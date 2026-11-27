@@ -29,7 +29,7 @@ mod region;
 #[path = "structure_tails.rs"]
 mod tails;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::gta6::script::cfg;
 use crate::gta6::script::ir::{Expr, Returns};
@@ -52,6 +52,10 @@ pub fn run(f: cfg::Function, names: &Names, stats: &mut Stats) -> tree::Function
 /// [`run`] as the pipeline calls it: the pass `gotos` of `cx` adds the rules that take out the jumps `run` leaves.
 pub fn run_in(f: cfg::Function, cx: &Context<'_>, _stats: &mut Stats) -> tree::Function {
     let gotos = cx.options.on(Pass::Gotos);
+    let alone = match gotos {
+        true => exits::alone(&f),
+        false => HashSet::new(),
+    };
     let cfg::Function {
         mut head,
         cfg: flow,
@@ -77,7 +81,7 @@ pub fn run_in(f: cfg::Function, cx: &Context<'_>, _stats: &mut Stats) -> tree::F
             tidy(&mut body, &mut named);
         }
         for _ in 0..ROUNDS {
-            let private = exits::Private::of(&head, &body);
+            let private = exits::Private::of(&head, &body, &alone);
             if !exits::rewritten(&mut body, &mut named, Some(&private)) {
                 break;
             }

@@ -482,7 +482,7 @@ fn head_of(vars: &[(Var, Width, bool)]) -> Head {
 }
 
 /// `f(&var);`: a call handed the address of `var`.
-fn handed(var: Var) -> Stmt {
+fn handing(var: Var) -> ir::Stmt {
     let call = Expr::Call {
         callee: Callee::Local {
             at: 0x200,
@@ -491,15 +491,24 @@ fn handed(var: Var) -> Stmt {
         args: vec![Expr::AddrOf { var, cell: 0 }],
         returns: None,
     };
-    Stmt::Simple(ir::Stmt::Eval(call))
+    ir::Stmt::Eval(call)
+}
+
+fn handed(var: Var) -> Stmt {
+    Stmt::Simple(handing(var))
 }
 
 /// The rules as the pass runs them, `head` saying which assignments may move: the count of each label's `goto`s must be what is left of them.
 fn moved(body: Vec<Stmt>, head: &Head) -> Vec<Stmt> {
+    moved_beside(body, head, &HashSet::new())
+}
+
+/// [`moved`], with `alone` the locals the blocks show no address reaches.
+fn moved_beside(body: Vec<Stmt>, head: &Head, alone: &HashSet<Var>) -> Vec<Stmt> {
     let mut named = counted(&body);
     let mut out = body;
     for _ in 0..4 {
-        let private = Private::of(head, &out);
+        let private = Private::of(head, &out, alone);
         if !rewritten(&mut out, &mut named, Some(&private)) {
             break;
         }
@@ -686,15 +695,21 @@ fn only_a_variable_of_one_cell_no_address_reaches_is_private() {
         (local, Width::Cell, true),
         (loose, Width::Cell, false),
     ]);
-    let private = Private::of(&head, &[handed(u)]);
+    let none = HashSet::new();
+    let private = Private::of(&head, &[handed(u)], &none);
     let mut vars: Vec<Var> = private.vars.iter().copied().collect();
     vars.sort_unstable();
     let mut expected = vec![T, local];
     expected.sort_unstable();
     assert_eq!(vars, expected);
-    // The address of any frame cell may reach the local.
-    let framed = Private::of(&head, &[handed(Var::Param(1))]);
+    // The address of any frame cell may reach the local, unless the blocks show it reaches nothing of it.
+    let framed = Private::of(&head, &[handed(Var::Param(1))], &none);
     assert!(framed.vars.contains(&T) && !framed.vars.contains(&local));
+    let shown = HashSet::from([local, loose]);
+    let apart = Private::of(&head, &[handed(Var::Param(1))], &shown);
+    assert!(apart.vars.contains(&local));
+    // Shown alone in what it reaches, a local still needs to be proved alone in its cells.
+    assert!(!apart.vars.contains(&loose));
     // A piece of a state machine out of sight may enter anywhere: nothing moves.
     let piece = Expr::Call {
         callee: Callee::Intrinsic {
@@ -705,6 +720,188 @@ fn only_a_variable_of_one_cell_no_address_reaches_is_private() {
         args: vec![k(0)],
         returns: None,
     };
-    let held = Private::of(&head, &[Stmt::Simple(ir::Stmt::Eval(piece))]);
+    let held = Private::of(&head, &[Stmt::Simple(ir::Stmt::Eval(piece))], &shown);
     assert!(held.vars.is_empty());
+}
+
+#[test]
+fn a_local_the_blocks_show_no_address_reaches_is_set_before_the_loop_beside_a_frame_address() {
+    let local = Var::Local(30);
+    let head = head_of(&[(local, Width::Cell, true)]);
+    // `while (p1) { s1; if (p2) { local_30 = p3; goto L; } } local_30 = -1; L: s4; f(&local_29); return;`
+    let body = vec![
+        search(local, goes(L)),
+        give(local, k(-1)),
+        Stmt::Label(L),
+        s(4),
+        handed(Var::Local(29)),
+        returns(),
+    ];
+    let out = moved_beside(body.clone(), &head, &HashSet::from([local]));
+    assert_eq!(
+        out,
+        [
+            give(local, k(-1)),
+            search(local, Stmt::Break),
+            s(4),
+            handed(Var::Local(29)),
+            returns()
+        ]
+    );
+    assert_eq!(moved_beside(body.clone(), &head, &HashSet::new()), body);
+}
+
+#[test]
+fn a_local_is_alone_only_where_no_address_handed_out_reaches_it() {
+    let (low, held, high) = (Var::Local(28), Var::Local(29), Var::Local(30));
+    let blocks = vec![cfg::Block {
+        at: None,
+        stmts: vec![handing(held)],
+        term: cfg::Terminator::Return(None),
+    }];
+    let of = |vars: &[(Var, Width, bool)]| cfg::Function {
+        head: head_of(vars),
+        cfg: cfg::Cfg {
+            blocks: blocks.clone(),
+        },
+    };
+    // One cell wide, the local handed out ends where it starts.
+    let bounded = of(&[
+        (low, Width::Cell, true),
+        (held, Width::Cell, true),
+        (high, Width::Cell, true),
+    ]);
+    assert_eq!(alone(&bounded), HashSet::from([low, high]));
+    // Nothing bounds it: every local from its own on may be reached.
+    let open = of(&[
+        (low, Width::Cell, true),
+        (held, Width::Cell, false),
+        (high, Width::Cell, false),
+    ]);
+    assert_eq!(alone(&open), HashSet::from([low]));
+}
+
+// ---- the else a loop's body ends in, and a switch's last body -------------------------------
+
+/// `while (p0) { s1; if (p1) { <then> } else { <els> } <rest> }`.
+fn looped(then: Vec<Stmt>, els: Vec<Stmt>, rest: Vec<Stmt>) -> Stmt {
+    let mut body = vec![s(1), when(p(1), then, els)];
+    body.extend(rest);
+    Stmt::While { cond: p(0), body }
+}
+
+#[test]
+fn a_label_in_the_else_that_ends_a_loops_body_comes_out_after_the_if() {
+    // `while (p0) { s1; if (p1) { if (p2) { s2; goto L; } s3; } else { s4; L: s5; } } return;`
+    let then = vec![only(p(2), vec![s(2), goes(L)]), s(3)];
+    let body = vec![
+        looped(then, vec![s(4), Stmt::Label(L), s(5)], Vec::new()),
+        returns(),
+    ];
+    let then = vec![when(p(2), vec![s(2)], vec![s(3), Stmt::Continue])];
+    let out = swept(body);
+    assert_eq!(out, [looped(then, vec![s(4)], vec![s(5)]), returns()]);
+    assert_eq!(gotos(&out), 0);
+}
+
+#[test]
+fn a_label_in_an_else_stays_where_its_if_does_not_end_a_loops_body_or_nothing_in_the_then_arm_jumps_to_it(
+) {
+    // Something follows the `if` in the body: what the then arm ran off to is not the loop's end.
+    let then = vec![only(p(2), vec![s(2), goes(L)]), s(3)];
+    let followed = vec![
+        looped(then.clone(), vec![s(4), Stmt::Label(L), s(5)], vec![s(6)]),
+        returns(),
+    ];
+    assert_eq!(swept(followed.clone()), followed);
+    // The jump to the label comes from before the loop.
+    let elsewhere = vec![
+        only(p(3), vec![goes(L)]),
+        looped(vec![s(3)], vec![s(4), Stmt::Label(L), s(5)], Vec::new()),
+        returns(),
+    ];
+    assert_eq!(swept(elsewhere.clone()), elsewhere);
+    // Not in a loop: off the end of the list is not where a `continue` goes.
+    let bare = vec![when(p(1), then, vec![s(4), Stmt::Label(L), s(5)])];
+    assert_eq!(swept(bare.clone()), bare);
+}
+
+#[test]
+fn a_jump_out_of_a_last_body_to_what_follows_the_switch_runs_off_it_and_its_break_is_written() {
+    // `switch (p0) { case 0: s1; break; case 1: switch (p1) { case 0: s2; goto L; case 1: s3; goto L; } } L: s4; return;`
+    let inner = |first: Vec<Stmt>, last: Vec<Stmt>| Stmt::Switch {
+        value: p(1),
+        cases: vec![case(&[Some(0)], first), case(&[Some(1)], last)],
+    };
+    let outer = |last: Vec<Stmt>| Stmt::Switch {
+        value: p(0),
+        cases: vec![
+            case(&[Some(0)], vec![s(1), Stmt::Break]),
+            case(&[Some(1)], last),
+        ],
+    };
+    let body = vec![
+        outer(vec![inner(vec![s(2), goes(L)], vec![s(3), goes(L)])]),
+        Stmt::Label(L),
+        s(4),
+        returns(),
+    ];
+    let done = inner(vec![s(2), Stmt::Break], vec![s(3), Stmt::Break]);
+    let out = swept(body);
+    assert_eq!(out, [outer(vec![done, Stmt::Break]), s(4), returns()]);
+    assert_eq!(gotos(&out), 0);
+}
+
+#[test]
+fn a_jump_out_of_a_body_before_the_last_still_needs_its_break() {
+    // `switch (p0) { case 0: switch (p1) { case 0: s2; goto L; } s3; case 1: s1; break; } L: s4; return;`:
+    // the first body runs off into the second, so `goto L` there is no `break` of the inner switch.
+    let inner = Stmt::Switch {
+        value: p(1),
+        cases: vec![
+            case(&[Some(0)], vec![s(2), goes(L)]),
+            case(&[Some(1)], vec![Stmt::Break]),
+        ],
+    };
+    let body = vec![
+        Stmt::Switch {
+            value: p(0),
+            cases: vec![
+                case(&[Some(0)], vec![inner, s(3)]),
+                case(&[Some(1)], vec![s(1), Stmt::Break]),
+            ],
+        },
+        Stmt::Label(L),
+        s(4),
+        returns(),
+    ];
+    assert_eq!(swept(body.clone()), body);
+}
+
+#[test]
+fn a_last_body_that_runs_off_is_ended_by_its_break_and_one_that_leaves_or_loops_is_not() {
+    let switch = |last: Vec<Stmt>| Stmt::Switch {
+        value: p(0),
+        cases: vec![case(&[Some(0)], vec![s(1)]), case(&[None], last)],
+    };
+    let lp = Stmt::While {
+        cond: p(2),
+        body: vec![s(3)],
+    };
+    let mut body = vec![
+        only(p(1), vec![switch(vec![s(2)])]),
+        switch(Vec::new()),
+        switch(vec![s(2), returns()]),
+        switch(vec![lp.clone()]),
+    ];
+    closed_cases(&mut body);
+    assert_eq!(
+        body,
+        [
+            only(p(1), vec![switch(vec![s(2), Stmt::Break])]),
+            switch(vec![Stmt::Break]),
+            switch(vec![s(2), returns()]),
+            switch(vec![lp]),
+        ]
+    );
 }

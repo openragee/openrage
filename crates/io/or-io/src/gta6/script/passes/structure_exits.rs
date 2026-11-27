@@ -5,17 +5,21 @@
 //! Each rule holds only where the label a `goto` names stands at the place control reaches by
 //! what is written instead, so what runs is what ran. ⚠ One rule writes a statement twice: a
 //! `return` of a small value with no call, a `break` or a `continue`, in front of the arm it
-//! followed. No simple statement is copied and none is dropped. ⚠ One rule moves one: the
+//! followed. Two write a statement that says where running off already went: a `continue` at the
+//! end of an arm that ran off the end of a loop's body, and a `break` at the end of a switch's
+//! last body. No simple statement is copied and none is dropped. ⚠ One rule moves one: the
 //! assignment of a constant to a variable no address reaches, from behind a construct whose
 //! jumps past it each assign that variable first, to in front of the construct.
 
 use std::collections::{HashMap, HashSet};
 
+use crate::gta6::script::cfg;
 use crate::gta6::script::ir::{self, Callee, Const, Expr, Head, Kind, Var, Width};
 // `PIECE`: the intrinsic `async_await::untangle` leaves a call of where it took a piece out.
 use crate::gta6::script::passes::async_await::PIECE;
 use crate::gta6::script::tree::{self, Label, Stmt};
 
+use super::super::values::effects::Facts;
 use super::cond;
 use super::graph::SCAN;
 use super::leaves;
@@ -230,15 +234,28 @@ fn place(body: &mut Vec<Stmt>, tail: Vec<Stmt>) -> Option<Vec<Stmt>> {
     Some(tail)
 }
 
+/// The locals of `f` that only an assignment naming them reads or writes: no load, store or call reaches them through an address.
+// ⚠ Read off the blocks before they are structured: the rules copy and move statements but
+// never take an address no block took.
+pub(super) fn alone(f: &cfg::Function) -> HashSet<Var> {
+    let facts = Facts::of(f);
+    f.head
+        .vars
+        .keys()
+        .filter(|var| matches!(**var, Var::Local(_)) && facts.named_only(**var))
+        .copied()
+        .collect()
+}
+
 /// The variables of a function whose assignment may move in front of a construct: one cell each, and no address reaches them.
 pub(super) struct Private {
     vars: HashSet<Var>,
 }
 
 impl Private {
-    /// What `head` and `body` prove; nothing where a piece of a state machine is out of sight.
+    /// What `head` and `body` prove, with `alone` the locals [`alone`] proves; nothing where a piece of a state machine is out of sight.
     // Such a piece enters the body at labels this pass cannot see named, and may read anything.
-    pub(super) fn of(head: &Head, body: &[Stmt]) -> Private {
+    pub(super) fn of(head: &Head, body: &[Stmt], alone: &HashSet<Var>) -> Private {
         let mut addressed: HashSet<Var> = HashSet::new();
         let mut piece = false;
         tree::each_expr(body, &mut |top| {
@@ -253,7 +270,8 @@ impl Private {
                 _ => {}
             });
         });
-        // The address of a frame cell, moved, may reach a local other than its own.
+        // The address of a frame cell, moved, may reach a local other than its own, unless the
+        // blocks show that no address reaches that local.
         let frame = addressed
             .iter()
             .any(|var| matches!(var, Var::Local(_) | Var::Param(_)));
@@ -264,7 +282,8 @@ impl Private {
                 .iter()
                 .filter(|(var, info)| {
                     let plain = info.width == Width::Cell && !addressed.contains(*var);
-                    let local = matches!(**var, Var::Local(_)) && info.single && !frame;
+                    let reached = frame && !alone.contains(*var);
+                    let local = matches!(**var, Var::Local(_)) && info.single && !reached;
                     plain && (var.is_temporary() || local)
                 })
                 .map(|(var, _)| *var)
@@ -425,6 +444,7 @@ impl Exits<'_> {
                     self.list(els, &inner, depth + 1);
                 }
                 Stmt::While { body, .. } => {
+                    self.lifted(body);
                     let mut cont = before.clone();
                     cont.extend(labels_before(body.as_slice(), body.len()));
                     let inner = Ways {
@@ -437,6 +457,7 @@ impl Exits<'_> {
                 // Off the end of the body is the test of a `do` and the step of a `for`: no
                 // label stands there but one the body ends in.
                 Stmt::DoWhile { body, .. } | Stmt::For { body, .. } => {
+                    self.lifted(body);
                     let inner = Ways {
                         after: Vec::new(),
                         brk: Some(next),
@@ -445,14 +466,19 @@ impl Exits<'_> {
                     self.list(body, &inner, depth + 1);
                 }
                 // ⚠ A body that runs off its end runs into the next one: a jump out of it is a
-                // `break` and never nothing.
+                // `break` and never nothing. The last runs off the switch to what follows it, and
+                // [`closed_cases`] writes its `break` back where a rule took its jump out.
                 Stmt::Switch { cases, .. } => {
-                    let inner = Ways {
-                        after: Vec::new(),
-                        brk: Some(next),
-                        cont: ways.cont.clone(),
-                    };
-                    for case in cases.iter_mut() {
+                    let last = cases.len().saturating_sub(1);
+                    for (at, case) in cases.iter_mut().enumerate() {
+                        let inner = Ways {
+                            after: match at == last {
+                                true => next.clone(),
+                                false => Vec::new(),
+                            },
+                            brk: Some(next.clone()),
+                            cont: ways.cont.clone(),
+                        };
                         self.list(&mut case.body, &inner, depth + 1);
                     }
                 }
@@ -701,6 +727,52 @@ impl Exits<'_> {
             self.changed = true;
         }
     }
+
+    /// `if (c) { T } else { E; L: R }` that ends a loop's `body` is `if (c) { T; continue; } else { E } L: R` where `T` jumps to `L`: that jump then runs off the `if`.
+    // Off the end of a loop's body is where `continue` goes in `while`, `do` and `for` alike, so
+    // `T` run off its end still goes there, and `R` runs off the body as it ran off the else. A
+    // label taken out of an arm is still in reach of every `goto` that reached it.
+    fn lifted(&mut self, body: &mut Vec<Stmt>) {
+        let Some(Stmt::If { then, els, .. }) = body.last_mut() else {
+            return;
+        };
+        let Some(at) = els.iter().position(|stmt| matches!(stmt, Stmt::Label(_))) else {
+            return;
+        };
+        let inside = free(then.as_slice(), &labels_at(els.as_slice(), at, &[]));
+        if inside.jumps == 0 || inside.opaque {
+            return;
+        }
+        let rest = els.split_off(at);
+        if runs_off(then.as_slice()) {
+            then.push(Stmt::Continue);
+        }
+        body.extend(rest);
+        self.changed = true;
+    }
+}
+
+/// Ends the last body of each `switch` that runs off its end with the `break` that leaves the switch there.
+// The rules read the end of a last body as what follows the switch, and so may take out the
+// jump that ended it. A body that ends in a loop is left: a loop no `break` leaves never runs off.
+fn closed_cases(body: &mut Vec<Stmt>) {
+    let mut work: Vec<&mut Vec<Stmt>> = vec![body];
+    while let Some(list) = work.pop() {
+        for stmt in list {
+            if let Stmt::Switch { cases, .. } = &mut *stmt {
+                if let Some(case) = cases.last_mut() {
+                    let looped = matches!(
+                        case.body.last(),
+                        Some(Stmt::While { .. } | Stmt::DoWhile { .. } | Stmt::For { .. })
+                    );
+                    if !looped && runs_off(&case.body) {
+                        case.body.push(Stmt::Break);
+                    }
+                }
+            }
+            work.extend(super::nested(stmt));
+        }
+    }
 }
 
 /// Writes each `goto` a rule explains as the way out it is, once over `body`; whether anything was rewritten. `private` lets assignments of its variables move.
@@ -717,6 +789,7 @@ pub(super) fn rewritten(
         changed: false,
     };
     exits.list(body, &Ways::default(), 0);
+    closed_cases(body);
     exits.changed
 }
 

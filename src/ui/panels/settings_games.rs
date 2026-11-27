@@ -24,7 +24,7 @@ pub fn draw_games_page(ui: &mut egui::Ui, state: &mut AppState) {
     ui.horizontal(|ui| {
         ui.label(tr!("Active game:"));
         let current = state.prefs.active_game;
-        let selected_text = current.map(Game::label).unwrap_or(tr!("(none)"));
+        let selected_text = current.map_or_else(|| tr!("(none)").to_string(), name_with_platform);
         let mut chosen: Option<Game> = None;
         let combo = egui::ComboBox::from_id_salt("active_game")
             .selected_text(selected_text)
@@ -34,7 +34,7 @@ pub fn draw_games_page(ui: &mut egui::Ui, state: &mut AppState) {
                         game.profile().is_supported() || crate::state::gta_vi::read_by_scan(game);
                     let row = ui.add_enabled(
                         supported,
-                        egui::Button::selectable(current == Some(game), game.label()),
+                        egui::Button::selectable(current == Some(game), name_with_platform(game)),
                     );
                     if !supported {
                         row.on_hover_text(game.profile().description());
@@ -55,6 +55,11 @@ pub fn draw_games_page(ui: &mut egui::Ui, state: &mut AppState) {
     }
 }
 
+/// `game`'s name with the platform of its build in parentheses.
+fn name_with_platform(game: Game) -> String {
+    format!("{} ({})", game.label(), game.profile().platform().label())
+}
+
 fn draw_game_row(ui: &mut egui::Ui, state: &mut AppState, game: Game) {
     let is_active = state.prefs.active_game == Some(game);
     let supported = game.profile().is_supported();
@@ -63,9 +68,9 @@ fn draw_game_row(ui: &mut egui::Ui, state: &mut AppState, game: Game) {
         ui.set_min_width(ui.available_width());
         ui.horizontal(|ui| {
             let label = if is_active {
-                egui::RichText::new(game.label()).strong()
+                egui::RichText::new(name_with_platform(game)).strong()
             } else {
-                egui::RichText::new(game.label())
+                egui::RichText::new(name_with_platform(game))
             };
             ui.label(label);
             if is_active {

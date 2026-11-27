@@ -108,8 +108,9 @@ fn records_digest_alike_in_any_order_and_apart_when_one_changes() {
 #[test]
 fn the_reference_script_gives_the_suite_its_cameras_hours_modes_and_weathers() {
     let read = stops(
-        "world hour 9\nworld camera 1 2 3 45 -10 60\nshot a\nworld modes base story\n\
-         world weather rain\nworld hour 21.5\nshot b\ncompare a ref.png 1 1",
+        "# a comment\nsize 1600 900\ngame gta6 ${BUILD}\nworkspace World\nworld clean on\n\n\
+         world hour 9\nworld camera 1 2 3 45 -10 60\nworld settle 30\nworld converge\nshot a\n\
+         world dump a.json\nworld modes base story\nworld weather rain\nworld hour 21.5\nshot b",
     )
     .expect("a script");
     let (base, story) = (Mode::Base.bit(), Mode::Story.bit());
@@ -127,6 +128,19 @@ fn the_reference_script_gives_the_suite_its_cameras_hours_modes_and_weathers() {
     assert!(stops("shot a").is_err(), "a shot before any camera");
     assert!(stops("world modes all").is_err());
     assert!(stops("world weather snow").is_err());
+    // ⚠ A step that changes the world and that the digests do not follow is refused, not passed over.
+    for unfollowed in [
+        "world group 1A2B on",
+        "world fly 10 0 0 2",
+        "world glide 10 0 0 2",
+        "world move 2 perf.json 1 2 3 45 -10",
+        "mode wireframe",
+        "click 10 10",
+    ] {
+        let script = format!("world camera 1 2 3 45 -10\n{unfollowed}\nshot a");
+        let wrong = stops(&script).expect_err("a step the digests do not follow");
+        assert!(wrong.starts_with("line 2:"), "{unfollowed}: {wrong}");
+    }
 
     let script = stops(SCRIPT).expect("the script in the tree");
     let names: BTreeSet<&str> = script.iter().map(|stop| stop.name.as_str()).collect();

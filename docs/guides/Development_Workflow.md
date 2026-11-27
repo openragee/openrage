@@ -645,7 +645,10 @@ among those the index places, in the order of their words; textures of the packs
 the order of their keys, and some of those the digested models name; the selection, the lights,
 the occluders and the day at each shot of the script; and the selection over maps evenly spaced
 among those that stream at rest. How many of each is a constant at the head of the suite. No name
-of the game is written in it: every set is chosen by its place in an order. It writes a reference that is not there and never writes over one, fails on a digest
+of the game is written in it: every set is chosen by its place in an order. It reads its cameras, hours,
+modes and weathers from the drawing script and refuses a step of it that it does not follow, a group
+switched or a flight, so that the digests are never taken of another world than the shots
+(`the_reference_script_gives_the_suite_its_cameras_hours_modes_and_weathers`). It writes a reference that is not there and never writes over one, fails on a digest
 that differs, one the reference lacks and one the world no longer gives, and skips unless the
 build and one of the two files are named. A part that moves the code the suite reads moves the
 suite's imports with it and changes nothing else of it: a digest whose making changed is a

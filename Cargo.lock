@@ -3584,7 +3584,6 @@ dependencies = [
  "or-title",
  "or-world",
  "tempfile",
- "thiserror 1.0.69",
  "tracing",
 ]
 

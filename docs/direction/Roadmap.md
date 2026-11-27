@@ -10833,7 +10833,12 @@ and "or-worlds".
   first run differed at 6 of the 16 views on each install, by the driver's doing: a parent map
   three wanted maps name was said to be the parent of the last of them, where the forest says the
   first. The driver now follows the parents of one wanted map before the next map's
-  (`crates/domain/or-world/src/driver.rs`), and an install built by hand holds it.
+  (`crates/domain/or-world/src/driver.rs`), which the core holds over rows of its own
+  (`a_parent_several_wanted_maps_name_is_wanted_as_the_parent_of_the_first_in_the_indexs_order`)
+  and an install built by hand holds over the adapter. What no rule of the kit and no comparison
+  asks (a gate by the weather, a model's levels and bytes, a box overlap, a placement row, an
+  interior's links, an instance's sphere, a pack the title update patches) is held in
+  `crates/domain/or-world-gta5/tests/what_no_rule_of_the_kit_asks_of_gta5.rs`.
 - **One kept file.** GTA V's rows go through the core's kept file by `or-depends`' own sealing,
   an archive a section, and the rows joined from the sections are byte for byte the index
   `or-depends` builds of the mount
@@ -10855,12 +10860,15 @@ and "or-worlds".
   registered game onto the core's id. `openrage-cli world index`, `at`, `ground`, `find` and
   `select` answer through it and the contract with `--neutral`, for whichever title the install's
   folder is detected as, by capability (`crates/tools/or-cli/src/world_neutral.rs`, held over the
-  fake title); without the flag they are GTA V's own verbs, unchanged.
+  fake title and, from the command line, over a GTA V install built by hand:
+  `crates/tools/or-cli/tests/the_world_verbs_answer_for_gta5_through_its_title.rs`); without the
+  flag they are GTA V's own verbs, unchanged.
 
-Left, each with why. ⚠ Over a real install the kit is asked 10 of its 20 rules
-(`the_rules_of_the_kit_that_take_no_built_scene_hold_over_a_real_install`): the others state a
-scene no real map is arranged as (a parent map that draws alone, an interior with a count), have
-no edit store to ask, or cannot pass until a model of a dictionary reads. A body states no light,
+Left, each with why. ⚠ Over a real install the kit is asked 11 of its 20 rules, the capabilities
+among them (`the_rules_of_the_kit_that_take_no_built_scene_hold_over_a_real_install`, 2026-11-27):
+the others state a scene no real map is arranged as (a parent map that draws alone, an interior
+with a count), have no edit store to ask, or cannot pass until a model of a dictionary reads. A
+body states no light,
 no occluder and no list, since the forest's reader reads none. A model reads only from a Legacy
 drawable that is a file of its own: an entry of a dictionary, a fragment, an Enhanced drawable
 and every texture are [R71e](#r71e-the-gta-v-world-drawn-in-the-fallback-pass)'s. The edit store
@@ -10868,7 +10876,7 @@ is not behind the contract, so the registry's line states none ([R71i](#r71i-one
 GTA V's own verbs do not answer through the contract: their output names files the contract does
 not state. A switch has no name of its own, so GTA V's, one a held-back map, all read alike; and
 no shared code turns a weather's name into the title's number, so `world select --neutral` takes
-a number.
+a number, in tens or in sixteens.
 
 **Depends on.** [R71a](#r71a-the-world-contract-the-conformance-kit-and-the-fake-title). It waits for no branch of R70.
 

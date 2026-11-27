@@ -10,7 +10,6 @@ description = "GTA V's world behind the world contract: its title, its opened in
 
 [dependencies]
 glam.workspace = true
-thiserror.workspace = true
 tracing.workspace = true
 # The contract, the kept file and the driver this crate answers.
 or-world.workspace = true

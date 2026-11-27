@@ -193,25 +193,65 @@ fn a_verb_whose_capability_the_world_lacks_is_refused_with_what_it_lacks() {
 }
 
 #[test]
-fn an_option_is_read_as_a_toggle_a_choice_or_a_name_and_a_moment_from_its_flags() {
+fn an_option_is_read_as_its_kind_takes_it_and_a_moment_from_its_flags() {
     let args = |words: &[&str]| -> Vec<String> { words.iter().map(|w| w.to_string()).collect() };
-    let set = options_of(&args(&[
-        "--option", "1=on", "x", "--option", "2=7", "--option", "3=a pack",
-    ]));
+    let set = |words: &[&str]| -> Vec<String> {
+        words.iter().flat_map(|w| args(&["--option", w])).collect()
+    };
+    // The fake's one option is a toggle.
+    let toggle = FakeTitle::new().options();
     assert_eq!(
-        set,
+        options_of(
+            &args(&["--option", "1=on", "x", "--option", "1=off"]),
+            &toggle
+        ),
         Ok(vec![
             (OptionId(1), OptionValue::On(true)),
-            (OptionId(2), OptionValue::Choice(7)),
-            (OptionId(3), OptionValue::Named("a pack".to_string())),
+            (OptionId(1), OptionValue::On(false)),
         ])
     );
-    assert!(options_of(&args(&["--option", "level"])).is_err());
-    assert!(options_of(&args(&["--option"])).is_err());
+    assert_eq!(
+        options_of(&set(&["1=7"]), &toggle),
+        Err("option 1 is `on` or `off`, not `7`".to_string())
+    );
+    assert_eq!(
+        options_of(&set(&["2=on"]), &toggle),
+        Err("the title has no option 2".to_string())
+    );
+    // GTA V's are a name, which may be all digits or a word a toggle takes, and one of two choices.
+    let gta5 = or_worlds::by_id("gta5").expect("GTA V's title");
+    let kinds = gta5.title.options();
+    let (named, one_of) = (kinds[0].id, kinds[1].id);
+    assert!(matches!(kinds[0].choices, Choices::Named));
+    let Choices::OneOf(choices) = &kinds[1].choices else {
+        panic!("{:?}", kinds[1].choices);
+    };
+    let (last, label) = *choices.last().expect("a choice");
+    for name in ["a pack", "1234", "on"] {
+        assert_eq!(
+            options_of(&set(&[&format!("{}={name}", named.0)]), &kinds),
+            Ok(vec![(named, OptionValue::Named(name.to_string()))])
+        );
+    }
+    for word in [last.to_string(), label.key().to_uppercase()] {
+        assert_eq!(
+            options_of(&set(&[&format!("{}={word}", one_of.0)]), &kinds),
+            Ok(vec![(one_of, OptionValue::Choice(last))])
+        );
+    }
+    assert_eq!(
+        options_of(&set(&[&format!("{}=77", one_of.0)]), &kinds),
+        Err(format!("option {} has no choice `77`", one_of.0))
+    );
+    assert!(options_of(&args(&["--option", "level"]), &kinds).is_err());
+    assert!(options_of(&args(&["--option"]), &kinds).is_err());
     let moment = moment_of(&args(&["--hour", "22", "--weather", "9"])).expect("a moment");
     assert_eq!((moment.hour, moment.weather), (22.0, 9));
+    let hashed = moment_of(&args(&["--weather", "0x1F"])).expect("a weather in sixteens");
+    assert_eq!((hashed.hour, hashed.weather), (12.0, 0x1f));
     assert!(moment_of(&args(&["--hour", "24"])).is_err());
     assert!(moment_of(&args(&["--weather", "RAIN"])).is_err());
+    assert!(moment_of(&args(&["--weather", "0x"])).is_err());
 }
 
 #[test]
@@ -226,5 +266,15 @@ fn an_install_no_title_opens_a_world_of_and_a_flag_no_verb_knows_are_refused() {
     assert_eq!(
         said("index", &args(&[&install, "--neutral", "--keys"])),
         Err("`--keys` takes a value".to_string())
+    );
+    // A folder detected as a game whose world no title of the registry opens.
+    std::fs::write(dir.path().join("RDR2.exe"), []).expect("a file");
+    assert_eq!(
+        said("index", &args(&[&install, "--neutral"])),
+        Err("no title of this build opens a world of that install".to_string())
+    );
+    assert_eq!(
+        said("at", &args(&["--neutral"])).map_err(|e| e.contains("the install's folder")),
+        Err(true)
     );
 }

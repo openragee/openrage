@@ -87,7 +87,8 @@ impl WorldLook for Gta5World {
         let turn = (at.hour.rem_euclid(24.0) - 12.0) / 24.0 * std::f32::consts::TAU;
         let day = turn.cos().max(0.0);
         FrameFacts {
-            sun: Vec3::new(turn.sin(), 0.0, turn.cos()),
+            // East is +X: the sun rises there and sets at -X.
+            sun: Vec3::new(-turn.sin(), 0.0, turn.cos()),
             key: [day; 3],
             ambient: [0.05 + 0.25 * day; 3],
             exposure: 1.0,

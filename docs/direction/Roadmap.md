@@ -10074,7 +10074,7 @@ interior ([in full, with what is left](../reference/Crate_Reference.md#io-crates
 `every_interior_of_an_install_reads_typed_states_the_members_typed_and_saves_to_its_fixed_point`
 reads 541 interiors in 2,763 type files of the Legacy install, and saves 424 of those type files to
 their fixed point with 0 problems; of the Enhanced install, 556 interiors in 2,876 type files and
-439 saved, with 0 problems (at `8853987c8` with this change).
+439 saved, with 0 problems (2026-11-25).
 
 The operations and the rules of an interior are built with no screen
 ([in full, with what is left](../reference/Crate_Reference.md#domain-crates)). The operations are
@@ -10593,9 +10593,9 @@ it states them
 (`an_entity_put_back_leaves_the_parked_vehicle_the_source_changed_as_the_source_states_it`).
 `openrage-cli maps put-back` runs a plan, and `MapChanges::count` is what a discard asks. On the
 installs each sampled entity, moved and then deleted with its chain, was put back to the bytes
-its pack was imported with, 19 of 19 on Legacy at fb434693e and 17 of 17 on Enhanced at
-138338896 (`an_entity_deleted_from_a_map_of_the_install_is_put_back_as_the_game_has_it`,
-2026-11-26).
+its pack was imported with, 19 of 19 on Legacy and 17 of 17 on Enhanced, both at 8530537a1
+(`an_entity_deleted_from_a_map_of_the_install_is_put_back_as_the_game_has_it`,
+2026-11-27).
 
 ⚠ Three readings are the owner's to rule on: the nearest match believes a place over a guid; an
 entity added after the one with the largest guid went takes that guid and is put back as that

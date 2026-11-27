@@ -860,11 +860,21 @@ pub(super) fn change(
             room,
             ..
         } => {
+            let placed = name_of(archetype_name);
+            let an_interior = types.archetypes.iter().any(|declared| {
+                declared.name.hash == placed.hash
+                    && matches!(declared, CBaseArchetypeDefAny::CMloArchetypeDef(_))
+            });
             let mlo = interior_at_mut(types, *archetype)?;
             let pose = pose.checked()?;
-            let placed = name_of(archetype_name);
             if placed.is_empty() {
                 return Err("an entity places an archetype, and none is named".to_string());
+            }
+            if an_interior {
+                return Err(
+                    "the archetype named is an interior this file declares, and an interior holds no interior"
+                        .to_string(),
+                );
             }
             if let Some(room) = room.filter(|room| *room >= mlo.rooms.len()) {
                 return Err(past(Holder::Room(room), mlo));
@@ -1180,10 +1190,10 @@ pub(super) fn change(
     }
 }
 
-/// Refuse `name` for a room of `mlo` when another room than `but` has it, whatever its case.
+/// Refuse `name` for a room of `mlo` when another room than `but` has it, whatever its case and the white space around it.
 fn name_is_free(mlo: &CMloArchetypeDef, name: &str, but: Option<usize>) -> Result<(), String> {
     let taken = (mlo.rooms.iter().enumerate())
-        .any(|(at, room)| Some(at) != but && room.name.eq_ignore_ascii_case(name));
+        .any(|(at, room)| Some(at) != but && room.name.trim().eq_ignore_ascii_case(name.trim()));
     if taken {
         Err(
             "the interior already holds a room of that name, and a room is found by its name"

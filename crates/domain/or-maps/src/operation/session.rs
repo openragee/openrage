@@ -555,7 +555,8 @@ impl Session {
 
     /// Keep what the session holds of `source` over what the disk holds of it now, so the next flush writes over a file it would have refused as changed.
     pub fn keep_over_the_disk(&mut self, source: &str) {
-        if let Some(held) = self.held.get_mut(source) {
+        // ⚠ A source whose folder is gone has no file to write over: it stays named as changed, to be read again.
+        if let Some(held) = (self.held.get_mut(source)).filter(|held| held.dir.is_dir()) {
             let on_disk = std::fs::read(held.dir.join(or_source::metadata::XML));
             held.on_disk = on_disk.unwrap_or_default();
         }
@@ -739,8 +740,9 @@ impl Session {
         let changed = |held: &Held| held.inputs.xml() != held.on_disk.as_slice();
         // ⚠ A session lives as long as a screen does, and a source something else wrote meanwhile is not the one its root was read from.
         for (source, held) in &self.held {
-            let on_disk = std::fs::read(held.dir.join(or_source::metadata::XML)).ok();
-            if changed(held) && on_disk.as_deref() != Some(held.on_disk.as_slice()) {
+            // ⚠ A file that is gone reads as an empty one, as `changed_on_disk` and `keep_over_the_disk` take it.
+            let on_disk = std::fs::read(held.dir.join(or_source::metadata::XML));
+            if changed(held) && on_disk.unwrap_or_default() != held.on_disk {
                 return Err(Error::Changed { at: source.clone() });
             }
         }

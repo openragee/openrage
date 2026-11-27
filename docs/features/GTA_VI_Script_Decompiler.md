@@ -77,7 +77,9 @@ was.
   constant of no proved kind whose bits are those of a round float keeps its bits and has the
   float written beside it as a comment, `0x3F800000 /* 1.0f */`: the bits alone prove no kind.
 - **Statements**: `structure`, `gotos`, `switch-on`, `for`.
-- **Names**: `names`, `hash-text`, `native-params`, `role-names`.
+- **Names**: `names`, `hash-text`, `native-params`, `role-names`. `hash-text` writes a constant
+  as the text of its hash only in a cell a user's list says holds hashes; a variable handed to
+  such a cell holds hashes, so the labels of a switch on it are written as texts too.
 - **Classes**: `fields`, `classes`, `receivers`, `constructors`, `operators`. An access through a
   variable the kinds pass proves holds an object of a script type is a field of that type, where
   the bytes lie in the type and no field the layouts state overlaps them; such a field is

@@ -975,3 +975,40 @@ fn a_variable_takes_the_role_of_what_a_function_a_list_names_as_a_getter_gets() 
     let off = named(head(0, 4), body(), &names);
     assert!(locals.iter().all(|v| name_of(&off, *v).is_none()));
 }
+
+#[test]
+fn a_variable_handed_to_a_cell_that_holds_hashes_holds_hashes() {
+    let mut names = Names::default();
+    names.hash_slots.insert((0xD1, 0));
+    let cx = with(&names, &[Pass::HashText]);
+    let cell = |kind: Kind| {
+        let mut info = VarInfo::new(Width::Cell);
+        info.kind = kind;
+        info
+    };
+    let mut held = head(2, 1);
+    held.vars.insert(Var::Param(0), cell(Kind::Unknown));
+    held.vars.insert(Var::Param(1), cell(Kind::F32));
+    held.vars.insert(Var::Local(0), cell(Kind::I32));
+    let set = |value: Expr| eval(native("SET_THING", 0xD1, vec![value]));
+    let body = vec![
+        set(var(Var::Param(0))),
+        set(Expr::cast(Scalar::I32, var(Var::Local(0)))),
+        // A float's kind is what its reads proved.
+        set(var(Var::Param(1))),
+    ];
+    let mut f = Function { head: held, body };
+    apply(&mut f, &cx);
+    let kind = |v: Var| f.head.vars[&v].kind.clone();
+    assert_eq!(kind(Var::Param(0)), Kind::Hash);
+    assert_eq!(kind(Var::Local(0)), Kind::Hash);
+    assert_eq!(kind(Var::Param(1)), Kind::F32);
+    // Switched off by its name, no variable is a hash.
+    let mut f = Function {
+        head: head(1, 0),
+        body: vec![set(var(Var::Param(0)))],
+    };
+    f.head.vars.insert(Var::Param(0), cell(Kind::Unknown));
+    apply(&mut f, &with(&names, &[]));
+    assert_eq!(f.head.vars[&Var::Param(0)].kind, Kind::Unknown);
+}

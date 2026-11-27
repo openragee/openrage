@@ -127,18 +127,33 @@ fn hash_text(f: &mut tree::Function, names: &Names) -> usize {
                         callee: Callee::Native { hash, .. },
                         args,
                         ..
-                    } => shown += vouched(*hash, args, head, names),
+                    } => shown += vouched(*hash, args, head, names, &mut held),
                     _ => {}
                 });
             });
             work.extend(tree::nested_mut(stmt));
         }
     }
+    // A variable a cell that holds hashes is given holds hashes: a switch on it goes by hashes.
+    // ⚠ Only one of a cell and of no other kind: a number's kind is what its reads proved.
+    for var in held {
+        let info = f.head.vars.get_mut(&var);
+        let plain = |kind: &Kind| matches!(kind, Kind::Unknown | Kind::I32 | Kind::U32);
+        if let Some(info) = info.filter(|info| info.width == Width::Cell && plain(&info.kind)) {
+            info.kind = Kind::Hash;
+        }
+    }
     shown
 }
 
-/// Gives the kind `Hash` to each constant that is the whole of an argument cell of the native `hash` which holds hashes; returns how many of them have a text.
-fn vouched(hash: u64, args: &mut [Expr], head: &Head, names: &Names) -> usize {
+/// Gives the kind `Hash` to each constant that is the whole of an argument cell of the native `hash` which holds hashes, and notes each variable that is; returns how many of the constants have a text.
+fn vouched(
+    hash: u64,
+    args: &mut [Expr],
+    head: &Head,
+    names: &Names,
+    held: &mut BTreeSet<Var>,
+) -> usize {
     let (mut cell, mut shown) = (0u32, 0);
     for arg in args {
         // Past an argument of cells nothing counts, no later argument's cell is known.
@@ -148,10 +163,22 @@ fn vouched(hash: u64, args: &mut [Expr], head: &Head, names: &Names) -> usize {
         if names.hash_slots.contains(&(hash, cell)) {
             let hashed = constant(arg).is_some_and(|c| vouch(c, names));
             shown += usize::from(hashed);
+            if let Some(var) = variable(arg).filter(|_| cells == 1) {
+                held.insert(var);
+            }
         }
         cell = cell.saturating_add(cells);
     }
     shown
+}
+
+/// The variable `e` is, under any reading of it of 32 bits or more.
+fn variable(e: &Expr) -> Option<Var> {
+    match e {
+        Expr::Cast { to, e } if to.bytes() >= 4 && !to.kind().is_float() => variable(e),
+        Expr::Var(var) => Some(*var),
+        _ => None,
+    }
 }
 
 /// The constant `e` is, under any reading of it.

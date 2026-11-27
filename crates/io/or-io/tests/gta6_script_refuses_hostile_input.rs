@@ -556,6 +556,11 @@ fn small_program() -> Vec<u8> {
 fn program_of(code: &[u8], data: &[u8]) -> Vec<u8> {
     let mut file = vec![0; HEADER];
     put32(&mut file, 0x10, 0xABCD_0001);
+    put32(
+        &mut file,
+        0x24,
+        or_io::gta6::script::compiled::check_copy(0xABCD_0001),
+    );
     put32(&mut file, 0x14, 1);
     put32(&mut file, 0x18, 0x6F);
     put64(&mut file, 0x1C, 0x5936_CAB2_EADB_CE67);

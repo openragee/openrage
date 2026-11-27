@@ -616,6 +616,12 @@ pub(super) fn read(bytes: &[u8]) -> Result<Program, ProgramError> {
     if u64_at(h, 0) != 0 {
         return refuse(0, "the first eight bytes are not zero");
     }
+    if word(0x24) != crate::gta6::script::compiled::check_copy(word(0x10)) {
+        return refuse(
+            0x24,
+            "the check copy is not the one the program's hash gives",
+        );
+    }
     if word(0x14) != 1 {
         return refuse(0x14, format!("the word is {}, not 1", word(0x14)));
     }

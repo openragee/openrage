@@ -113,6 +113,11 @@ impl Parts {
     fn build(&self) -> Vec<u8> {
         let mut file = vec![0; 0x180];
         put32(&mut file, 0x10, PROGRAM);
+        put32(
+            &mut file,
+            0x24,
+            crate::gta6::script::compiled::check_copy(PROGRAM),
+        );
         put32(&mut file, 0x14, 1);
         put32(&mut file, 0x18, 0x6F);
         put64(&mut file, 0x1C, 0x5936_CAB2_EADB_CE67);
@@ -434,6 +439,13 @@ fn another_format_and_another_build_are_refused() {
     let (at, what) = refused(Program::read(&bytes));
     assert_eq!(at, 0xD4);
     assert!(what.contains("third group"), "{what}");
+    // A check copy that is not the one the hash gives, and a hash of no such copy.
+    let mut bytes = small().build();
+    put32(&mut bytes, 0x24, 1);
+    assert_eq!(refused(Program::read(&bytes)).0, 0x24);
+    let mut bytes = small().build();
+    put32(&mut bytes, 0x10, PROGRAM ^ 1);
+    assert_eq!(refused(Program::read(&bytes)).0, 0x24);
 }
 
 #[test]

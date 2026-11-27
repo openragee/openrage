@@ -136,6 +136,11 @@ fn a_field_no_list_names_and_a_field_that_is_gone_each_fail() {
     let found = differences(&more, &more).expect("two dumps");
     assert_eq!(found.len(), 1, "{found:?}");
     assert!(found[0].starts_with("lights") && found[0].contains("neither"));
+    // A field whose name begins another's is said beside it, whichever dump holds which.
+    let (longer, shorter) = (more, with(dump(), "light", json!(3)));
+    let found = differences(&longer, &shorter).expect("two dumps");
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(found[0].starts_with("light is") && found[1].starts_with("lights is"));
 
     let mut less = dump();
     (less.as_object_mut().expect("an object")).remove("drawn_nodes");

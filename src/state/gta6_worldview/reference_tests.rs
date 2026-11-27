@@ -74,7 +74,7 @@ struct Stop {
     weather: WeatherState,
 }
 
-/// The shots of `script`, each with the camera, the hour, the modes and the weather set before it.
+/// The shots of `script`, each with the camera, the hour, the modes and the weather set before it; a step that sets anything else is refused.
 fn stops(script: &str) -> Result<Vec<Stop>, String> {
     let (mut pose, mut hour, mut modes) = (None, NOON, Mode::Base.bit());
     let mut weather = WeatherState::Clear;
@@ -116,7 +116,13 @@ fn stops(script: &str) -> Result<Vec<Stop>, String> {
                 modes,
                 weather,
             }),
-            _ => {}
+            // What sets nothing a digest is taken of: the window, the build's folder, the waits and the dump.
+            []
+            | ["size" | "game" | "workspace", ..]
+            | ["world", "clean" | "settle" | "converge" | "dump", ..] => {}
+            [first, ..] if first.starts_with('#') => {}
+            // ⚠ Any other step may change what the shot after it shows, a group switched or a flight: the digests would be taken of another world than the shots.
+            _ => return Err(wrong("a step the digests do not follow")),
         }
     }
     Ok(out)

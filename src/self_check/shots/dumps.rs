@@ -146,16 +146,13 @@ pub(super) fn differences(ours: &Value, theirs: &Value) -> Result<Vec<String>, S
     };
     let (ours, theirs) = (object(ours, "the dump")?, object(theirs, "the reference")?);
     let (ours, theirs) = (fields(&ours), fields(&theirs));
-    let mut found = Vec::new();
-    for (name, _) in ours.iter().chain(&theirs) {
-        let named = COMPARED.contains(&name.as_str()) || LEFT_OUT.contains(&name.as_str());
-        let said = found.iter().any(|line: &String| line.starts_with(name));
-        if !named && !said {
-            found.push(format!(
-                "{name} is a field neither compared nor left out: name it in one list"
-            ));
-        }
-    }
+    let unnamed: BTreeSet<&str> = (ours.iter().chain(&theirs))
+        .map(|(name, _)| name.as_str())
+        .filter(|name| !COMPARED.contains(name) && !LEFT_OUT.contains(name))
+        .collect();
+    let mut found: Vec<String> = (unnamed.iter())
+        .map(|name| format!("{name} is a field neither compared nor left out: name it in one list"))
+        .collect();
     let of = |fields: &[(String, &Value)], name: &str| {
         (fields.iter().find(|(field, _)| field == name)).map(|(_, value)| (*value).clone())
     };

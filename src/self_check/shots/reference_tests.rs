@@ -28,18 +28,10 @@ fn every_shot_of_the_reference_is_settled_then_converged_then_dumped() {
     let (mut settled, mut converged, mut shots) = (false, false, 0);
     for (at, step) in drawn.iter().enumerate() {
         match step {
-            // What moves the camera or changes what streams or how it is lit undoes the wait before it.
-            Step::World(
-                WorldStep::Camera(_)
-                | WorldStep::Hour(_)
-                | WorldStep::Modes(_)
-                | WorldStep::Weather(_)
-                | WorldStep::Group(..),
-            )
-            | Step::Mode(_)
-            | Step::Size(..) => (settled, converged) = (false, false),
             Step::World(WorldStep::Settle(_)) => (settled, converged) = (true, false),
             Step::World(WorldStep::Converge(_)) => converged = settled,
+            // A dump reads what the frame before it drew and changes nothing of it.
+            Step::World(WorldStep::Dump(_)) => {}
             Step::Shot(name) => {
                 assert!(
                     settled && converged,
@@ -55,7 +47,8 @@ fn every_shot_of_the_reference_is_settled_then_converged_then_dumped() {
             Step::Compare(_) | Step::CompareDump(_) => {
                 panic!("the script that draws judges nothing: a reference is a run of it")
             }
-            _ => {}
+            // ⚠ Every other step may move the camera or change what streams or how it is lit: a flight, a group, a size. It undoes the wait before it.
+            _ => (settled, converged) = (false, false),
         }
     }
     assert!(shots > 0, "the script takes no shot");

@@ -30,10 +30,9 @@ fn icon_name(name: &str, kind: Option<Rpf9Kind>) -> Option<String> {
     Some(format!("{stated}.{ext}"))
 }
 
-/// The name of a GTA VI row as it is shown, with the build's platform letter substituted for any
-/// `#` the stored name carries, for any `y`-prefixed RAGE extension the names vocabulary ships
-/// (`n01.ybn` → `n01.zbn` on an Xbox Series build), and the kind's extension appended where the
-/// name has none.
+/// The name of a row as it is shown, with the build's platform letter substituted for any `#` the
+/// stored name carries, for any concrete RAGE platform extension already baked in (`n01.ybn` →
+/// `n01.zbn` on an Xbox Series build), and the kind's extension appended where the name has none.
 fn displayed_name(name: &str, kind: Option<Rpf9Kind>, letter: char) -> String {
     use or_io::container::rpf::substitute_platform_letter;
     let stated = substitute_platform_letter(name, letter);
@@ -47,36 +46,27 @@ fn displayed_name(name: &str, kind: Option<Rpf9Kind>, letter: char) -> String {
     }
 }
 
-/// Swap the first letter of a `y`-prefixed RAGE extension at the end of `path` for `letter`.
+/// Swap the first letter of a RAGE platform extension at the end of `path` for `letter`.
 ///
-/// The names vocabulary ships paths with Windows extensions baked in (`n01_e01_0.ybn`,
+/// The names vocabulary ships paths with a platform extension baked in (`n01_e01_0.ybn`,
 /// `models/car.ydr`), so on an Xbox Series build the row should still read `.zbn` / `.zdr`.
-/// Only extensions whose tail after the first letter matches a known RAGE stub (`dr`, `ft`,
-/// `td`, `bn`, `map`, `typ`, …) are rewritten; `rpf`, `dat`, `gfx`, `mrf`, `meta`, `cut` and
-/// anything else stays as given.
+/// Only extensions a RAGE platform letter plus a known stub make (`dr`, `ft`, `td`, `bn`, `map`,
+/// `typ`, …) are rewritten; `rpf`, `dat`, `gfx`, `mrf`, `meta`, `cut` and anything else stays.
+/// The stub list is `or_io`'s own, shared with the archive's name-based platform detection.
 fn rewrite_platform_extension(path: &str, letter: char) -> String {
-    const RAGE_LETTERS: &[char] = &['y', 'w', 'x', 'd', 'z', 'c', 'o', 'p', 'a', 's', 'n', 'v'];
-    /// The tail after the platform letter, from the public rage.re reference (`#dr`, `#td`, …).
-    const RAGE_STUB_TAILS: &[&str] = &[
-        "dr", "ft", "dd", "td", "bn", "bd", "bs", "cd", "ld", "sc", "nv", "nh", "jd", "mt", "pt",
-        "ch", "ad", "cs", "pd", "pdb", "ldb", "as", "sd", "vr", "wr", "map", "typ", "mf", "ed",
-        "fd", "nm", "pm", "pmd", "pfl", "pl", "nd", "cdt", "edt", "gd", "gx", "hm", "pr", "prp",
-        "sf", "sg", "si", "sp", "st", "tb", "tx", "vd",
-    ];
+    use or_io::container::rpf::{platform_letter_of_name, RAGE_STUB_TAILS};
     let Some(dot) = path.rfind('.') else {
         return path.to_string();
     };
-    let ext = &path[dot + 1..];
-    let Some(first) = ext.chars().next() else {
+    // Reuse the shared matcher so the set of rewritable extensions never drifts from detection.
+    let Some(first) = platform_letter_of_name(path) else {
         return path.to_string();
     };
-    if !RAGE_LETTERS.contains(&first) || first == letter {
+    if first as char == letter {
         return path.to_string();
     }
-    let tail = &ext[first.len_utf8()..];
-    if !RAGE_STUB_TAILS.iter().any(|s| *s == tail) {
-        return path.to_string();
-    }
+    let tail = &path[dot + 2..];
+    debug_assert!(RAGE_STUB_TAILS.contains(&tail.to_ascii_lowercase().as_str()));
     let mut out = String::with_capacity(path.len());
     out.push_str(&path[..=dot]);
     out.push(letter);
@@ -88,34 +78,38 @@ fn rewrite_platform_extension(path: &str, letter: char) -> String {
 /// source down to a default:
 ///
 /// 1. **The archive's own header**, where its format records the platform. RPF8 keeps the letter
-///    at header offset `0x0A`, so an RDR2 console archive reports `o`/`p`/`d`/… straight from
-///    the file — no guessing.
-/// 2. **The active install**, when the archive records no platform (RPF7 and earlier, RPF9, IMG)
-///    and the install's profile ships that same container family. The user is browsing their own
-///    install, so its platform is the archive's.
-/// 3. **The canonical title** for the archive's container family (GTA VI for RPF9, RDR2 for RPF8,
-///    GTA V for every RPF7-and-before) when no active install matches.
-/// 4. `y` where even that is unknown.
+///    at `0x0A` and RPF9 at `0x19`, so an RDR2 or GTA VI archive reports `o`/`p`/`d`/`z`/… straight
+///    from the file — no context needed.
+/// 2. **The archive's own stored names**, for an older format whose table keeps full names as text
+///    (RPF7 and earlier, IMG): `n01.ydr`, `prop.xdr` carry the platform letter in their extension,
+///    so the most common one across the table is the archive's platform. Hash-named tables give
+///    nothing here.
+/// 3. **The active install**, when neither the header nor the names say, and the install's profile
+///    ships the archive's container family. The user is browsing their own install.
+/// 4. **The canonical title** for the container family (GTA VI for RPF9, RDR2 for RPF8, GTA V for
+///    every RPF7-and-before), then `y`, where even that is unknown.
 ///
-/// ⚠ Steps 2–4 are the shortcut: a format that stores no platform and an install that is not the
-/// active one render under the active install's letter. Only the RPF8 header is self-describing;
-/// a fully self-describing answer for RPF7/RPF9 would need the platform baked into those formats,
-/// which Rockstar did not do, or each mounted archive tied to the install root it came from.
+/// Steps 1–2 read the platform out of the archive itself; only 3–4 lean on context, and only for a
+/// format that neither records the platform nor keeps readable names (a hash-named RPF7).
 fn platform_letter_for(state: &AppState, session: &RpfEditSession, node: &RpfSessionNode) -> char {
     let archive = archive_of(session, node);
-    // 1. The archive's own header, where the format records a platform (RPF8).
+    // 1. The archive's header, where the format records a platform (RPF8, RPF9).
     if let Some(letter) = archive.and_then(|a| a.platform_letter()) {
+        return letter;
+    }
+    // 2. The archive's own names, where an older format keeps them as text (RPF7 and earlier, IMG).
+    if let Some(letter) = archive.and_then(|a| a.platform_letter_from_names()) {
         return letter;
     }
     let archive_family = archive.map(|a| container_family_for_version(a.version));
     let active = state.prefs.active_game;
-    // 2. The active install, when it ships the same container family as the archive.
+    // 3. The active install, when it ships the same container family as the archive.
     if let (Some(family), Some(game)) = (archive_family, active) {
         if game.profile().container() == family {
             return game.platform_letter();
         }
     }
-    // 3. The canonical title for the family; 4. `y` where none is known.
+    // 4. The canonical title for the family, then `y` where none is known.
     match archive_family {
         Some(family) => canonical_game_for_container(family).platform_letter(),
         None => active.map(|g| g.platform_letter()).unwrap_or('y'),

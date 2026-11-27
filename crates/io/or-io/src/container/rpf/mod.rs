@@ -52,6 +52,27 @@ pub mod rpf9_write;
 pub mod rsc8;
 pub mod version;
 
+/// RAGE's one-letter platform prefixes (`y` PC x64, `z` Xbox Series, `p` PS5, `x` Xbox 360, …).
+pub const RAGE_PLATFORM_LETTERS: &[u8] = b"ywxdzcopasnvi";
+
+/// The tails a platform letter is followed by in RAGE extensions (`#dr`, `#td`, `#map`, …).
+pub const RAGE_STUB_TAILS: &[&str] = &[
+    "dr", "ft", "dd", "td", "bn", "bd", "bs", "cd", "ld", "sc", "nv", "nh", "jd", "mt", "pt", "ch",
+    "ad", "cs", "pd", "pdb", "ldb", "as", "sd", "vr", "wr", "map", "typ", "mf", "ed", "fd", "nm",
+    "pm", "pmd", "pfl", "pl", "nd", "cdt", "edt", "gd", "gx", "hm", "pr", "prp", "sf", "sg", "si",
+    "sp", "st", "tb", "tx", "vd",
+];
+
+/// The platform letter `name`'s extension starts with, where that extension is a RAGE platform
+/// letter followed by a known stub (`car.ydr` → `y`, `car.zdr` → `z`); `None` for `rpf`, `meta`,
+/// `dat` or any other extension.
+pub fn platform_letter_of_name(name: &str) -> Option<u8> {
+    let ext = name.rsplit_once('.')?.1.to_ascii_lowercase();
+    let (&first, tail) = ext.as_bytes().split_first()?;
+    let tail = std::str::from_utf8(tail).ok()?;
+    (RAGE_PLATFORM_LETTERS.contains(&first) && RAGE_STUB_TAILS.contains(&tail)).then_some(first)
+}
+
 pub use archive::{RpfArchive, RpfNode};
 pub use builder::RpfBuilder;
 #[cfg(feature = "crypto")]
@@ -130,3 +151,25 @@ pub use rpf9_write::write_rpf9_resource_capped;
 #[cfg(feature = "gta6")]
 pub use rpf9_write::{write_rpf9_resource, Rpf9Form, Rpf9Sections, Rpf9WriteError};
 pub use version::RpfVersion;
+
+#[cfg(test)]
+mod platform_letter_tests {
+    use super::platform_letter_of_name;
+
+    #[test]
+    fn a_platform_extension_names_its_letter_and_nothing_else_does() {
+        assert_eq!(platform_letter_of_name("models/car.ydr"), Some(b'y'));
+        assert_eq!(platform_letter_of_name("prop.xdr"), Some(b'x'));
+        assert_eq!(platform_letter_of_name("tex.ztd"), Some(b'z'));
+        assert_eq!(platform_letter_of_name("area.pmap"), Some(b'p'));
+        // Case is folded before matching.
+        assert_eq!(platform_letter_of_name("CAR.YDR"), Some(b'y'));
+        // A bare extension with no platform letter, and one whose tail is no stub.
+        assert_eq!(platform_letter_of_name("packs/base.rpf"), None);
+        assert_eq!(platform_letter_of_name("world/heightmap.dat"), None);
+        assert_eq!(platform_letter_of_name("audio.awc"), None);
+        assert_eq!(platform_letter_of_name("hash_00ab"), None);
+        // `d` is a RAGE letter (Durango) but `at` is no stub, so `.dat` is left alone.
+        assert_eq!(platform_letter_of_name("x.dat"), None);
+    }
+}

@@ -97,6 +97,9 @@ pub struct RpfArchive {
     pub(super) keys: Arc<dyn RpfCryptoProvider>,
     /// Lower-case path to entry index, built by the first lookup by path.
     pub(super) paths: OnceLock<HashMap<String, u32>>,
+    /// The platform letter the stored names spell, worked out once on first ask; `Some(None)` once
+    /// the names were scanned and none carried a platform extension (a hash-named table).
+    pub(super) names_platform: OnceLock<Option<u8>>,
     /// An RPF9's decrypted table and keys, which its bodies and nested archives are read through.
     #[cfg(feature = "gta6")]
     pub(super) rpf9: Option<Arc<super::gta6_rpf::Rpf9State>>,
@@ -119,6 +122,28 @@ impl RpfArchive {
     /// platform has to come from the install the archive was mounted under.
     pub fn platform_letter(&self) -> Option<char> {
         self.header.platform.map(char::from)
+    }
+
+    /// The platform letter the archive's own stored names spell, for a format whose table keeps
+    /// names as text (RPF7 and earlier, IMG): the most common letter among entries whose extension
+    /// is a RAGE platform letter followed by a known stub (`n01.ydr` → `y`). `None` when no entry
+    /// name carries one, as in a hash-named table. Scanned once and cached.
+    pub fn platform_letter_from_names(&self) -> Option<char> {
+        let byte = self.names_platform.get_or_init(|| {
+            let mut counts = [0usize; 256];
+            for name in &self.names {
+                if let Some(letter) = super::platform_letter_of_name(name) {
+                    counts[letter as usize] += 1;
+                }
+            }
+            counts
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| **c > 0)
+                .max_by_key(|(_, c)| **c)
+                .map(|(byte, _)| byte as u8)
+        });
+        byte.map(char::from)
     }
 
     /// The archive at `path`, which needs no keys. An IMG1 is named by its `.img` or its `.dir`.

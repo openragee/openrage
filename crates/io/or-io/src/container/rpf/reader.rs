@@ -138,6 +138,7 @@ impl RpfArchive {
             size,
             keys,
             paths: OnceLock::new(),
+            names_platform: OnceLock::new(),
             #[cfg(feature = "gta6")]
             rpf9,
         })

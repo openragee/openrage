@@ -6,12 +6,35 @@
 //! function is written as a method, whatever its role says.
 
 use crate::gta6::script::class::{Method, Role};
-use crate::gta6::script::ir::{FunctionKey, Kind, Returns, TypeKey, Var};
-use crate::gta6::script::passes::async_await;
+use crate::gta6::script::ir::{Expr, FunctionKey, Kind, Returns, TypeKey, Var};
+use crate::gta6::script::passes::{async_await, classes};
 use crate::gta6::script::tree;
 use crate::gta6::script::Pass;
 
 use super::{placement, Writer};
+
+/// Whether every `return` of a value in `body` hands back `back`: a method of a task then returns nothing else.
+fn only_hands_back(body: &[tree::Stmt], back: &Expr) -> bool {
+    // An explicit stack: a body nests as deep as its listing does.
+    let mut open: Vec<&[tree::Stmt]> = vec![body];
+    while let Some(list) = open.pop() {
+        for stmt in list {
+            match stmt {
+                tree::Stmt::Return(Some(value)) if value != back => return false,
+                tree::Stmt::If { then, els, .. } => open.extend([then.as_slice(), els.as_slice()]),
+                tree::Stmt::While { body, .. }
+                | tree::Stmt::DoWhile { body, .. }
+                | tree::Stmt::For { body, .. } => open.push(body),
+                tree::Stmt::Switch { cases, .. } => {
+                    open.extend(cases.iter().map(|case| case.body.as_slice()));
+                }
+                tree::Stmt::Sugar(sugar) => open.extend(sugar.parts().bodies),
+                _ => {}
+            }
+        }
+    }
+    true
+}
 
 impl Writer<'_> {
     /// Writes `method` as a member of the class whose key and name are given; as a function of the program where none is.
@@ -37,6 +60,14 @@ impl Writer<'_> {
                     kind => self.kind_text(&kind),
                 };
                 self.task = Some(format!("Task<{ty}>"));
+            } else if self
+                .back
+                .as_ref()
+                .is_some_and(|back| only_hands_back(body, back))
+            {
+                // A start that hands back its builder's task, and nothing else, heads a method of
+                // a task, whatever the machine gives it.
+                self.task = Some("Task".to_owned());
             }
         }
         // The form of old knows no class, and a function no type owns is written at the top of its file.
@@ -50,6 +81,28 @@ impl Writer<'_> {
         }
         let passed = head.params - received;
         let void = head.returns == Returns::Void;
+        let fixed = if method.is_static { "static " } else { "" };
+        let slot = match (method.slot, method.overrides, method.is_static) {
+            (Some(_), true, false) => "override ",
+            (Some(_), false, false) => "virtual ",
+            _ => "",
+        };
+        // The user's name for the function; else the name its slot goes by wherever it is called.
+        let key = FunctionKey::new(head.program, head.at);
+        let unnamed = self.names.function(key).is_none() && !method.is_static;
+        let slotted = method.slot.filter(|_| unnamed);
+        let name = match slotted {
+            Some(slot) => match self.method_name(owner, slot) {
+                Some(name) => name.to_owned(),
+                None => format!("Method_{slot}"),
+            },
+            None => listed,
+        };
+        // An accessor is declared under the name of its property, by the rule its uses are read by.
+        let property = match classes::accessor(&name) {
+            Some((_, property)) => property.to_owned(),
+            None => name.clone(),
+        };
         match method.role {
             Role::Constructor if received == 1 && void => {
                 let text = format!("{class}({})", self.params(body));
@@ -61,30 +114,14 @@ impl Writer<'_> {
             Role::Finalizer if received == 1 && passed == 0 && void => {
                 self.bodied(format!("~{class}()"), class, body);
             }
-            Role::Getter if passed == 0 && !void => self.property(method, &listed, None, body),
+            Role::Getter if passed == 0 && !void => {
+                self.property(method, slot, &property, None, body);
+            }
             Role::Setter if passed == 1 && void => {
-                self.property(method, &listed, Some(Var::Param(received)), body);
+                let value = Some(Var::Param(received));
+                self.property(method, slot, &property, value, body);
             }
-            _ => {
-                let fixed = if method.is_static { "static " } else { "" };
-                let slot = match (method.slot, method.overrides, method.is_static) {
-                    (Some(_), true, false) => "override ",
-                    (Some(_), false, false) => "virtual ",
-                    _ => "",
-                };
-                // The user's name for the function; else the name its slot goes by wherever it is called.
-                let key = FunctionKey::new(head.program, head.at);
-                let unnamed = self.names.function(key).is_none() && !method.is_static;
-                let slotted = method.slot.filter(|_| unnamed);
-                let name = match slotted {
-                    Some(slot) => match self.method_name(owner, slot) {
-                        Some(name) => name.to_owned(),
-                        None => format!("Method_{slot}"),
-                    },
-                    None => listed,
-                };
-                self.function_as(&format!("{fixed}{slot}{waits}"), &name, body);
-            }
+            _ => self.function_as(&format!("{fixed}{slot}{waits}"), &name, body),
         }
     }
 
@@ -98,8 +135,15 @@ impl Writer<'_> {
 
     /// Writes a getter or a setter as the one accessor of a property; `value` is the setter's parameter.
     // ⚠ A getter and the setter of the same field are two properties here: nothing pairs them yet.
-    fn property(&mut self, method: &Method, name: &str, value: Option<Var>, body: &[tree::Stmt]) {
-        let fixed = if method.is_static { "static " } else { "" };
+    fn property(
+        &mut self,
+        method: &Method,
+        slot: &str,
+        name: &str,
+        value: Option<Var>,
+        body: &[tree::Stmt],
+    ) {
+        let fixed = if method.is_static { "static " } else { slot };
         let ty = match value {
             Some(value) => self.declared_type(value),
             None => self.returned(),

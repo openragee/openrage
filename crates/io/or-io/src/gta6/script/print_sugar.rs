@@ -19,6 +19,9 @@ use super::{
 /// The most elements a collection is written in one statement with.
 const ELEMENTS: u64 = 4096;
 
+/// The objects an initialiser holds inside one another at most, as the pass that nests them makes them.
+const NESTS: usize = 4;
+
 /// `e` under the source readings around it.
 fn bare(e: &Expr) -> &Expr {
     let mut e = e;
@@ -253,6 +256,19 @@ impl Writer<'_> {
 
     /// `x = new T(a) { F = b }`: an object made, the constructor run on it, and the fields stored straight after.
     fn construction(&mut self, parts: &[Stmt]) -> Option<(String, usize)> {
+        let made @ Stmt::Assign { target, .. } = parts.first()? else {
+            return None;
+        };
+        let (value, held) = self.filled_object(parts, 0)?;
+        let name = self.target(made, *target);
+        Some((format!("{name} = {value}"), held))
+    }
+
+    /// `new T(a) { F = b, G = new U { H = c } }` of the parts that make an object and fill it, with how many parts it holds.
+    // ⚠ An object made and filled among the stores is one the initialiser holds only where the
+    // store of it into a field follows its parts: the pass proves the function names it nowhere
+    // else.
+    fn filled_object(&mut self, parts: &[Stmt], depth: usize) -> Option<(String, usize)> {
         let (made, rest) = parts.split_first()?;
         let Stmt::Assign { target, value } = made else {
             return None;
@@ -281,14 +297,26 @@ impl Writer<'_> {
         let stores = rest
             .get(usize::from(passed.is_some())..)
             .unwrap_or_default();
+        let owner = TypeKey::of(ty);
         let mut fields = Vec::new();
+        let mut taken = 0;
         if self.options.on(Pass::Initialisers) {
-            for store in stores {
-                match self.initialised(store, *target, TypeKey::of(ty)) {
-                    Some(field) => fields.push(field),
+            while taken < stores.len() {
+                let held = match self.nested(stores, taken, *target, owner, depth) {
+                    Some((field, held)) => Some((field, held)),
+                    None => self
+                        .initialised(&stores[taken], *target, owner)
+                        .map(|field| (field, 1)),
+                };
+                match held {
+                    Some((field, held)) => {
+                        fields.push(field);
+                        taken += held;
+                    }
                     // One store that is no plain field of the object leaves them all statements.
                     None => {
                         fields.clear();
+                        taken = 0;
                         break;
                     }
                 }
@@ -297,15 +325,66 @@ impl Writer<'_> {
         if passed.is_none() && fields.is_empty() {
             return None;
         }
-        let name = self.target(made, *target);
-        let mut text = format!("{name} = new {}", self.type_name(&ty.name));
+        let mut text = format!("new {}", self.type_name(&ty.name));
         if let Some((callee, args)) = passed {
             let _ = write!(text, "({})", self.arguments(callee, args, 1));
         }
         if !fields.is_empty() {
             let _ = write!(text, " {{ {} }}", fields.join(", "));
         }
-        Some((text, 1 + usize::from(passed.is_some()) + fields.len()))
+        Some((text, 1 + usize::from(passed.is_some()) + taken))
+    }
+
+    /// `F = new U { .. }` for an object or array made at `stores[at]`, filled by the parts after it, and stored whole into a field of the object `object` holds; with how many parts that is.
+    fn nested(
+        &mut self,
+        stores: &[Stmt],
+        at: usize,
+        object: Var,
+        owner: Option<TypeKey>,
+        depth: usize,
+    ) -> Option<(String, usize)> {
+        if depth >= NESTS {
+            return None;
+        }
+        let Stmt::Assign {
+            target: inner,
+            value,
+        } = stores.get(at)?
+        else {
+            return None;
+        };
+        if !matches!(bare(value), Expr::NewObject(_) | Expr::NewArray { .. }) {
+            return None;
+        }
+        // The store of the inner object into a field of the outer one closes its parts.
+        let closes = |stmt: &Stmt| match stmt {
+            Stmt::Store { addr, value, .. } => {
+                *bare(bits(addr)) == Expr::Var(object) && *bare(bits(value)) == Expr::Var(*inner)
+            }
+            _ => false,
+        };
+        let end = at + stores.get(at..)?.iter().position(closes)?;
+        let Stmt::Store { offset, .. } = &stores[end] else {
+            return None;
+        };
+        if *offset == 0 {
+            return None;
+        }
+        let parts = &stores[at..end];
+        let value = match bare(value) {
+            Expr::NewObject(_) if parts.len() == 1 => self.value(value),
+            Expr::NewObject(_) => match self.filled_object(parts, depth + 1)? {
+                (text, held) if held == parts.len() => text,
+                _ => return None,
+            },
+            _ => match self.collected(parts)? {
+                (text, held) if held == parts.len() => text,
+                _ => return None,
+            },
+        };
+        let field = format!("{} = {value}", self.field_name(owner, *offset));
+        Some((field, end + 1 - at))
     }
 
     /// `F = value` for a store to a field of the object `object` holds, as an initialiser writes it.
@@ -328,6 +407,16 @@ impl Writer<'_> {
 
     /// `x = new T[] { a, b }`: an array made and every element of it set, in order.
     fn collection(&mut self, parts: &[Stmt]) -> Option<(String, usize)> {
+        let made @ Stmt::Assign { target, .. } = parts.first()? else {
+            return None;
+        };
+        let (value, held) = self.collected(parts)?;
+        let name = self.target(made, *target);
+        Some((format!("{name} = {value}"), held))
+    }
+
+    /// `new T[] { a, b }` of the parts that make an array and set every element of it, with how many parts it holds.
+    fn collected(&mut self, parts: &[Stmt]) -> Option<(String, usize)> {
         if !self.options.on(Pass::Initialisers) {
             return None;
         }
@@ -355,9 +444,8 @@ impl Writer<'_> {
             let place = format!("{}[{index}] = ", self.var(*target));
             items.push(text.strip_prefix(&place)?.to_owned());
         }
-        let name = self.target(made, *target);
         let ty = self.type_name(&ty.name);
-        let text = format!("{name} = new {ty}[] {{ {} }}", items.join(", "));
+        let text = format!("new {ty}[] {{ {} }}", items.join(", "));
         Some((text, parts.len()))
     }
 
@@ -392,12 +480,15 @@ impl Writer<'_> {
                     false => format!("{name} = {}.{function}", self.expr(bits(bound), POSTFIX)),
                 }
             }
-            _ => format!(
-                "{name} = new {}({}, {})",
-                self.type_name(&ty.name),
-                self.value(bound),
-                self.value(function)
-            ),
+            _ => match self.method_group(bound, function) {
+                Some(group) => format!("{name} = {group}"),
+                None => format!(
+                    "{name} = new {}({}, {})",
+                    self.type_name(&ty.name),
+                    self.value(bound),
+                    self.value(function)
+                ),
+            },
         };
         Some((text, 2))
     }

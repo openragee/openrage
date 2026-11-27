@@ -167,6 +167,24 @@ fn a_constructor_run_on_an_object_made_in_the_call_is_that_object_made() {
     let named = "    func_000300(new type_00000000000000AB(), 7);\n";
     assert!(text.contains(named), "{text}");
 }
+#[test]
+fn an_object_made_and_filled_inside_an_initialiser_is_the_value_of_the_field_it_is_stored_to() {
+    // `local_0 = new T; local_0.f_8 = p0; local_1 = new T; local_1.f_8 = 1; local_0.f_10 = local_1;
+    // local_0.f_18 = 2`, one group as the pass makes it.
+    let parts = vec![
+        assign(Var::Local(0), Expr::NewObject(object())),
+        store(StoreKind::Ref, local(0), 0x8, param(0)),
+        assign(Var::Local(1), Expr::NewObject(object())),
+        store(StoreKind::I32, local(1), 0x8, int(1)),
+        store(StoreKind::Ref, local(0), 0x10, local(1)),
+        store(StoreKind::I32, local(0), 0x18, int(2)),
+    ];
+    let body = vec![group(Group::Construct, parts), used(vec![local(0)])];
+    let filled = "    Cell local_0 = new type_00000000000000AB { f_8 = p0, f_10 = new type_00000000000000AB { f_8 = 1 }, f_18 = 2 };
+    DEMO.USE(local_0);
+";
+    assert_eq!(lines(&[], body), filled);
+}
 
 #[test]
 fn a_store_that_is_no_field_of_the_object_leaves_the_stores_statements() {

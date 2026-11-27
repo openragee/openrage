@@ -309,6 +309,16 @@ fn an_async_method_that_hands_its_task_back_early_is_written_leaving_with_a_bare
         els: Vec::new(),
     };
     let last = hidden(vec![tree::Stmt::Return(Some(task()))]);
+    // Where every `return` hands back the task, the method is one of a task.
+    let only = vec![early.clone(), kept(), last.clone()];
+    let mut tasked = member(Role::Method, headed(2, Returns::Cell), only);
+    tasked.is_async = true;
+    let text = written(&tasked);
+    assert!(
+        text.starts_with("    async Task func_000040(Cell p1)\n"),
+        "{text}"
+    );
+    // ⚠ One that returns anything else is not: its head stays the type it returns.
     let body = vec![early, other, kept(), last];
     let mut kicked = member(Role::Method, headed(2, Returns::Cell), body.clone());
     kicked.is_async = true;

@@ -39,10 +39,10 @@ use super::ir::{
 };
 use super::listing::{Import, Listing, Target, Wrapper};
 use super::names::{declared_natives, Names};
-use super::passes::closures;
 use super::passes::types::yielded_shape;
+use super::passes::{classes, closures};
 use super::project::signatures::native_key;
-use super::project::TypeFacts;
+use super::project::{Param, TypeFacts};
 use super::tree;
 use super::{Context, Level, Options, Pass, Project, Stats};
 
@@ -75,8 +75,15 @@ const TOKEN: &str = "typeof(T) is the Type and typeof(T).TypeHandle the token of
 /// What a header says of a `return` in an `async` method, where `await` is on.
 const HANDED: &str = "return; in an async method that is not void hands back the task its \
                       state machine holds, which the code returns by a field of the machine; \
-                      async Task<T> heads one whose machine gives its task a value of T, and \
-                      async void one of which the machine says no more";
+                      async Task<T> heads one whose machine gives its task a value of T, \
+                      async Task one whose start hands back its builder's task, Task being our \
+                      word for a task no list names, and async void one of which the machine \
+                      says no more";
+
+/// What a header says of the integer an enum is headed by, where `kinds` is on.
+const UNDERLYING: &str = "enum E : int is an enum as wide as its type states, of the signed \
+                          integer of that width unless one of its values lies past that range: \
+                          no program states the sign";
 
 /// What a header says of the variable a `foreach` over an array may be given, where `foreach` is on.
 const ITEM: &str = "item, item_2 and on is the element a foreach reads where the code reads it \
@@ -99,6 +106,9 @@ fn words(options: &Options) -> String {
     }
     if options.on(Pass::Await) {
         said.push(HANDED);
+    }
+    if options.on(Pass::Kinds) {
+        said.push(UNDERLYING);
     }
     if options.on(Pass::Foreach) {
         said.push(ITEM);
@@ -685,11 +695,8 @@ impl<'a> Writer<'a> {
 
     /// Writes a function under `modifiers`, each word of them followed by a space, and the name `name`.
     fn function_as(&mut self, modifiers: &str, name: &str, body: &[tree::Stmt]) {
-        let text = format!(
-            "{modifiers}{} {name}({})",
-            self.returned(),
-            self.params(body)
-        );
+        let params = self.params(body);
+        let text = format!("{modifiers}{} {name}({params})", self.returned());
         self.headed(text, name);
         self.line(0, "{");
         self.block(body, 1);
@@ -737,7 +744,7 @@ impl<'a> Writer<'a> {
     }
 
     /// The parameters of a head: in true C# a value of several cells once, and the receiver of a method not at all.
-    fn params(&self, body: &[tree::Stmt]) -> String {
+    fn params(&mut self, body: &[tree::Stmt]) -> String {
         let head = self.head;
         let mut written = Vec::new();
         let mut named: Option<BTreeSet<u32>> = None;
@@ -1261,9 +1268,23 @@ impl<'a> Writer<'a> {
                 }
             }
             (ExprSugar::Property, Expr::Call { callee, args, .. }) => {
-                if let [receiver] = args.as_slice() {
-                    let receiver = self.expr(receiver, POSTFIX);
-                    return (format!("{receiver}.{}", self.called(callee)), POSTFIX);
+                let called = self.called(callee);
+                let name = match classes::accessor(&called) {
+                    Some((_, property)) => property.to_owned(),
+                    None => called,
+                };
+                match args.as_slice() {
+                    [receiver] => {
+                        let receiver = self.expr(receiver, POSTFIX);
+                        return (format!("{receiver}.{name}"), POSTFIX);
+                    }
+                    // A setter's use is made only where the call is the whole of its statement.
+                    [receiver, value] => {
+                        let receiver = self.expr(receiver, POSTFIX);
+                        let value = self.value(value);
+                        return (format!("{receiver}.{name} = {value}"), 0);
+                    }
+                    _ => {}
                 }
             }
             (ExprSugar::Field { owner }, Expr::Load { ty, addr, offset }) => {
@@ -1396,6 +1417,8 @@ impl<'a> Writer<'a> {
 
     /// The name a reference to the function at `at` of `program` is written under.
     fn function_ref(&self, program: u32, at: u32) -> String {
+        // The top byte of a reference's offset holds its flags.
+        let at = at & 0x00FF_FFFF;
         let own = self.function_name(program, at, &format!("func_{at:06X}"));
         let unnamed = format!("program_{program:08X}.{own}");
         self.member(program, own, unnamed)
@@ -1670,14 +1693,25 @@ impl<'a> Writer<'a> {
             Callee::Native { .. } => return vec![Some(false); args.len()],
             Callee::Local { at, .. } => FunctionKey::new(self.head.program, *at),
             Callee::Import { program, at, .. } => FunctionKey::new(*program, *at),
+            // What every function the slot may reach takes, the receiver first.
+            Callee::Virtual { ty, slot, .. } => {
+                let params = TypeKey::of_name(ty)
+                    .and_then(|owner| self.project.slot_parameters(owner, *slot));
+                return self.answered(args, params.unwrap_or_default());
+            }
             _ => return Vec::new(),
         };
         let Some(signature) = self.project.signatures.get(&key) else {
             return Vec::new();
         };
+        self.answered(args, &signature.params)
+    }
+
+    /// For each argument, whether the parameter it answers takes 32 bits and no more, up to the first argument that fills other cells than its parameter takes.
+    fn answered(&self, args: &[Expr], params: &[Param]) -> Vec<Option<bool>> {
         // ⚠ An argument answers a parameter only while every one before it filled its own cells.
         let mut slots = Vec::with_capacity(args.len());
-        for (arg, param) in args.iter().zip(&signature.params) {
+        for (arg, param) in args.iter().zip(params) {
             if cells_of(arg, self.head) != Some(param.cells) {
                 break;
             }
@@ -1818,6 +1852,21 @@ impl<'a> Writer<'a> {
     }
 
     /// What `e` is, as far as its own shape and the kinds of its variables say.
+    /// The kind of the field a whole-cell load of `owner`'s bytes reads, where the layouts prove it an eight-byte reference or pointer.
+    fn reference_field(&self, owner: TypeKey, load: &Expr) -> Option<Kind> {
+        let Expr::Load {
+            ty: Scalar::U64,
+            offset,
+            ..
+        } = load
+        else {
+            return None;
+        };
+        let field = self.project.field(owner, *offset)?;
+        let held = reference(&field.kind) || field.kind == Kind::Pointer;
+        (self.sharp && field.bytes == 8 && held).then(|| field.kind.clone())
+    }
+
     fn kind_of(&self, e: &Expr) -> Kind {
         match e {
             Expr::Const(c) => c.kind.clone(),
@@ -1827,6 +1876,13 @@ impl<'a> Writer<'a> {
                 kind: ExprSugar::Field { owner },
                 e: inner,
             } if self.truth_field(*owner, inner) => Kind::Bool,
+            // A whole cell of a field the layouts prove a reference is that reference: its zero is `null`.
+            Expr::Sugar {
+                kind: ExprSugar::Field { owner },
+                e: inner,
+            } if self.reference_field(*owner, inner).is_some() => {
+                self.reference_field(*owner, inner).unwrap_or(Kind::Unknown)
+            }
             Expr::Sugar { e: inner, .. } => self.kind_of(inner),
             // A global that the project states, or every access of which agrees, holds a reference.
             Expr::Var(Var::Global {
@@ -1878,6 +1934,12 @@ impl<'a> Writer<'a> {
                     None => yielded_shape(self.names, callee, *returns),
                 }
             }
+            // C# reads a field written for bytes taken out of a value as the number it is written as.
+            Expr::ExtractBytes {
+                value,
+                offset,
+                bytes,
+            } => self.extracted_kind(value, *offset, *bytes),
             _ => Kind::Unknown,
         }
     }
@@ -1974,41 +2036,17 @@ impl<'a> Writer<'a> {
                 offset,
                 bytes,
             } => format!("load_bytes({}, 0x{offset:X}, {bytes})", self.expr(addr, 0)),
-            // Bytes taken out of a variable are its field, read as the unsigned number they make
-            // up: the cell they come to is zero above them.
+            // Bytes taken out of a value are its field, read as the unsigned number they make up.
             Expr::ExtractBytes {
                 value,
                 offset,
                 bytes,
-            } if self.sharp
-                && matches!(bits(value), Expr::Var(_))
-                && matches!(bytes, 1 | 2 | 4 | 8) =>
-            {
-                let owner = match self.kind_of(bits(value)) {
-                    Kind::Value { ty, .. } => TypeKey::of_name(&ty),
-                    _ => None,
-                };
-                let place = format!(
-                    "{}.{}",
-                    self.expr(bits(value), POSTFIX),
-                    self.field_name(owner, *offset)
-                );
-                let unsigned = match bytes {
-                    1 => Some("byte"),
-                    2 => Some("ushort"),
-                    4 => Some("uint"),
-                    _ => None,
-                };
-                return match unsigned {
-                    Some(ty) => (format!("({ty}){place}"), UNARY),
-                    None => (place, POSTFIX),
-                };
+            } => {
+                if let Some(field) = self.extracted(value, *offset, *bytes) {
+                    return field;
+                }
+                format!("extract_bytes({}, {offset}, {bytes})", self.expr(value, 0))
             }
-            Expr::ExtractBytes {
-                value,
-                offset,
-                bytes,
-            } => format!("extract_bytes({}, {offset}, {bytes})", self.expr(value, 0)),
             Expr::ByteOffset { addr, offset } => match &**offset {
                 Expr::Const(c) if c.bits == 0 => return self.spelled(addr),
                 Expr::Const(c) if c.bits <= u64::from(u32::MAX) => {
@@ -2072,6 +2110,22 @@ impl<'a> Writer<'a> {
         }
         if let Expr::Const(c) = inner {
             return self.constant(&reread(to, c));
+        }
+        // A field read as an integer of its own width says that width by the cast alone.
+        if let Expr::ExtractBytes {
+            value,
+            offset,
+            bytes,
+        } = inner
+        {
+            let own = to.kind().is_integer() && to.bytes() == *bytes && *bytes < 8;
+            let place = match own {
+                true => self.extracted_place(value, *offset, *bytes),
+                false => None,
+            };
+            if let Some(place) = place {
+                return (format!("({}){place}", to.keyword()), UNARY);
+            }
         }
         let kind = self.kind_of(inner);
         // Zero or one is zero or one under any integer reading, and a hash is its 32 bits.
@@ -3100,6 +3154,34 @@ fn whole_clear(s: &Stmt, head: &Head) -> Option<Var> {
     (u64::from(*bytes) == u64::from(cells) * 8).then_some(*var)
 }
 
+/// The address `addr` is, where a load or a store of `bytes` bytes at `offset` through it reaches only bytes of the variable whose address it is.
+fn own_access(addr: &Expr, offset: u32, bytes: u32, head: &Head) -> Option<*const Expr> {
+    let Expr::AddrOf { var, cell } = addr else {
+        return None;
+    };
+    let cells = flat_cells(&Expr::Var(*var), head)?;
+    let end = u64::from(*cell) * 8 + u64::from(offset) + u64::from(bytes);
+    (end <= u64::from(cells) * 8).then(|| std::ptr::from_ref(addr))
+}
+
+/// The address a statement stores to, clears or steps the bytes of a variable through, where it reaches only that variable's bytes.
+fn stored_place(s: &Stmt, head: &Head) -> Option<*const Expr> {
+    match s {
+        Stmt::Store {
+            kind, addr, offset, ..
+        } => own_access(addr, *offset, kind.bytes(), head),
+        Stmt::StoreBytes {
+            addr,
+            offset,
+            bytes,
+            ..
+        } => own_access(addr, *offset, *bytes, head),
+        Stmt::ZeroBytes { addr, bytes } => own_access(addr, 0, *bytes, head),
+        Stmt::StepI32 { addr, offset, .. } => own_access(addr, *offset, 4, head),
+        _ => None,
+    }
+}
+
 /// Where the readable form declares the variables of a body.
 struct Placement {
     /// The assignments that declare their target: its first mention, in the block that holds every other.
@@ -3245,9 +3327,33 @@ impl Placer<'_> {
     }
 
     fn reads(&mut self, e: &Expr, block: u32) {
+        self.reads_beside(e, block, None);
+    }
+
+    /// What `e` reads, where `place` is the address the statement it stands in reads or writes its own bytes through.
+    // ⚠ An address that is only where a load or a store of the variable's own bytes goes hands
+    // the variable to nothing: it is a mention of it, as the variable itself is.
+    fn reads_beside(&mut self, e: &Expr, block: u32, place: Option<*const Expr>) {
+        let mut own: HashSet<*const Expr> = place.into_iter().collect();
+        if let Some(head) = self.head {
+            e.walk(&mut |e| match e {
+                Expr::Load { ty, addr, offset } => {
+                    own.extend(own_access(addr, *offset, ty.bytes(), head));
+                }
+                Expr::LoadBytes {
+                    addr,
+                    offset,
+                    bytes,
+                } => own.extend(own_access(addr, *offset, *bytes, head)),
+                _ => {}
+            });
+        }
         e.walk(&mut |e| match e {
             Expr::Var(var) => self.mention(*var, block, None, false),
-            Expr::AddrOf { var, .. } => self.mention(*var, block, None, true),
+            Expr::AddrOf { var, .. } => {
+                let handed = !own.contains(&std::ptr::from_ref(e));
+                self.mention(*var, block, None, handed);
+            }
             _ => {}
         });
     }
@@ -3260,7 +3366,8 @@ impl Placer<'_> {
             self.mention(var, block, site, false);
             return;
         }
-        s.each_expr(&mut |e| self.reads(e, block));
+        let place = self.head.and_then(|head| stored_place(s, head));
+        s.each_expr(&mut |e| self.reads_beside(e, block, place));
         let site = match s {
             Stmt::Assign { .. } if declares => Some(std::ptr::from_ref(s)),
             _ => None,

@@ -185,3 +185,56 @@ fn an_int_alone_where_32_bits_are_taken_is_its_eight_digits_without_the_cast() {
     .iter()
     .all(|kind| !narrow_kind(kind)));
 }
+
+#[test]
+fn bytes_taken_out_of_a_group_of_cells_or_a_call_are_a_field_of_the_one_they_lie_in() {
+    use crate::gta6::script::ir::{Stmt, StoreKind};
+    use crate::gta6::script::print::tests::{at, head, native, param};
+    use crate::gta6::script::{Level, Names};
+    let names = Names::default();
+    let cx = at(&names, Level::Structured);
+    let head = head();
+    let written = |e: &Expr| {
+        let mut out = String::new();
+        Writer::in_context(&mut out, &cx, &head).expr(e, 0)
+    };
+    let taken = |value: Expr, offset: u32, bytes: u32| Expr::ExtractBytes {
+        value: Box::new(value),
+        offset,
+        bytes,
+    };
+    let alone = || Expr::Cells(vec![param(1)]);
+    // One cell gathered alone is that cell, and its bytes its field.
+    assert_eq!(written(&taken(alone(), 4, 4)), "(uint)p1.f_4");
+    // An integer of the field's own width says the width by its cast alone.
+    let read = |to: Scalar, bytes: u32| Expr::Cast {
+        to,
+        e: Box::new(taken(alone(), 4, bytes)),
+    };
+    assert_eq!(written(&read(Scalar::I32, 4)), "(int)p1.f_4");
+    assert_eq!(written(&read(Scalar::U32, 4)), "(uint)p1.f_4");
+    assert_eq!(written(&read(Scalar::I16, 2)), "(short)p1.f_4");
+    // Of several cells of one variable each, the cell the bytes lie in.
+    let four = || Expr::Cells(vec![param(1), param(2), param(3), param(4)]);
+    assert_eq!(written(&taken(four(), 28, 1)), "(byte)p4.f_4");
+    assert_eq!(written(&taken(four(), 8, 8)), "p2");
+    // Bytes over two cells, or a group one of whose cells is a call's, stay what they are.
+    let over = written(&taken(four(), 6, 4));
+    assert!(over.starts_with("extract_bytes("), "{over}");
+    let called = Expr::Cells(vec![native("MAKE", Vec::new()), param(2)]);
+    let dropped = written(&taken(called, 8, 4));
+    assert!(dropped.starts_with("extract_bytes("), "{dropped}");
+    // A call's value is a value of its own: its field is read off the call.
+    let made = taken(native("MAKE", Vec::new()), 8, 4);
+    assert_eq!(written(&made), "(uint)DEMO.MAKE().f_8");
+    // ⚠ A store of a whole cell says how the narrower number fills it.
+    let stored = Stmt::Store {
+        kind: StoreKind::U64,
+        addr: param(0),
+        offset: 0x10,
+        value: taken(alone(), 4, 4),
+    };
+    let mut out = String::new();
+    let text = Writer::in_context(&mut out, &cx, &head).simple(&stored);
+    assert_eq!(text, "p0->f_10 = (long)(uint)p1.f_4");
+}

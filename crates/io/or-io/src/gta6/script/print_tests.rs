@@ -14,6 +14,7 @@ pub(super) fn head() -> Head {
         locals: 2,
         vars: BTreeMap::new(),
         incomplete: None,
+        value_types: BTreeMap::new(),
     }
 }
 
@@ -2608,8 +2609,8 @@ fn a_clear_of_every_byte_of_a_variable_is_its_default_and_may_declare_it() {
     let f = function_of(head, body);
     let text = written_sharp(&f);
     assert!(text.contains("Cells2 local_0 = default;"), "{text}");
-    // A local whose address is taken elsewhere is declared at the top, as any such local is.
-    assert!(text.contains("    local_1 = default;"), "{text}");
+    // A local whose address only reaches its own bytes, as a clear's does, is declared where it is first assigned.
+    assert!(text.contains("    Cell local_1 = default;"), "{text}");
     assert!(text.contains("zero_bytes(&local_1, 4);"), "{text}");
     // The readable form is read back, and keeps the clear as it is.
     let names = Names::default();
@@ -2928,4 +2929,150 @@ fn a_generic_type_a_list_names_is_written_with_its_arguments_unquoted() {
     });
     let text = sharp_in(&head(), &at(&names, Level::Structured), &made);
     assert_eq!(text, "new Quill<Sprocket, int>.Grommet()");
+}
+
+#[test]
+fn a_local_whose_address_only_reaches_its_own_bytes_in_place_is_declared_at_its_assignment() {
+    let names = Names::default();
+    let cx = at(&names, Level::Structured);
+    let byte_at = |offset: u32| {
+        simple(Stmt::Store {
+            kind: StoreKind::U8,
+            addr: address(Var::Local(0), 0),
+            offset,
+            value: int(1),
+        })
+    };
+    let used = simple(Stmt::Eval(native("USE", vec![local(0)])));
+    let written_with = |middle: tree::Stmt| {
+        let mut head = head();
+        head.locals = 1;
+        let body = vec![simple(assign(Var::Local(0), int(5))), middle, used.clone()];
+        written_in(&function_of(head, body), &cx)
+    };
+    // A byte of its own cell stored through its address hands the variable to nothing.
+    let own = written_with(byte_at(4));
+    assert!(own.contains("    Cell local_0 = 5;\n"), "{own}");
+    assert!(own.contains("    local_0.f_4 = (byte)1;\n"), "{own}");
+    // A read of its own bytes is no more than a store is.
+    let own_read = load(Scalar::I32, address(Var::Local(0), 0), 4);
+    let text = written_with(simple(Stmt::Eval(native("USE", vec![own_read]))));
+    assert!(text.contains("    Cell local_0 = 5;\n"), "{text}");
+    // ⚠ Past its own cell, or handed to a call, the address may be read through elsewhere.
+    for middle in [
+        byte_at(8),
+        simple(Stmt::Eval(native("FILL", vec![address(Var::Local(0), 0)]))),
+    ] {
+        let text = written_with(middle);
+        assert!(text.contains("    Cell local_0;\n"), "{text}");
+        assert!(text.contains("    local_0 = 5;\n"), "{text}");
+    }
+}
+
+#[test]
+fn an_int_constant_handed_to_a_slot_whose_every_function_takes_32_bits_stands_without_its_cast() {
+    let owner = TypeKey(0xA0A0_0010);
+    let held = FunctionKey::new(0x1122_3344, 0x200);
+    let mut project = Project::default();
+    let mut facts = TypeFacts::default();
+    facts.slots.insert(3, held);
+    project.types.insert(owner, facts);
+    let one = |kind: Kind| Param { kind, cells: 1 };
+    let params = vec![one(Kind::Unknown), one(Kind::I32), one(Kind::Unknown)];
+    project.slot_params.insert(held, params);
+    let call = Expr::Call {
+        callee: Callee::Virtual {
+            class: owner.to_string(),
+            method: "Method_3".to_owned(),
+            ty: owner.to_string(),
+            slot: 3,
+        },
+        args: vec![param(0), high(), high()],
+        returns: Some(0),
+    };
+    let names = Names::default();
+    let cx = Context::new(&names, &project, Options::at(Level::Structured));
+    assert_eq!(
+        sharp_in(&head(), &cx, &call),
+        format!("{owner}.Method_3(p0, 0x9A3B5C7D, (int)0x9A3B5C7D)")
+    );
+    // ⚠ Of a slot no line states the parameters of, the cast says how the cell is filled.
+    assert_eq!(
+        sharp_in(&head(), &at(&names, Level::Structured), &call),
+        format!("{owner}.Method_3(p0, (int)0x9A3B5C7D, (int)0x9A3B5C7D)")
+    );
+}
+
+#[test]
+fn a_parameter_only_written_or_read_and_written_through_stays_the_address_its_callers_hand() {
+    use crate::gta6::script::project::reach::{Mode, Reach};
+    let mut head = head();
+    head.params = 3;
+    let key = FunctionKey::new(head.program, head.at);
+    let reached = |bytes: u32, mode: Mode| Reach {
+        bytes,
+        mode: Some(mode),
+        covered: bytes,
+        ..Reach::default()
+    };
+    let mut project = Project::default();
+    let cells = BTreeMap::from([(1, reached(8, Mode::Out)), (2, reached(4, Mode::Ref))]);
+    project.reach.insert(key, cells);
+    let filled = simple(Stmt::Store {
+        kind: StoreKind::U64,
+        addr: param(1),
+        offset: 0,
+        value: param(0),
+    });
+    let counted = Expr::Binary {
+        op: BinOp::Add,
+        at: Kind::I32,
+        l: Box::new(load(Scalar::I32, param(2), 0)),
+        r: Box::new(int(1)),
+    };
+    let stepped = simple(Stmt::Store {
+        kind: StoreKind::I32,
+        addr: param(2),
+        offset: 0,
+        value: counted,
+    });
+    let names = Names::default();
+    let write = |body: Vec<tree::Stmt>, options: Options| {
+        let f = function_of(head.clone(), body);
+        written_in(&f, &Context::new(&names, &project, options))
+    };
+    // ⚠ A head of `out int p` beside a caller that hands `&x` of a whole cell would be read as
+    // `F(ref x)` there: no call site of the project is seen here, so the head keeps the pointer
+    // whatever the reach table says of it.
+    let both = vec![filled, stepped];
+    for options in [Options::default(), Options::default().without(Pass::RefOut)] {
+        let text = write(both.clone(), options);
+        assert!(
+            text.starts_with("void func_000040(Cell p0, Cell p1, Cell p2)\n"),
+            "{text}"
+        );
+        assert!(text.contains("    *p1 = p0;\n"), "{text}");
+    }
+}
+
+#[test]
+fn a_switch_on_four_bytes_taken_out_of_a_value_labels_its_cases_by_their_32_bits() {
+    let taken = Expr::ExtractBytes {
+        value: Box::new(Expr::Cells(vec![param(0)])),
+        offset: 4,
+        bytes: 4,
+    };
+    let case = tree::Case {
+        labels: vec![Some(-0x6000_0000)],
+        body: vec![tree::Stmt::Return(None)],
+    };
+    let body = vec![tree::Stmt::Switch {
+        value: taken,
+        cases: vec![case],
+    }];
+    let names = Names::default();
+    let text = written_in(&function_of(head(), body), &at(&names, Level::Structured));
+    // The switch compares 32 bits, which the field is and the label's eight digits are.
+    assert!(text.contains("    switch ((uint)p0.f_4)\n"), "{text}");
+    assert!(text.contains("        case 0xA0000000:\n"), "{text}");
 }

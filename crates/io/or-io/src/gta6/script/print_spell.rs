@@ -6,10 +6,14 @@
 
 use std::fmt::Write;
 
-use crate::gta6::script::ir::{BinOp, Callee, Const, Expr, FunctionKey, Kind, Scalar, TypeKey};
+use crate::gta6::script::ir::{
+    BinOp, Callee, Const, Expr, ExprSugar, FunctionKey, Kind, Scalar, TypeKey,
+};
 use crate::gta6::script::Pass;
 
-use super::{bits, callee_name, is_zero, readable_const, reread, wrap, Writer, POSTFIX, UNARY};
+use super::{
+    bits, callee_name, flat_cells, is_zero, readable_const, reread, wrap, Writer, POSTFIX, UNARY,
+};
 
 /// The base types a name is looked for on: no hierarchy is that deep, and a ring of bases must end.
 const MAX_BASES: usize = 64;
@@ -375,6 +379,113 @@ impl Writer<'_> {
                 (format!("(uint){}", wrap(place, binds, UNARY)), UNARY)
             }
             _ => self.cast(Scalar::U32, e),
+        }
+    }
+
+    /// The value whose field the bytes `extract_bytes(value, offset, bytes)` takes are, and the field's offset in it; `None` where they are no field of one value.
+    // ⚠ Of a group of cells only where every cell is a variable's or a cell of one, so that
+    // writing the one the bytes lie in leaves out no effect of the others. Never a read of
+    // memory, whose field reads alike as the memory after it, nor the receiver or a reference,
+    // whose field reads as a member of what it refers to.
+    pub(super) fn taken_from<'e>(
+        &self,
+        value: &'e Expr,
+        offset: u32,
+        bytes: u32,
+    ) -> Option<(&'e Expr, u32)> {
+        if !self.sharp || bytes == 0 {
+            return None;
+        }
+        let (mut value, mut offset) = (bits(value), offset);
+        if let Expr::Cells(items) = value {
+            match items.as_slice() {
+                [one] => value = bits(one),
+                _ => {
+                    let cell = offset / 8;
+                    let last = offset.checked_add(bytes - 1)? / 8;
+                    let plain = items.iter().all(|item| self.one_cell(bits(item)));
+                    if cell != last || !plain {
+                        return None;
+                    }
+                    value = bits(items.get(cell as usize)?);
+                    offset %= 8;
+                }
+            }
+        }
+        let own = match value {
+            Expr::Var(var) => self.this != Some(*var) && !self.reference(value),
+            Expr::Call { .. } => !self.reference(value),
+            Expr::Sugar { kind, e } => {
+                !matches!(kind, ExprSugar::Field { .. })
+                    && matches!(&**e, Expr::Call { .. })
+                    && !self.reference(value)
+            }
+            _ => false,
+        };
+        own.then_some((value, offset))
+    }
+
+    /// Whether `e` is one cell of a frame that evaluating it reads and does nothing more: a variable of one cell, or one cell of a variable.
+    fn one_cell(&self, e: &Expr) -> bool {
+        match e {
+            Expr::Var(var) => flat_cells(&Expr::Var(*var), self.head) == Some(1),
+            Expr::Cell { base, .. } => matches!(&**base, Expr::Var(_)),
+            _ => false,
+        }
+    }
+
+    /// The field `extract_bytes(value, offset, bytes)` takes, written as such without a word on its width: `x.f_4`, and a cell of a group taken whole as that cell.
+    pub(super) fn extracted_place(
+        &mut self,
+        value: &Expr,
+        offset: u32,
+        bytes: u32,
+    ) -> Option<String> {
+        let (of, at) = self.taken_from(value, offset, bytes)?;
+        if bytes == 8 && at == 0 && self.one_cell(of) {
+            return Some(self.expr(of, POSTFIX));
+        }
+        let owner = match self.kind_of(of) {
+            Kind::Value { ty, .. } => TypeKey::of_name(&ty),
+            _ => None,
+        };
+        let base = self.expr(of, POSTFIX);
+        Some(format!("{base}.{}", self.field_name(owner, at)))
+    }
+
+    /// `extract_bytes(value, offset, bytes)` as the field it takes, read as the unsigned number of its width, bare for one cell and under its cells for several; `None` for any other width.
+    // The cell the bytes come to is zero above them, as the unsigned number is.
+    pub(super) fn extracted(
+        &mut self,
+        value: &Expr,
+        offset: u32,
+        bytes: u32,
+    ) -> Option<(String, u8)> {
+        let unsigned = match bytes {
+            1 => Some("byte"),
+            2 => Some("ushort"),
+            4 => Some("uint"),
+            n if n.is_multiple_of(8) => None,
+            _ => return None,
+        };
+        let place = self.extracted_place(value, offset, bytes)?;
+        Some(match (unsigned, bytes) {
+            (Some(ty), _) => (format!("({ty}){place}"), UNARY),
+            (None, 8) => (place, POSTFIX),
+            (None, n) => {
+                let cells = self.kind_text(&Kind::Aggregate(n / 8));
+                (format!("({cells}){place}"), UNARY)
+            }
+        })
+    }
+
+    /// The kind of what `extract_bytes(value, offset, bytes)` is written as where it is written as a field: the unsigned number of its width.
+    pub(super) fn extracted_kind(&self, value: &Expr, offset: u32, bytes: u32) -> Kind {
+        match (bytes, self.taken_from(value, offset, bytes)) {
+            (1, Some(_)) => Kind::U8,
+            (2, Some(_)) => Kind::U16,
+            (4, Some(_)) => Kind::U32,
+            _ => Kind::Unknown,
         }
     }
 

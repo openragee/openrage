@@ -19,6 +19,7 @@ fn function(at: u32, params: u32, returns: Returns, body: Vec<tree::Stmt>) -> tr
         locals: 0,
         vars: BTreeMap::new(),
         incomplete: None,
+        value_types: BTreeMap::new(),
     };
     tree::Function { head, body }
 }
@@ -649,4 +650,50 @@ class type_00000000000000BB // a closure
         "{text}"
     );
     assert!(text.contains("\n    void func_0000E0(Cell p1)\n"), "{text}");
+}
+
+#[test]
+fn an_enum_is_headed_by_the_integer_its_values_are_and_its_base_and_interfaces_are_said_beside() {
+    let mut project = Project::default();
+    // A value type that is no struct, of four bytes, one of whose values a signed int cannot hold.
+    let facts = TypeFacts {
+        byte_size: 4,
+        flags: 0x08,
+        constants: vec![0, 1, 0x8000_0000],
+        ..TypeFacts::default()
+    };
+    project.types.insert(TypeKey(2), facts);
+    let mut listed = class(2, ClassKind::Enum);
+    listed.base = Some(TypeKey(0xCC));
+    listed.interfaces = vec![TypeKey(0xDD)];
+    let unit = Unit {
+        program: PROGRAM,
+        imports: Vec::new(),
+        classes: vec![listed],
+        functions: Vec::new(),
+        front: None,
+    };
+    let names = Names::default();
+    let text = file(&unit, &names, &project, Options::default()).text;
+    let expected = "\
+enum type_0000000000000002 : uint // base type_00000000000000CC; implements type_00000000000000DD
+{
+    // values: 0, 1, 2147483648
+}
+";
+    assert!(text.ends_with(expected), "{text}");
+
+    // Of no proved values, the head names no integer, and its interfaces still stand aside.
+    let unknown = Project::default();
+    let text = file(&unit, &names, &unknown, Options::default()).text;
+    let head = "\nenum type_0000000000000002 // base type_00000000000000CC; implements \
+                type_00000000000000DD\n{\n}\n";
+    assert!(text.ends_with(head), "{text}");
+
+    // With `kinds` off the head is what it was.
+    let off = Options::default().without(Pass::Kinds);
+    let text = file(&unit, &names, &project, off).text;
+    let old = "\nenum type_0000000000000002 : type_00000000000000DD // base \
+               type_00000000000000CC\n";
+    assert!(text.contains(old), "{text}");
 }

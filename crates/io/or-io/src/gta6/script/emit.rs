@@ -220,14 +220,35 @@ fn opened(out: &mut String, class: &Class, name: &str, depth: usize, cx: &Contex
     if let (false, Some(base)) = (value, &base) {
         listed.push(base.clone());
     }
-    listed.extend(class.interfaces.iter().map(shown));
+    // ⚠ What follows the name of a C# enum is the integer its values are: its base and its
+    // interfaces are a comment's.
+    let as_enum = word == "enum" && cx.options.on(Pass::Kinds);
+    let interfaces: Vec<String> = class.interfaces.iter().map(shown).collect();
     let mut head = format!("{word} {name}");
-    if !listed.is_empty() {
-        let _ = write!(head, " : {}", listed.join(", "));
-    }
-    head.push_str(note);
-    if let (true, Some(base)) = (value, &base) {
-        let _ = write!(head, " // base {base}");
+    match as_enum {
+        true => {
+            if let Some(of) = types::enumeration(cx.project, class.key) {
+                let underlying = print::kind_text(&of.underlying, cx.names, true);
+                let _ = write!(head, " : {underlying}");
+            }
+            let mut said: Vec<String> = base.iter().map(|base| format!("base {base}")).collect();
+            if !interfaces.is_empty() {
+                said.push(format!("implements {}", interfaces.join(", ")));
+            }
+            if !said.is_empty() {
+                let _ = write!(head, " // {}", said.join("; "));
+            }
+        }
+        false => {
+            listed.extend(interfaces);
+            if !listed.is_empty() {
+                let _ = write!(head, " : {}", listed.join(", "));
+            }
+            head.push_str(note);
+            if let (true, Some(base)) = (value, &base) {
+                let _ = write!(head, " // base {base}");
+            }
+        }
     }
     // A list of bases that passes the width goes on under the head, one level in.
     indent(out, depth);

@@ -149,10 +149,15 @@ pub(super) fn holds_unsupported(game: Game, root: &Path) -> bool {
 
 impl super::AppState {
     /// Remember `root` as the folder of `game`, a title OpenRage cannot open as an install yet, and
-    /// open it as a plain folder; a folder that holds another title is refused.
+    /// open it as a plain folder; a folder that holds another title is refused. The title is also
+    /// made the active install — the user picked it from the start page, so what they open next is
+    /// what they look at, and features keyed off `active_game` (platform letter, folder notes,
+    /// name scans) all follow their choice.
     pub fn open_title_folder(&mut self, game: Game, root: PathBuf) {
         self.set_game_install_folder(game, Some(root.clone()));
         if self.prefs.game_paths.get(game) == Some(&root) {
+            self.prefs.active_game = Some(game);
+            super::save_prefs(&self.prefs);
             self.open_folder(root);
         }
     }

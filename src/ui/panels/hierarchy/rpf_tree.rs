@@ -84,26 +84,43 @@ fn rewrite_platform_extension(path: &str, letter: char) -> String {
     out
 }
 
-/// The platform letter a GTA VI archive's rows read under: the archive's own version picks GTA VI's
-/// profile (`z` for the Xbox Series build this project tracks), everything else falls back to the
-/// active install's letter and ultimately `y`.
+/// The platform letter a row of this archive reads under: the archive's own version picks the
+/// Rockstar title that ships that format (GTA VI for RPF9, RDR2 for RPF8, GTA V for every RPF
+/// and IMG before), and that profile's platform settles the letter. When the row is not inside
+/// an archive (a loose folder entry, the install root), the letter falls back to the active
+/// install's and ultimately `y`.
 fn platform_letter_for(state: &AppState, session: &RpfEditSession, node: &RpfSessionNode) -> char {
-    use or_io::container::rpf::version::RpfVersion;
-    let rpf9 = match &node.backing {
-        RpfNodeBacking::ArchiveFile { archive_id, .. } => session
-            .archive(*archive_id)
-            .map(|slot| slot.archive.version == RpfVersion::Rpf9)
-            .unwrap_or(false),
-        _ => false,
+    archive_platform_letter(session, node).unwrap_or_else(|| {
+        state
+            .prefs
+            .active_game
+            .map(|g| g.platform_letter())
+            .unwrap_or('y')
+    })
+}
+
+/// The letter the archive the row sits in writes its RAGE extensions under, read from the
+/// archive's version. `None` for a row of no archive (a disk folder, the install root).
+fn archive_platform_letter(session: &RpfEditSession, node: &RpfSessionNode) -> Option<char> {
+    let archive_id = match &node.backing {
+        RpfNodeBacking::ArchiveFile { archive_id, .. } => *archive_id,
+        _ => return None,
     };
-    if rpf9 {
-        return or_title::Game::GtaVI.platform_letter();
+    let version = session.archive(archive_id)?.archive.version;
+    Some(game_for_rpf_version(version).platform_letter())
+}
+
+/// The Rockstar title whose profile ships this archive version: RPF9 is GTA VI's, RPF8 is RDR2's,
+/// every RPF7-and-before and every IMG is from the GTA V era or earlier, all PC-era `y` on the
+/// profiles this tree knows about.
+fn game_for_rpf_version(version: or_io::container::rpf::version::RpfVersion) -> or_title::Game {
+    use or_io::container::rpf::version::RpfVersion;
+    use or_title::Game;
+    match version {
+        RpfVersion::Rpf9 => Game::GtaVI,
+        RpfVersion::Rpf8 => Game::Rdr2,
+        _ => Game::GtaVLegacy,
     }
-    state
-        .prefs
-        .active_game
-        .map(|g| g.platform_letter())
-        .unwrap_or('y')
 }
 
 /// The stem a GTA VI drawable or fragment body stated for `node` on open, where `(archive, offset)`

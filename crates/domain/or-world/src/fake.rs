@@ -3,12 +3,13 @@
 //! interior, a list, a light, an occluder, a cube with a flat texture, and an edit store that keeps
 //! its edits in memory. It stands in no registry a person sees.
 //!
-//! ⚠ It counts: every read of rows, of a body and every layout is counted in [`Counts`], so a test
-//! can say a held map was read once.
+//! ⚠ It counts: every read of rows, of a body, every layout and every asking of what draws a
+//! body's nodes is counted in [`Counts`], so a test can say a held map was read once.
 //!
 //! A [`Fault`] makes it break one rule of the conformance kit and no other, which is how the kit
 //! is shown to refuse by the rule's name.
 
+use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
@@ -118,10 +119,26 @@ pub enum Fault {
     BandOfNought,
     /// The cube's last triangle names a vertex it does not hold.
     IndexPastVertices,
+    /// The model the parent of the ladder draws with does not read.
+    ModelUnread,
+    /// The sun's direction is twice a unit vector.
+    SunTwiceAUnit,
+    /// The flat texture the cube's surface asks for does not read.
+    TextureUnread,
+    /// The cube's texture coordinate is stated past the end of its vertex.
+    ElementPastStride,
+    /// The body of the children's map says what draws every node but its last.
+    DrawsShort,
+    /// The edit session makes the body of an edited map afresh each time it is asked.
+    SessionBodyAfresh,
+    /// Its capabilities state a base, and its edit session answers none.
+    BaseStated,
+    /// Its capabilities state a base and no edit store.
+    StoreUnstated,
 }
 
 impl Fault {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 25] = [
         Self::LinkForgets,
         Self::ParentUnlinked,
         Self::ChildrenMiscounted,
@@ -139,6 +156,14 @@ impl Fault {
         Self::StreamsEverywhere,
         Self::BandOfNought,
         Self::IndexPastVertices,
+        Self::ModelUnread,
+        Self::SunTwiceAUnit,
+        Self::TextureUnread,
+        Self::ElementPastStride,
+        Self::DrawsShort,
+        Self::SessionBodyAfresh,
+        Self::BaseStated,
+        Self::StoreUnstated,
     ];
 }
 
@@ -349,6 +374,8 @@ pub struct Counts {
     rows: Mutex<HashMap<usize, usize>>,
     reads: Mutex<HashMap<u64, usize>>,
     lays: Mutex<HashMap<u64, usize>>,
+    draws: Mutex<HashMap<u64, usize>>,
+    interiors: Mutex<usize>,
     flushes: Mutex<usize>,
 }
 
@@ -366,6 +393,16 @@ impl Counts {
     /// How many times the body under the forest key `key` was laid out.
     pub fn lays_of(&self, key: u64) -> usize {
         lock(&self.lays).get(&key).copied().unwrap_or(0)
+    }
+
+    /// How many times the body under the forest key `key` was asked what draws its nodes.
+    pub fn draws_of(&self, key: u64) -> usize {
+        lock(&self.draws).get(&key).copied().unwrap_or(0)
+    }
+
+    /// How many times the body of an interior was asked for, read or refused.
+    pub fn interior_reads(&self) -> usize {
+        *lock(&self.interiors)
     }
 
     /// How many times an edit session was flushed.
@@ -789,11 +826,16 @@ impl MapBody for Body {
         &self.nodes
     }
 
-    fn draws(&self, node: u32, _at: &Moment) -> Draws {
-        match self.what.get(node as usize) {
-            Some(What::Model(model)) => Draws::Model(*model),
-            Some(What::List(_)) => Draws::StandIn,
-            Some(What::Interior(_)) | None => Draws::Nothing,
+    fn draws(&self, _at: &Moment, out: &mut Vec<Draws>) {
+        *lock(&self.shared.counts.draws).entry(self.key).or_default() += 1;
+        out.extend(self.what.iter().map(|what| match what {
+            What::Model(model) => Draws::Model(*model),
+            What::List(_) => Draws::StandIn,
+            What::Interior(_) => Draws::Nothing,
+        }));
+        let of_children = self.nodes.last().is_some_and(|node| node.parent.is_some());
+        if of_children && self.shared.has(Fault::DrawsShort) {
+            out.pop();
         }
     }
 
@@ -863,26 +905,29 @@ impl MapReader for Install {
         &self,
         index: &Index,
         map: MapId,
+        body: &dyn MapBody,
         placed: &InteriorPlaced,
         _worker: &mut Worker,
     ) -> Result<Arc<dyn MapBody>, WorldError> {
+        *lock(&self.shared.counts.interiors) += 1;
         if placed.interior != INTERIOR || self.shared.has(Fault::InteriorUnread) {
             return Err(WorldError::Unread {
                 what: format!("the interior {:#x}", placed.interior),
                 why: "nothing of the fake world declares it".into(),
             });
         }
-        let (archive, at) =
-            *(linked(index)?.places.get(map.0 as usize)).ok_or(WorldError::NoSuchMap(map))?;
-        let world = self.shared.world();
-        let origin = (world.archives.get(archive))
-            .and_then(|archive| archive.maps.get(at)?.nodes.get(placed.node as usize))
-            .map_or(Vec3::ZERO, |instance| instance.at);
+        let placing: &dyn Any = body;
+        let instance = (placing.downcast_ref::<Body>())
+            .and_then(|body| body.nodes.get(placed.node as usize))
+            .ok_or(WorldError::Lacks(
+                "such instance in a body of the fake title",
+            ))?;
         let key = interior_key(map, placed.node);
+        let world = self.shared.world();
         Ok(Arc::new(Body::of(
             key,
             &world.interior,
-            origin,
+            instance.position,
             index,
             &self.shared,
         )))
@@ -925,7 +970,10 @@ fn cube(shared: &Shared) -> Mesh {
                 Element {
                     semantic: Semantic::TexCoord(0),
                     format: ElementFormat::F32x2,
-                    offset: 12,
+                    offset: match shared.has(Fault::ElementPastStride) {
+                        true => u32::MAX,
+                        false => 12,
+                    },
                 },
             ],
         },
@@ -955,7 +1003,9 @@ impl ModelReader for Install {
         _worker: &mut Worker,
         out: &mut Vec<(AssetKey, Model)>,
     ) {
-        for ask in asks.iter().filter(|ask| [CUBE, SLAB].contains(ask)) {
+        let unread = self.shared.has(Fault::ModelUnread);
+        let reads = |ask: &&AssetKey| **ask == CUBE || (**ask == SLAB && !unread);
+        for ask in asks.iter().filter(reads) {
             let lod = Lod {
                 distance: 1000.0,
                 meshes: vec![cube(&self.shared)],
@@ -977,10 +1027,9 @@ impl ModelReader for Install {
         _worker: &mut Worker,
         out: &mut Vec<(TextureAsk, Texture)>,
     ) {
-        for ask in asks
-            .iter()
-            .filter(|ask| ask.scope == FLAT.scope && ask.name == FLAT.name)
-        {
+        let unread = self.shared.has(Fault::TextureUnread);
+        let reads = |ask: &&TextureAsk| ask.scope == FLAT.scope && ask.name == FLAT.name && !unread;
+        for ask in asks.iter().filter(reads) {
             out.push((
                 *ask,
                 Texture {
@@ -1013,8 +1062,12 @@ impl WorldLook for Install {
         let turn = (at.hour - 12.0) / 24.0 * std::f32::consts::TAU;
         let day = turn.cos().max(0.0);
         out.set(FeedName::Name("fake_hour"), &[at.hour]);
+        let long = match self.shared.has(Fault::SunTwiceAUnit) {
+            true => 2.0,
+            false => 1.0,
+        };
         FrameFacts {
-            sun: Vec3::new(turn.sin(), 0.0, turn.cos()),
+            sun: Vec3::new(turn.sin(), 0.0, turn.cos()) * long,
             key: [day; 3],
             ambient: [0.05 + 0.25 * day; 3],
             exposure: 1.0,
@@ -1025,8 +1078,15 @@ impl WorldLook for Install {
 
 impl WorldInstall for Install {
     fn caps(&self) -> WorldCaps {
-        let caps = (WorldCaps::none().with(Capability::Edits)).with_instance_words(WORDS);
-        match self.shared.has(Fault::CapsLie) {
+        let has = |fault| self.shared.has(fault);
+        let mut caps = WorldCaps::none().with_instance_words(WORDS);
+        if !has(Fault::StoreUnstated) {
+            caps = caps.with(Capability::Edits);
+        }
+        if has(Fault::BaseStated) || has(Fault::StoreUnstated) {
+            caps = caps.with(Capability::Base);
+        }
+        match has(Fault::CapsLie) {
             true => caps,
             false => caps.with(Capability::Placements),
         }
@@ -1108,7 +1168,7 @@ impl EditTitle for FakeEdits {
         }]
     }
 
-    fn open(&self, place: &EditPlace<'_>) -> Result<Box<dyn EditSession>, EditError> {
+    fn open<'w>(&self, place: &EditPlace<'_, 'w>) -> Result<Box<dyn EditSession + 'w>, EditError> {
         linked(place.index)?;
         Ok(Box::new(Session {
             shared: Arc::clone(&self.shared),
@@ -1151,6 +1211,24 @@ impl Session {
             Some((nodes, _)) => Some((id, nodes.clone())),
             None => Some((id, self.shared.world().map(name)?.nodes.clone())),
         }
+    }
+}
+
+impl Session {
+    /// A body of the map `id` with `nodes` in place of those the fake world holds of it.
+    fn body_of(&self, id: MapId, nodes: &[NodeDef]) -> Option<Arc<dyn MapBody>> {
+        let name = self.index.map(id)?.name;
+        let world = self.shared.world();
+        let edited = MapDef {
+            nodes: nodes.to_vec(),
+            ..world.map(name)?.clone()
+        };
+        Some(Arc::new(Body::of_map(
+            id,
+            &edited,
+            &self.index,
+            &self.shared,
+        )))
     }
 }
 
@@ -1213,14 +1291,8 @@ impl EditSession for Session {
         if self.shared.has(Fault::InverseWrong) {
             back.x += 1.0;
         }
-        let world = self.shared.world();
-        let def = (world.map(name)).ok_or_else(|| EditError::NoSuchAddress(at.clone()))?;
-        let edited = MapDef {
-            nodes: nodes.clone(),
-            ..def.clone()
-        };
-        let body: Arc<dyn MapBody> = Arc::new(Body::of_map(id, &edited, &self.index, &self.shared));
-        drop(world);
+        let body =
+            (self.body_of(id, &nodes)).ok_or_else(|| EditError::NoSuchAddress(at.clone()))?;
         self.edited.insert(id, (nodes, body));
         Ok(Applied {
             inverse: move_node(self, name, node as u32, back),
@@ -1232,7 +1304,11 @@ impl EditSession for Session {
         if self.shared.has(Fault::SessionHidesBody) {
             return None;
         }
-        self.edited.get(&map).map(|(_, body)| Arc::clone(body))
+        let (nodes, body) = self.edited.get(&map)?;
+        match self.shared.has(Fault::SessionBodyAfresh) {
+            true => self.body_of(map, nodes),
+            false => Some(Arc::clone(body)),
+        }
     }
 
     fn flush(&mut self) -> Result<Vec<Written>, EditError> {

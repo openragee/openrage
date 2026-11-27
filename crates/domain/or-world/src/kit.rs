@@ -7,11 +7,12 @@
 //! read once, a body laid out once a selection) is held by the driver's own tests over the fake
 //! title, which counts.
 //!
-//! ⚠ Every rule opens the world afresh, in a scratch folder of its own, with no key.
+//! ⚠ Every rule opens the world afresh with no key, its index kept under a scratch folder the
+//! caller makes and removes: the macro makes one a test with `tempfile`, which a crate that calls
+//! it lists among its dev-dependencies.
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use glam::Vec3;
@@ -25,7 +26,8 @@ use crate::contract::{
 use crate::driver::{Driver, Selected, Streamed};
 use crate::kept::{self, Verdict};
 use crate::model::{
-    is_interior_key, AssetKey, Element, Index, MapId, Moment, SwitchId, Switched, TextureAsk,
+    is_interior_key, AssetKey, Element, Feed, FeedName, Index, MapId, Moment, SwitchId, Switched,
+    TextureAsk,
 };
 use crate::streaming::{NodeId, NodeState};
 
@@ -152,10 +154,13 @@ pub enum Rule {
     Streams,
     Policy,
     Models,
+    Frame,
+    Draws,
+    SessionBody,
 }
 
 impl Rule {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 20] = [
         Self::KeptLinks,
         Self::ChildNamesParent,
         Self::ParentUntilChildren,
@@ -173,6 +178,9 @@ impl Rule {
         Self::Streams,
         Self::Policy,
         Self::Models,
+        Self::Frame,
+        Self::Draws,
+        Self::SessionBody,
     ];
 
     /// The rule as a sentence, which is the name of the test that holds it.
@@ -199,30 +207,10 @@ impl Rule {
             Self::Streams => "a_map_streams_from_inside_its_box_and_nothing_streams_from_nowhere",
             Self::Policy => "the_policy_states_every_level",
             Self::Models => "every_model_a_selection_draws_with_reads_whole",
+            Self::Frame => "the_look_states_a_whole_frame_at_every_hour",
+            Self::Draws => "a_body_says_what_draws_each_of_its_nodes",
+            Self::SessionBody => "a_sessions_body_stands_until_the_next_apply_and_no_longer",
         }
-    }
-}
-
-/// A folder under the system's scratch folder, removed when it is let go of.
-struct Scratch(PathBuf);
-
-impl Scratch {
-    fn new() -> std::io::Result<Self> {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let name = format!(
-            "world-kit-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        );
-        let folder = std::env::temp_dir().join(name);
-        std::fs::create_dir_all(&folder)?;
-        Ok(Self(folder))
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
     }
 }
 
@@ -230,8 +218,6 @@ impl Drop for Scratch {
 struct Opened {
     install: Arc<dyn WorldInstall>,
     index: Arc<Index>,
-    /// Held so that the kept index outlives the rule.
-    _scratch: Scratch,
 }
 
 type Held<T = ()> = Result<T, String>;
@@ -243,18 +229,18 @@ fn said<T, E: std::fmt::Display>(what: &str, result: Result<T, E>) -> Held<T> {
 /// Open the world of `fixture` through its title with no key, its index kept under `scratch`.
 fn open_in(
     fixture: &Fixture,
-    scratch: &Scratch,
+    scratch: &Path,
 ) -> Held<(Arc<dyn WorldInstall>, Index, kept::Report)> {
     let (cancel, progress) = (Cancel::new(), Progress::new());
     let opening = Opening {
-        config: &scratch.0,
+        config: scratch,
         keys: Keys::None,
         cancel: &cancel,
         progress: &progress,
     };
     let opened = fixture.title.open(&fixture.world, &opening);
     let install = said("the world does not open", opened)?;
-    let file = kept::file_for(&scratch.0, fixture.title.id(), &fixture.world);
+    let file = kept::file_for(scratch, fixture.title.id(), &fixture.world);
     let refreshed = kept::refresh(fixture.title.id(), &fixture.world, &*install, &file);
     let (index, report) = said("the index does not build", refreshed)?;
     if let Some(e) = &report.not_kept {
@@ -263,13 +249,11 @@ fn open_in(
     Ok((install, index, report))
 }
 
-fn open(fixture: &Fixture) -> Held<Opened> {
-    let scratch = said("no scratch folder", Scratch::new())?;
-    let (install, index, _) = open_in(fixture, &scratch)?;
+fn open(fixture: &Fixture, scratch: &Path) -> Held<Opened> {
+    let (install, index, _) = open_in(fixture, scratch)?;
     Ok(Opened {
         install,
         index: Arc::new(index),
-        _scratch: scratch,
     })
 }
 
@@ -279,7 +263,7 @@ impl Opened {
             .ok_or_else(|| format!("the fixture names the map {name:#x}, which the index lacks"))
     }
 
-    fn driver(&self) -> Driver {
+    fn driver(&self) -> Driver<'static> {
         Driver::new(Arc::clone(&self.install), Arc::clone(&self.index))
     }
 }
@@ -291,7 +275,7 @@ fn all_ready(_: AssetKey) -> NodeState {
 
 /// One view of `driver` from `eye`: every wanted body read, then a selection.
 fn look(
-    driver: &mut Driver,
+    driver: &mut Driver<'_>,
     eye: Vec3,
     at: &Moment,
     switched: &Switched,
@@ -335,16 +319,15 @@ fn unread(streamed: &Streamed) -> Held {
     }
 }
 
-fn kept_links(fixture: &Fixture) -> Held {
-    let scratch = said("no scratch folder", Scratch::new())?;
-    let (_, built, first) = open_in(fixture, &scratch)?;
+fn kept_links(fixture: &Fixture, scratch: &Path) -> Held {
+    let (_, built, first) = open_in(fixture, scratch)?;
     if !matches!(first.verdict, Verdict::Absent) {
         return Err(format!(
             "a first open found a kept index: {:?}",
             first.verdict
         ));
     }
-    let (_, kept, second) = open_in(fixture, &scratch)?;
+    let (_, kept, second) = open_in(fixture, scratch)?;
     if !matches!(second.verdict, Verdict::Current) || !second.read.is_empty() || second.derived {
         return Err(format!(
             "a second open of a world that did not change read the archives {:?}, derived again: {}, and judged the kept index {:?}",
@@ -367,8 +350,8 @@ fn kept_links(fixture: &Fixture) -> Held {
     }
 }
 
-fn child_names_parent(fixture: &Fixture) -> Held {
-    let opened = open(fixture)?;
+fn child_names_parent(fixture: &Fixture, scratch: &Path) -> Held {
+    let opened = open(fixture, scratch)?;
     let ladder = &fixture.scene.ladder;
     let (parent, child) = (
         opened.map(ladder.parent_map)?,
@@ -384,8 +367,8 @@ fn child_names_parent(fixture: &Fixture) -> Held {
     }
 }
 
-fn parent_until_children(fixture: &Fixture) -> Held {
-    let opened = open(fixture)?;
+fn parent_until_children(fixture: &Fixture, scratch: &Path) -> Held {
+    let opened = open(fixture, scratch)?;
     let (scene, ladder) = (&fixture.scene, &fixture.scene.ladder);
     let (parent, child) = (
         opened.map(ladder.parent_map)?.key(),
@@ -458,8 +441,8 @@ fn streams(opened: &Opened, map: MapId, eye: Vec3, at: &Moment, switched: &Switc
     Ok(streamed.wanted.iter().any(|(wanted, _)| *wanted == map))
 }
 
-fn timed_map(fixture: &Fixture) -> Held {
-    let opened = open(fixture)?;
+fn timed_map(fixture: &Fixture, scratch: &Path) -> Held {
+    let opened = open(fixture, scratch)?;
     let (scene, timed) = (&fixture.scene, &fixture.scene.timed);
     let map = opened.map(timed.map)?;
     let at = |hour: f32| Moment {
@@ -480,8 +463,8 @@ fn timed_map(fixture: &Fixture) -> Held {
     }
 }
 
-fn held_map(fixture: &Fixture) -> Held {
-    let opened = open(fixture)?;
+fn held_map(fixture: &Fixture, scratch: &Path) -> Held {
+    let opened = open(fixture, scratch)?;
     let (scene, held) = (&fixture.scene, &fixture.scene.held);
     let map = opened.map(held.map)?;
     let at = Moment::noon(scene.weather);
@@ -500,8 +483,8 @@ fn held_map(fixture: &Fixture) -> Held {
     }
 }
 
-fn interior(fixture: &Fixture) -> Held {
-    let opened = open(fixture)?;
+fn interior(fixture: &Fixture, scratch: &Path) -> Held {
+    let opened = open(fixture, scratch)?;
     let (scene, interior) = (&fixture.scene, &fixture.scene.interior);
     let (streamed, selected) = glance(&opened, interior.eye, scene.weather);
     unread(&streamed)?;
@@ -520,8 +503,8 @@ fn interior(fixture: &Fixture) -> Held {
     }
 }
 
-fn list(fixture: &Fixture) -> Held {
-    let opened = open(fixture)?;
+fn list(fixture: &Fixture, scratch: &Path) -> Held {
+    let opened = open(fixture, scratch)?;
     let (scene, list) = (&fixture.scene, &fixture.scene.list);
     let (streamed, selected) = glance(&opened, list.eye, scene.weather);
     unread(&streamed)?;
@@ -539,8 +522,9 @@ fn list(fixture: &Fixture) -> Held {
 }
 
 /// The places a fixture states something draws from.
-fn eyes(scene: &Scene) -> [Vec3; 4] {
+fn eyes(scene: &Scene) -> [Vec3; 5] {
     [
+        scene.ladder.far,
         scene.ladder.near,
         scene.interior.eye,
         scene.list.eye,
@@ -548,8 +532,8 @@ fn eyes(scene: &Scene) -> [Vec3; 4] {
     ]
 }
 
-fn columns(fixture: &Fixture) -> Held {
-    let opened = open(fixture)?;
+fn columns(fixture: &Fixture, scratch: &Path) -> Held {
+    let opened = open(fixture, scratch)?;
     let scene = &fixture.scene;
     let words = opened.install.caps().instance_words;
     let mut drawn = 0;
@@ -608,8 +592,8 @@ fn columns(fixture: &Fixture) -> Held {
     }
 }
 
-fn lit(fixture: &Fixture) -> Held {
-    let opened = open(fixture)?;
+fn lit(fixture: &Fixture, scratch: &Path) -> Held {
+    let opened = open(fixture, scratch)?;
     let (scene, lit) = (&fixture.scene, &fixture.scene.lit);
     let (streamed, selected) = glance(&opened, lit.eye, scene.weather);
     unread(&streamed)?;
@@ -647,8 +631,8 @@ fn session<'a>(
     Ok(Some((edit, session)))
 }
 
-fn caps(fixture: &Fixture) -> Held {
-    let opened = open(fixture)?;
+fn caps(fixture: &Fixture, scratch: &Path) -> Held {
+    let opened = open(fixture, scratch)?;
     let caps = opened.install.caps();
     if caps.has(Capability::Edits) != fixture.edit.is_some() {
         return Err(format!(
@@ -691,7 +675,7 @@ fn caps(fixture: &Fixture) -> Held {
 
 /// Where the node `node` stands in what `driver` selects from `eye`, the session asked before the reader.
 fn place_of(
-    driver: &mut Driver,
+    driver: &mut Driver<'_>,
     node: NodeId,
     eye: Vec3,
     weather: u64,
@@ -709,8 +693,8 @@ fn close(a: Vec3, b: Vec3) -> bool {
     a.distance(b) <= 1e-3
 }
 
-fn apply_shows(fixture: &Fixture) -> Held {
-    let opened = open(fixture)?;
+fn apply_shows(fixture: &Fixture, scratch: &Path) -> Held {
+    let opened = open(fixture, scratch)?;
     let Some((edit, mut session)) = session(fixture, &opened)? else {
         return Ok(());
     };
@@ -740,8 +724,8 @@ fn apply_shows(fixture: &Fixture) -> Held {
     }
 }
 
-fn stale_guard(fixture: &Fixture) -> Held {
-    let opened = open(fixture)?;
+fn stale_guard(fixture: &Fixture, scratch: &Path) -> Held {
+    let opened = open(fixture, scratch)?;
     let Some((edit, mut session)) = session(fixture, &opened)? else {
         return Ok(());
     };
@@ -756,8 +740,8 @@ fn stale_guard(fixture: &Fixture) -> Held {
     }
 }
 
-fn inverse(fixture: &Fixture) -> Held {
-    let opened = open(fixture)?;
+fn inverse(fixture: &Fixture, scratch: &Path) -> Held {
+    let opened = open(fixture, scratch)?;
     let Some((edit, mut session)) = session(fixture, &opened)? else {
         return Ok(());
     };
@@ -795,8 +779,8 @@ fn once(what: &str, ids: impl IntoIterator<Item = u64>) -> Held {
     }
 }
 
-fn slots(fixture: &Fixture) -> Held {
-    let opened = open(fixture)?;
+fn slots(fixture: &Fixture, scratch: &Path) -> Held {
+    let opened = open(fixture, scratch)?;
     let options = fixture.title.options();
     once("the option", options.iter().map(|o| u64::from(o.id.0)))?;
     let switches = opened.install.look().switches();
@@ -831,8 +815,8 @@ fn slots(fixture: &Fixture) -> Held {
     }
 }
 
-fn streams_rule(fixture: &Fixture) -> Held {
-    let opened = open(fixture)?;
+fn streams_rule(fixture: &Fixture, scratch: &Path) -> Held {
+    let opened = open(fixture, scratch)?;
     let scene = &fixture.scene;
     let (at, none) = (Moment::noon(scene.weather), Switched::default());
     let child = opened.map(scene.ladder.child_map)?;
@@ -850,16 +834,16 @@ fn streams_rule(fixture: &Fixture) -> Held {
     }
 }
 
-fn policy(fixture: &Fixture) -> Held {
-    let opened = open(fixture)?;
+fn policy(fixture: &Fixture, scratch: &Path) -> Held {
+    let opened = open(fixture, scratch)?;
     match opened.install.policy().fault() {
         Some(fault) => Err(fault.into()),
         None => Ok(()),
     }
 }
 
-fn models(fixture: &Fixture) -> Held {
-    let opened = open(fixture)?;
+fn models(fixture: &Fixture, scratch: &Path) -> Held {
+    let opened = open(fixture, scratch)?;
     let scene = &fixture.scene;
     let mut asks = BTreeSet::new();
     for eye in eyes(scene) {
@@ -870,10 +854,12 @@ fn models(fixture: &Fixture) -> Held {
     let (mut worker, mut read) = (Worker::new(), Vec::new());
     let reader = opened.install.models();
     reader.models(&opened.index, &asks, &mut worker, &mut read);
-    if read.is_empty() {
+    if asks.is_empty() {
+        return Err("nothing drawn from the fixture's places draws with a model".into());
+    }
+    if let Some(unread) = (asks.iter()).find(|ask| !read.iter().any(|(key, _)| key == *ask)) {
         return Err(format!(
-            "of the {} model(s) the fixture's places draw with, none reads",
-            asks.len()
+            "the model {unread:?}, which a place of the fixture draws with, does not read"
         ));
     }
     once("the model", read.iter().map(|(key, _)| key.0))?;
@@ -886,8 +872,10 @@ fn models(fixture: &Fixture) -> Held {
         }
         for mesh in model.lods.iter().flat_map(|lod| &lod.meshes) {
             let (stride, count) = (mesh.layout.stride as usize, mesh.vertex_count());
-            let fits =
-                |element: &Element| (element.offset + element.format.size()) as usize <= stride;
+            // An offset near the last number a `u32` holds must not wrap to one that fits.
+            let fits = |element: &Element| {
+                u64::from(element.offset) + u64::from(element.format.size()) <= stride as u64
+            };
             let laid_out = mesh.layout.elements.iter().all(fits);
             if stride == 0 || mesh.vertices.len() % stride != 0 || !laid_out {
                 return Err(format!(
@@ -907,6 +895,11 @@ fn models(fixture: &Fixture) -> Held {
     let textures: Vec<TextureAsk> = textures.into_iter().collect();
     let mut read = Vec::new();
     reader.textures(&opened.index, &textures, &mut worker, &mut read);
+    if let Some(unread) = (textures.iter()).find(|ask| !read.iter().any(|(key, _)| key == *ask)) {
+        return Err(format!(
+            "the texture {unread:?}, which a surface of a model the fixture draws with asks for, does not read"
+        ));
+    }
     for (ask, texture) in &read {
         let first = texture.levels.first().map_or(0, Vec::len);
         let whole = first == texture.format.level_bytes(texture.width, texture.height);
@@ -919,40 +912,131 @@ fn models(fixture: &Fixture) -> Held {
     Ok(())
 }
 
-/// Whether the world of `fixture` holds `rule`, and why not where it does not.
-pub fn check(fixture: &Fixture, rule: Rule) -> Result<(), String> {
-    match rule {
-        Rule::KeptLinks => kept_links(fixture),
-        Rule::ChildNamesParent => child_names_parent(fixture),
-        Rule::ParentUntilChildren => parent_until_children(fixture),
-        Rule::TimedMap => timed_map(fixture),
-        Rule::HeldMap => held_map(fixture),
-        Rule::Interior => interior(fixture),
-        Rule::List => list(fixture),
-        Rule::Columns => columns(fixture),
-        Rule::Lit => lit(fixture),
-        Rule::Caps => caps(fixture),
-        Rule::ApplyShows => apply_shows(fixture),
-        Rule::StaleGuard => stale_guard(fixture),
-        Rule::Inverse => inverse(fixture),
-        Rule::Slots => slots(fixture),
-        Rule::Streams => streams_rule(fixture),
-        Rule::Policy => policy(fixture),
-        Rule::Models => models(fixture),
+/// A feed that keeps whether every value handed to it was a number.
+struct Numbers(bool);
+
+impl Feed for Numbers {
+    fn set(&mut self, _: FeedName<'_>, value: &[f32]) {
+        self.0 &= value.iter().all(|number| number.is_finite());
     }
 }
 
-/// Every rule the world of `fixture` breaks, each with why.
-pub fn broken(fixture: &Fixture) -> Vec<(Rule, String)> {
+fn frame(fixture: &Fixture, scratch: &Path) -> Held {
+    let opened = open(fixture, scratch)?;
+    let look = opened.install.look();
+    for hour in 0..24u8 {
+        let at = Moment {
+            hour: f32::from(hour),
+            weather: fixture.scene.weather,
+        };
+        let mut fed = Numbers(true);
+        let facts = look.frame(&at, &mut fed);
+        let colours = [facts.key, facts.ambient, facts.clear];
+        let lit = (colours.iter().flatten()).all(|part| part.is_finite() && *part >= 0.0);
+        let towards = (facts.sun.length() - 1.0).abs() <= 1e-3;
+        let exposed = facts.exposure.is_finite() && facts.exposure > 0.0;
+        if !(towards && lit && exposed && fed.0) {
+            return Err(format!(
+                "at {hour} h the frame is {facts:?}, and every value fed by name is a number: {}; the sun is to be a unit vector, a colour a number not below nought and the exposure above nought",
+                fed.0
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn draws(fixture: &Fixture, scratch: &Path) -> Held {
+    let opened = open(fixture, scratch)?;
+    let scene = &fixture.scene;
+    let at = Moment::noon(scene.weather);
+    let mut told = Vec::new();
+    for eye in eyes(scene) {
+        let (_, selected) = glance(&opened, eye, scene.weather);
+        for (key, body) in &selected.bodies {
+            told.clear();
+            body.draws(&at, &mut told);
+            if told.len() != body.nodes().len() {
+                return Err(format!(
+                    "the body under the key {key:#x} holds {} node(s) and says what draws {}: a node it says nothing of draws nothing",
+                    body.nodes().len(),
+                    told.len()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn session_body(fixture: &Fixture, scratch: &Path) -> Held {
+    let opened = open(fixture, scratch)?;
+    let Some((edit, mut session)) = session(fixture, &opened)? else {
+        return Ok(());
+    };
+    let map = opened.map(edit.map)?;
+    let op = (edit.op)(&*session);
+    let applied = said("the operation does not apply", session.apply(&op))?;
+    // A session that answers no body breaks another rule, not this one.
+    let (Some(first), Some(again)) = (session.body(map), session.body(map)) else {
+        return Ok(());
+    };
+    if !Arc::ptr_eq(&first, &again) {
+        return Err(
+            "asked twice with no apply between, the session answers two bodies of the map: the driver would put the map in the forest afresh at every view".into(),
+        );
+    }
+    said(
+        "the inverse does not apply",
+        session.apply(&applied.inverse),
+    )?;
+    match session.body(map) {
+        Some(after) if Arc::ptr_eq(&first, &after) => Err(
+            "an apply changed the map and the session answers the body it answered before: the driver would not see the change".into(),
+        ),
+        _ => Ok(()),
+    }
+}
+
+/// Whether the world of `fixture` holds `rule`, and why not where it does not; its index is kept under `scratch`, which holds no file yet.
+pub fn check(fixture: &Fixture, rule: Rule, scratch: &Path) -> Result<(), String> {
+    let run: fn(&Fixture, &Path) -> Held = match rule {
+        Rule::KeptLinks => kept_links,
+        Rule::ChildNamesParent => child_names_parent,
+        Rule::ParentUntilChildren => parent_until_children,
+        Rule::TimedMap => timed_map,
+        Rule::HeldMap => held_map,
+        Rule::Interior => interior,
+        Rule::List => list,
+        Rule::Columns => columns,
+        Rule::Lit => lit,
+        Rule::Caps => caps,
+        Rule::ApplyShows => apply_shows,
+        Rule::StaleGuard => stale_guard,
+        Rule::Inverse => inverse,
+        Rule::Slots => slots,
+        Rule::Streams => streams_rule,
+        Rule::Policy => policy,
+        Rule::Models => models,
+        Rule::Frame => frame,
+        Rule::Draws => draws,
+        Rule::SessionBody => session_body,
+    };
+    run(fixture, scratch)
+}
+
+/// Every rule the world of `fixture` breaks, each with why, each rule's index kept in a folder of its own under `scratch`.
+pub fn broken(fixture: &Fixture, scratch: &Path) -> Vec<(Rule, String)> {
     let rules = Rule::ALL.into_iter();
     rules
-        .filter_map(|rule| Some((rule, check(fixture, rule).err()?)))
+        .filter_map(|rule| {
+            let broke = check(fixture, rule, &scratch.join(rule.name()));
+            Some((rule, broke.err()?))
+        })
         .collect()
 }
 
-/// Fail the test that holds `rule` where the world of `fixture` breaks it.
-pub fn hold(fixture: &Fixture, rule: Rule) {
-    if let Err(why) = check(fixture, rule) {
+/// Fail the test that holds `rule` where the world of `fixture` breaks it; its index is kept under `scratch`.
+pub fn hold(fixture: &Fixture, rule: Rule, scratch: &Path) {
+    if let Err(why) = check(fixture, rule, scratch) {
         panic!(
             "the title `{}` breaks the rule `{}`: {why}",
             fixture.title.id(),
@@ -983,6 +1067,9 @@ macro_rules! conformance_kit {
             a_map_streams_from_inside_its_box_and_nothing_streams_from_nowhere => Streams,
             the_policy_states_every_level => Policy,
             every_model_a_selection_draws_with_reads_whole => Models,
+            the_look_states_a_whole_frame_at_every_hour => Frame,
+            a_body_says_what_draws_each_of_its_nodes => Draws,
+            a_sessions_body_stands_until_the_next_apply_and_no_longer => SessionBody,
         }
     };
     (@rules $fixture:expr; $($name:ident => $rule:ident,)*) => {
@@ -991,7 +1078,8 @@ macro_rules! conformance_kit {
             fn $name() {
                 // A test named otherwise than its rule would fail under another rule's name.
                 assert_eq!(stringify!($name), $crate::kit::Rule::$rule.name());
-                $crate::kit::hold(&$fixture, $crate::kit::Rule::$rule)
+                let scratch = ::tempfile::tempdir().expect("a scratch folder");
+                $crate::kit::hold(&$fixture, $crate::kit::Rule::$rule, scratch.path())
             }
         )*
     };

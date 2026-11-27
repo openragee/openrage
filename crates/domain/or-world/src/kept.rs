@@ -20,8 +20,9 @@ pub const FORMAT: u32 = 1;
 /// The most bytes a kept file is read to.
 const MOST_BYTES: u64 = 1 << 30;
 
-/// A 64-bit FNV-1a hash, written out: the number is compared across runs and builds, which the
-/// standard library's hasher promises neither of.
+/// A 64-bit FNV-1a hash, written out.
+// The number is compared across runs and builds, which the standard library's hasher promises
+// neither of.
 #[derive(Debug, Clone, Copy)]
 pub struct Fnv(u64);
 
@@ -363,8 +364,12 @@ impl Kept {
             std::fs::create_dir_all(folder)?;
         }
         // Written beside the file and moved over it, so a write that stops leaves the old file.
+        // ⚠ Under a name of this writer's own: two writers of one name write through each other,
+        // and the one that moves the file second moves a file that is gone.
+        let thread = format!("{:?}", std::thread::current().id());
+        let thread: String = thread.chars().filter(char::is_ascii_digit).collect();
         let mut beside = file.as_os_str().to_owned();
-        beside.push(".writing");
+        beside.push(format!(".writing-{}-{thread}", std::process::id()));
         let beside = Path::new(&beside);
         let kept = std::fs::write(beside, self.seal()).and_then(|()| std::fs::rename(beside, file));
         if kept.is_err() {

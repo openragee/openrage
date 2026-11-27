@@ -556,9 +556,9 @@ differs, how a world is drawn and the order, and gives each row below its brief.
 lettered as they were written, and [the plan's table](Unified_World_Plan.md#the-order-of-work) gives
 their order: R71a stands on nothing, R71m's measures run beside it, and R71d puts GTA V behind the
 contract before R71b's move begins. A row takes the default beside its question in [the rulings
-asked](Unified_World_Plan.md#asked-of-the-owner). Nothing is built.
+asked](Unified_World_Plan.md#asked-of-the-owner). R71a is built and nothing else is.
 
-- [ ] [R71 One world for every title](#r71-one-world-for-every-title) — the plan of 2026-11-26, in the parts below; no part is started, and the GTA VI World screen and the headless GTA V world of R70 are what it starts from
+- [ ] [R71 One world for every title](#r71-one-world-for-every-title) — the plan of 2026-11-26, in the parts below; R71a is built and no other part is started, and the GTA VI World screen and the headless GTA V world of R70 are what it starts from
   - [ ] [R71a The world contract the conformance kit and the fake title](#r71a-the-world-contract-the-conformance-kit-and-the-fake-title)
   - [ ] [R71b The GTA VI world behind the contract](#r71b-the-gta-vi-world-behind-the-contract)
   - [ ] [R71c One world session one frame host and panels by capability](#r71c-one-world-session-one-frame-host-and-panels-by-capability)
@@ -10728,26 +10728,17 @@ conformance kit, a macro in the manner of `declared_gates!` that writes the same
 adapter; a fake title, so that the core is proven with no game; and architecture tests with ledgers
 ([brief](Unified_World_Plan.md#the-contract-the-kit-and-the-fake-title-r71a)).
 
-**Where it stands.** Built in `or-world`, with no game named in what was added; [the crate
-reference](../reference/Crate_Reference.md#domain-crates) describes each module under "The world
-core". The fake title passes the kit (`crates/domain/or-world/tests/the_fake_title_passes_the_kit.rs`,
-the row's own check among its tests), and a fault of the fake for each rule fails by that rule's
-name (`each_broken_fake_breaks_the_rule_it_was_built_to_break_and_no_other`). The driver is held
-by `a_held_map_is_read_once` and its neighbours, the kept file by
-`a_changed_stamp_reads_that_archive_again_and_leaves_the_others`, the language gate by
-`a_sentence_a_world_adapter_names_that_no_catalog_holds_fails_the_gate`, and the architecture by
-`the_core_names_no_game_outside_its_ledger` and `no_adapter_crate_depends_on_another_or_above_itself`.
-`with_exact_children` is gone: the forest takes `Children` from the policy.
-
-Left for the rows that follow: the world thread and reader pool around the driver
-([R71b](#r71b-the-gta-vi-world-behind-the-contract)), the render profile
-([R71f](#r71f-the-render-profile-and-the-programs-of-gta-v-legacy)), the kit's second tier over an
-install on disk, and the World panel's own `Pose`, which stands beside the core's until
-[R71c](#r71c-one-world-session-one-frame-host-and-panels-by-capability). No title's index is kept
-by the core's file yet. The built contract departs from [the plan's
-outline](Unified_World_Plan.md#the-contract) in three ways the plan is still to be mended for: a
-game is an id and no `Game`, every reader is handed the linked index, and a body is laid out from
-its entities and its lists together.
+**Where it stands.** Built in `or-world`, naming no game ([each module, the tests that hold it and
+what is left](../reference/Crate_Reference.md#domain-crates), under "The world core"). The fake
+title passes the kit (`crates/domain/or-world/tests/the_fake_title_passes_the_kit.rs`), and each
+fault of the fake breaks the one rule it was built to break
+(`each_broken_fake_breaks_the_rule_it_was_built_to_break_and_no_other`) and fails that rule's test
+by the rule's name (`every_broken_fake_fails_the_test_of_its_rule_and_the_failure_names_the_rule`). Left for
+[R71b](#r71b-the-gta-vi-world-behind-the-contract),
+[R71f](#r71f-the-render-profile-and-the-programs-of-gta-v-legacy) and
+[R71c](#r71c-one-world-session-one-frame-host-and-panels-by-capability): the world thread around
+the driver, the render profile and the World panel's own `Pose`. ⚠ The built contract departs from
+[the plan's outline](Unified_World_Plan.md#the-contract), still to be mended for it.
 
 **Depends on.** Nothing. It edits two files the local branches of R70 change, by a few lines, and
 lands before them.

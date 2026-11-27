@@ -83,6 +83,12 @@ pub(super) struct Given {
     pub(super) odd: bool,
     /// The functions whose results are among them.
     pub(super) from: Vec<FunctionKey>,
+    /// Where `kind` is a pointer only because the arguments are objects of two or more types: those types.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) objects: Vec<String>,
+    /// An argument among them is of no kind its reading says: what it holds is not known.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(super) vague: bool,
 }
 
 impl Given {
@@ -94,6 +100,7 @@ impl Given {
             lo: self.lo,
             hi: self.hi,
             odd: self.odd,
+            objects: self.objects.iter().cloned().collect(),
             ..Found::default()
         };
         for function in &self.from {
@@ -104,6 +111,15 @@ impl Given {
             }
         }
         found
+    }
+
+    /// Whether an argument among them may hold anything: one of no kind, or the result of a function whose result is of none.
+    pub(super) fn vague(&self, project: &Project) -> bool {
+        let typed = |function: &FunctionKey| {
+            let held = project.signatures.get(function);
+            held.is_some_and(|held| held.returns == 1 && held.result != Kind::Unknown)
+        };
+        self.vague || !self.from.iter().all(typed)
     }
 }
 
@@ -140,6 +156,8 @@ impl Sites {
             returned_vars: BTreeSet::new(),
             taken: BTreeSet::new(),
             given: BTreeMap::new(),
+            vague: BTreeSet::new(),
+            var_stands: HashMap::new(),
         };
         for block in &f.cfg.blocks {
             for stmt in &block.stmts {
@@ -189,9 +207,13 @@ struct Scan<'a, 'r> {
     handed: BTreeSet<FunctionKey>,
     taken: BTreeSet<FunctionKey>,
     given: BTreeMap<(FunctionKey, u32), Found>,
+    /// The parameter cells an argument of no kind is passed for.
+    vague: BTreeSet<(FunctionKey, u32)>,
     /// The natives whose result the function hands back, and the variables it returns.
     returned_natives: BTreeSet<u64>,
     returned_vars: BTreeSet<Var>,
+    /// How often each variable stands, and how often a read above says what it is read as.
+    var_stands: HashMap<Var, (u64, u64)>,
 }
 
 impl Scan<'_, '_> {
@@ -269,6 +291,7 @@ impl Scan<'_, '_> {
             Expr::AddrOf { var, .. } => {
                 self.vars.insert(*var, Usage::Mixed);
             }
+            Expr::Var(var) => self.var_stands.entry(*var).or_default().0 += 1,
             _ => {}
         }
     }
@@ -279,6 +302,9 @@ impl Scan<'_, '_> {
             Expr::Var(var) => {
                 let held = self.vars.entry(*var).or_default();
                 *held = held.join(usage);
+                if usage != Usage::Unsaid {
+                    self.var_stands.entry(*var).or_default().1 += 1;
+                }
             }
             Expr::Call {
                 callee,
@@ -377,6 +403,8 @@ impl Scan<'_, '_> {
         }
         if let Expr::Var(var) = whole(e) {
             self.returned_vars.insert(*var);
+            // Handed back, it is read as the function's result is: the project's to say.
+            self.var_stands.entry(*var).or_default().1 += 1;
         }
     }
 
@@ -414,8 +442,17 @@ impl Scan<'_, '_> {
             }
             *self.narrow.entry((key, cell)).or_insert(true) &= widened_i32(arg);
             let found = self.reader.given(arg, 0);
-            if found != Found::default() {
-                self.given.entry((key, cell)).or_default().join(&found);
+            let entry = self.given.entry((key, cell)).or_default();
+            // ⚠ No kind is not nothing: zero is a value of every kind, anything else may hold
+            // what no other argument does.
+            match found != Found::default() {
+                true => {
+                    entry.join(&found);
+                }
+                false if !matches!(arg, Expr::Const(c) if c.bits == 0) => {
+                    self.vague.insert((key, cell));
+                }
+                false => {}
             }
         }
     }
@@ -440,6 +477,15 @@ impl Scan<'_, '_> {
         declared.join(self.vars.get(&var).copied().unwrap_or_default())
     }
 
+    /// How a variable that holds a native's result is read: by its reads alone, as wide as it is.
+    fn held_as(&self, var: Var) -> Usage {
+        let info = self.head.vars.get(&var);
+        if info.is_some_and(|info| info.width == Width::Cells) {
+            return Usage::Mixed;
+        }
+        self.vars.get(&var).copied().unwrap_or_default()
+    }
+
     fn done(mut self) -> Sites {
         let kept = std::mem::take(&mut self.kept);
         for (var, key) in kept {
@@ -455,9 +501,14 @@ impl Scan<'_, '_> {
                 self.returned_natives.insert(key);
             }
             // What any code reads a global as is not said here.
+            // ⚠ Nor is what a variable that stands where nothing above reads it (an argument, a
+            // value stored, a copy) is read as, whatever kind it is declared: a `bool` passed on
+            // or stored passes on what the native gave.
+            let (stands, said) = self.var_stands.get(&var).copied().unwrap_or_default();
             let usage = match var {
                 Var::Global { .. } => Usage::Mixed,
-                var => self.kept_as(var),
+                _ if stands > said => Usage::Mixed,
+                var => self.held_as(var),
             };
             let held = self.natives.entry(key).or_default();
             *held = held.join(usage);
@@ -469,7 +520,9 @@ impl Scan<'_, '_> {
             }
         }
         let said = self.calls.into_iter();
+        let vague = self.vague;
         let gives = self.given.into_iter().map(|((to, cell), found)| Given {
+            vague: vague.contains(&(to, cell)),
             to,
             cell,
             kind: found.kind.unwrap_or(Kind::Unknown),
@@ -478,6 +531,7 @@ impl Scan<'_, '_> {
             hi: found.hi,
             odd: found.odd,
             from: found.from.into_iter().collect(),
+            objects: found.objects.into_iter().collect(),
         });
         let natives = self.natives.into_iter();
         let narrow = self
@@ -499,7 +553,7 @@ impl Scan<'_, '_> {
 }
 
 /// The parameters `f` assigns, or takes the address of, anywhere in its code.
-fn changed(f: &cfg::Function) -> BTreeSet<u32> {
+pub(super) fn changed(f: &cfg::Function) -> BTreeSet<u32> {
     let mut changed = BTreeSet::new();
     let mut note = |var: &Var| {
         if let Var::Param(n) = var {

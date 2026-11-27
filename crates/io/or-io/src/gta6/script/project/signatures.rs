@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use super::{Param, Project, Signature};
 use crate::gta6::script::cfg::{self, Terminator};
 use crate::gta6::script::ir::{
-    Callee, Const, Expr, FunctionKey, Head, Kind, Returns, Scalar, Stmt, Var, Width,
+    Callee, Const, Expr, FunctionKey, Head, Kind, Returns, Scalar, Stmt, TypeKey, Var, Width,
 };
 use crate::gta6::script::passes::types::yielded_shape;
 use crate::gta6::script::print::cells_of;
@@ -51,6 +51,8 @@ const MAX_FROM: usize = 64;
 const CLASH: u32 = u32::MAX;
 /// The runtime's own comparisons of two 16-byte handles, each handle given as two cells.
 const HANDLE_TESTS: [&str; 2] = ["System.Guid.op_Equality", "System.Guid.op_Inequality"];
+/// The base types a walk up a line of types follows: no line is that deep, and a ring of bases must end.
+const BASES: usize = 64;
 
 /// Adds the cells each function of a compiled program takes and returns, as its table states them.
 pub fn of_program(project: &mut Project, program: &Program) {
@@ -105,14 +107,16 @@ pub fn of_function(project: &mut Project, f: &cfg::Function) {
     let mut result = Kind::Unknown;
     if head.returns == Returns::Cell {
         let found = returned(f, &reader);
-        // Constants alone are of no kind, but a function that hands them on must know of them.
-        let waits = !found.from.is_empty() || found.kind.is_none();
+        // Constants alone are of no kind, but a function that hands them on must know of them;
+        // objects of several types wait on every type being known.
+        let waits = !found.from.is_empty() || found.kind.is_none() || !found.objects.is_empty();
         match (found.dead, waits) {
             (true, _) => {}
             (false, true) => {
                 open.live = true;
                 (open.lo, open.hi, open.odd) = (found.lo, found.hi, found.odd);
                 open.returned = found.from.iter().copied().collect();
+                open.objects = found.objects.iter().cloned().collect();
                 result = found.kind.clone().unwrap_or(Kind::Unknown);
             }
             (false, false) => {
@@ -120,9 +124,12 @@ pub fn of_function(project: &mut Project, f: &cfg::Function) {
                 result = kind.unwrap_or(Kind::Unknown);
             }
         }
+        open.backs = truth_backs(f, &reader, &body);
     }
 
     let groups = body.groups();
+    let changed = sites::changed(f);
+    let copied = copied_params(f);
     let mut params = Vec::new();
     let mut waiting = BTreeSet::new();
     let mut cell = 0;
@@ -137,6 +144,15 @@ pub fn of_function(project: &mut Project, f: &cfg::Function) {
             continue;
         }
         let kind = own_kind(head, cell);
+        // ⚠ What a parameter the function assigns refers to is read off every value it holds,
+        // its assignments among them, and what one it copies into another variable refers to is
+        // read off that variable's values too: what it is handed is the calls' to say
+        // (`p ??= new T()`, `t = p ?? new T()`).
+        let named = matches!(kind, Kind::Object(_) | Kind::Array(_));
+        let kind = match named && (changed.contains(&cell) || copied.contains(&cell)) {
+            true => Kind::Unknown,
+            false => kind,
+        };
         let passed = body.cells.get(cell as usize).is_some_and(Cell::only_passed);
         if kind == Kind::Unknown && passed {
             waiting.insert(cell);
@@ -151,9 +167,21 @@ pub fn of_function(project: &mut Project, f: &cfg::Function) {
         .collect();
     open.forwards.sort_unstable();
     open.forwards.dedup();
-    open.passes.clone_from(&body.forwards);
+    // ⚠ A parameter the function assigns or takes the address of passes on what it then holds,
+    // which its calls carry as an argument of their own.
+    open.passes = (body.forwards.iter())
+        .filter(|(cell, _, _)| !changed.contains(cell))
+        .copied()
+        .collect();
     open.passes.sort_unstable();
     open.passes.dedup();
+    // ⚠ A cell at or above a parameter whose address is taken may be read through that address.
+    let cells = (0u32..).zip(&body.cells);
+    let reached = |n: u32| body.lowest_param.is_some_and(|low| n >= low);
+    open.unread = cells
+        .filter(|(n, cell)| cell.mentions == 0 && !reached(*n))
+        .map(|(n, _)| n)
+        .collect();
     let sites = Sites::of(f, &reader);
     for (native, usage) in &sites.natives {
         *project.native_uses.entry(*native).or_insert(true) &= *usage == Usage::Truth;
@@ -205,10 +233,12 @@ pub fn settle(project: &mut Project) {
     }
     let shared = Shared::of(project, &open);
     results(project, &open, &shared);
+    shared::truths(project, &open, &shared);
     parameters(project, &open);
     shared::passed(project, &open, &shared);
     shared::overridden(project, &shared);
     shared::slot_results(project, &shared);
+    shared::slot_params(project, &open, &shared);
     shared::widened(project, &open, &shared);
     // ⚠ A native's result a function hands back is read as that function's result is, and is no
     // truth where a call no code names may read it.
@@ -306,6 +336,26 @@ struct Open {
     /// The natives, by key, whose result the function hands back as its own.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     returned_natives: Vec<u64>,
+    /// Where every `return` is zero, one, a truth or a result handed on, and some hands one on: the calls and slots whose results it hands on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    backs: Option<Vec<Back>>,
+    /// Where the result is a pointer to objects of two or more types alone: those types.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    objects: Vec<String>,
+    /// The parameter cells the function's code never mentions, in rising order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    unread: Vec<u32>,
+}
+
+/// A result one `return` hands on as its own.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+enum Back {
+    /// Of a call of this function.
+    Call(FunctionKey),
+    /// Of a call through this virtual slot of an object of this type.
+    Slot(TypeKey, u32),
+    /// Of nothing handed on: a truth, a zero or a one of the function's own.
+    Ground,
 }
 
 /// Puts what a signature waits on at its end, as a parameter of no cells; `false` where it cannot be written.
@@ -348,6 +398,8 @@ struct Found {
     odd: bool,
     /// The functions whose results are among them.
     from: BTreeSet<FunctionKey>,
+    /// Where `kind` is a pointer only because the cells are objects of two or more types: the names of those types; empty for any other pointer.
+    objects: BTreeSet<String>,
 }
 
 impl Found {
@@ -380,8 +432,9 @@ impl Found {
         if self.dead {
             return false;
         }
-        let clash =
-            matches!((&self.kind, &other.kind), (Some(mine), Some(theirs)) if mine != theirs);
+        let referred = referred(self, other);
+        let clash = referred.is_none()
+            && matches!((&self.kind, &other.kind), (Some(mine), Some(theirs)) if mine != theirs);
         let held = self.from.len();
         self.from.extend(other.from.iter().copied());
         if other.dead || clash || self.from.len() > MAX_FROM {
@@ -389,8 +442,13 @@ impl Found {
             return true;
         }
         let mut changed = self.from.len() != held;
-        if self.kind.is_none() && other.kind.is_some() {
+        if let Some((kind, objects)) = referred {
+            changed |= self.kind.as_ref() != Some(&kind) || self.objects != objects;
+            self.kind = Some(kind);
+            self.objects = objects;
+        } else if self.kind.is_none() && other.kind.is_some() {
             self.kind.clone_from(&other.kind);
+            self.objects.clone_from(&other.objects);
             changed = true;
         }
         let (lo, hi) = (self.lo.min(other.lo), self.hi.max(other.hi));
@@ -399,6 +457,102 @@ impl Found {
         changed |= other.odd && !self.odd;
         self.odd |= other.odd;
         changed
+    }
+
+    /// Adds what `other` says where two kinds of any sort are no kind: what the functions given a cell each read it as, of which no common base is one.
+    // ⚠ Two references read as two types ask for a type that is both, never one both are.
+    fn join_exact(&mut self, other: &Found) -> bool {
+        let differ =
+            matches!((&self.kind, &other.kind), (Some(mine), Some(theirs)) if mine != theirs);
+        if self.dead || !differ {
+            return self.join(other);
+        }
+        *self = Found::dead();
+        true
+    }
+}
+
+/// The objects a reference may be: `Some(None)` for a pointer to anything, `None` for a kind that is no object nor pointer.
+fn objects_of<'a>(
+    kind: &'a Kind,
+    objects: &'a BTreeSet<String>,
+) -> Option<Option<Vec<&'a String>>> {
+    match kind {
+        Kind::Object(name) => Some(Some(vec![name])),
+        Kind::Pointer if objects.is_empty() => Some(None),
+        Kind::Pointer => Some(Some(objects.iter().collect())),
+        _ => None,
+    }
+}
+
+/// What two references are together, where both kinds are an object or a pointer: the one type both are of, else a pointer, with every type of object the cells are where each is an object.
+fn referred(mine: &Found, theirs: &Found) -> Option<(Kind, BTreeSet<String>)> {
+    let (Some(a), Some(b)) = (&mine.kind, &theirs.kind) else {
+        return None;
+    };
+    let (a, b) = (
+        objects_of(a, &mine.objects)?,
+        objects_of(b, &theirs.objects)?,
+    );
+    let (Some(a), Some(b)) = (a, b) else {
+        return Some((Kind::Pointer, BTreeSet::new()));
+    };
+    let mut all: BTreeSet<String> = a.into_iter().cloned().collect();
+    all.extend(b.into_iter().cloned());
+    if all.len() > MAX_FROM {
+        return Some((Kind::Pointer, BTreeSet::new()));
+    }
+    if all.len() == 1 {
+        let one = all.into_iter().next()?;
+        return Some((Kind::Object(one), BTreeSet::new()));
+    }
+    Some((Kind::Pointer, all))
+}
+
+/// The kind `found` settles as: a pointer to objects of several types is the nearest type every one of them is, where the project knows one.
+fn resolved(project: &Project, found: &Found) -> Option<Kind> {
+    match &found.kind {
+        Some(Kind::Pointer) if !found.objects.is_empty() => {
+            let common = common_type(project, &found.objects);
+            Some(common.map_or(Kind::Pointer, |ty| Kind::Object(ty.to_string())))
+        }
+        kind => kind.clone(),
+    }
+}
+
+/// The nearest type every type named is: the first base of the first of them that all derive from, else the one interface they all implement.
+// ⚠ Never a type below one of them: that would say more of the objects than the code does. A
+// builtin root gives way to the one interface all implement, where there is one.
+fn common_type(project: &Project, names: &BTreeSet<String>) -> Option<TypeKey> {
+    let keys = names
+        .iter()
+        .map(|name| TypeKey::of_name(name))
+        .collect::<Option<Vec<TypeKey>>>()?;
+    let first = *keys.first()?;
+    let shared = |ty: TypeKey| keys.iter().all(|key| project.is_a(*key, ty));
+    let mut class = None;
+    let mut interfaces = BTreeSet::new();
+    let mut at = Some(first);
+    for _ in 0..BASES {
+        let Some(ty) = at else {
+            break;
+        };
+        if class.is_none() && shared(ty) {
+            if ty.builtin().is_none() {
+                return Some(ty);
+            }
+            class = Some(ty);
+        }
+        let facts = project.types.get(&ty);
+        if let Some(facts) = facts {
+            let common = facts.interfaces.iter().copied().filter(|i| shared(*i));
+            interfaces.extend(common);
+        }
+        at = facts.and_then(|facts| facts.base);
+    }
+    match interfaces.len() {
+        1 => interfaces.into_iter().next(),
+        _ => class,
     }
 }
 
@@ -670,6 +824,106 @@ fn returned(f: &cfg::Function, reader: &Reader<'_>) -> Found {
     found
 }
 
+/// The results a function of one returned cell hands on, where every `return` is zero, one, a truth, or such a result, and some `return` hands one on.
+// ⚠ What a variable returned holds counts only where nothing but its assignments writes it, as
+// the reader has it; a slot's result only as the call yields it, one cell.
+fn truth_backs(f: &cfg::Function, reader: &Reader<'_>, body: &Body) -> Option<Vec<Back>> {
+    let mut backs: BTreeSet<Back> = BTreeSet::new();
+    for block in &f.cfg.blocks {
+        let Terminator::Return(Some(e)) = &block.term else {
+            continue;
+        };
+        let mut take = |held: Vec<Back>| match held.is_empty() {
+            true => {
+                backs.insert(Back::Ground);
+            }
+            false => backs.extend(held),
+        };
+        match handed(e) {
+            Expr::Var(var) if reader.expr(e, 0).dead => {
+                for value in sealed_values(f, body, *var)? {
+                    take(truth_back(reader, value)?);
+                }
+            }
+            _ => take(truth_back(reader, e)?),
+        }
+    }
+    // ⚠ A function of its own truths alone is left to what types it: only a result handed on is
+    // proved here.
+    let handed_on = backs.iter().any(|back| *back != Back::Ground);
+    handed_on.then(|| backs.into_iter().collect())
+}
+
+/// What one value returned hands on, where it is zero, one, a truth or results handed on; `None` for anything else.
+fn truth_back(reader: &Reader<'_>, e: &Expr) -> Option<Vec<Back>> {
+    if let Expr::Call {
+        callee: Callee::Virtual { ty, slot, .. },
+        returns: None | Some(1),
+        ..
+    } = handed(e)
+    {
+        return Some(vec![Back::Slot(TypeKey::of_name(ty)?, *slot)]);
+    }
+    let found = reader.expr(e, 0);
+    let truth = matches!(found.kind, None | Some(Kind::Bool));
+    let within = 0 <= found.lo && found.hi <= 1;
+    if found.dead || !truth || !within || !found.objects.is_empty() {
+        return None;
+    }
+    Some(found.from.iter().copied().map(Back::Call).collect())
+}
+
+/// `e` under the readings that hand on its whole cell.
+fn handed(e: &Expr) -> &Expr {
+    let mut at = e;
+    for _ in 0..MAX_DEPTH {
+        match at {
+            Expr::Sugar { e: inner, .. }
+            | Expr::Cast {
+                to: Scalar::I64 | Scalar::U64,
+                e: inner,
+            } => at = &**inner,
+            _ => break,
+        }
+    }
+    at
+}
+
+/// Every value assigned to `var`, where nothing but those assignments writes it and it is a variable of one cell.
+fn sealed_values<'f>(f: &'f cfg::Function, body: &Body, var: Var) -> Option<Vec<&'f Expr>> {
+    let sealed = match var {
+        Var::Local(n) => body.lowest_local.is_none_or(|low| n < low),
+        Var::Value { .. } | Var::Stack { .. } => !body.addressed.contains(&var),
+        Var::Param(_) | Var::Global { .. } => false,
+    };
+    let one = f
+        .head
+        .vars
+        .get(&var)
+        .is_none_or(|info| info.width == Width::Cell);
+    if !sealed || !one {
+        return None;
+    }
+    let mut values = Vec::new();
+    for stmt in f.cfg.blocks.iter().flat_map(|block| &block.stmts) {
+        match stmt {
+            Stmt::Assign { target, value } if *target == var => values.push(value),
+            Stmt::AssignMany {
+                targets,
+                values: all,
+            } => {
+                let set = targets
+                    .iter()
+                    .zip(all)
+                    .filter(|(target, _)| **target == var);
+                values.extend(set.map(|(_, value)| value));
+            }
+            _ => {}
+        }
+    }
+    (!values.is_empty()).then_some(values)
+}
+
 /// The cells a function of several returns, by its `return`s; where only the functions it hands the result of can say, `open` waits on them.
 fn several(f: &cfg::Function, open: &mut Open) -> Option<u32> {
     let mut stated: Option<u32> = None;
@@ -708,6 +962,26 @@ fn own_kind(head: &Head, cell: u32) -> Kind {
     }
 }
 
+/// The parameters `f` copies whole into another variable, alone or among the values of a row.
+fn copied_params(f: &cfg::Function) -> BTreeSet<u32> {
+    let mut copied = BTreeSet::new();
+    for block in &f.cfg.blocks {
+        for stmt in &block.stmts {
+            let values = match stmt {
+                Stmt::Assign { value, .. } => std::slice::from_ref(value),
+                Stmt::AssignMany { values, .. } => values.as_slice(),
+                _ => continue,
+            };
+            for value in values {
+                if let Expr::Var(Var::Param(n)) = value {
+                    copied.insert(*n);
+                }
+            }
+        }
+    }
+    copied
+}
+
 /// How a function's code mentions one of its parameter cells.
 #[derive(Clone, Copy, Debug, Default)]
 struct Cell {
@@ -742,6 +1016,8 @@ struct Body {
     forwards: Vec<(u32, FunctionKey, u32)>,
     /// The lowest local whose address is taken.
     lowest_local: Option<u32>,
+    /// The lowest parameter cell whose address is taken: the cells from it on may be read through that address.
+    lowest_param: Option<u32>,
     /// The temporaries whose address is taken.
     addressed: HashSet<Var>,
 }
@@ -786,7 +1062,10 @@ impl Body {
                     Var::Value { .. } | Var::Stack { .. } => {
                         self.addressed.insert(*var);
                     }
-                    Var::Param(_) | Var::Global { .. } => {}
+                    Var::Param(n) => {
+                        self.lowest_param = Some(self.lowest_param.map_or(n, |low| low.min(n)));
+                    }
+                    Var::Global { .. } => {}
                 }
             }
             Expr::LoadBytes {
@@ -959,6 +1238,7 @@ fn results(project: &mut Project, open: &BTreeMap<FunctionKey, Open>, shared: &S
             lo: waits.lo,
             hi: waits.hi,
             odd: waits.odd,
+            objects: waits.objects.iter().cloned().collect(),
             ..Found::default()
         };
         kinds.insert(*key, own);
@@ -1021,7 +1301,7 @@ fn results(project: &mut Project, open: &BTreeMap<FunctionKey, Open>, shared: &S
         if waits.live {
             let found = kinds.get(key).filter(|found| !found.dead && !unsettled);
             let kind = found.and_then(|found| {
-                let kind = found.kind.clone().or_else(|| shared.read_as(key, found));
+                let kind = resolved(project, found).or_else(|| shared.read_as(key, found));
                 kind.filter(|kind| holds(kind, found))
             });
             if let Some(held) = project.signatures.get_mut(key) {
@@ -1054,7 +1334,7 @@ fn parameters(project: &mut Project, open: &BTreeMap<FunctionKey, Open>) {
                         }
                     }
                 };
-                moving |= kinds.entry((*key, *cell)).or_default().join(&theirs);
+                moving |= kinds.entry((*key, *cell)).or_default().join_exact(&theirs);
             }
         }
         if !moving {
@@ -1065,7 +1345,7 @@ fn parameters(project: &mut Project, open: &BTreeMap<FunctionKey, Open>) {
         return;
     }
     for ((key, cell), found) in kinds {
-        let (false, Some(kind)) = (found.dead, found.kind) else {
+        let (false, Some(kind)) = (found.dead, resolved(project, &found)) else {
             continue;
         };
         let Some(held) = project.signatures.get_mut(&key) else {

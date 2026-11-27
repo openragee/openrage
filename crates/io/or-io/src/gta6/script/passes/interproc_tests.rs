@@ -349,3 +349,74 @@ fn only_the_bits_of_a_value_of_the_kind_take_it() {
         "{choice:?}"
     );
 }
+
+/// The constants passed in each call through a slot, call by call, as their kind and bits.
+fn passed_through_slots(f: &cfg::Function) -> Vec<Vec<(Kind, u64)>> {
+    let mut calls = Vec::new();
+    for block in &f.cfg.blocks {
+        for stmt in &block.stmts {
+            stmt.each_expr(&mut |top: &Expr| {
+                top.walk(&mut |e| {
+                    if let Expr::Call {
+                        callee: Callee::Virtual { .. },
+                        args,
+                        ..
+                    } = e
+                    {
+                        let constants = args.iter().filter_map(|arg| match arg {
+                            Expr::Const(c) => Some((c.kind.clone(), c.bits)),
+                            _ => None,
+                        });
+                        calls.push(constants.collect());
+                    }
+                });
+            });
+        }
+    }
+    calls
+}
+
+#[test]
+fn a_constant_passed_through_a_slot_is_written_as_the_kind_its_whole_line_states() {
+    let body = "Virtual.type_00000001000000C1.Method_3(p0, 0x3F000000); return;";
+    let ty = TypeKey(0x0000_0001_0000_00C1);
+    let held = FunctionKey::new(1, 0x20);
+    let mut project = project(
+        vec![
+            Param {
+                kind: Kind::Unknown,
+                cells: 1
+            };
+            2
+        ],
+        1,
+        Kind::Unknown,
+    );
+    let facts = TypeFacts {
+        slots: BTreeMap::from([(3, held)]),
+        ..TypeFacts::default()
+    };
+    project.types.insert(ty, facts);
+    let mut f = lowered("void", body);
+    let was = passed_through_slots(&f);
+    // The one function the slot resolves to says nothing of its second parameter.
+    let done = apply(&mut f, &project);
+    assert_eq!((passed_through_slots(&f), done.consts), (was.clone(), 0));
+
+    let line = vec![
+        Param {
+            kind: Kind::Unknown,
+            cells: 1,
+        },
+        Param {
+            kind: Kind::F32,
+            cells: 1,
+        },
+    ];
+    project.slot_params.insert(held, line);
+    let mut f = lowered("void", body);
+    let done = apply(&mut f, &project);
+    let half = u64::from(0.5f32.to_bits());
+    assert_eq!(passed_through_slots(&f), [vec![(Kind::F32, half)]]);
+    assert_eq!(done.consts, 1);
+}

@@ -25,6 +25,17 @@ const DECLARATIONS: &str = r#"
             public static VmValue func_000040(VmValue p0) => Vm.Script(0x00000002U, 0x000040, 1, p0)[0];
         }
     }
+    public static class Virtual
+    {
+        public static class type_00000001000000C1
+        {
+            public static VmValue Method_3(VmValue p0, VmValue p1) => Vm.Virtual("type_00000001000000C1", 3, 1, p0, p1)[0];
+        }
+        public static class type_00000001000000D1
+        {
+            public static VmValue Method_3(VmValue p0, VmValue p1) => Vm.Virtual("type_00000001000000D1", 3, 1, p0, p1)[0];
+        }
+    }
     public static class Native
     {
         public static class DEMO
@@ -755,4 +766,239 @@ fn a_native_a_function_hands_back_is_a_truth_where_every_call_of_the_function_on
     let taken = "Native.DEMO.USE(Vm.Function(0x00000001U, 0x000020));";
     let project = project_of(&[listing(1, &functions(taken))]);
     assert_eq!(project.native_truths, BTreeSet::from([5]));
+}
+
+/// The key of the invented type `n` of program 1, as a call through a slot names it.
+fn invented(n: u64) -> TypeKey {
+    TypeKey(0x0000_0001_0000_0000 | n)
+}
+
+#[test]
+fn a_result_handed_on_from_a_slot_whose_whole_line_returns_a_truth_is_a_truth() {
+    let through = |ty: &str| format!("return Virtual.type_00000001000000{ty}.Method_3(p0, p1);");
+    let or_through = |ty: &str| format!("if (((as_u32(p0) == 0))) {{ return 0; }} {}", through(ty));
+    let functions = [
+        // The line of slot 3 of C1: a test, and an override that returns zero alone.
+        function("VmValue", 0x10, 2, "return ((as_i32(p1) < as_i32(3)));"),
+        function("VmValue", 0x20, 2, "return 0;"),
+        function("VmValue", 0x30, 2, &or_through("C1")),
+        function("VmValue", 0x40, 2, "return func_000030(p0, p1);"),
+        // The line of slot 3 of D1 counts.
+        function("VmValue", 0x50, 2, &or_through("D1")),
+        function("VmValue", 0x60, 2, "return ((as_i32(p1) + as_i32(3)));"),
+        // Zero, one, or what it returns itself.
+        function(
+            "VmValue",
+            0x70,
+            2,
+            "if (((as_u32(p0) == 0))) { return 1; } return func_000070(p0, p1);",
+        ),
+        // A truth and what a function of the line that counts hands back.
+        function(
+            "VmValue",
+            0x80,
+            2,
+            "if (((as_u32(p0) == 0))) { return ((as_i32(p1) < as_i32(3))); } return func_000050(p0, p1);",
+        ),
+    ];
+    let mut project = parts_of(&[listing(1, &functions)]);
+    project.types.insert(invented(0xC1), fills(None, 0x10));
+    project
+        .types
+        .insert(invented(0xC2), fills(Some(invented(0xC1)), 0x20));
+    project.types.insert(invented(0xD1), fills(None, 0x60));
+    settle(&mut project);
+
+    assert_eq!(result(&project, 0x20), Kind::Bool);
+    assert_eq!(project.slot_result(invented(0xC1), 3), Some(&Kind::Bool));
+    // Whichever type the object is, the call through the slot yields zero or one.
+    assert_eq!(result(&project, 0x30), Kind::Bool);
+    assert_eq!(result(&project, 0x40), Kind::Bool);
+    assert_eq!(result(&project, 0x60), Kind::I32);
+    assert_eq!(result(&project, 0x50), Kind::Unknown);
+    assert_eq!(result(&project, 0x70), Kind::Bool);
+    assert_eq!(result(&project, 0x80), Kind::Unknown);
+}
+
+/// A call of the function at `at` with a new object of the invented type `n`.
+fn given_object(at: u32, n: u64) -> String {
+    format!(
+        "func_{at:06X}(Vm.NewObject(new VmType(\"{}\")));",
+        invented(n)
+    )
+}
+
+#[test]
+fn objects_of_two_types_are_of_the_nearest_type_both_are() {
+    let caller = [
+        given_object(0x10, 0xA2),
+        given_object(0x10, 0xA3),
+        given_object(0x20, 0xA2),
+        given_object(0x20, 0xB1),
+        given_object(0x30, 0xA2),
+        "func_000030(Vm.Address(locals, 0));".to_owned(),
+        given_object(0x40, 0xA2),
+        given_object(0x40, 0xA1),
+        "return;".to_owned(),
+    ];
+    let new = |n: u64| format!("Vm.NewObject(new VmType(\"{}\"))", invented(n));
+    let either = format!(
+        "if (((as_u32(p0) == 0))) {{ return {}; }} return {};",
+        new(0xA2),
+        new(0xA3)
+    );
+    let functions = [
+        function("void", 0x10, 1, TAKES),
+        function("void", 0x20, 1, TAKES),
+        function("void", 0x30, 1, TAKES),
+        function("void", 0x40, 1, TAKES),
+        function("VmValue", 0x50, 1, &either),
+        function("void", 0x100, 0, &caller.join(" ")),
+    ];
+    let mut project = parts_of(&[listing(1, &functions)]);
+    let under = |base: Option<u64>| TypeFacts {
+        base: base.map(invented),
+        ..TypeFacts::default()
+    };
+    project.types.insert(invented(0xA1), under(None));
+    project.types.insert(invented(0xA2), under(Some(0xA1)));
+    project.types.insert(invented(0xA3), under(Some(0xA1)));
+    project.types.insert(invented(0xB1), under(None));
+    settle(&mut project);
+
+    let object = |n: u64| Kind::Object(invented(n).to_string());
+    assert_eq!(param(&project, 0x10, 0), object(0xA1));
+    // No type is both: a reference, of no type.
+    assert_eq!(param(&project, 0x20, 0), Kind::Pointer);
+    assert_eq!(param(&project, 0x30, 0), Kind::Pointer);
+    // Never the type below: an object of the base is passed too.
+    assert_eq!(param(&project, 0x40, 0), object(0xA1));
+    assert_eq!(result(&project, 0x50), object(0xA1));
+}
+
+#[test]
+fn a_parameter_some_call_hands_what_may_be_anything_is_of_no_one_objects_type() {
+    let or_made = format!(
+        "if (((as_u64(p0) == 0))) {{ p0 = Vm.NewObject(new VmType(\"{}\")); }} {TAKES}",
+        invented(0xA2)
+    );
+    let copied = format!(
+        "local_0 = p0; if (((as_u64(local_0) == 0))) {{ local_0 = Vm.NewObject(new VmType(\"{}\")); }} Native.DEMO.USE(local_0); return;",
+        invented(0xA2)
+    );
+    let caller = [
+        given_object(0x10, 0xA2),
+        // What a native hands back, through a function whose result is of no kind.
+        "func_000010(func_000040(1UL));".to_owned(),
+        given_object(0x20, 0xA2),
+        given_object(0x60, 0xA2),
+        given_object(0x70, 0xA3),
+        given_object(0x80, 0xA3),
+        "return;".to_owned(),
+    ];
+    let functions = [
+        function("void", 0x10, 1, TAKES),
+        // Passes on what it assigned its parameter, not what its callers hand it.
+        function(
+            "void",
+            0x20,
+            1,
+            "p0 = func_000040(p0); func_000050(p0); return;",
+        ),
+        function("VmValue", 0x40, 1, "return Native.DEMO.GET(p0);"),
+        function("void", 0x50, 1, TAKES),
+        function("void", 0x60, 1, TAKES),
+        // Given an object of another type, and one of its own where it is given none.
+        function("void", 0x70, 1, &or_made),
+        // Copied into a variable that holds an object of its own where it is given none.
+        function("void", 0x80, 1, &copied),
+        function("void", 0x100, 0, &caller.join(" ")),
+    ];
+    let mut project = parts_of(&[listing(1, &functions)]);
+    project.types.insert(invented(0xA2), TypeFacts::default());
+    project.types.insert(invented(0xA3), TypeFacts::default());
+    settle(&mut project);
+
+    let object = Kind::Object(invented(0xA2).to_string());
+    assert_eq!(param(&project, 0x60, 0), object);
+    assert_ne!(param(&project, 0x10, 0), object);
+    assert_ne!(param(&project, 0x50, 0), object);
+    assert_ne!(param(&project, 0x70, 0), object);
+    assert_ne!(param(&project, 0x80, 0), object);
+}
+
+#[test]
+fn references_join_to_a_pointer_and_what_the_functions_given_one_read_it_as_does_not() {
+    let object = |n: u64| Found::of(Kind::Object(invented(n).to_string()));
+    let mut both = object(0xA2);
+    assert!(both.join(&object(0xA3)));
+    assert_eq!(both.kind, Some(Kind::Pointer));
+    assert_eq!(both.objects.len(), 2);
+    assert!(!both.join(&object(0xA3)));
+    // A pointer to anything takes every type away.
+    let mut any = both.clone();
+    assert!(any.join(&Found::of(Kind::Pointer)));
+    assert_eq!((any.kind, any.objects.len()), (Some(Kind::Pointer), 0));
+    let mut same = object(0xA2);
+    assert!(!same.join(&object(0xA2)));
+    assert_eq!(same, object(0xA2));
+    // A string, an integer: as before, no kind.
+    let mut other = object(0xA2);
+    other.join(&Found::of(Kind::String));
+    assert!(other.dead);
+    // Two types two callees read a cell as are no kind.
+    let mut read = object(0xA2);
+    assert!(read.join_exact(&object(0xA3)));
+    assert!(read.dead);
+
+    let mut project = Project::default();
+    let facts = |base: Option<u64>, interfaces: &[u64]| TypeFacts {
+        base: base.map(invented),
+        interfaces: interfaces.iter().copied().map(invented).collect(),
+        ..TypeFacts::default()
+    };
+    project
+        .types
+        .insert(invented(0xE2), facts(None, &[0xF1, 0xF2]));
+    project.types.insert(invented(0xE3), facts(None, &[0xF1]));
+    project.types.insert(invented(0xE4), facts(None, &[0xF2]));
+    let names =
+        |ns: &[u64]| -> BTreeSet<String> { ns.iter().map(|n| invented(*n).to_string()).collect() };
+    // No base both derive from: the one interface both implement.
+    assert_eq!(
+        common_type(&project, &names(&[0xE2, 0xE3])),
+        Some(invented(0xF1))
+    );
+    assert_eq!(common_type(&project, &names(&[0xE3, 0xE4])), None);
+    let unnamed = BTreeSet::from(["System.Object".to_owned(), invented(0xE2).to_string()]);
+    assert_eq!(common_type(&project, &unnamed), None);
+}
+
+#[test]
+fn a_slots_parameters_are_what_every_function_of_its_line_that_mentions_them_states() {
+    let functions = [
+        function("VmValue", 0x30, 2, "return ((as_i32(p1) < 5));"),
+        function("VmValue", 0x40, 2, "return 0;"),
+        function("VmValue", 0x50, 2, "return ((as_i32(p1) < 5));"),
+        function("VmValue", 0x60, 2, "Native.DEMO.USE(p1); return 0;"),
+    ];
+    let mut project = parts_of(&[listing(1, &functions)]);
+    project.types.insert(invented(1), fills(None, 0x30));
+    project
+        .types
+        .insert(invented(2), fills(Some(invented(1)), 0x40));
+    project.types.insert(invented(3), fills(None, 0x50));
+    project
+        .types
+        .insert(invented(4), fills(Some(invented(3)), 0x60));
+    settle(&mut project);
+
+    let of = |kind: Kind| Param { kind, cells: 1 };
+    let line = [of(Kind::Unknown), of(Kind::I32)];
+    // The override reads neither cell, so what it is passed there is the method's.
+    assert_eq!(project.slot_parameters(invented(1), 3), Some(&line[..]));
+    assert_eq!(project.slot_parameters(invented(2), 3), Some(&line[..]));
+    assert_eq!(param(&project, 0x40, 1), Kind::Unknown);
+    // One reads all of its second cell, as nothing types it.
+    assert_eq!(project.slot_parameters(invented(3), 3), None);
 }

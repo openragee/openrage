@@ -3,7 +3,8 @@
 //! Works on the blocks, after the rounds of `values` and before `types`: a call of a function
 //! of the same program states the cells it yields, a reading of a result as the kind its callee
 //! proves it is goes, a variable that holds one such result takes its kind, and a constant passed
-//! for a parameter the callee's signature types is written as that kind.
+//! for a parameter the callee's signature, or the whole line of a slot called through, types is
+//! written as that kind.
 //!
 //! ⚠ Every rewrite rests on a signature of the project. A result's kind there says that each
 //! cell the callee can return is widened as that kind, which is all that makes a cast of it say
@@ -158,8 +159,7 @@ pub(crate) fn passed_constants(f: &mut cfg::Function, project: &Project) -> usiz
             let Expr::Call { callee, args, .. } = e else {
                 return;
             };
-            let held = key_of(program, callee).and_then(|key| project.signatures.get(&key));
-            let Some(held) = held.filter(|held| settled(held)) else {
+            let Some(params) = parameters_of(program, callee, project) else {
                 return;
             };
             // The cell of the callee's parameters each argument starts at, while the arguments before it say their cells.
@@ -169,8 +169,7 @@ pub(crate) fn passed_constants(f: &mut cfg::Function, project: &Project) -> usiz
                     break;
                 };
                 at = cells_of(arg, head).and_then(|cells| cell.checked_add(cells));
-                let param = param_at(held, cell).and_then(|n| held.params.get(n));
-                if let Some(kind) = param.and_then(one_kind) {
+                if let Some(kind) = starting(params, cell).and_then(one_kind) {
                     written += written_as(arg, kind, 0);
                 }
             }
@@ -185,6 +184,31 @@ pub(crate) fn passed_constants(f: &mut cfg::Function, project: &Project) -> usiz
         }
     }
     written
+}
+
+/// The parameters a call passes, where the project states them: by the callee's settled signature, or for a slot's call by what its whole line agrees on.
+// ⚠ A slot's call reaches any function of the slot's line: one function's signature is not the call's.
+fn parameters_of<'p>(program: u32, callee: &Callee, project: &'p Project) -> Option<&'p [Param]> {
+    if let Callee::Virtual { ty, slot, .. } = callee {
+        return project.slot_parameters(TypeKey::of_name(ty)?, *slot);
+    }
+    let held = project.signatures.get(&key_of(program, callee)?)?;
+    settled(held).then_some(held.params.as_slice())
+}
+
+/// The parameter of `params` that starts at cell `cell` of a function's parameters.
+fn starting(params: &[Param], cell: u32) -> Option<&Param> {
+    let mut at = 0u32;
+    for param in params {
+        if at == cell && param.cells > 0 {
+            return Some(param);
+        }
+        at = at.checked_add(param.cells)?;
+        if at > cell {
+            return None;
+        }
+    }
+    None
 }
 
 /// Gives the constants an argument comes to the kind `kind`, where each is a value of it; returns how many took it.

@@ -4,9 +4,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{holds, number, param_at, settled, Found, Open, Usage, MAX_PARAMS, ROUNDS};
+use super::{
+    holds, number, param_at, resolved, settled, Back, Found, Open, Usage, MAX_PARAMS, ROUNDS,
+};
 use crate::gta6::script::ir::{FunctionKey, Kind};
-use crate::gta6::script::project::Project;
+use crate::gta6::script::project::{Param, Project, Signature};
 
 /// What is gathered over the whole project before any signature takes a kind from another.
 pub(super) struct Shared {
@@ -101,6 +103,214 @@ pub(super) fn slot_results(project: &mut Project, shared: &Shared) {
             project.slot_results.insert(*member, kind.clone());
         }
     }
+}
+
+/// The functions a virtual slot holds, by line: under the least function of each.
+fn lines(shared: &Shared) -> BTreeMap<FunctionKey, Vec<FunctionKey>> {
+    let mut lines: BTreeMap<FunctionKey, Vec<FunctionKey>> = BTreeMap::new();
+    for (member, root) in &shared.roots {
+        lines.entry(*root).or_default().push(*member);
+    }
+    lines
+}
+
+/// Gives the result `bool` to each function nothing else has typed whose every `return` is zero, one, a truth, or the result of a function or a slot so proved.
+// The largest set that holds, found by taking out what fails until nothing does: every value a
+// function so kept returns comes, down a finite chain of calls, from a truth, a zero or a one. A
+// slot's result is so where every function of its line is, whichever the object's type.
+pub(super) fn truths(project: &mut Project, open: &BTreeMap<FunctionKey, Open>, shared: &Shared) {
+    let facts: &Project = project;
+    let one = |key: &FunctionKey| {
+        let held = facts.signatures.get(key);
+        held.filter(|held| settled(held) && held.returns == 1)
+    };
+    let proved = |key: &FunctionKey| one(key).is_some_and(|held| held.result == Kind::Bool);
+    let lines = lines(shared);
+    // Each function that may be so, with the functions and the lines, by their least, it rests on.
+    let mut rests: BTreeMap<FunctionKey, (Vec<FunctionKey>, Vec<FunctionKey>)> = BTreeMap::new();
+    // The functions with a truth, a zero or a one of their own among what they return.
+    let mut grounds: BTreeSet<FunctionKey> = BTreeSet::new();
+    for (key, waits) in open {
+        let Some(backs) = &waits.backs else {
+            continue;
+        };
+        let open_result = |held: &Signature| matches!(held.result, Kind::Unknown | Kind::Bool);
+        let untyped = one(key).is_some_and(open_result);
+        let (mut calls, mut slots, mut whole) = (Vec::new(), Vec::new(), untyped);
+        if backs.contains(&Back::Ground) {
+            grounds.insert(*key);
+        }
+        for back in backs {
+            match back {
+                Back::Ground => {}
+                Back::Call(callee) => calls.push(*callee),
+                Back::Slot(ty, slot) => {
+                    let held = facts.slot(*ty, *slot);
+                    match held.and_then(|held| shared.roots.get(&held)) {
+                        Some(root) => slots.push(*root),
+                        None => whole = false,
+                    }
+                }
+            }
+        }
+        if whole {
+            rests.insert(*key, (calls, slots));
+        }
+    }
+    let mut dead_lines: BTreeSet<FunctionKey> = BTreeSet::new();
+    for (root, members) in &lines {
+        let lost = |member: &FunctionKey| !rests.contains_key(member) && !proved(member);
+        if members.iter().any(lost) {
+            dead_lines.insert(*root);
+        }
+    }
+    let mut callers: BTreeMap<FunctionKey, Vec<FunctionKey>> = BTreeMap::new();
+    let mut users: BTreeMap<FunctionKey, Vec<FunctionKey>> = BTreeMap::new();
+    for (key, (calls, slots)) in &rests {
+        for callee in calls {
+            callers.entry(*callee).or_default().push(*key);
+        }
+        for root in slots {
+            users.entry(*root).or_default().push(*key);
+        }
+    }
+    // Each function is taken out once, and each line lost once: every push follows one of those.
+    let mut out: BTreeSet<FunctionKey> = BTreeSet::new();
+    let mut queue: Vec<FunctionKey> = rests.keys().copied().collect();
+    while let Some(key) = queue.pop() {
+        let Some((calls, slots)) = rests.get(&key).filter(|_| !out.contains(&key)) else {
+            continue;
+        };
+        let lost = |callee: &FunctionKey| match rests.contains_key(callee) {
+            true => out.contains(callee),
+            false => !proved(callee),
+        };
+        let fails = calls.iter().any(lost) || slots.iter().any(|root| dead_lines.contains(root));
+        if !fails {
+            continue;
+        }
+        out.insert(key);
+        queue.extend(callers.get(&key).into_iter().flatten().copied());
+        if let Some(root) = shared.roots.get(&key) {
+            if dead_lines.insert(*root) {
+                queue.extend(users.get(root).into_iter().flatten().copied());
+            }
+        }
+    }
+    // ⚠ The largest set also holds functions that only hand each other's results on, which
+    // return nothing: only those a value of their own or a proved function reaches down their
+    // calls and lines are so, the least set that holds.
+    let mut reached: BTreeSet<FunctionKey> = BTreeSet::new();
+    let mut lines_reached: BTreeSet<FunctionKey> = BTreeSet::new();
+    for (root, members) in &lines {
+        if members
+            .iter()
+            .any(|member| !rests.contains_key(member) && proved(member))
+        {
+            lines_reached.insert(*root);
+        }
+    }
+    let seeded = |key: &FunctionKey, calls: &[FunctionKey], slots: &[FunctionKey]| {
+        let outside = |callee: &FunctionKey| !rests.contains_key(callee) && proved(callee);
+        grounds.contains(key)
+            || calls.iter().any(outside)
+            || slots.iter().any(|root| lines_reached.contains(root))
+    };
+    let mut queue: Vec<FunctionKey> = (rests.iter())
+        .filter(|(key, (calls, slots))| !out.contains(key) && seeded(key, calls, slots))
+        .map(|(key, _)| *key)
+        .collect();
+    // Each function is reached once, and each line once: every push follows one of those.
+    while let Some(key) = queue.pop() {
+        if out.contains(&key) || !reached.insert(key) {
+            continue;
+        }
+        queue.extend(callers.get(&key).into_iter().flatten().copied());
+        if let Some(root) = shared.roots.get(&key) {
+            if lines_reached.insert(*root) {
+                queue.extend(users.get(root).into_iter().flatten().copied());
+            }
+        }
+    }
+    let kept: Vec<FunctionKey> = rests
+        .into_keys()
+        .filter(|key| reached.contains(key))
+        .collect();
+    for key in kept {
+        let held = project.signatures.get_mut(&key);
+        if let Some(held) = held.filter(|held| held.result == Kind::Unknown) {
+            held.result = Kind::Bool;
+        }
+    }
+}
+
+/// Notes for each function a virtual slot holds the parameters a call through the slot passes: each of the kind every function of its line that mentions it states, where all state one.
+// ⚠ A function that mentions a cell and types it nothing reads all of it: the line then states
+// no kind there. One that never mentions the cell reads none of it, whatever is passed.
+pub(super) fn slot_params(
+    project: &mut Project,
+    open: &BTreeMap<FunctionKey, Open>,
+    shared: &Shared,
+) {
+    for members in lines(shared).values() {
+        let Some(params) = line_params(project, open, members) else {
+            continue;
+        };
+        if params.iter().all(|param| param.kind == Kind::Unknown) {
+            continue;
+        }
+        for member in members {
+            project.slot_params.insert(*member, params.clone());
+        }
+    }
+}
+
+/// The parameters every function of one line takes alike, each of the kind all that mention it state; `None` where they take them otherwise.
+fn line_params(
+    project: &Project,
+    open: &BTreeMap<FunctionKey, Open>,
+    members: &[FunctionKey],
+) -> Option<Vec<Param>> {
+    let mut held = Vec::with_capacity(members.len());
+    for member in members {
+        let signature = project
+            .signatures
+            .get(member)
+            .filter(|held| settled(held))?;
+        let unread = open.get(member).map(|waits| waits.unread.as_slice());
+        held.push((signature, unread.unwrap_or_default()));
+    }
+    let (first, _) = held.first()?;
+    let shape: Vec<u32> = first.params.iter().map(|param| param.cells).collect();
+    let alike = |signature: &&Signature| {
+        let cells = signature.params.iter().map(|param| param.cells);
+        cells.eq(shape.iter().copied())
+    };
+    if !held.iter().all(|(signature, _)| alike(signature)) {
+        return None;
+    }
+    let mut params = Vec::with_capacity(shape.len());
+    let mut cell = 0u32;
+    for (n, cells) in shape.iter().copied().enumerate() {
+        let mut kind: Option<&Kind> = None;
+        let mut agree = true;
+        for (signature, unread) in &held {
+            if cells == 1 && unread.binary_search(&cell).is_ok() {
+                continue;
+            }
+            let theirs = signature.params.get(n).map(|param| &param.kind);
+            let differs = kind.is_some_and(|mine| Some(mine) != theirs);
+            if theirs.is_none_or(|theirs| *theirs == Kind::Unknown) || differs {
+                agree = false;
+                break;
+            }
+            kind = theirs;
+        }
+        let kind = kind.filter(|_| agree).cloned().unwrap_or(Kind::Unknown);
+        params.push(Param { kind, cells });
+        cell = cell.checked_add(cells)?;
+    }
+    Some(params)
 }
 
 /// Notes for each function the parameter cells every call of it passes an `int` widened by its sign: an argument so by its form, or a parameter cell of the caller so proved.
@@ -289,11 +499,25 @@ fn untyped(project: &Project, key: &FunctionKey, cell: u32) -> bool {
 // passed on takes what that one is, so the kinds run both ways along a chain of calls until
 // nothing changes. Two kinds anywhere along it are no kind.
 // ⚠ A function a slot or a delegate reaches takes nothing from the calls that name it.
+// ⚠ Every way a value arrives counts: a call whose arguments state no cells, or a caller whose
+// calls were not read, says nothing of its callee, and an argument of no kind may be anything.
 pub(super) fn passed(project: &mut Project, open: &BTreeMap<FunctionKey, Open>, shared: &Shared) {
     let facts: &Project = project;
-    let takes =
-        |key: &FunctionKey, cell: u32| !shared.blind.contains(key) && untyped(facts, key, cell);
+    let mut killed: BTreeSet<FunctionKey> = BTreeSet::new();
+    for waits in open.values() {
+        let unsaid = waits.narrow.iter().filter(|(_, cell, _)| *cell == u32::MAX);
+        killed.extend(unsaid.map(|(to, _, _)| *to));
+    }
+    for (caller, callees) in &facts.calls {
+        if !open.contains_key(caller) {
+            killed.extend(callees.iter().copied());
+        }
+    }
+    let takes = |key: &FunctionKey, cell: u32| {
+        !shared.blind.contains(key) && !killed.contains(key) && untyped(facts, key, cell)
+    };
     let mut kinds: BTreeMap<(FunctionKey, u32), Found> = BTreeMap::new();
+    let mut vague: BTreeSet<(FunctionKey, u32)> = BTreeSet::new();
     for waits in open.values() {
         for given in &waits.gives {
             if takes(&given.to, given.cell) {
@@ -302,6 +526,9 @@ pub(super) fn passed(project: &mut Project, open: &BTreeMap<FunctionKey, Open>, 
                     .entry((given.to, given.cell))
                     .or_default()
                     .join(&found);
+                if given.vague(facts) {
+                    vague.insert((given.to, given.cell));
+                }
             }
         }
     }
@@ -322,13 +549,16 @@ pub(super) fn passed(project: &mut Project, open: &BTreeMap<FunctionKey, Open>, 
                 if let Some(theirs) = is(&kinds, key, *cell) {
                     moving |= kinds.entry((*callee, *at)).or_default().join(&theirs);
                 }
+                if vague.contains(&(*key, *cell)) && stated(facts, key, *cell).is_none() {
+                    moving |= vague.insert((*callee, *at));
+                }
             }
             for (cell, callee, at) in &waits.forwards {
                 if !untyped(facts, key, *cell) {
                     continue;
                 }
                 if let Some(theirs) = is(&kinds, callee, *at) {
-                    moving |= kinds.entry((*key, *cell)).or_default().join(&theirs);
+                    moving |= kinds.entry((*key, *cell)).or_default().join_exact(&theirs);
                 }
             }
         }
@@ -340,10 +570,13 @@ pub(super) fn passed(project: &mut Project, open: &BTreeMap<FunctionKey, Open>, 
         return;
     }
     for ((key, cell), found) in kinds {
-        let kind = found
-            .kind
-            .clone()
-            .filter(|kind| !found.dead && holds(kind, &found));
+        let kind = resolved(project, &found).filter(|kind| !found.dead && holds(kind, &found));
+        // What may be anything beside objects of a type is a reference of no type.
+        let named = matches!(kind, Some(Kind::Object(_) | Kind::Array(_)));
+        let kind = match named && vague.contains(&(key, cell)) {
+            true => Some(Kind::Pointer),
+            false => kind,
+        };
         let (Some(kind), Some(held)) = (kind, project.signatures.get_mut(&key)) else {
             continue;
         };

@@ -61,7 +61,9 @@ was.
   `interproc`, `aggregates` fold temporaries into their uses, forward stores to loads, merge
   copies and carry signatures across calls. A call through a virtual slot yields the kind every
   function the slot holds down its line of types proves, and none where one of them proves
-  nothing.
+  nothing. `wide-joins` makes a value of several cells carried to a join in a row of one-cell
+  temporaries one variable, and `repeats` sends a test that repeats the one its block was
+  entered by the way that one went.
 - **Kinds**: `types`, `kinds`, `signs` give a variable a declared type where every read and write
   agrees; a variable of no proved kind is declared `Cell`, and a 32-bit reading of it is written
   as a cast. A field of one byte that every program only ever stores a truth to and only tests
@@ -70,14 +72,17 @@ was.
   compared with `null`. A variable every
   assignment of which makes an array is an array of that element type. A value of two cells that
   the code only takes from natives, compares and hands back to them is declared `Handle`, a word
-  the header explains. A value of several cells that a `box<T>` of it, or a method of the value
+  the header explains. A value of several cells that an instruction storing, making or unboxing
+  the whole value names, a `box<T>` of it, or a method of the value
   type `T` called on its address, or a builtin's constructor handed its address, names is of type
   `T`, and bytes taken out of a whole variable
   are its field, read as the unsigned number they make up. A parameter every call of which, from
   functions that every call names, passes an `int` widened by its sign is read as an `int`. A
   constant of no proved kind whose bits are those of a round float keeps its bits and has the
   float written beside it as a comment, `0x3F800000 /* 1.0f */`: the bits alone prove no kind.
-- **Statements**: `structure`, `gotos`, `switch-on`, `for`.
+- **Statements**: `structure`, `gotos`, `switch-on`, `for`, `conditions`. `conditions` writes a
+  truth chosen by an `if` as one condition, `x = a && b`, and an `if` alone inside another as
+  `if (a && b)`.
 - **Names**: `names`, `hash-text`, `native-params`, `role-names`. `hash-text` writes a constant
   as the text of its hash only in a cell a user's list says holds hashes; a variable handed to
   such a cell holds hashes, so the labels of a switch on it are written as texts too.
@@ -92,22 +97,28 @@ was.
   line of types. `script
   export` reads every program's code a second time once the project is settled, so that the
   accesses through such variables and through a member's receiver add to the layouts too. Two
-  whole variables compared byte by byte are compared with `==`.
+  whole variables compared byte by byte are compared with `==`. `properties` writes a call of a
+  runtime type's accessor `get_X` or `set_X` on its receiver as `x.X` and `x.X = v`; a script's
+  own function of such a name stays the method it is, declared and called as one.
 - **Compiler expansions**: `await` reads a kick-off and the step function it calls as one
-  method, `async Task<T>` where its state machine gives the task a value and `async void`
-  otherwise, and writes what is awaited in place, `await f(a)`, where the variable it was kept in
+  method, `async Task<T>` where its state machine gives the task a value, `async Task` where the
+  kick-off hands back its builder's task and `async void` otherwise, and writes what is awaited in place, `await f(a)`, where the variable it was kept in
   is used nowhere else; `lambdas`, `delegates`, `events`, `foreach`, `using`, `lock`,
-  `compound`, `initialisers`, `null-ops`, `concat`, `ref-out`. A lambda whose body is one value or
-  a few statements, bound once and outside every loop, is written as `=>` where it is bound; any
-  other is written by its function's name. `events`, `concat`, `using` and `lock` read a call
-  only by the name a user's list gives it, so without such a list they rebuild nothing. An
-  address handed to a call is written `ref x` only where it is proved to reach `x` alone, and
-  `&x` otherwise. `boxing` writes `object.Equals(box<T>(a), box<T>(b))` as `a == b` for a type
-  whose values are equal exactly where their bits are (never a float), and
+  `compound`, `initialisers`, `null-ops`, `concat`, `ref-out`. A lambda bound once and outside
+  every loop, whose body jumps nowhere back, is written as `=>` where it is bound, whatever its
+  length; any other is written by its function's name. `events`, `concat`, `using` and `lock`
+  read a call only by the name a user's list gives it, so without such a list they rebuild
+  nothing. An
+  address handed to a call is written `ref x` where the callee is proved to reach `x` alone and
+  keep no address, `out x` where it is also proved to write every byte of `x` before it reads any,
+  on every way through (a variable made zero just before such a call as `F(out var x)`), and `&x`
+  otherwise. A head keeps such a parameter a pointer: no caller is seen where a head is written.
+  `boxing` writes `object.Equals(box<T>(a), box<T>(b))` as `a == b` for a type whose values are
+  equal exactly where their bits are (never a float), and
   `Convert.ToInt32(box<T>(x))` as `(int)x` where no value of `T` lies past an `int`'s range. A
   clear of every byte of a variable is written `x = default;`.
 
-These names are accepted and rebuild nothing yet: `properties`, `iterators`, `wait`,
+These names are accepted and rebuild nothing yet: `iterators`, `wait`,
 `local-functions`, `nullable`, `tuples`, `try`. Their constructs print in the lower form.
 
 ## The project
@@ -138,6 +149,8 @@ lists named things; `disasm` and the facts of a program consult no list.
 | Names list (`--names`) | one `0xHASH name` a line, or a tab-separated table under a row of column names | types, programs, modules, methods, fields, and the text of hash constants |
 | Word list (`--names`) | one word a line with no hash | candidates: a word names a type, a field or a module only where its own hash is the one the program holds, and a method only while the list is short enough that a chance match of a 32-bit hash is unlikely |
 | Handler table (`--names`) | a table whose first columns are `hash` and `rva` | the hash of the native at each handler address, which is how a natives list reaches a compiled program |
+| Function rows (`--names`) | one `program:offset Name` a line; the program as a hash of up to eight digits, as `program_` and its eight digits, or by its name; the offset in hex after `0x` or `func_` | a function, on trust |
+| Enum members (`--names`) | a table under the columns `enum_type_hash64`, `member` and `value` | a value of an enum, under either reading of its sign |
 
 A row whose hash is the hash of its name proves itself and names whatever that hash function
 names; any other row is the user's own label. A type's record hashes its full runtime name, so a
@@ -149,9 +162,14 @@ other mark is counted and not written. Without `--names`, the command line reads
 a file whose name starts with `natives` is a natives list where it reads as one and a names list
 otherwise, any other file a names list where it reads as one and a natives list otherwise, and a
 file that reads as neither is said on stderr and passed over. A file whose name starts with a dot
-and `project.json` are no lists. The app reads the same folder by the same rule, except that it
-also tries a file that holds JSON as a natives list first, and it takes a `project.json` from that
-folder where none lies beside the script.
+and `project.json` are no lists. A file whose name holds `candidate` holds guesses, whose rows a
+loader cannot tell from proved ones, so the folder passes it over and says so; `--names` reads it.
+A list every row of which proves itself by its hash is read before every other list of the
+folder, so that where a label given on trust and a proof name one hash differently, the label's
+list is the one refused. The first lines of a source name each list read with how many hashes,
+cells, indices, functions or words it named that no list before it did. The app reads the same folder by the same rules,
+except that it also tries a file that holds JSON as a natives list first, and it takes a
+`project.json` from that folder where none lies beside the script.
 
 ## What cannot be recovered
 
@@ -208,6 +226,8 @@ with the key snapshot `rpf9` takes).
 | `script list <archive.rpf>` | the programs an archive holds |
 | `script export <build\|archive\|folder> [-o <folder>]` | every program, with its project |
 | `script passes` | the passes and their levels |
+| `script names-search <program\|folder>... [--words <file>]... [-o <file>]` | a names list of the type, field and program names a word search proves, each by two hashes of the name |
+| `script natives --unnamed <program\|folder>... [--project <file>]` | each native no list names, with its calls and the kinds of their arguments, so that a list can be written where it names most |
 | `script lifted <listing.ysc.cs>` | source from a lifted listing |
 | `script compiled <file>` | the instruction listing read with none of the program's tables |
 
@@ -223,7 +243,14 @@ says which. A program with more than a mebibyte of code opens with its `main` al
 picking another function in the outline decompiles it, and the inspector offers every function.
 A decompile asked again, at another level or with more functions, runs on a thread of its own:
 the inspector counts the functions written, and **Stop decompiling** stops it after the one it is
-writing, the script keeping the source it had. The text editor shows the
+writing, the script keeping the source it had. A decompile another one replaces, or whose script
+is closed, is stopped too. A script read from an archive and decompiled alone offers **Build
+project from this archive**: on a thread of its own it reads every program of that archive and
+of the archives nested in it, builds their project as `script export` does, writes it as the
+names folder's `project.json` in place of the one there, and decompiles the script again with
+it; the inspector counts the programs found and read, and **Stop building the project** stops it
+before anything is written. A function picked in the outline while the project is being built is
+not decompiled: pick it again once the build is done. The text editor shows the
 source with highlighting, **Go to definition** and **Find references** follow the name under the
 caret within the script, the outline lists its classes and functions, and the inspector states
 the program's facts, the lists that named things, the level, and the instructions of the function

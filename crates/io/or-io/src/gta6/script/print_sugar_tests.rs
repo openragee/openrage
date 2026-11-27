@@ -113,15 +113,15 @@ fn an_object_made_constructed_and_filled_is_one_new() {
     // Without `initialisers` the fields are the stores they are, and without `constructors`
     // the group is every statement it holds: the way back.
     let stored = "    Cell local_0 = new type_00000000000000AB(p0);
-    local_0->f_18 = p0;
-    local_0->f_10 = -1;
+    local_0.f_18 = p0;
+    local_0.f_10 = -1;
     DEMO.USE(local_0);
 ";
     assert_eq!(lines(&[Pass::Initialisers], constructed()), stored);
     let apart = "    Cell local_0 = new type_00000000000000AB();
     func_000100(local_0, p0);
-    local_0->f_18 = p0;
-    local_0->f_10 = -1;
+    local_0.f_18 = p0;
+    local_0.f_10 = -1;
     DEMO.USE(local_0);
 ";
     assert_eq!(lines(&[Pass::Constructors], constructed()), apart);
@@ -198,8 +198,8 @@ fn a_store_that_is_no_field_of_the_object_leaves_the_stores_statements() {
     let body = vec![group(Group::Construct, parts), used(vec![local(0)])];
     let expected = "    Cell local_1;
     Cell local_0 = new type_00000000000000AB(p0);
-    local_0->f_18 = p0;
-    local_1->f_18 = p0;
+    local_0.f_18 = p0;
+    local_1.f_18 = p0;
     DEMO.USE(local_0);
 ";
     assert_eq!(lines(&[], body), expected);
@@ -342,11 +342,11 @@ fn a_statement_that_works_on_the_place_it_writes_is_a_compound_assignment() {
     let flagged = store(StoreKind::U64, param(0), 0x30, or(field(0x30)));
     assert_eq!(
         lines(&[], compound(flagged.clone())),
-        "    p0->f_30 |= 1024;\n"
+        "    p0.f_30 |= 1024;\n"
     );
     assert_eq!(
         lines(&[Pass::Compound], compound(flagged)),
-        "    p0->f_30 = p0->f_30 | 1024;\n"
+        "    p0.f_30 = p0.f_30 | 1024;\n"
     );
 
     let shifted = Expr::Binary {
@@ -359,7 +359,7 @@ fn a_statement_that_works_on_the_place_it_writes_is_a_compound_assignment() {
     let narrow = store(StoreKind::I32, param(0), 0x10, shifted);
     assert_eq!(
         lines(&[], compound(narrow)),
-        "    p0->f_10 = (int)p0->f_10 << 2;\n"
+        "    p0.f_10 = (int)p0.f_10 << 2;\n"
     );
 
     let stepped = |at: Expr| Expr::Binary {
@@ -373,15 +373,15 @@ fn a_statement_that_works_on_the_place_it_writes_is_a_compound_assignment() {
         lines(&[], compound(step)),
         "    Cell local_0;\n    local_0++;\n"
     );
-    // ⚠ `p0->f_30++` is the step of an `int` there: a whole cell stepped says `+= 1`.
+    // ⚠ `p0.f_30++` is the step of an `int` there: a whole cell stepped says `+= 1`.
     let counted = store(StoreKind::U64, param(0), 0x30, stepped(field(0x30)));
-    assert_eq!(lines(&[], compound(counted)), "    p0->f_30 += 1;\n");
+    assert_eq!(lines(&[], compound(counted)), "    p0.f_30 += 1;\n");
 
     // ⚠ Another place on the left of the operator is no compound assignment.
     let other = store(StoreKind::U64, param(0), 0x30, or(field(0x38)));
     assert_eq!(
         lines(&[], compound(other)),
-        "    p0->f_30 = p0->f_38 | 1024;\n"
+        "    p0.f_30 = p0.f_38 | 1024;\n"
     );
     // ⚠ Nor is an address that calls: the one statement would call once where the two call twice.
     let got = || native("GET", vec![]);
@@ -664,7 +664,7 @@ fn an_await_and_a_yield_are_written_as_what_they_take_and_give() {
     };
     let body = || vec![sugar(awaited()), used(vec![local(2)])];
     let whole = "    Cell local_1, local_2;
-    local_2 = await p0;
+    local_2 = await func_000100(p0);
     DEMO.USE(local_2);
 ";
     assert_eq!(lines(&[], body()), whole);
@@ -874,7 +874,7 @@ fn an_expression_reads_as_its_construct_only_under_its_pass() {
             Expr::sugar(ExprSugar::NullConditional, select(field, null())),
             Pass::NullOps,
             "local_0?.f_10",
-            "local_0 != 0 ? local_0->f_10 : null",
+            "local_0 != 0 ? local_0.f_10 : null",
         ),
         (
             Expr::sugar(ExprSugar::Lambda, own),
@@ -913,7 +913,7 @@ fn an_expression_reads_as_its_construct_only_under_its_pass() {
     // ⚠ A narrower reading of nothing would not be null: only a field read whole is `?.`.
     let narrow = load(Scalar::I32, local(0), 0x10);
     let read = Expr::sugar(ExprSugar::NullConditional, select(narrow, null()));
-    let chosen = "local_0 != 0 ? (int)local_0->f_10 : null";
+    let chosen = "local_0 != 0 ? (int)local_0.f_10 : null";
     assert_eq!(text(&[], &head, read), chosen);
     // A conversion is the cast it is in C#.
     let unboxed = intrinsic("unbox<System.Int32>", vec![local(0)]);
@@ -980,7 +980,8 @@ fn a_field_stored_through_a_field_read_as_one_is_written_with_a_dot_as_its_load_
     );
     let body = vec![group(Group::Field { owner: inner }, vec![raw])];
     let written = lines_in(head, &Names::default(), Options::default(), body);
-    assert_eq!(written, "    p0->f_8->f_18 = p1;\n");
+    // The first hop is through a variable of one cell, the second through what it held.
+    assert_eq!(written, "    p0.f_8->f_18 = p1;\n");
 }
 
 /// A function that makes a closure object in `local_0`, keeps `p0` in it, and binds the function at 0x200 of its program to it in `local_1`.
@@ -1041,8 +1042,8 @@ fn a_lambda_is_written_where_it_is_bound_with_the_object_it_reads_named_as_the_b
 void func_000040(Cell p0)
 {
     Cell local_0 = new type_00000000000000AB();
-    local_0->f_8 = p0;
-    Cell local_1 = (Cell p1) => DEMO.USE(local_0->f_8, p1);
+    local_0.f_8 = p0;
+    Cell local_1 = (Cell p1) => DEMO.USE(local_0.f_8, p1);
     DEMO.USE(local_1);
 }
 ";
@@ -1054,7 +1055,7 @@ void func_000040(Cell p0)
     let block = "    Cell local_1 = (Cell p1) =>
     {
         DEMO.USE(p1);
-        local_0->f_8 = p1;
+        local_0.f_8 = p1;
     };
     DEMO.USE(local_1);
 ";
@@ -1207,4 +1208,60 @@ fn a_field_the_project_proves_a_bool_is_read_and_tested_as_one() {
     // A byte of no proved kind is read as the byte it is.
     let text = written_in(&function_of(head(), body), &at(&names, Level::Source));
     assert!(text.contains("(byte)p0.f_10 != 0"), "{text}");
+}
+
+#[test]
+fn a_constant_stored_to_a_field_of_an_enum_is_the_member_a_list_names_for_it() {
+    use crate::gta6::script::project::TypeFacts;
+    let (owner, mode) = (TypeKey(0xAB), TypeKey(0xE1));
+    let mut project = Project::default();
+    let facts = TypeFacts {
+        byte_size: 4,
+        flags: 0x08,
+        constants: vec![1, 2, 5],
+        ..TypeFacts::default()
+    };
+    project.types.insert(mode, facts);
+    let field = FieldFacts {
+        offset: 0x10,
+        bytes: 4,
+        kind: Kind::Value {
+            ty: mode.to_string(),
+            cells: 1,
+        },
+    };
+    project.fields.insert(owner, vec![field]);
+    let mut names = Names::default();
+    names.types.insert(mode.0, "ZqMode".to_owned());
+    names.enum_members.insert((mode, 2), "zqSecond".to_owned());
+    let stored = |value: i32| {
+        let set = store(StoreKind::I32, param(0), 0x10, int(value));
+        vec![group(Group::Field { owner }, vec![set])]
+    };
+    let written = |value: i32, options: Options| {
+        let cx = Context::new(&names, &project, options);
+        written_in(&function_of(head(), stored(value)), &cx)
+    };
+    let text = written(2, Options::default());
+    assert!(text.contains("    p0.f_10 = ZqMode.zqSecond;\n"), "{text}");
+    // A value no list names a member of, and any value with `kinds` off, is the number it is.
+    let text = written(5, Options::default());
+    assert!(text.contains("    p0.f_10 = 5;\n"), "{text}");
+    let text = written(2, Options::default().without(Pass::Kinds));
+    assert!(text.contains("    p0.f_10 = 2;\n"), "{text}");
+}
+
+#[test]
+fn a_field_of_a_variables_own_bytes_is_written_as_the_place_they_are() {
+    let owner = TypeKey(0x0000_0001_0000_00AB);
+    let load = Expr::Load {
+        ty: Scalar::U64,
+        addr: Box::new(Expr::AddrOf {
+            var: Var::Local(0),
+            cell: 0,
+        }),
+        offset: 0x18,
+    };
+    let field = Expr::sugar(ExprSugar::Field { owner }, load);
+    assert_eq!(text(&[], &head(), field), "(&local_0)->f_18");
 }

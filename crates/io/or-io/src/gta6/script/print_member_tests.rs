@@ -196,7 +196,7 @@ fn the_form_of_old_knows_no_class_and_a_function_no_type_owns_is_written_free() 
     let expected = "\
 void func_000040(Cell p0, Cell p1)
 {
-    p0->f_8 = p1;
+    p0.f_8 = p1;
 }
 ";
     assert_eq!(free, expected);
@@ -283,11 +283,19 @@ fn what_the_receiver_holds_is_written_with_a_dot_and_its_own_cell_through_its_ad
 ";
     assert_eq!(out, expected);
 
-    // A function no class owns has no receiver: its first parameter stays a pointer.
+    // A function no class owns has no receiver: its first parameter is a variable of one cell,
+    // gone through with a dot as the receiver is, and its own cell is reached through its address.
     let mut free = String::new();
     method(&mut free, &held, None, 0, &at(&names, Level::Source));
-    assert!(free.contains("    DEMO.USE(*p0, (int)p0->f_C, "), "{free}");
-    assert!(free.contains("    p0.f_0 = (int)p1;\n"), "{free}");
+    let through = "    DEMO.USE(*p0, (int)p0.f_C, (int)p0.f_20.f_4, &p0.f_38);\n";
+    assert!(free.contains(through), "{free}");
+    assert!(free.contains("    p0.f_14++;\n"), "{free}");
+    assert!(free.contains("    (&p0)->f_0 = (int)p1;\n"), "{free}");
+    // With `fields` off it is the pointer the code holds, and its own cell is in place.
+    let mut old = String::new();
+    method(&mut old, &held, None, 0, &cx);
+    assert!(old.contains("    DEMO.USE(*p0, (int)p0->f_C, "), "{old}");
+    assert!(old.contains("    p0.f_0 = (int)p1;\n"), "{old}");
 }
 
 #[test]
@@ -342,7 +350,7 @@ fn an_async_method_that_hands_its_task_back_early_is_written_leaving_with_a_bare
     // A method that is not async returns what it returns.
     let plain = member(Role::Method, headed(2, Returns::Cell), body);
     assert!(
-        written(&plain).contains("return local_0->f_10;"),
+        written(&plain).contains("return local_0.f_10;"),
         "{}",
         written(&plain)
     );

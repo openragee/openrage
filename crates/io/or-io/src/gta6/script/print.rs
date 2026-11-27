@@ -5,7 +5,9 @@
 //! says: a cast of a value of that very kind, a 64-bit reading where every bit counts alike, a
 //! zero test of a truth value. Memory prints as `p->f_10`, the field at byte 0x10 of what `p`
 //! points at, or `v.f_10` for byte 0x10 of the variable `v` itself, and a variable is declared
-//! where it is first assigned.
+//! where it is first assigned. With `fields` on, a variable of one cell can only be gone
+//! through and one of several only read in place, so the dot says both by the width the
+//! variable is declared with: `p.f_10` through `p`, and `(&p)->f_10` for the frame after it.
 //!
 //! The readable form is written two ways. With the four first passes alone it is what it always
 //! was, byte for byte. With any other pass on it is true C#: a C# parser reads every line, and
@@ -40,14 +42,16 @@ use super::ir::{
 use super::listing::{Import, Listing, Target, Wrapper};
 use super::names::{declared_natives, Names};
 use super::passes::types::yielded_shape;
-use super::passes::{classes, closures};
+use super::passes::{async_await, classes, closures};
 use super::project::signatures::native_key;
 use super::project::{Param, TypeFacts};
 use super::tree;
 use super::{Context, Level, Options, Pass, Project, Stats};
 
 use lambda::*;
-pub(super) use lambda::{bound_in_place, method_in, Lambdas};
+pub(super) use lambda::{
+    bound_in_place, kind_types, method_hiding, method_in, types_of, unimported, Hidden, Lambdas,
+};
 
 /// The strength a unary operator and a cast bind at, above every binary operator.
 const UNARY: u8 = 12;
@@ -57,13 +61,19 @@ const POSTFIX: u8 = 13;
 /// What every header of true C# says of the words no C# has.
 const WORDS: [&str; 7] = [
     "Cell is one 64-bit cell of no proved kind, Cells2 two of them",
-    "Handle is a value of two cells the code only takes from the engine, compares and hands back to it",
+    "Handle is a value of two cells the code takes from the engine, or copies whole from or into one, and compares, as the runtime compares a Guid",
     "f_10 is the field at byte 0x10",
     "as_f32(x) is the bits of x read as a float",
-    "p->f_10++ steps the int at f_10",
+    "e->f_10++ steps the int at f_10",
     "a local declared without a value starts as zero",
     "0x3F800000 /* 1.0f */ is a number of no proved kind whose bits are those of the float beside it",
 ];
+
+/// What a header says of a dot and an arrow, where `fields` is on.
+const MEMBER: &str = "p.f_10 is the field at byte 0x10 of what p points at where p is a variable of \
+                      one cell, and byte 0x10 of the cells of p where p holds several; (&x)->f_10 is \
+                      byte 0x10 from where x stands, and e->f_10 byte 0x10 of what any other e \
+                      points at";
 
 /// What a header says of a constant written without the cast C# would ask for, where `signs` is on.
 const NARROW: &str = "0x89ABCDEF alone, as an argument of a native or where an int is taken, is \
@@ -98,6 +108,9 @@ const DERIVED: &str = "a variable named otherwise than by its slot (p1, local_2,
 /// The comment that says what the words of a file mean, by the passes that write them.
 fn words(options: &Options) -> String {
     let mut said: Vec<&str> = WORDS.to_vec();
+    if options.on(Pass::Fields) {
+        said.push(MEMBER);
+    }
     if options.on(Pass::Signs) {
         said.push(NARROW);
     }
@@ -339,6 +352,19 @@ pub(super) fn header(
     if by_hash > 0 || !compiled {
         shown.push(format!("{by_hash} shown by hash"));
     }
+    // ⚠ A label is a guess, never a name: it is counted apart from what a natives list names.
+    let guessed = (read.natives.keys())
+        .filter(|hash| !listed(hash) && names.native_label(**hash).is_some())
+        .count();
+    if guessed > 0 {
+        let lists: Vec<String> = (names.label_lists.iter())
+            .map(|list| format!("`{}`", one_line(list)))
+            .collect();
+        shown.push(format!(
+            "{guessed} of no name written by a label, a guess, of {}",
+            lists.join(", ")
+        ));
+    }
     if read.by_address > 0 {
         let by_address = read.by_address;
         shown.push(format!(
@@ -369,8 +395,9 @@ pub(super) fn header(
                     names.candidates.get(n).copied().unwrap_or(0)
                 ),
                 Some((proved, trusted)) => format!(
-                    "`{}` ({proved} proved by hash, {trusted} on trust)",
-                    one_line(list)
+                    "`{}` ({proved} proved by hash, {trusted} on trust{})",
+                    one_line(list),
+                    names.in_place(n)
                 ),
                 None => format!("`{}`", one_line(list)),
             };
@@ -523,6 +550,8 @@ enum Labels {
     Hex,
     /// The same, and a hash the user's vocabulary has the text of as that text.
     Hashes,
+    /// Members of the enum a field of it is switched on: `E.Member`, each named by a list.
+    Members(TypeKey),
 }
 
 struct Writer<'a> {
@@ -953,6 +982,13 @@ impl<'a> Writer<'a> {
                     Labels::Decimal if self.plain => self.value(value),
                     Labels::Decimal => self.switched(value),
                     Labels::Hex | Labels::Hashes => self.as_uint(bits(value)).0,
+                    Labels::Members(_) => match enum_field(self.project, value) {
+                        Some((_, addr, owner, offset)) => {
+                            let base = self.expr(addr, POSTFIX);
+                            format!("{base}.{}", self.field_name(Some(owner), offset))
+                        }
+                        None => self.switched(value),
+                    },
                 };
                 self.line(indent, &format!("switch ({value})"));
                 self.line(indent, "{");
@@ -972,6 +1008,7 @@ impl<'a> Writer<'a> {
                     true => self.narrow(value, true),
                     false => None,
                 };
+                let narrow = narrow.or_else(|| self.returned_whole(value));
                 let value = narrow.unwrap_or_else(|| self.value(value));
                 self.line(indent, &format!("return {value};"));
             }
@@ -1014,6 +1051,17 @@ impl<'a> Writer<'a> {
         let large = labels().any(|label| label.unsigned_abs() > 0x1_0000);
         let fit = labels().all(|label| (-0x8000_0000..0x1_0000_0000i64).contains(label));
         let texts = kind == Kind::Hash && self.options.on(Pass::HashText);
+        // A field of an enum switched on is labelled by its members where a list names every one.
+        let on = self.sharp && self.options.on(Pass::Kinds);
+        let of = enum_field(self.project, value).filter(|_| on);
+        let named = of.map(|(key, ..)| key).filter(|key| {
+            let listed = |label: &i64| self.enum_member(*key, *label as u64).is_some();
+            let mut labels = labels();
+            labels.next().is_some_and(listed) && labels.all(listed)
+        });
+        if let Some(key) = named {
+            return Labels::Members(key);
+        }
         match (self.sharp && narrow && large && fit, texts) {
             (false, _) => Labels::Decimal,
             (true, false) => Labels::Hex,
@@ -1023,15 +1071,31 @@ impl<'a> Writer<'a> {
 
     /// One label of a switch.
     fn label(&self, value: i64, labels: Labels) -> String {
+        if let Labels::Members(key) = labels {
+            let member = self.enum_member(key, value as u64);
+            return member.unwrap_or_else(|| value.to_string());
+        }
         let text = match labels {
             Labels::Hashes => self.names.text(value as u32),
-            Labels::Decimal | Labels::Hex => None,
+            Labels::Decimal | Labels::Hex | Labels::Members(_) => None,
         };
         match (labels, text) {
             (Labels::Decimal, _) => value.to_string(),
             (_, Some(text)) => format!("Hash({})", spell::string(text)),
             (_, None) => format!("0x{:08X}", value as u32),
         }
+    }
+
+    /// `E.Member` for the value of the enum `key` a cell holds, where a list names the member; `None` where none does, or the type is no enum.
+    fn enum_member(&self, key: TypeKey, bits: u64) -> Option<String> {
+        use crate::gta6::script::project::types;
+        let of = types::enumeration(self.project, key)?;
+        let low = of.value(bits)?;
+        // Only a member the enum's declaration writes, with the value it writes it with.
+        let members = types::declared_members(self.project, self.names, key);
+        let (.., member) = members.into_iter().find(|(_, held, _)| *held == low)?;
+        let name = types::display(self.project, self.names, key);
+        Some(format!("{name}.{member}"))
     }
 
     /// The line that says where a case of true C# goes on to, which may not run into the next unsaid.
@@ -1068,31 +1132,24 @@ impl<'a> Writer<'a> {
             tree::Sugar::Hidden(_) if self.options.level == Level::Source => {}
             tree::Sugar::Hidden(stmts) => work.push(Work::Run(stmts, indent)),
             tree::Sugar::Group { kind, parts } => self.group(*kind, parts, indent),
-            tree::Sugar::Await {
-                before,
-                ready,
-                after,
-                ..
-            } if on(Pass::Await) => {
-                // What is awaited is what the awaiter is taken from, else the awaiter the test asks.
-                let awaiter = receiver(ready);
-                let (shown, awaited) = match before.split_last() {
-                    Some((taken, rest)) if takes(taken, awaiter) => {
-                        (rest, assigned_receiver(taken))
-                    }
-                    _ => (before.as_slice(), awaiter),
+            tree::Sugar::Await { after, .. } if on(Pass::Await) => {
+                let Some(read) = async_await::reading(sugar) else {
+                    return self.lowered(sugar, indent);
                 };
-                self.simples(shown, indent);
-                let awaited = self.value(awaited.unwrap_or(ready));
-                match (after.as_slice(), awaiter) {
+                self.simples(read.shown, indent);
+                let awaited = self.value(read.awaited);
+                match read.taken {
                     // The one statement that asks the awaiter for its result takes what the `await` yields.
-                    ([Stmt::Assign { target, value }], Some(awaiter))
-                        if asked_of(value, awaiter) =>
-                    {
-                        let text = format!("{} = await {awaited};", self.var(*target));
+                    async_await::Taken::Assigned(target) => {
+                        let text = format!("{} = await {awaited};", self.var(target));
                         self.line(indent, &text);
                     }
-                    _ => {
+                    async_await::Taken::Dropped => {
+                        self.line(indent, &format!("await {awaited};"));
+                    }
+                    // ⚠ A store given the result is written as it is, after the await: its value
+                    // asks the awaiter, which the store's own text says.
+                    async_await::Taken::Stored(_) | async_await::Taken::Nothing => {
                         self.line(indent, &format!("await {awaited};"));
                         self.simples(after, indent);
                     }
@@ -1274,6 +1331,13 @@ impl<'a> Writer<'a> {
                     None => called,
                 };
                 match args.as_slice() {
+                    // A static getter of the runtime's own types, by the type that declares it.
+                    [] if matches!(callee, Callee::Builtin { .. }) => {
+                        let full = self.callee(callee);
+                        if let Some((owner, _)) = full.rsplit_once('.') {
+                            return (format!("{owner}.{name}"), POSTFIX);
+                        }
+                    }
                     [receiver] => {
                         let receiver = self.expr(receiver, POSTFIX);
                         return (format!("{receiver}.{name}"), POSTFIX);
@@ -1288,8 +1352,11 @@ impl<'a> Writer<'a> {
                 }
             }
             (ExprSugar::Field { owner }, Expr::Load { ty, addr, offset }) => {
-                let base = self.expr(addr, POSTFIX);
-                let place = format!("{base}.{}", self.field_name(Some(owner), *offset));
+                let place = format!(
+                    "{}{}",
+                    self.field_base(addr),
+                    self.field_name(Some(owner), *offset)
+                );
                 // ⚠ The field's own type is said where it is declared: a reading of its bytes
                 // as anything else is said here, as it is of any place.
                 let declared = self.project.field(owner, *offset);
@@ -1301,9 +1368,9 @@ impl<'a> Writer<'a> {
                 };
             }
             (ExprSugar::Field { owner }, Expr::LoadBytes { addr, offset, .. }) => {
-                let base = self.expr(addr, POSTFIX);
+                let base = self.field_base(addr);
                 let name = self.field_name(Some(owner), *offset);
-                return (format!("{base}.{name}"), POSTFIX);
+                return (format!("{base}{name}"), POSTFIX);
             }
             (
                 ExprSugar::Operator,
@@ -1385,7 +1452,8 @@ impl<'a> Writer<'a> {
                     None => generic.and_then(|(_, rest)| rest.strip_suffix('>')),
                 };
                 if let (Some(to), [value]) = (to, args.as_slice()) {
-                    let text = format!("({}){}", self.type_name(to), self.expr(value, UNARY));
+                    let to = self.type_name(to);
+                    let text = format!("({to}){}", self.expr(value, cast_operand(&to)));
                     return (text, UNARY);
                 }
             }
@@ -1479,6 +1547,22 @@ impl<'a> Writer<'a> {
             }
             _ => text,
         }
+    }
+
+    /// What a field read through `addr` is written after, with its mark: a variable's own bytes as the place they are, `(&x)->` where `x` holds one cell and `x.` where it holds several, and `e.` after any other address.
+    fn field_base(&mut self, addr: &Expr) -> String {
+        match addr {
+            Expr::AddrOf { var, cell: 0 } if self.single(*var) => {
+                format!("(&{})->", self.var(*var))
+            }
+            Expr::AddrOf { var, cell: 0 } => format!("{}.", self.var(*var)),
+            _ => format!("{}.", self.expr(addr, POSTFIX)),
+        }
+    }
+
+    /// Whether a dot after `var` goes through what it holds: true C# with `fields` on, and a variable [`reads_through`] says holds one cell.
+    fn single(&self, var: Var) -> bool {
+        self.sharp && self.options.on(Pass::Fields) && reads_through(self.head, var)
     }
 
     /// Whether a variable is declared a 32-bit integer, which `++` and `--` step as the code does.
@@ -1582,9 +1666,11 @@ impl<'a> Writer<'a> {
                     (None, StoreKind::U64, Expr::Const(c)) if c.kind.is_integer() => {
                         let text = self.value(value);
                         // An `(int)` in front already says how the eight bytes come about.
-                        match text.starts_with('(') {
-                            true => text,
-                            false => format!("{text}L"),
+                        // ⚠ The suffix belongs to the number, before a note on what its bits say.
+                        match (text.starts_with('('), text.split_once(" /*")) {
+                            (true, _) => text,
+                            (false, Some((number, note))) => format!("{number}L /*{note}"),
+                            (false, None) => format!("{text}L"),
                         }
                     }
                     (None, ..) => self.widened(value),
@@ -1744,6 +1830,24 @@ impl<'a> Writer<'a> {
         let proved = self.project.signatures.get(&key);
         self.head.returns == Returns::Cell
             && proved.is_some_and(|sig| sig.returns == 1 && spell::narrow_kind(&sig.result))
+    }
+
+    /// A load of whole cells a function returns, as the place alone where its head is written as wide: the type of the head says how many cells, as a variable's does of an assignment.
+    fn returned_whole(&mut self, value: &Expr) -> Option<String> {
+        let Expr::LoadBytes {
+            addr,
+            offset,
+            bytes,
+        } = value
+        else {
+            return None;
+        };
+        let key = FunctionKey::new(self.head.program, self.head.at);
+        let proved = self.project.signatures.get(&key);
+        let cells = proved.map(|sig| sig.returns).filter(|cells| *cells >= 2);
+        let headed = self.sharp && self.task.is_none() && self.head.returns == Returns::Cells;
+        let whole = bytes.is_multiple_of(8) && cells == Some(bytes / 8);
+        (headed && whole).then(|| self.place_of(addr, *offset, false, Some(*bytes)).0)
     }
 
     /// One side of a type's own equality: zero cells are as many as the other side holds.
@@ -2028,7 +2132,7 @@ impl<'a> Writer<'a> {
             } if bytes.is_multiple_of(8) => {
                 let (place, binds) = self.place_of(addr, *offset, false, Some(*bytes));
                 let cells = self.kind_text(&Kind::Aggregate(bytes / 8));
-                let text = format!("({cells}){}", wrap(place, binds, UNARY));
+                let text = format!("({cells}){}", wrap(place, binds, cast_operand(&cells)));
                 return (text, UNARY);
             }
             Expr::LoadBytes {
@@ -2219,6 +2323,12 @@ impl<'a> Writer<'a> {
     }
 
     fn binary(&mut self, op: BinOp, at: &Kind, l: &Expr, r: &Expr) -> (String, u8) {
+        // A test against zero needs no wider reading of a value whose own form holds it narrower.
+        let tested = self.sharp && matches!(op, BinOp::Eq | BinOp::Ne) && !at.is_float();
+        let l = match tested && is_zero(r) {
+            true => zero_read(l),
+            false => l,
+        };
         let typed = match self.sharp {
             true => self.typed(op, at, l, r),
             false => None,
@@ -2298,10 +2408,14 @@ impl<'a> Writer<'a> {
         // ⚠ Not in a lambda's body written where it is bound: its object is a variable there.
         let dotted = sharp && self.bound.is_none();
         let own = dotted && matches!(bits(base), Expr::Var(var) if self.this == Some(*var));
+        // A variable of one cell has no field of its own: a dot after it goes through what it
+        // holds, as one after the receiver does, in a lambda's body too.
+        let held = sharp && matches!(bits(base), Expr::Var(var) if self.single(*var));
         // ⚠ A byte of the receiver's own cell would then read as a member of the object: that
-        // one is spelled through the cell's address.
+        // one is spelled through the cell's address, and so is one of any variable of one cell.
         let mut boxed =
             dotted && matches!(base, Expr::AddrOf { var, cell: 0 } if self.this == Some(*var));
+        boxed |= sharp && matches!(base, Expr::AddrOf { var, cell: 0 } if self.single(*var));
         let (mut text, variable) = match base {
             Expr::AddrOf { var, cell: 0 } => (self.var(*var), true),
             Expr::AddrOf { var, cell } => (format!("{}[{cell}]", self.var(*var)), true),
@@ -2331,10 +2445,14 @@ impl<'a> Writer<'a> {
             pointer if !embedded && offset == 0 => {
                 return (format!("*{}", self.expr(pointer, UNARY)), UNARY);
             }
+            pointer if held => (self.expr(bits(pointer), POSTFIX), false),
             pointer => (self.expr(pointer, POSTFIX), false),
         };
         // ⚠ `->` goes through a pointer and `.` stays in place: `local_3->f_8` reads what the
-        // pointer in `local_3` points at, `local_3.f_8` the frame cell after `local_3`.
+        // pointer in `local_3` points at, `local_3.f_8` the frame cell after `local_3`. With
+        // `fields` on, a dot after a variable of one cell goes through it, and the frame cell
+        // after it is `(&local_3)->f_8`.
+        let dot = own || held;
         let mut through = !variable;
         // ⚠ Fewer bytes than a variable of several cells holds are a part of it, as a narrow
         // store is of a cell: the variable's name alone is every cell of it.
@@ -2355,7 +2473,7 @@ impl<'a> Writer<'a> {
                     text = format!("(&{text})");
                     through = true;
                 }
-                let via = match (std::mem::take(&mut through), own) {
+                let via = match (std::mem::take(&mut through), dot) {
                     (true, false) => "->",
                     _ => ".",
                 };
@@ -2464,7 +2582,8 @@ impl<'a> Writer<'a> {
             return (text, 7);
         }
         if let Some((to, value)) = self.boxed_conversion(callee, args) {
-            return (format!("({to}){}", self.expr(value, UNARY)), UNARY);
+            let binds = cast_operand(to);
+            return (format!("({to}){}", self.expr(value, binds)), UNARY);
         }
         let equality = match self.sharp {
             true => None,
@@ -2703,7 +2822,8 @@ impl<'a> Writer<'a> {
             // A cast that must hold; ⚠ never the `as` below, which yields null where this faults.
             [value] if name.starts_with("cast<") => {
                 let ty = name.strip_prefix("cast<")?.strip_suffix('>')?;
-                let text = format!("({}){}", self.type_name(ty), self.expr(value, UNARY));
+                let ty = self.type_name(ty);
+                let text = format!("({ty}){}", self.expr(value, cast_operand(&ty)));
                 Some((text, UNARY))
             }
             [value] => {
@@ -2949,21 +3069,6 @@ fn takes(taken: &Stmt, asked: Option<&Expr>) -> bool {
     );
     own && assigned_receiver(taken).is_some()
 }
-
-/// Whether `e` is a call of one argument, and that argument `of`: a method that takes nothing, asked of it.
-fn asked_of(e: &Expr, of: &Expr) -> bool {
-    let mut e = e;
-    while let Expr::Sugar { e: inner, .. }
-    | Expr::Cast {
-        to: Scalar::I64 | Scalar::U64,
-        e: inner,
-    } = e
-    {
-        e = &**inner;
-    }
-    matches!(e, Expr::Call { args, .. } if args.len() == 1 && args[0] == *of)
-}
-
 /// Whether control may run off the end of `body`; where nothing says, it may.
 // An explicit stack: a chain of `else if` is as deep as it is long.
 fn falls(body: &[tree::Stmt]) -> bool {
@@ -3092,7 +3197,9 @@ pub(super) fn callee_name(callee: &Callee, names: &Names) -> String {
             hash,
             ..
         } => {
-            let (namespace, name) = match names.native(*hash) {
+            // A label, a guess opening with `_`, is written only where no natives list names one.
+            let listed = names.native(*hash).or_else(|| names.native_label(*hash));
+            let (namespace, name) = match listed {
                 Some(listed) => (&listed.namespace, &listed.name),
                 None => (namespace, name),
             };
@@ -3133,6 +3240,25 @@ fn flat_cells(e: &Expr, head: &Head) -> Option<u32> {
         Expr::LoadBytes { bytes, .. } | Expr::ExtractBytes { bytes, .. } => Some(bytes.div_ceil(8)),
         Expr::Call { returns, .. } => returns.filter(|cells| *cells > 0),
         _ => Some(1),
+    }
+}
+
+/// Whether `var` is a variable of one cell by its head, so that with `fields` on a dot after it reads through what it holds: no global, and no value held in place.
+// ⚠ The read-back holds the tree by the same rule, a load through such a name as `x.f_N` and
+// its own bytes as `(&x)->f_N`: a change here is a change there.
+pub(super) fn reads_through(head: &Head, var: Var) -> bool {
+    if matches!(var, Var::Global { .. }) {
+        return false;
+    }
+    match head.vars.get(&var) {
+        None => true,
+        Some(info) => {
+            let several = matches!(
+                info.kind,
+                Kind::Vector | Kind::Handle | Kind::Aggregate(_) | Kind::Value { .. }
+            );
+            info.width == Width::Cell && !several
+        }
     }
 }
 
@@ -3542,6 +3668,18 @@ impl Placer<'_> {
 }
 
 /// `text` in parentheses where it binds less tightly than `min`.
+/// How tightly what a cast to `ty` stands before must bind: a type no keyword names reads as a name in parentheses, so that `(T)*p` would read as a product and `(T)-x` as a difference.
+pub(super) fn cast_operand(ty: &str) -> u8 {
+    const KEYWORDS: [&str; 17] = [
+        "bool", "byte", "sbyte", "char", "decimal", "double", "float", "int", "uint", "long",
+        "ulong", "object", "short", "ushort", "string", "nint", "nuint",
+    ];
+    match KEYWORDS.contains(&ty) {
+        true => UNARY,
+        false => POSTFIX,
+    }
+}
+
 fn wrap(text: String, binds: u8, min: u8) -> String {
     match binds < min {
         true => format!("({text})"),
@@ -3581,6 +3719,75 @@ fn is_zero(e: &Expr) -> bool {
         e = &**inner;
     }
     matches!(e, Expr::Const(c) if c.bits == 0)
+}
+
+/// The field of an enum `value` reads whole: the enum, the address the field is read through, the type that declares the field and its offset; `None` for anything else.
+// ⚠ Every reading over the field must keep every bit of it: one of fewer bits is another value.
+fn enum_field<'e>(project: &Project, value: &'e Expr) -> Option<(TypeKey, &'e Expr, TypeKey, u32)> {
+    let mut e = value;
+    let mut narrowest = 8;
+    let (owner, load) = loop {
+        match e {
+            Expr::Sugar {
+                kind: ExprSugar::Field { owner },
+                e: inner,
+            } => break (*owner, &**inner),
+            Expr::Cast { to, e: inner } if to.kind().is_integer() => {
+                narrowest = narrowest.min(to.bytes());
+                e = &**inner;
+            }
+            _ => return None,
+        }
+    };
+    let Expr::Load { ty, addr, offset } = load else {
+        return None;
+    };
+    let field = project.field(owner, *offset)?;
+    let Kind::Value { ty: name, .. } = &field.kind else {
+        return None;
+    };
+    let key = TypeKey::of_name(name)?;
+    let of = crate::gta6::script::project::types::enumeration(project, key)?;
+    let bytes = ty.bytes();
+    let whole = field.bytes == bytes && of.bytes == bytes && narrowest >= bytes;
+    (ty.kind().is_integer() && whole).then_some((key, &**addr, owner, *offset))
+}
+
+/// `e` without the integer readings over it that are as wide as the value under them or wider: each is zero exactly where that value is.
+// ⚠ Only for a test against zero: as an operand a reading of 32 bits is what makes C# work
+// in 32 bits.
+fn zero_read(e: &Expr) -> &Expr {
+    let mut e = e;
+    while let Expr::Cast { to, e: inner } = e {
+        let within = held_bytes(inner).is_some_and(|bytes| bytes <= to.bytes());
+        if !to.kind().is_integer() || !within {
+            break;
+        }
+        e = &**inner;
+    }
+    e
+}
+
+/// The bytes the form of `e` alone holds its value to, widened in its cell: a load, a reading or an element of an integer type, and bytes taken out of a value.
+fn held_bytes(e: &Expr) -> Option<u32> {
+    match e {
+        Expr::Load { ty, .. } | Expr::Cast { to: ty, .. } if ty.kind().is_integer() => {
+            Some(ty.bytes())
+        }
+        Expr::ExtractBytes { bytes, .. } => Some(*bytes),
+        Expr::Sugar { e: inner, .. } => held_bytes(inner),
+        Expr::Call {
+            callee: Callee::Intrinsic { name, .. },
+            args,
+            ..
+        } if args.len() == 2 => {
+            let element = name.strip_prefix("array_get_").and_then(Scalar::from_name);
+            element
+                .filter(|ty| ty.kind().is_integer())
+                .map(Scalar::bytes)
+        }
+        _ => None,
+    }
 }
 
 /// The comparison that holds exactly when `op` does not, for operands that always compare.

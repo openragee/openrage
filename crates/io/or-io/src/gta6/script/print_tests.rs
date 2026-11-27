@@ -3076,3 +3076,311 @@ fn a_switch_on_four_bytes_taken_out_of_a_value_labels_its_cases_by_their_32_bits
     assert!(text.contains("    switch ((uint)p0.f_4)\n"), "{text}");
     assert!(text.contains("        case 0xA0000000:\n"), "{text}");
 }
+
+#[test]
+fn with_fields_on_a_dot_goes_through_a_variable_of_one_cell_and_stays_in_one_of_several() {
+    let mut head = head();
+    let mut pair = VarInfo::new(Width::Cells);
+    pair.kind = Kind::Aggregate(2);
+    head.vars.insert(Var::Local(1), pair);
+    let names = Names::default();
+    let cx = at(&names, Level::Source);
+    let own = |var: Var| address(var, 0);
+    let global = Expr::Var(Var::Global {
+        program: 0x1122_3344,
+        offset: 0x10,
+        statics: false,
+    });
+    let cases = [
+        // What a variable of one cell holds is gone through with a dot, its first bytes still `*`.
+        (load(Scalar::U64, local(0), 8), "local_0.f_8"),
+        (load(Scalar::I32, local(0), 0xC), "(int)local_0.f_C"),
+        (load(Scalar::U64, local(0), 0), "*local_0"),
+        (offset(local(0), int(0x28)), "&local_0.f_28"),
+        (
+            load(Scalar::U64, load(Scalar::U64, local(0), 8), 0x10),
+            "local_0.f_8->f_10",
+        ),
+        // ⚠ Its own bytes, and the frame after it, are reached through its address.
+        (
+            load(Scalar::I32, own(Var::Local(0)), 4),
+            "(int)(&local_0)->f_4",
+        ),
+        (load(Scalar::U64, own(Var::Local(0)), 8), "(&local_0)->f_8"),
+        (load(Scalar::U64, own(Var::Local(0)), 0), "local_0"),
+        // A variable of several cells is read in place, and gone through with an arrow.
+        (load(Scalar::U64, own(Var::Local(1)), 8), "local_1.f_8"),
+        (load(Scalar::U64, local(1), 8), "local_1->f_8"),
+        // A global states no width in the function: it keeps its arrow.
+        (load(Scalar::U64, global, 8), "Global_10->f_8"),
+    ];
+    for (e, text) in &cases {
+        assert_eq!(sharp_in(&head, &cx, e), *text);
+    }
+    let set = Stmt::Store {
+        kind: StoreKind::U8,
+        addr: own(Var::Local(0)),
+        offset: 0,
+        value: int(1),
+    };
+    let mut out = String::new();
+    let stored = Writer::in_context(&mut out, &cx, &head).simple(&set);
+    assert_eq!(stored, "(&local_0)->f_0 = (byte)1");
+
+    // With `fields` off the arrow goes through and the dot stays in place, as it always did.
+    let off = Context::new(
+        &names,
+        Project::empty(),
+        Options::default().without(Pass::Fields),
+    );
+    let through = load(Scalar::U64, local(0), 8);
+    assert_eq!(sharp_in(&head, &off, &through), "local_0->f_8");
+    let in_place = load(Scalar::I32, own(Var::Local(0)), 4);
+    assert_eq!(sharp_in(&head, &off, &in_place), "(int)local_0.f_4");
+    assert_eq!(readable(&through), "local_0->f_8");
+}
+
+#[test]
+fn a_variable_reads_through_a_dot_by_the_width_its_head_declares_it_with() {
+    let mut head = head();
+    let mut wide = VarInfo::new(Width::Cells);
+    wide.kind = Kind::Aggregate(2);
+    head.vars.insert(Var::Local(1), wide);
+    let mut held = VarInfo::new(Width::Cell);
+    held.kind = Kind::Value {
+        ty: "type_00000000000000E1".to_owned(),
+        cells: 1,
+    };
+    head.vars.insert(Var::Local(2), held);
+    let mut object = VarInfo::new(Width::Cell);
+    object.kind = Kind::Object("type_00000000000000AB".to_owned());
+    head.vars.insert(Var::Local(3), object);
+    assert!(reads_through(&head, Var::Local(0)));
+    assert!(reads_through(&head, Var::Param(0)));
+    assert!(reads_through(&head, Var::Local(3)));
+    assert!(!reads_through(&head, Var::Local(1)));
+    assert!(!reads_through(&head, Var::Local(2)));
+    let global = Var::Global {
+        program: 0x1122_3344,
+        offset: 8,
+        statics: true,
+    };
+    assert!(!reads_through(&head, global));
+}
+
+#[test]
+fn bytes_taken_out_of_a_variable_of_one_cell_are_its_bits_shifted_down_where_fields_is_on() {
+    let head = kinds(&[(Var::Local(0), Kind::I32)]);
+    let taken = |value: Expr, offset: u32, bytes: u32| Expr::ExtractBytes {
+        value: Box::new(value),
+        offset,
+        bytes,
+    };
+    let names = Names::default();
+    let cx = at(&names, Level::Source);
+    let cases = [
+        (taken(param(1), 4, 1), "(byte)(p1 >> 32)"),
+        (taken(param(1), 0, 2), "(ushort)p1"),
+        (taken(param(1), 0, 8), "p1"),
+        (
+            Expr::cast(Scalar::I32, taken(param(1), 4, 4)),
+            "(int)(p1 >> 32)",
+        ),
+        (
+            taken(
+                Expr::Cells(vec![param(1), param(2), param(3), param(4)]),
+                28,
+                1,
+            ),
+            "(byte)(p4 >> 32)",
+        ),
+        (taken(local(0), 1, 1), "(byte)(local_0 >> 8)"),
+        // ⚠ Past the four bytes of an `int` a shift of C# would wrap: the bytes stay as they are.
+        (taken(local(0), 5, 1), "extract_bytes(local_0, 5, 1)"),
+    ];
+    for (e, text) in &cases {
+        assert_eq!(sharp_in(&head, &cx, e), *text);
+    }
+    // Below the source level a dot after the variable stays in its own bytes.
+    let structured = at(&names, Level::Structured);
+    assert_eq!(
+        sharp_in(&head, &structured, &taken(param(1), 4, 1)),
+        "(byte)p1.f_4"
+    );
+}
+
+#[test]
+fn a_test_against_zero_needs_no_wider_reading_of_a_value_its_form_holds_narrower() {
+    let zero_test = |op: BinOp, l: Expr, r: Expr| Expr::Binary {
+        op,
+        at: Kind::U32,
+        l: Box::new(l),
+        r: Box::new(r),
+    };
+    let uint = |e: Expr| Expr::cast(Scalar::U32, e);
+    let byte = || load(Scalar::U8, param(0), 8);
+    let cases = [
+        (
+            zero_test(BinOp::Ne, uint(byte()), int(0)),
+            "(byte)p0->f_8 != 0",
+        ),
+        (
+            zero_test(BinOp::Eq, uint(load(Scalar::I32, param(0), 8)), int(0)),
+            "(int)p0->f_8 == 0",
+        ),
+        (
+            zero_test(BinOp::Ne, uint(Expr::cast(Scalar::U8, local(0))), int(0)),
+            "(byte)local_0 != 0",
+        ),
+        // ⚠ A reading of fewer bits than the value holds is another test, and so is one of another
+        // number.
+        (
+            zero_test(BinOp::Ne, uint(load(Scalar::U64, param(0), 8)), int(0)),
+            "(uint)p0->f_8 != 0",
+        ),
+        (
+            zero_test(BinOp::Ne, uint(local(0)), int(0)),
+            "(uint)local_0 != 0",
+        ),
+        (
+            zero_test(BinOp::Ne, uint(byte()), int(1)),
+            "(uint)(byte)p0->f_8 != 1",
+        ),
+    ];
+    for (e, text) in &cases {
+        assert_eq!(sharp(e), *text);
+    }
+    // The form of old writes every reading.
+    let old = zero_test(BinOp::Ne, uint(byte()), int(0));
+    assert_eq!(readable(&old), "(uint)(byte)p0->f_8 != 0");
+}
+
+#[test]
+fn whole_cells_returned_where_the_head_says_as_many_need_no_word_on_their_width() {
+    use crate::gta6::script::project::{Param, Signature};
+    let names = Names::default();
+    let returning = |cells: u32| {
+        let mut project = Project::default();
+        let own = Signature {
+            params: vec![Param {
+                kind: Kind::Unknown,
+                cells: 1,
+            }],
+            returns: cells,
+            result: Kind::Unknown,
+        };
+        project
+            .signatures
+            .insert(FunctionKey::new(0x1122_3344, 0x40), own);
+        project
+    };
+    let mut head = head();
+    head.returns = Returns::Cells;
+    let wide = Expr::LoadBytes {
+        addr: Box::new(param(0)),
+        offset: 0x10,
+        bytes: 16,
+    };
+    let f = function_of(head, vec![tree::Stmt::Return(Some(wide))]);
+    let two = returning(2);
+    let text = written_in(
+        &f,
+        &Context::new(&names, &two, Options::at(Level::Structured)),
+    );
+    assert!(text.starts_with("Cells2 func_000040(Cell p0)\n"), "{text}");
+    assert!(text.contains("    return p0->f_10;\n"), "{text}");
+    // ⚠ A head of another width, or none proved, leaves the width to the cast.
+    let three = returning(3);
+    let text = written_in(
+        &f,
+        &Context::new(&names, &three, Options::at(Level::Structured)),
+    );
+    assert!(text.contains("    return (Cells2)p0->f_10;\n"), "{text}");
+    let text = written_in(&f, &at(&names, Level::Structured));
+    assert!(text.contains("    return (Cells2)p0->f_10;\n"), "{text}");
+}
+
+#[test]
+fn a_switch_on_a_field_of_an_enum_whose_every_value_a_list_names_is_labelled_by_its_members() {
+    use crate::gta6::script::project::FieldFacts;
+    let (owner, mode) = (TypeKey(0xAB), TypeKey(0xE1));
+    let mut project = Project::default();
+    let facts = TypeFacts {
+        byte_size: 4,
+        flags: 0x08,
+        constants: vec![1, 2, 3],
+        ..TypeFacts::default()
+    };
+    project.types.insert(mode, facts);
+    let field = FieldFacts {
+        offset: 0x10,
+        bytes: 4,
+        kind: Kind::Value {
+            ty: mode.to_string(),
+            cells: 1,
+        },
+    };
+    project.fields.insert(owner, vec![field]);
+    let mut names = Names::default();
+    names.types.insert(mode.0, "ZqMode".to_owned());
+    names.enum_members.insert((mode, 1), "zqFirst".to_owned());
+    names.enum_members.insert((mode, 2), "zqSecond".to_owned());
+    let read = Expr::cast(
+        Scalar::I32,
+        Expr::sugar(
+            ExprSugar::Field { owner },
+            load(Scalar::I32, param(0), 0x10),
+        ),
+    );
+    let case = |label: i64| tree::Case {
+        labels: vec![Some(label)],
+        body: vec![simple(Stmt::Eval(native("USE", vec![]))), tree::Stmt::Break],
+    };
+    let switch = |labels: &[i64]| {
+        let cases = labels.iter().map(|label| case(*label)).collect();
+        function_of(
+            head(),
+            vec![tree::Stmt::Switch {
+                value: read.clone(),
+                cases,
+            }],
+        )
+    };
+    let cx = Context::new(&names, &project, Options::default());
+    let text = written_in(&switch(&[1, 2]), &cx);
+    assert!(text.contains("    switch (p0.f_10)\n"), "{text}");
+    assert!(text.contains("        case ZqMode.zqFirst:\n"), "{text}");
+    assert!(text.contains("        case ZqMode.zqSecond:\n"), "{text}");
+    // ⚠ One value no list names leaves every label the number it is.
+    let text = written_in(&switch(&[1, 3]), &cx);
+    assert!(text.contains("        case 1:\n"), "{text}");
+    assert!(!text.contains("ZqMode."), "{text}");
+    // With `kinds` off the labels are numbers.
+    let off = Context::new(&names, &project, Options::default().without(Pass::Kinds));
+    let text = written_in(&switch(&[1, 2]), &off);
+    assert!(text.contains("        case 1:\n"), "{text}");
+    // ⚠ Of two values of one name the declaration writes the first a member, the second a number:
+    // so does every label.
+    let mut twice = names.clone();
+    twice.enum_members.insert((mode, 2), "zqFirst".to_owned());
+    let cx = Context::new(&twice, &project, Options::default());
+    let text = written_in(&switch(&[1, 2]), &cx);
+    assert!(text.contains("        case 2:\n"), "{text}");
+    assert_eq!(text.matches("case ZqMode.zqFirst:").count(), 0, "{text}");
+    // A value a list names but no constant of the type states is no member either.
+    let mut stated = project.clone();
+    if let Some(facts) = stated.types.get_mut(&mode) {
+        facts.constants = vec![1];
+    }
+    let cx = Context::new(&names, &stated, Options::default());
+    let text = written_in(&switch(&[1, 2]), &cx);
+    assert!(text.contains("        case 2:\n"), "{text}");
+}
+
+#[test]
+fn the_words_of_a_header_say_what_a_dot_and_an_arrow_are_where_fields_is_on() {
+    let said = words(&Options::default()).replace("\n//   ", " ");
+    assert!(said.contains(MEMBER), "{said}");
+    let off = words(&Options::default().without(Pass::Fields)).replace("\n//   ", " ");
+    assert!(!off.contains(MEMBER), "{off}");
+}

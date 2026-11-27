@@ -607,8 +607,8 @@ fn a_lambda_bound_once_is_written_where_it_is_bound_and_left_out_of_its_closure_
 Cell func_000000(Cell p0)
 {
     Cell local_0 = new type_00000000000000BB();
-    local_0->f_8 = p0;
-    Cell local_1 = (Cell p1) => shared.func_00A1B2(local_0->f_8, p1);
+    local_0.f_8 = p0;
+    Cell local_1 = (Cell p1) => shared.func_00A1B2(local_0.f_8, p1);
     return local_1;
 }
 
@@ -696,4 +696,142 @@ enum type_0000000000000002 : uint // base type_00000000000000CC; implements type
     let old = "\nenum type_0000000000000002 : type_00000000000000DD // base \
                type_00000000000000CC\n";
     assert!(text.contains(old), "{text}");
+}
+
+#[test]
+fn an_enum_declares_the_members_a_list_names_and_says_the_values_no_list_names() {
+    let mut project = Project::default();
+    let facts = TypeFacts {
+        byte_size: 4,
+        flags: 0x08,
+        constants: vec![0, 1, 7],
+        ..TypeFacts::default()
+    };
+    project.types.insert(TypeKey(2), facts);
+    let unit = Unit {
+        program: PROGRAM,
+        imports: Vec::new(),
+        classes: vec![class(2, ClassKind::Enum)],
+        functions: Vec::new(),
+        front: None,
+    };
+    let mut names = Names::default();
+    names
+        .enum_members
+        .insert((TypeKey(2), 1), "zqOne".to_owned());
+    names
+        .enum_members
+        .insert((TypeKey(2), 7), "zqSeven".to_owned());
+    let text = file(&unit, &names, &project, Options::default()).text;
+    let expected = "\
+enum type_0000000000000002 : int
+{
+    zqOne = 1,
+    zqSeven = 7,
+    // values no list names a member of: 0
+}
+";
+    assert!(text.ends_with(expected), "{text}");
+
+    // ⚠ One name for two values would be one member to C#: the second value stays a number.
+    names
+        .enum_members
+        .insert((TypeKey(2), 0), "zqOne".to_owned());
+    let text = file(&unit, &names, &project, Options::default()).text;
+    assert!(
+        text.contains("\n    zqOne = 0,\n    zqSeven = 7,\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("// values no list names a member of: 1\n"),
+        "{text}"
+    );
+
+    // With no member named, or `kinds` off, the values are the comment they were.
+    let text = file(&unit, &Names::default(), &project, Options::default()).text;
+    assert!(text.ends_with("{\n    // values: 0, 1, 7\n}\n"), "{text}");
+    let off = Options::default().without(Pass::Kinds);
+    let text = file(&unit, &names, &project, off).text;
+    assert!(text.ends_with("{\n    // values: 0, 1, 7\n}\n"), "{text}");
+}
+
+#[test]
+fn the_globals_and_statics_a_program_names_are_declared_with_their_kinds_before_its_functions() {
+    use crate::gta6::script::project::{FieldFacts, ProgramInfo};
+    let global = |program: u32, offset: u32, statics: bool| Var::Global {
+        program,
+        offset,
+        statics,
+    };
+    let body = vec![
+        tree::Stmt::Simple(Stmt::Assign {
+            target: global(PROGRAM, 0x18, false),
+            value: Expr::Const(Const::i32(1)),
+        }),
+        eval(Expr::Call {
+            callee: Callee::Import {
+                module: "shared".to_owned(),
+                name: "func_00A1B2".to_owned(),
+                program: 0x0A0B_0C0D,
+                at: 0xA1B2,
+            },
+            args: vec![
+                Expr::Var(global(PROGRAM, 0x10, false)),
+                Expr::Var(global(0x0A0B_0C0D, 0x20, false)),
+                Expr::AddrOf {
+                    var: global(PROGRAM, 0x8, true),
+                    cell: 0,
+                },
+                Expr::AddrOf {
+                    var: global(PROGRAM, 0x30, false),
+                    cell: 0,
+                },
+            ],
+            returns: Some(0),
+        }),
+    ];
+    let unit = Unit {
+        program: PROGRAM,
+        imports: Vec::new(),
+        classes: Vec::new(),
+        functions: vec![Method::free(function(0, 0, Returns::Void, body))],
+        front: None,
+    };
+    let mut project = Project::default();
+    let cell = |offset: u32, kind: Kind| FieldFacts {
+        offset,
+        bytes: 4,
+        kind,
+    };
+    let info = ProgramInfo {
+        program: PROGRAM,
+        global_cells: vec![cell(0x10, Kind::I32), cell(0x30, Kind::F32)],
+        statics: BTreeMap::from([(0x8, Kind::Object("type_00000000000000AB".to_owned()))]),
+        ..ProgramInfo::default()
+    };
+    project.programs.insert(PROGRAM, info);
+    let names = Names::default();
+    let text = file(&unit, &names, &project, Options::default()).text;
+    // ⚠ A global whose address the code hands on is of no kind its accesses agree on.
+    let declared = "\nint Global_10;\nCell Global_18, Global_30;\n\
+                    type_00000000000000AB Static_8;\n\nvoid func_000000()\n";
+    assert!(text.contains(declared), "{text}");
+    // What another program holds is that program's to declare.
+    assert!(!text.contains(" Global_20;"), "{text}");
+    // ⚠ The comment over them goes on under itself where it passes the width.
+    assert!(
+        text.contains("\n// the globals and statics of this program "),
+        "{text}"
+    );
+    assert!(
+        text.lines().all(|line| line.chars().count() <= 120),
+        "{text}"
+    );
+
+    // With `kinds` off, or nothing of the program named, nothing is declared.
+    let off = Options::default().without(Pass::Kinds);
+    let text = file(&unit, &names, &project, off).text;
+    assert!(!text.contains("Global_10;"), "{text}");
+    let text = file(&program(), &names, &project, Options::default()).text;
+    assert!(!text.contains("// the globals and statics"), "{text}");
 }

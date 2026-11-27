@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
 use super::class::{Class, ClassKind, Field, Method, Role, Unit};
-use super::ir::{Callee, Expr, Kind, TypeKey};
+use super::ir::{Callee, Expr, Kind, TypeKey, Var};
 use super::passes::closures;
 use super::print::{self, Lambdas, ListingWriter, Read};
 use super::project::types;
@@ -61,12 +61,14 @@ fn source(unit: &Unit, cx: &Context<'_>, stats: &Stats) -> String {
         counted: "called",
     };
     let mut out = print::header(unit.program, &imports, &read, cx, stats);
+    out.push_str(&globals(unit, cx));
     let lambdas = in_place(unit, cx);
+    let hidden = print::Hidden::of(unit, &lambdas, cx);
     let mut free: Vec<&Method> = unit.functions.iter().collect();
     free.sort_by_key(|method| method.function.head.at);
     for method in free {
         out.push('\n');
-        print::method_in(&mut out, method, None, 0, cx, &lambdas);
+        print::method_hiding(&mut out, method, None, 0, cx, &lambdas, &hidden);
     }
 
     // An explicit stack: classes nest as deep as the closures they were made for.
@@ -81,6 +83,10 @@ fn source(unit: &Unit, cx: &Context<'_>, stats: &Stats) -> String {
                 continue;
             }
         };
+        // A closure class every member of which is written in place is no class to write.
+        if hidden.hides(class.key) {
+            continue;
+        }
         if gap {
             out.push('\n');
         }
@@ -104,13 +110,14 @@ fn source(unit: &Unit, cx: &Context<'_>, stats: &Stats) -> String {
             if std::mem::replace(&mut written, true) {
                 out.push('\n');
             }
-            print::method_in(
+            print::method_hiding(
                 &mut out,
                 method,
                 Some((class.key, name.as_str())),
                 depth + 1,
                 cx,
                 &lambdas,
+                &hidden,
             );
         }
         work.push(Work::Close(depth));
@@ -119,6 +126,121 @@ fn source(unit: &Unit, cx: &Context<'_>, stats: &Stats) -> String {
         }
     }
     out
+}
+
+/// What the comment over the globals and statics a file declares says of them.
+const GLOBALS: &str = "the globals and statics of this program that its code names, each of \
+                       the kind the program states of it or every access of it in the project \
+                       agrees on, and Cell where neither says one";
+
+/// The globals and statics of the program its own code names, under a blank line and a comment, each declared with the kind the project holds of it; nothing where none is named or `kinds` is off.
+// ⚠ Before the first function: C# takes a statement at the top of a file only there.
+fn globals(unit: &Unit, cx: &Context<'_>) -> String {
+    if !(cx.options.on(Pass::Kinds) && print::true_csharp(&cx.options)) {
+        return String::new();
+    }
+    let own = |var: &Var| match *var {
+        Var::Global {
+            program,
+            offset,
+            statics,
+        } if program == unit.program => Some((statics, offset)),
+        _ => None,
+    };
+    let mut named: BTreeSet<(bool, u32)> = BTreeSet::new();
+    // ⚠ What a callee does through an address no access of the project shows: a global whose
+    // address the code hands on is declared only by what the program states of it.
+    let mut addressed: BTreeSet<(bool, u32)> = BTreeSet::new();
+    for body in bodies(unit) {
+        tree::each_simple(body, &mut |s| {
+            named.extend(s.targets().iter().filter_map(own))
+        });
+        tree::each_expr(body, &mut |top| {
+            top.walk(&mut |e| match e {
+                Expr::Var(var) => named.extend(own(var)),
+                Expr::AddrOf { var, .. } => {
+                    named.extend(own(var));
+                    addressed.extend(own(var));
+                }
+                _ => {}
+            });
+        });
+    }
+    if named.is_empty() {
+        return String::new();
+    }
+    // One line a type, in the order its first variable stands.
+    let mut lines: Vec<(String, Vec<String>)> = Vec::new();
+    for (statics, offset) in named {
+        let seen = !addressed.contains(&(statics, offset));
+        let ty = global_type(unit.program, offset, statics, seen, cx);
+        let space = if statics { "Static" } else { "Global" };
+        let name = format!("{space}_{offset:X}");
+        match lines.iter_mut().find(|(held, _)| *held == ty) {
+            Some((_, names)) => names.push(name),
+            None => lines.push((ty, vec![name])),
+        }
+    }
+    let mut out = String::from("\n");
+    out.push_str(&print::comment(GLOBALS, 0));
+    for (ty, names) in lines {
+        out.push_str(&print::laid(&format!("{ty} {};", names.join(", ")), 0));
+        out.push('\n');
+    }
+    out
+}
+
+/// The type a global or a static of `program` is declared with: the kind the program states of it, else, where `seen`, the one every access agrees on where that kind is as wide as the accesses, else `Cell`.
+fn global_type(program: u32, offset: u32, statics: bool, seen: bool, cx: &Context<'_>) -> String {
+    let info = cx.project.programs.get(&program);
+    let stated = info.and_then(|info| match statics {
+        true => info.statics.get(&offset),
+        false => info.globals.get(&offset),
+    });
+    if let Some(kind) = stated {
+        return print::kind_text(kind, cx.names, true);
+    }
+    let cell = cx.project.cell(program, offset, statics).filter(|_| seen);
+    let Some(cell) = cell else {
+        return "Cell".to_owned();
+    };
+    let kind = &cell.kind;
+    let fits = match cell.bytes {
+        1 => matches!(kind, Kind::Bool | Kind::I8 | Kind::U8),
+        2 => matches!(kind, Kind::I16 | Kind::U16),
+        4 => matches!(kind, Kind::I32 | Kind::U32 | Kind::F32 | Kind::Hash),
+        8 => matches!(
+            kind,
+            Kind::Unknown
+                | Kind::I64
+                | Kind::U64
+                | Kind::F64
+                | Kind::Pointer
+                | Kind::Object(_)
+                | Kind::String
+                | Kind::Array(_)
+        ),
+        _ => false,
+    };
+    match (fits, kind) {
+        (true, kind) => print::kind_text(kind, cx.names, true),
+        (false, Kind::Unknown) if cell.bytes > 8 && cell.bytes.is_multiple_of(8) => {
+            format!("Cells{}", cell.bytes / 8)
+        }
+        (false, _) => "Cell".to_owned(),
+    }
+}
+
+/// Every body of a unit: its functions' and those of every class, nested ones too.
+fn bodies(unit: &Unit) -> Vec<&[tree::Stmt]> {
+    let mut bodies: Vec<&[tree::Stmt]> = Vec::new();
+    bodies.extend(unit.functions.iter().map(|m| m.function.body.as_slice()));
+    let mut open: Vec<&Class> = unit.classes.iter().collect();
+    while let Some(class) = open.pop() {
+        bodies.extend(class.methods.iter().map(|m| m.function.body.as_slice()));
+        open.extend(&class.nested);
+    }
+    bodies
 }
 
 /// The lambdas of a unit whose bodies are written where they are bound and left out of their closure class, by offset.
@@ -259,18 +381,50 @@ fn opened(out: &mut String, class: &Class, name: &str, depth: usize, cx: &Contex
     if class.kind != ClassKind::Enum {
         return;
     }
-    // The values an enum's constants take: no list names the constants themselves.
+    // The values an enum's constants take: a member each where a list names it, the rest said.
     let constants = cx
         .project
         .types
         .get(&class.key)
         .map(|facts| facts.constants.as_slice())
         .unwrap_or_default();
-    if !constants.is_empty() {
-        let values: Vec<String> = constants.iter().map(i64::to_string).collect();
-        let said = format!("values: {}", values.join(", "));
+    let members = match as_enum {
+        true => enum_members(class.key, cx),
+        false => Vec::new(),
+    };
+    let mut left: Vec<String> = Vec::new();
+    let mut written: BTreeSet<i64> = BTreeSet::new();
+    for value in constants {
+        let line = members.iter().find(|(held, _)| held == value);
+        match line.filter(|_| written.insert(*value)) {
+            Some((_, line)) => {
+                indent(out, depth + 1);
+                out.push_str(line);
+                out.push('\n');
+            }
+            None => left.push(value.to_string()),
+        }
+    }
+    if !left.is_empty() {
+        let said = match members.is_empty() {
+            true => format!("values: {}", left.join(", ")),
+            false => format!("values no list names a member of: {}", left.join(", ")),
+        };
         out.push_str(&print::comment(&said, depth + 1));
     }
+}
+
+/// The members of the enum `key` a list names, each as the line that declares it, by the constant whose value it is: one name a member and one member a value.
+fn enum_members(key: TypeKey, cx: &Context<'_>) -> Vec<(i64, String)> {
+    let members = types::declared_members(cx.project, cx.names, key);
+    let line = |(value, low, member): (i64, u64, &str)| {
+        let written = match low <= 0x1_0000 {
+            true => low.to_string(),
+            false => format!("0x{low:X}"),
+        };
+        (value, format!("{member} = {written},"))
+    };
+    members.into_iter().map(line).collect()
 }
 
 /// One field: `[static] <type> <name>;`, with the offset that a user's name leaves unsaid.

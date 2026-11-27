@@ -548,7 +548,7 @@ impl Writer<'_> {
                 // ⚠ A place no type declares says no width: only a whole cell reads as one.
                 None if kind.bytes() == 8 => {
                     typed = false;
-                    self.place(addr, *offset, false)
+                    self.place_of(addr, *offset, false, Some(8))
                 }
                 None => return None,
             },
@@ -619,10 +619,18 @@ impl Writer<'_> {
         };
         let field = self.project.field(owner?, *offset)?;
         let bytes = kind.bytes();
-        if field.bytes != bytes || bytes > 2 {
+        if field.bytes != bytes {
             return None;
         }
         let c = spell::folded(bits(value))?;
+        // A value of a field of an enum is the member a list names for it.
+        if let Kind::Value { ty, .. } = &field.kind {
+            let key = TypeKey::of_name(ty).filter(|_| self.options.on(Pass::Kinds));
+            return key.and_then(|key| self.enum_member(key, c.bits));
+        }
+        if bytes > 2 {
+            return None;
+        }
         let low = c.bits & ((1u64 << (bytes * 8)) - 1);
         match (&field.kind, bytes) {
             (Kind::Bool, 1) if low <= 1 => Some((low == 1).to_string()),
@@ -726,9 +734,15 @@ impl Writer<'_> {
         let item: &'b Stmt = item;
         let none: &[Stmt] = &[];
         let asked = receiver(cond);
+        let held = crate::gta6::script::passes::sugar_statements::enumerated(setup, cond);
         let (shown, source) = match (step.as_deref(), setup.split_last()) {
             // An index stepped over an array: the array is what is gone through, and nothing else is shown.
             (Some(step), _) => (none, indexed(setup, item, step)),
+            // A struct enumerator: what it is made from is what is gone through.
+            (None, _) if held.is_some() => held
+                .map_or((setup.as_slice(), None), |(rest, source)| {
+                    (rest, Some(source))
+                }),
             // The collection is what the enumerator is taken from, else what each round asks.
             (None, Some((taken, rest))) if takes(taken, asked) => (rest, assigned_receiver(taken)),
             (None, _) => (setup.as_slice(), asked),
@@ -877,7 +891,7 @@ impl Writer<'_> {
         };
         let subject = match labels {
             Labels::Decimal => self.value(value),
-            Labels::Hex | Labels::Hashes => self.as_uint(value).0,
+            Labels::Hex | Labels::Hashes | Labels::Members(_) => self.as_uint(value).0,
         };
         let written = |of: &Vec<i64>| -> Vec<String> {
             of.iter().map(|label| self.label(*label, labels)).collect()

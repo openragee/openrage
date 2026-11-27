@@ -7,7 +7,7 @@
 use std::fmt::Write;
 
 use crate::gta6::script::ir::{
-    BinOp, Callee, Const, Expr, ExprSugar, FunctionKey, Kind, Scalar, TypeKey,
+    BinOp, Callee, Const, Expr, ExprSugar, FunctionKey, Kind, Scalar, TypeKey, Var,
 };
 use crate::gta6::script::Pass;
 
@@ -375,7 +375,7 @@ impl Writer<'_> {
                 addr,
                 offset,
             } => {
-                let (place, binds) = self.place(addr, *offset, false);
+                let (place, binds) = self.place_of(addr, *offset, false, Some(4));
                 (format!("(uint){}", wrap(place, binds, UNARY)), UNARY)
             }
             _ => self.cast(Scalar::U32, e),
@@ -445,12 +445,39 @@ impl Writer<'_> {
         if bytes == 8 && at == 0 && self.one_cell(of) {
             return Some(self.expr(of, POSTFIX));
         }
+        // ⚠ A dot after a variable of one cell goes through it: its own bytes are its bits
+        // shifted down.
+        if let Expr::Var(var) = of {
+            if self.single(*var) {
+                return self.shifted(*var, at, bytes);
+            }
+        }
         let owner = match self.kind_of(of) {
             Kind::Value { ty, .. } => TypeKey::of_name(&ty),
             _ => None,
         };
         let base = self.expr(of, POSTFIX);
         Some(format!("{base}.{}", self.field_name(owner, at)))
+    }
+
+    /// `(x >> 32)`: the variable of one cell `var` shifted down to the `bytes` bytes at byte `at` of it, which a cast in front cuts to their width; `None` past the bytes its kind holds, or where C# shifts no value of its kind.
+    // ⚠ Within those bytes the sign a shift brings in reaches none of the bits kept.
+    fn shifted(&self, var: Var, at: u32, bytes: u32) -> Option<String> {
+        let held: u64 = match self.kind_of(&Expr::Var(var)) {
+            Kind::I8 | Kind::U8 => 1,
+            Kind::I16 | Kind::U16 => 2,
+            Kind::I32 | Kind::U32 => 4,
+            Kind::I64 | Kind::U64 | Kind::Unknown => 8,
+            _ => return None,
+        };
+        if u64::from(at) + u64::from(bytes) > held {
+            return None;
+        }
+        let name = self.var(var);
+        Some(match at {
+            0 => name,
+            at => format!("({name} >> {})", u64::from(at) * 8),
+        })
     }
 
     /// `extract_bytes(value, offset, bytes)` as the field it takes, read as the unsigned number of its width, bare for one cell and under its cells for several; `None` for any other width.

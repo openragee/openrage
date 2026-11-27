@@ -18,6 +18,10 @@ use crate::gta6::script::ir::{
 use crate::gta6::script::project::{Project, Signature};
 use crate::gta6::script::{Context, Pass, Stats};
 
+#[path = "aggregates_kinds.rs"]
+mod kinds;
+pub use kinds::copied_kinds;
+
 /// The names this file's rewrites are switched by.
 pub const PASSES: &[Pass] = &[Pass::Aggregates];
 

@@ -345,6 +345,22 @@ fn a_record_s_bytes_round_trip_through_save_and_the_version_is_asav_version() {
 }
 
 #[test]
+fn every_known_settings_field_hashes_to_its_key() {
+    for (hash, name) in KNOWN_SETTINGS_FIELD_NAMES {
+        assert_eq!(
+            key_hash(name),
+            *hash,
+            "{name} hashes to {h:#010x}, not {expect:#010x}",
+            h = key_hash(name),
+            expect = hash,
+        );
+        assert_eq!(known_field_name(*hash), Some(*name));
+    }
+    // A hash no name is known for returns None, not a wrong guess.
+    assert_eq!(known_field_name(0xBAAD_F00D), None);
+}
+
+#[test]
 fn the_rage_joaat_matches_a_known_value() {
     // Empty input returns a hash of the seed alone, run through the finalizer.
     // seed = 0; finalize: (0*9)^((0*9)>>11) * 0x8001 = 0. So for seed 0, the result is 0.

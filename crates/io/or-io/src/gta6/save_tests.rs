@@ -367,7 +367,7 @@ fn the_rage_joaat_matches_a_known_value() {
     assert_eq!(rage_joaat_signed(&[], 0), 0);
     // A one-byte input with seed 0: hash = ((byte + 0) * 0x401) ^ ... then finalized.
     // We just lock the current value so a later refactor does not drift the algorithm.
-    let one_byte = rage_joaat_signed(&[b'a'], 0);
+    let one_byte = rage_joaat_signed(b"a", 0);
     assert_ne!(one_byte, 0, "a non-zero byte gives a non-zero hash");
     // The `#[record]`-style check: the game's seed on the ASAV header is 0x4BF672ED.
     assert_eq!(ASAV_CHECKSUM_SEED, 0x4BF6_72ED);

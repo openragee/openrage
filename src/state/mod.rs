@@ -521,7 +521,6 @@ pub use search_session::SearchQuery;
 
 use document_io::*;
 
-use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -594,7 +593,7 @@ pub struct AppState {
     pub loading: LoadingState,
     /// The file being opened, and where its result arrives.
     load_receiver: Option<(PathBuf, Receiver<LoadResult>)>,
-    pending_loads: VecDeque<PathBuf>,
+    pending_loads: std::collections::VecDeque<PathBuf>,
     batch_loading: bool,
     save_receiver: Option<file_io::SaveJob>,
     pub show_error_dialog: bool,
@@ -763,7 +762,7 @@ impl AppState {
             front_door: Default::default(),
             loading: LoadingState::Idle,
             load_receiver: None,
-            pending_loads: VecDeque::new(),
+            pending_loads: std::collections::VecDeque::new(),
             batch_loading: false,
             save_receiver: None,
             show_error_dialog: false,

@@ -33,12 +33,14 @@ pub fn run(f: &mut cfg::Function, names: &Names, stats: &mut Stats) {
     run_in(f, &Context::baseline(names), stats);
 }
 
-/// [`run`] as the pipeline calls it: `escape`, `constants` and `coalesce` each switch on a finer rule of this pass.
+/// [`run`] as the pipeline calls it: `escape`, `constants`, `coalesce`, `wide-joins` and `repeats` each switch on a finer rule of this pass.
 // `escape`: two accesses are told apart by the variables their addresses are in, and an allocation
 // may change places with a call. `constants`: a test of constants is decided at every kind it is
 // taken at, and so is a test of the variable the statement straight before it gave a constant.
 // `coalesce`: a local that copies a temporary keeps its name, and two arms that only choose a
-// value for one variable are the one assignment of the choice.
+// value for one variable are the one assignment of the choice. `wide-joins`: temporaries of one
+// cell each that only ever carry a value of several cells whole are one variable of its cells.
+// `repeats`: a test that repeats the one its block was entered by goes the way that one went.
 // `Stats` counts temporaries on the trees either side of the passes, so nothing is counted here.
 pub fn run_in(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) {
     if f.head.incomplete.is_some() || f.cfg.blocks.is_empty() {
@@ -47,6 +49,8 @@ pub fn run_in(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) {
     let finer = cx.options.on(Pass::Escape);
     let ordered = cx.options.on(Pass::Constants);
     let keep = cx.options.on(Pass::Coalesce);
+    let wide = cx.options.on(Pass::WideJoins);
+    let again = cx.options.on(Pass::Repeats);
     named_accesses(&f.head, &mut f.cfg);
     tidy(&f.head, &mut f.cfg, ordered);
     joins::split_tuples(&mut f.cfg);
@@ -64,7 +68,9 @@ pub fn run_in(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) {
             changed |= fold::copies(f, keep);
             changed |= joins::roots(f);
             changed |= joins::merge(f);
+            changed |= wide && joins::wholes(f);
             changed |= cells::gather(f);
+            changed |= again && repeats(&mut f.cfg);
             changed |= tidy(&f.head, &mut f.cfg, ordered);
             if !changed {
                 settled = true;
@@ -361,6 +367,97 @@ fn tidy(head: &Head, cfg: &mut Cfg, ordered: bool) -> bool {
             }
         }
         changed = true;
+    }
+    changed
+}
+
+/// How deep a test is looked into for the readings of truth around it.
+const TRUTHS: usize = 16;
+
+/// `e` with the readings of truth around it taken off: a branch on either goes the same way.
+fn tested(e: &Expr) -> &Expr {
+    let mut e = e;
+    for _ in 0..TRUTHS {
+        match e {
+            Expr::Truth(inner) => e = &**inner,
+            _ => break,
+        }
+    }
+    e
+}
+
+/// Whether a branch on `b` goes the way a branch on `a` goes (`Some(false)`) or the other way (`Some(true)`), by their forms alone.
+// ⚠ `l == r` and `l != r` at one kind are each other's opposite, a float that is no number too.
+fn opposite(a: &Expr, b: &Expr) -> Option<bool> {
+    let (a, b) = (tested(a), tested(b));
+    if a == b {
+        return Some(false);
+    }
+    let flipped = |op: BinOp| match op {
+        BinOp::Eq => Some(BinOp::Ne),
+        BinOp::Ne => Some(BinOp::Eq),
+        _ => None,
+    };
+    match (a, b) {
+        (Expr::Unary { op: UnOp::Not, e }, other) | (other, Expr::Unary { op: UnOp::Not, e })
+            if tested(e) == other =>
+        {
+            Some(true)
+        }
+        (
+            Expr::Binary { op, at, l, r },
+            Expr::Binary {
+                op: other,
+                at: at_b,
+                l: l_b,
+                r: r_b,
+            },
+        ) if flipped(*op) == Some(*other) && at == at_b && l == l_b && r == r_b => Some(true),
+        _ => None,
+    }
+}
+
+/// Sends each test that repeats the test its block was entered by, with nothing run between, the way that test went.
+// `if (c) { if (c) { A } else { B } }` is `if (c) { A }`: the block of the second test holds no
+// statement and is entered from the first alone, by the arm `c` chose. The arm left behind has
+// nothing that leads to it, for `tidy` to remove.
+// ⚠ Only a test that gives the same again and does nothing when evaluated again: no call and no new object.
+fn repeats(cfg: &mut Cfg) -> bool {
+    let preds = cfg.predecessors();
+    let mut decided: Vec<(BlockId, BlockId)> = Vec::new();
+    for (b, block) in cfg.blocks.iter().enumerate() {
+        let Terminator::Branch { cond, then, els } = &block.term else {
+            continue;
+        };
+        let [p] = preds[b].as_slice() else {
+            continue;
+        };
+        if b == ENTRY || *p == b || !block.stmts.is_empty() {
+            continue;
+        }
+        let Terminator::Branch {
+            cond: first,
+            then: yes,
+            els: no,
+        } = &cfg.blocks[*p].term
+        else {
+            continue;
+        };
+        let held = match (*yes == b, *no == b) {
+            (true, false) => true,
+            (false, true) => false,
+            _ => continue,
+        };
+        let Some(flipped) = opposite(first, cond) else {
+            continue;
+        };
+        if effects::repeatable(cond) {
+            decided.push((b, if held != flipped { *then } else { *els }));
+        }
+    }
+    let changed = !decided.is_empty();
+    for (b, to) in decided {
+        cfg.blocks[b].term = Terminator::Jump(to);
     }
     changed
 }

@@ -1099,3 +1099,162 @@ fn one_cell_read_through_the_address_of_a_variable_of_several_is_not_the_variabl
         "{args:?}"
     );
 }
+
+/// A value of two cells and the two stack slots a join carries it in.
+const PAIR_SLOTS: &str = "VmValues v_000018_1 = null!; VmValue stack_000060_0 = default; VmValue stack_000060_1 = default;";
+
+/// The cells of a value of two cells given to the two slots.
+const PAIR_CELLS: &str = "v_000018_1 = Native.DEMO.PAIR(); stack_000060_0 = v_000018_1[0]; stack_000060_1 = v_000018_1[1];";
+
+/// A branch on the first parameter whose arms give the two slots `yes` and `no`, read by `reads` where they meet.
+fn pair_join(yes: &str, no: &str, reads: &str) -> String {
+    format!("if (((as_u32(p0) != 0))) {{ {yes} }} else {{ {no} }} {reads} return;")
+}
+
+/// Whether any statement or terminator of `f` names `var`.
+fn mentioned(f: &cfg::Function, var: Var) -> bool {
+    let named = |top: &Expr| {
+        let mut found = false;
+        top.walk(&mut |e| found |= *e == Expr::Var(var));
+        found
+    };
+    f.cfg.blocks.iter().any(|block| {
+        let in_stmts = block.stmts.iter().any(|stmt| {
+            let mut found = stmt.targets().contains(&var);
+            stmt.each_expr(&mut |top| found |= named(top));
+            found
+        });
+        in_stmts || block.term.expr().is_some_and(named)
+    })
+}
+
+#[test]
+fn a_value_of_two_cells_carried_over_two_stack_slots_to_a_join_is_one_variable() {
+    let (low, high) = (
+        Var::Stack { at: 0x60, index: 0 },
+        Var::Stack { at: 0x60, index: 1 },
+    );
+    let zeroes = "stack_000060_0 = 0; stack_000060_1 = 0;";
+    let reads = "Native.DEMO.USE2(stack_000060_0, stack_000060_1); Native.DEMO.USE3(p1, stack_000060_0, stack_000060_1);";
+    let body = pair_join(PAIR_CELLS, zeroes, reads);
+    let made = ran_with(&[Pass::WideJoins], PAIR_SLOTS, &body);
+    let info = &made.head.vars[&low];
+    assert_eq!(
+        (info.width, info.kind.clone()),
+        (Width::Cells, Kind::Aggregate(2))
+    );
+    assert!(!made.head.vars.contains_key(&high), "{:?}", made.head.vars);
+    assert!(!mentioned(&made, high), "{:?}", made.cfg);
+    // Each arm gives the one variable one value, the zeroes as the value of two zero cells.
+    let stmts: Vec<&Stmt> = made
+        .cfg
+        .blocks
+        .iter()
+        .flat_map(|block| &block.stmts)
+        .collect();
+    let given: Vec<&Expr> = (stmts.iter())
+        .filter_map(|stmt| match stmt {
+            Stmt::Assign { target, value } if *target == low => Some(value),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(given.len(), 2, "{stmts:?}");
+    assert!(given.contains(&&Expr::ZeroSlots(2)), "{given:?}");
+    // Both calls are handed the variable whole, in the place of its two cells.
+    let handed = |stmt: &&&Stmt| matches!(stmt, Stmt::Eval(Expr::Call { args, .. }) if args.last() == Some(&Expr::Var(low)));
+    assert_eq!(stmts.iter().filter(handed).count(), 2, "{stmts:?}");
+    // Every assignment states two cells, so the variable is known to be that wide.
+    assert_eq!(effects::Facts::of(&made).widths.get(&low), Some(&2));
+
+    // Without the name the slots stay two variables.
+    let off = ran_with(&[], PAIR_SLOTS, &body);
+    assert!(mentioned(&off, high), "{:?}", off.cfg);
+    assert_eq!(off.head.vars[&low].width, Width::Cell);
+}
+
+#[test]
+fn stack_slots_read_or_given_a_cell_apart_stay_slots() {
+    let high = Var::Stack { at: 0x60, index: 1 };
+    let reads = "Native.DEMO.USE2(stack_000060_0, stack_000060_1);";
+    let zeroes = "stack_000060_0 = 0; stack_000060_1 = 0;";
+    let kept = |body: String| {
+        let made = ran_with(&[Pass::WideJoins], PAIR_SLOTS, &body);
+        assert!(mentioned(&made, high), "from:\n{body}\n{:?}", made.cfg);
+        let stack = (made.head.vars.iter()).filter(|(var, _)| matches!(var, Var::Stack { .. }));
+        let wide = stack.filter(|(_, info)| info.width == Width::Cells).count();
+        assert_eq!(wide, 0, "from:\n{body}\n{:?}", made.head.vars);
+    };
+    // One slot read alone takes one cell of the value.
+    let alone = format!("{reads} Native.DEMO.USE(stack_000060_1);");
+    kept(pair_join(PAIR_CELLS, zeroes, &alone));
+    // The other arm gives two cells of no one value.
+    kept(pair_join(
+        PAIR_CELLS,
+        "stack_000060_0 = p1; stack_000060_1 = 0;",
+        reads,
+    ));
+    // The two are handed over the other way round.
+    let swapped = "Native.DEMO.USE2(stack_000060_1, stack_000060_0);";
+    kept(pair_join(PAIR_CELLS, zeroes, swapped));
+}
+
+#[test]
+fn a_test_that_repeats_the_one_its_block_was_entered_by_goes_the_way_that_one_went() {
+    let field = "as_u32(load_i32(p0, 0x10))";
+    let nested = |first: &str, between: &str, second: &str| {
+        format!("if ((({first} != 0))) {{ {between} if ((({second} != 0))) {{ Native.DEMO.USE(p1); }} else {{ Native.DEMO.USE(p0); }} }} else {{ }} return;")
+    };
+    let tests = |f: &cfg::Function| {
+        let test = |block: &&Block| matches!(block.term, Terminator::Branch { .. });
+        f.cfg.blocks.iter().filter(test).count()
+    };
+    let calls = |f: &cfg::Function, arg: Var| {
+        let all = f.cfg.blocks.iter().flat_map(|block| &block.stmts);
+        let handed = |stmt: &&Stmt| matches!(stmt, Stmt::Eval(Expr::Call { args, .. }) if args[..] == [Expr::Var(arg)]);
+        all.filter(handed).count()
+    };
+    // The arm the second test can no longer take goes with the test.
+    let made = ran_with(&[Pass::Repeats], "", &nested(field, "", field));
+    assert_eq!(tests(&made), 1, "{:?}", made.cfg);
+    assert_eq!(calls(&made, Var::Param(0)), 0, "{:?}", made.cfg);
+    assert_eq!(calls(&made, Var::Param(1)), 1, "{:?}", made.cfg);
+    // Without the name both tests stay.
+    assert_eq!(tests(&ran_with(&[], "", &nested(field, "", field))), 2);
+    // A store between may change what the second test reads.
+    let stored = nested(field, "store_i32(p0, 0x10, 0);", field);
+    assert_eq!(tests(&ran_with(&[Pass::Repeats], "", &stored)), 2);
+    // Another field is another test.
+    let other = nested(field, "", "as_u32(load_i32(p0, 0x14))");
+    assert_eq!(tests(&ran_with(&[Pass::Repeats], "", &other)), 2);
+    // A call made again may give another value.
+    let call = "as_u32(Native.DEMO.GET(p0))";
+    let again = nested(call, "", call);
+    assert_eq!(tests(&ran_with(&[Pass::Repeats], "", &again)), 2);
+}
+
+#[test]
+fn a_test_that_is_the_opposite_of_the_one_its_block_was_entered_by_goes_the_other_way() {
+    let field = "as_u32(load_i32(p0, 0x10))";
+    // Entered where the field is not zero, the second test, that it is not, holds.
+    let body = format!("if ((({field} == 0))) {{ Native.DEMO.USE(p1); }} else {{ if ((({field} != 0))) {{ Native.DEMO.USE(p0); }} else {{ Native.DEMO.USE(p1); }} }} return;");
+    let made = ran_with(&[Pass::Repeats], "", &body);
+    let tests = (made.cfg.blocks.iter())
+        .filter(|block| matches!(block.term, Terminator::Branch { .. }))
+        .count();
+    assert_eq!(tests, 1, "{:?}", made.cfg);
+    let all: Vec<&Stmt> = made
+        .cfg
+        .blocks
+        .iter()
+        .flat_map(|block| &block.stmts)
+        .collect();
+    let handed = |arg: Var| {
+        let to = |stmt: &&&Stmt| matches!(stmt, Stmt::Eval(Expr::Call { args, .. }) if args[..] == [Expr::Var(arg)]);
+        all.iter().filter(to).count()
+    };
+    assert_eq!(
+        (handed(Var::Param(0)), handed(Var::Param(1))),
+        (1, 1),
+        "{all:?}"
+    );
+}

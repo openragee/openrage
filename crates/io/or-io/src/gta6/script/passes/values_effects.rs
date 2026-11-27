@@ -795,6 +795,8 @@ impl Facts {
                 widths.insert(*var, *cells);
             }
         }
+        // A temporary assigned more than once: the assignments seen, and the cells all of them state alike.
+        let mut several: HashMap<Var, (u32, Option<u32>)> = HashMap::new();
         for block in &f.cfg.blocks {
             for stmt in &block.stmts {
                 let Stmt::Assign { target, value } = stmt else {
@@ -805,8 +807,8 @@ impl Facts {
                     .vars
                     .get(target)
                     .is_some_and(|info| info.width == Width::Cells);
-                let once = uses.get(target).is_some_and(|uses| uses.defs == 1);
-                if target.is_temporary() && many && once {
+                let defs = uses.get(target).map_or(0, |uses| uses.defs);
+                if target.is_temporary() && many && defs >= 1 {
                     let cells = match value {
                         // A group of cells is as wide as it has cells.
                         Expr::Cells(items) if items.iter().all(|item| one_cell(&f.head, item)) => {
@@ -814,10 +816,27 @@ impl Facts {
                         }
                         other => cells_of(other, &widths),
                     };
-                    if let Some(cells) = cells {
-                        widths.insert(*target, cells);
+                    match (defs, cells) {
+                        (1, Some(cells)) => {
+                            widths.insert(*target, cells);
+                        }
+                        (1, None) => {}
+                        _ => {
+                            let seen = several.entry(*target).or_insert((0, cells));
+                            seen.0 += 1;
+                            if seen.1 != cells {
+                                seen.1 = None;
+                            }
+                        }
                     }
                 }
+            }
+        }
+        // ⚠ Only where every assignment is one of those counted: a tuple's also assigns it.
+        for (var, (assigned, cells)) in several {
+            let defs = uses.get(&var).map_or(0, |uses| uses.defs);
+            if let (true, Some(cells)) = (assigned == defs, cells) {
+                widths.insert(var, cells);
             }
         }
         Facts {
@@ -1059,6 +1078,24 @@ fn class(name: &str) -> Class {
     } else {
         Class::Calls
     }
+}
+
+/// Whether evaluating `e` again, with nothing run since it was evaluated, gives what it gave and does nothing it did not.
+// A load reads what it read, for nothing between wrote memory; a call to anything but an
+// intrinsic that only works on or reads what it is given may not, and an allocation makes another object.
+pub(in crate::gta6::script::passes) fn repeatable(e: &Expr) -> bool {
+    let mut again = true;
+    e.walk(&mut |node| {
+        again &= match node {
+            Expr::Call {
+                callee: Callee::Intrinsic { name, .. },
+                ..
+            } => matches!(class(name), Class::Pure | Class::Reads),
+            Expr::Call { .. } | Expr::NewObject(_) | Expr::NewArray { .. } => false,
+            _ => true,
+        };
+    });
+    again
 }
 
 /// What evaluating something does that bears on moving it past something else.

@@ -1,12 +1,12 @@
 //! The values a lifter carries across a join in `stack_` variables: tuples taken apart, each
 //! variable that only renames another value replaced by that value, a join that is only
-//! copied into the next one merged with it, and two arms that only choose a value written as
-//! the choice.
+//! copied into the next one merged with it, two arms that only choose a value written as the
+//! choice, and a value of several cells carried in a row of temporaries made one variable.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::gta6::script::cfg::{self, Block, BlockId, Cfg, Terminator, ENTRY};
-use crate::gta6::script::ir::{Expr, Head, Stmt, UnOp, Var, Width};
+use crate::gta6::script::ir::{Expr, Head, Kind, Stmt, UnOp, Var, VarInfo, Width};
 
 use super::effects::{depth, each_top_mut, one_cell, Effects, Facts};
 
@@ -21,6 +21,9 @@ const CHOICE_DEPTH: usize = 24;
 
 /// The statements of a join that are looked at for copies of the value two arms hand it.
 const JOIN_COPIES: usize = 64;
+
+/// The most cells a value carried in temporaries of one cell each is made one variable of.
+const WHOLE: u32 = 256;
 
 /// The statements a function's walks along its paths may look at before the rest is left as it is.
 fn allowance(cfg: &Cfg) -> usize {
@@ -401,6 +404,12 @@ pub(super) fn merge(f: &mut cfg::Function) -> bool {
         // Where each stack variable is assigned by a statement of its own.
         let mut assigned: HashMap<Var, Vec<(BlockId, usize)>> = HashMap::new();
         let mut links: Vec<Link> = Vec::new();
+        // ⚠ A copy of a value of several cells renames no assignment: the variable it would
+        // rename to is declared a cell wide.
+        let wide = |var: &Var| {
+            facts.widths.contains_key(var)
+                || (f.head.vars.get(var)).is_some_and(|info| info.width == Width::Cells)
+        };
         for (b, block) in f.cfg.blocks.iter().enumerate() {
             for (i, stmt) in block.stmts.iter().enumerate() {
                 let Stmt::Assign { target, value } = stmt else {
@@ -416,7 +425,12 @@ pub(super) fn merge(f: &mut cfg::Function) -> bool {
                     continue;
                 }
                 match value {
-                    Expr::Var(from) if matches!(from, Var::Stack { .. }) && from != target => {
+                    Expr::Var(from)
+                        if matches!(from, Var::Stack { .. })
+                            && from != target
+                            && !wide(from)
+                            && !wide(target) =>
+                    {
                         links.push(Link {
                             s: *from,
                             t: *target,
@@ -477,6 +491,392 @@ pub(super) fn merge(f: &mut cfg::Function) -> bool {
         changed = true;
     }
     changed
+}
+
+/// A row of temporaries a lifter numbers one after another, `first` and the `cells - 1` after it, that a value of several cells may be carried in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Slots {
+    first: Var,
+    cells: u32,
+}
+
+impl Slots {
+    /// Where `var` stands in the row.
+    fn place(self, var: Var) -> Option<u32> {
+        let i = match (self.first, var) {
+            (Var::Stack { at, index }, Var::Stack { at: of, index: n })
+            | (Var::Value { at, index }, Var::Value { at: of, index: n })
+                if at == of =>
+            {
+                n.checked_sub(index)?
+            }
+            _ => return None,
+        };
+        (i < self.cells).then_some(i)
+    }
+
+    /// The temporary at place `i` of the row.
+    fn member(self, i: u32) -> Option<Var> {
+        match self.first {
+            Var::Stack { at, index } => Some(Var::Stack {
+                at,
+                index: index.checked_add(i)?,
+            }),
+            Var::Value { at, index } => Some(Var::Value {
+                at,
+                index: index.checked_add(i)?,
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// Whether `var` is a temporary of one cell, which may stand in a row.
+fn lone_cell(facts: &Facts, head: &Head, var: Var) -> bool {
+    let many = (head.vars.get(&var)).is_some_and(|info| info.width == Width::Cells);
+    var.is_temporary() && !many && !facts.widths.contains_key(&var)
+}
+
+/// The cells of `base` where it is a whole value of several cells whose width something states.
+// ⚠ A global's name reads one cell of memory, whatever kind it is given.
+fn width_of(facts: &Facts, head: &Head, base: &Expr) -> Option<u32> {
+    match base {
+        Expr::GuidEmpty => Some(2),
+        Expr::Var(var) if !matches!(var, Var::Global { .. }) => {
+            let many = (head.vars.get(var)).is_some_and(|info| info.width == Width::Cells);
+            facts.widths.get(var).copied().filter(|_| many)
+        }
+        _ => None,
+    }
+}
+
+/// The one value the assignments `stmts` starts with give the temporaries of `slots`, each in turn: every cell of one whole value, zeroes, or locals in a row.
+fn row(facts: &Facts, head: &Head, stmts: &[Stmt], slots: Slots) -> Option<Expr> {
+    let run = stmts.get(..usize::try_from(slots.cells).ok()?)?;
+    let mut values: Vec<&Expr> = Vec::with_capacity(run.len());
+    for (stmt, i) in run.iter().zip(0u32..) {
+        let Stmt::Assign { target, value } = stmt else {
+            return None;
+        };
+        if slots.place(*target) != Some(i) {
+            return None;
+        }
+        values.push(value);
+    }
+    let first = *values.first()?;
+    // `t = x[0]; t+1 = x[1]; ..` over every cell of an `x` that is none of the row.
+    if let Expr::Cell { base, index: 0 } = first {
+        let apart = !matches!(&**base, Expr::Var(var) if slots.place(*var).is_some());
+        let whole = width_of(facts, head, base) == Some(slots.cells);
+        let cells = (values.iter().copied().zip(0u32..)).all(|(value, i)| {
+            matches!(value, Expr::Cell { base: of, index } if *index == i && of == base)
+        });
+        return (apart && whole && cells).then(|| (**base).clone());
+    }
+    let zeroes =
+        (values.iter().copied()).all(|value| matches!(value, Expr::Const(c) if c.bits == 0));
+    if zeroes {
+        return Some(Expr::ZeroSlots(slots.cells));
+    }
+    // Locals of one cell each, one after another: the group of them is what the row holds.
+    let Expr::Var(Var::Local(low)) = first else {
+        return None;
+    };
+    let locals = (values.iter().copied().zip(0u32..)).all(|(value, i)| match value {
+        Expr::Var(var @ Var::Local(n)) => {
+            let one = !facts.widths.contains_key(var) && one_cell(head, value);
+            Some(*n) == low.checked_add(i) && one
+        }
+        _ => false,
+    });
+    locals.then(|| Expr::Cells(values.into_iter().cloned().collect()))
+}
+
+/// The row whose every temporary `items[at..]` names in order, from its first.
+fn run_of(members: &HashMap<Var, (Slots, u32)>, items: &[Expr], at: usize) -> Option<Slots> {
+    let Some(Expr::Var(var)) = items.get(at) else {
+        return None;
+    };
+    let (slots, 0) = *members.get(var)? else {
+        return None;
+    };
+    let end = at.checked_add(usize::try_from(slots.cells).ok()?)?;
+    let run = items.get(at..end)?;
+    let named = (run.iter().zip(0u32..))
+        .all(|(item, i)| matches!(item, Expr::Var(var) if slots.place(*var) == Some(i)));
+    named.then_some(slots)
+}
+
+/// Notes as taken apart each row a temporary of which stands in `inner`, where `inner` is a group that what holds it reads only a part of.
+fn picked(members: &HashMap<Var, (Slots, u32)>, inner: &Expr, refused: &mut HashSet<Var>) {
+    let Expr::Cells(items) = inner else {
+        return;
+    };
+    for item in items {
+        let Expr::Var(var) = item else {
+            continue;
+        };
+        if let Some((slots, _)) = members.get(var) {
+            refused.insert(slots.first);
+        }
+    }
+}
+
+/// Makes one variable of each row of temporaries that only ever takes a value of several cells whole and hands it on whole.
+// `t0 = x[0]; t1 = x[1]; .. f(t0, t1);` is `t0 = x; .. f(t0);`, however many rows assign the
+// temporaries on the way to a join: each row is the value one way in gives. A row of every cell
+// of one whole value says the temporaries carry a value; another row may give zeroes, or locals
+// in a row.
+// ⚠ Every assignment of each temporary must be in such a row, and every read in a run of all of
+// them in order that a call or a group is given whole: no cell is taken alone, so the variable is
+// only another name for the same cells.
+pub(super) fn wholes(f: &mut cfg::Function) -> bool {
+    let facts = Facts::of(f);
+    let head = &f.head;
+    // The rows each row of every cell of one whole value proposes, by their first temporary.
+    let mut proposed: BTreeMap<Var, u32> = BTreeMap::new();
+    let mut refused: HashSet<Var> = HashSet::new();
+    for block in &f.cfg.blocks {
+        for (i, stmt) in block.stmts.iter().enumerate() {
+            let Stmt::Assign {
+                target,
+                value: Expr::Cell { base, index: 0 },
+            } = stmt
+            else {
+                continue;
+            };
+            let cells = width_of(&facts, head, base).filter(|cells| (2..=WHOLE).contains(cells));
+            let Some(cells) = cells else {
+                continue;
+            };
+            let slots = Slots {
+                first: *target,
+                cells,
+            };
+            let made = row(&facts, head, &block.stmts[i..], slots).is_some();
+            if !(lone_cell(&facts, head, *target) && made) {
+                continue;
+            }
+            if proposed
+                .insert(*target, cells)
+                .is_some_and(|known| known != cells)
+            {
+                refused.insert(*target);
+            }
+        }
+    }
+    if proposed.is_empty() {
+        return false;
+    }
+    // A temporary stands in one row at most: rows that share one are left alone.
+    let mut members: HashMap<Var, (Slots, u32)> = HashMap::new();
+    let mut rows: Vec<Slots> = Vec::new();
+    for (first, cells) in &proposed {
+        let slots = Slots {
+            first: *first,
+            cells: *cells,
+        };
+        rows.push(slots);
+        for i in 0..*cells {
+            let Some(var) = slots.member(i) else {
+                refused.insert(*first);
+                break;
+            };
+            if let Some((other, _)) = members.insert(var, (slots, i)) {
+                refused.insert(other.first);
+                refused.insert(*first);
+            }
+        }
+    }
+    members.retain(|_, (slots, _)| !refused.contains(&slots.first));
+
+    // How many rows assign each row's temporaries, and how many runs read them.
+    let wide = |var: &Var| (head.vars.get(var)).is_some_and(|info| info.width == Width::Cells);
+    let mut assigned: HashMap<Var, u32> = HashMap::new();
+    let mut handed: HashMap<Var, u32> = HashMap::new();
+    for block in &f.cfg.blocks {
+        for stmt in &block.stmts {
+            // What a statement reads of a group only in part: an address, one cell stored, a cell assigned.
+            match stmt {
+                Stmt::Assign { target, value } if !wide(target) => {
+                    picked(&members, value, &mut refused);
+                }
+                Stmt::AssignMany { values, .. } => {
+                    for value in values {
+                        picked(&members, value, &mut refused);
+                    }
+                }
+                Stmt::Store { addr, value, .. } => {
+                    picked(&members, addr, &mut refused);
+                    picked(&members, value, &mut refused);
+                }
+                Stmt::StoreBytes { addr, .. }
+                | Stmt::StoreF32Slots { addr, .. }
+                | Stmt::ZeroBytes { addr, .. }
+                | Stmt::StepI32 { addr, .. } => picked(&members, addr, &mut refused),
+                Stmt::Assign { .. } | Stmt::Eval(_) => {}
+            }
+            stmt.each_expr(&mut |top| each_run(&members, top, &mut handed, &mut refused));
+        }
+        // Each assignment of a temporary of a row is a statement of a whole row that starts at its first.
+        let mut i = 0;
+        while i < block.stmts.len() {
+            let hit = (block.stmts[i].targets().iter())
+                .find_map(|target| members.get(target))
+                .copied();
+            match hit {
+                Some((slots, 0)) if row(&facts, head, &block.stmts[i..], slots).is_some() => {
+                    *assigned.entry(slots.first).or_default() += 1;
+                    i += slots.cells as usize;
+                }
+                Some((slots, _)) => {
+                    refused.insert(slots.first);
+                    i += 1;
+                }
+                None => i += 1,
+            }
+        }
+        match &block.term {
+            Terminator::Branch { cond: e, .. } | Terminator::Switch { value: e, .. } => {
+                picked(&members, e, &mut refused);
+            }
+            Terminator::Jump(_) | Terminator::Return(_) | Terminator::Unreachable => {}
+        }
+        if let Some(e) = block.term.expr() {
+            each_run(&members, e, &mut handed, &mut refused);
+        }
+    }
+
+    let valid: HashMap<Var, Slots> = rows
+        .into_iter()
+        .filter(|slots| {
+            let made = assigned.get(&slots.first).copied().unwrap_or(0);
+            let runs = handed.get(&slots.first).copied().unwrap_or(0);
+            let each = (0..slots.cells).all(|i| {
+                slots.member(i).is_some_and(|var| {
+                    let uses = facts.uses.get(&var).copied().unwrap_or_default();
+                    let counted = uses.defs == made && uses.reads == runs && uses.addrs == 0;
+                    lone_cell(&facts, head, var) && counted
+                })
+            });
+            !refused.contains(&slots.first) && made > 0 && each
+        })
+        .map(|slots| (slots.first, slots))
+        .collect();
+    if valid.is_empty() {
+        return false;
+    }
+    members.retain(|_, (slots, _)| valid.contains_key(&slots.first));
+
+    for block in &mut f.cfg.blocks {
+        let mut found: Vec<(usize, Slots, Expr)> = Vec::new();
+        let mut i = 0;
+        while i < block.stmts.len() {
+            let first = match &block.stmts[i] {
+                Stmt::Assign { target, .. } => members.get(target).copied(),
+                _ => None,
+            };
+            let made = first
+                .filter(|(_, place)| *place == 0)
+                .and_then(|(slots, _)| Some((slots, row(&facts, head, &block.stmts[i..], slots)?)));
+            match made {
+                Some((slots, value)) => {
+                    found.push((i, slots, value));
+                    i += slots.cells as usize;
+                }
+                None => i += 1,
+            }
+        }
+        // From the last back, so that the places before stay where they were found.
+        for (i, slots, value) in found.into_iter().rev() {
+            block.stmts.drain(i + 1..i + slots.cells as usize);
+            block.stmts[i] = Stmt::Assign {
+                target: slots.first,
+                value,
+            };
+        }
+    }
+    each_top_mut(&mut f.cfg, &mut |top| {
+        top.walk_mut(&mut |e| {
+            if let Expr::Call { args: items, .. } | Expr::Cells(items) = e {
+                let mut at = 0;
+                while at < items.len() {
+                    if let Some(slots) = run_of(&members, &items[..], at) {
+                        items.drain(at + 1..at + slots.cells as usize);
+                        items[at] = Expr::Var(slots.first);
+                    }
+                    at += 1;
+                }
+            }
+            // A group of the one variable alone is the variable.
+            let lone = matches!(&*e, Expr::Cells(items) if matches!(&items[..], [Expr::Var(var)] if valid.contains_key(var)));
+            if lone {
+                if let Expr::Cells(mut items) = std::mem::replace(e, Expr::GuidEmpty) {
+                    if let Some(item) = items.pop() {
+                        *e = item;
+                    }
+                }
+            }
+        });
+    });
+    for slots in valid.values() {
+        for i in 1..slots.cells {
+            if let Some(var) = slots.member(i) {
+                f.head.vars.remove(&var);
+            }
+        }
+        let info = (f.head.vars.entry(slots.first)).or_insert_with(|| VarInfo::new(Width::Cells));
+        info.width = Width::Cells;
+        info.kind = Kind::Aggregate(slots.cells);
+        info.single = false;
+    }
+    true
+}
+
+/// Counts in `top` each run of a row's temporaries a call or a group is given, and notes as taken apart each row a group of whose temporaries something reads only in part.
+fn each_run(
+    members: &HashMap<Var, (Slots, u32)>,
+    top: &Expr,
+    handed: &mut HashMap<Var, u32>,
+    refused: &mut HashSet<Var>,
+) {
+    top.walk(&mut |e| match e {
+        Expr::Call { args: items, .. } | Expr::Cells(items) => {
+            let mut at = 0;
+            while at < items.len() {
+                match run_of(members, items, at) {
+                    Some(slots) => {
+                        *handed.entry(slots.first).or_default() += 1;
+                        at += slots.cells as usize;
+                    }
+                    None => at += 1,
+                }
+            }
+        }
+        // A cell picked out of a group, its low bits, a test of it or an address made of it.
+        Expr::Cell { base: inner, .. }
+        | Expr::ExtractBytes { value: inner, .. }
+        | Expr::Cast { e: inner, .. }
+        | Expr::Truth(inner)
+        | Expr::Unary { e: inner, .. }
+        | Expr::Load { addr: inner, .. }
+        | Expr::LoadBytes { addr: inner, .. }
+        | Expr::NewArray { len: inner, .. }
+        | Expr::VirtualFunctionRef {
+            receiver: inner, ..
+        }
+        | Expr::Select { cond: inner, .. } => picked(members, inner, refused),
+        Expr::Binary { l, r, .. } | Expr::ByteOffset { addr: l, offset: r } => {
+            picked(members, l, refused);
+            picked(members, r, refused);
+        }
+        Expr::Vector3(items) => {
+            for item in items.iter() {
+                picked(members, item, refused);
+            }
+        }
+        _ => {}
+    });
 }
 
 /// The one assignment of a block that assigns one variable and jumps on: the variable, the value and where the block goes.

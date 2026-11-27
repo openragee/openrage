@@ -5,7 +5,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    holds, number, param_at, resolved, settled, Back, Found, Open, Usage, MAX_PARAMS, ROUNDS,
+    holds, number, param_at, resolved, settled, Back, Found, Open, Slot, Usage, ANY, MAX_PARAMS,
+    ROUNDS,
 };
 use crate::gta6::script::ir::{FunctionKey, Kind};
 use crate::gta6::script::project::{Param, Project, Signature};
@@ -20,6 +21,8 @@ pub(super) struct Shared {
     blind: BTreeSet<FunctionKey>,
     /// How the result of each function is read, over every call that names it and every function that hands it on.
     uses: BTreeMap<FunctionKey, Usage>,
+    /// How the result of each line of a slot is read, by the least function of the line: over every call that names a function of it, and every call through the slot.
+    line_uses: BTreeMap<FunctionKey, Usage>,
 }
 
 impl Shared {
@@ -55,16 +58,45 @@ impl Shared {
         }
         families.retain(|_, members| members.len() >= 2);
 
-        let mut blind: BTreeSet<FunctionKey> = members.into_iter().collect();
+        // The functions a call no code names may reach, besides through a slot.
+        let mut opaque: BTreeSet<FunctionKey> = BTreeSet::new();
         for waits in open.values() {
-            blind.extend(waits.taken.iter().copied());
+            opaque.extend(waits.taken.iter().copied());
+        }
+        // ⚠ Code no part read calls what it calls with what it holds: what its instructions name,
+        // or, where they were not read either, any function of its program or of one it imports.
+        let anywhere: BTreeSet<u32> = (project.unseen.iter())
+            .filter(|key| key.at() == ANY)
+            .map(|key| key.program())
+            .collect();
+        opaque.extend(project.unseen.iter().filter(|key| key.at() != ANY));
+        let reached = project.signatures.keys().chain(project.calls.keys());
+        opaque.extend(reached.filter(|key| anywhere.contains(&key.program())));
+        let mut blind: BTreeSet<FunctionKey> = members.into_iter().collect();
+        blind.extend(opaque.iter().copied());
+        let reads = slot_reads(project, open, &roots, &opaque);
+        let uses = uses(open, &opaque, &roots, &reads);
+        // A function of a line may be called by name or through the slot.
+        let mut line_uses = reads;
+        for (member, root) in &roots {
+            let usage = uses.get(member).copied().unwrap_or_default();
+            let held = line_uses.entry(*root).or_default();
+            *held = held.join(usage);
         }
         Shared {
             families,
             roots,
             blind,
-            uses: uses(open),
+            uses,
+            line_uses,
         }
+    }
+
+    /// The kind every call that may reach `key`, a function a slot holds, reads its result as, where each constant of `found` is a value of that kind: the calls that name a function of its line and the calls through the slot.
+    // ⚠ Nothing where a delegate or code no part read may reach a function of the line.
+    pub(super) fn line_read_as(&self, key: &FunctionKey, found: &Found) -> Option<Kind> {
+        let root = self.roots.get(key)?;
+        self.line_uses.get(root).and_then(|usage| usage.kind(found))
     }
 
     /// The kind every call of `key` reads its result as, where each constant of `found` is a value of that kind.
@@ -77,7 +109,11 @@ impl Shared {
     }
 
     /// Whether every call that may reach `key` reads its result for whether it is zero alone: every call names it, and none reads it as anything else.
+    // A function a slot holds is read as its whole line is, and only a test of it says so.
     pub(super) fn read_only_as_truth(&self, key: &FunctionKey) -> bool {
+        if let Some(root) = self.roots.get(key) {
+            return self.line_uses.get(root) == Some(&Usage::Truth);
+        }
         let usage = self.uses.get(key).copied().unwrap_or_default();
         !self.blind.contains(key) && matches!(usage, Usage::Truth | Usage::Unsaid)
     }
@@ -313,34 +349,43 @@ fn line_params(
     Some(params)
 }
 
-/// Notes for each function the parameter cells every call of it passes an `int` widened by its sign: an argument so by its form, or a parameter cell of the caller so proved.
+/// Notes for each function the parameter cells every call of it passes an `int` widened by its sign: an argument so by its form as first read, a parameter cell of the caller so proved, or the result of a function whose signature says it is so.
 // ⚠ Only where every call names the function: one a slot or a delegate reaches has callers no
 // code names. A cell no call passes anything to is proved nothing.
 pub(super) fn widened(project: &mut Project, open: &BTreeMap<FunctionKey, Open>, shared: &Shared) {
+    let facts: &Project = project;
+    // A settled result of these kinds is a cell each value of it widens to as an `int` of it does.
+    let int = |key: &FunctionKey| {
+        let held = facts.signatures.get(key);
+        held.is_some_and(|held| {
+            let narrow = matches!(
+                held.result,
+                Kind::Bool | Kind::I8 | Kind::U8 | Kind::I16 | Kind::U16 | Kind::I32
+            );
+            settled(held) && held.returns == 1 && narrow
+        })
+    };
     let mut cells: BTreeMap<(FunctionKey, u32), bool> = BTreeMap::new();
     let mut killed: BTreeSet<FunctionKey> = BTreeSet::new();
-    for waits in open.values() {
-        for (to, cell, narrow) in &waits.narrow {
-            match *cell {
-                u32::MAX => {
-                    killed.insert(*to);
-                }
-                cell => *cells.entry((*to, cell)).or_insert(true) &= *narrow,
+    // A parameter passed on is so where the caller's cell is.
+    let mut edges: Vec<((FunctionKey, u32), (FunctionKey, u32))> = Vec::new();
+    for (key, waits) in open {
+        for given in &waits.widening {
+            if given.cell == u32::MAX {
+                killed.insert(given.to);
+                continue;
+            }
+            let proved = given.proved && given.results.iter().all(int);
+            *cells.entry((given.to, given.cell)).or_insert(true) &= proved;
+            for cell in &given.params {
+                edges.push(((*key, *cell), (given.to, given.cell)));
             }
         }
     }
     // A caller whose calls were not read says nothing of what it passes.
-    for (caller, callees) in &project.calls {
+    for (caller, callees) in &facts.calls {
         if !open.contains_key(caller) {
             killed.extend(callees.iter().copied());
-        }
-    }
-    // A parameter passed on is so where the caller's cell is.
-    let mut edges: Vec<((FunctionKey, u32), (FunctionKey, u32))> = Vec::new();
-    for (key, waits) in open {
-        for (cell, callee, at) in &waits.passes {
-            cells.entry((*callee, *at)).or_insert(true);
-            edges.push(((*key, *cell), (*callee, *at)));
         }
     }
     cells
@@ -393,7 +438,14 @@ fn join(lines: &mut BTreeMap<FunctionKey, FunctionKey>, a: FunctionKey, b: Funct
 }
 
 /// How each function's result is read: by the calls that name it, and as the result of each function that hands it on is.
-fn uses(open: &BTreeMap<FunctionKey, Open>) -> BTreeMap<FunctionKey, Usage> {
+// ⚠ What a function hands on is read wherever the function is: through its slot, by `reads`, and
+// as anything where a delegate or code no part read may reach it.
+fn uses(
+    open: &BTreeMap<FunctionKey, Open>,
+    opaque: &BTreeSet<FunctionKey>,
+    roots: &BTreeMap<FunctionKey, FunctionKey>,
+    reads: &BTreeMap<FunctionKey, Usage>,
+) -> BTreeMap<FunctionKey, Usage> {
     let mut uses: BTreeMap<FunctionKey, Usage> = BTreeMap::new();
     for waits in open.values() {
         for (callee, usage) in &waits.uses {
@@ -405,7 +457,12 @@ fn uses(open: &BTreeMap<FunctionKey, Open>) -> BTreeMap<FunctionKey, Usage> {
     for _ in 0..ROUNDS {
         moving = false;
         for (key, waits) in open {
-            let theirs = uses.get(key).copied().unwrap_or_default();
+            let own = uses.get(key).copied().unwrap_or_default();
+            let theirs = match (opaque.contains(key), roots.get(key)) {
+                (true, _) => Usage::Mixed,
+                (false, Some(root)) => own.join(reads.get(root).copied().unwrap_or_default()),
+                (false, None) => own,
+            };
             if theirs == Usage::Unsaid {
                 continue;
             }
@@ -421,10 +478,90 @@ fn uses(open: &BTreeMap<FunctionKey, Open>) -> BTreeMap<FunctionKey, Usage> {
         }
     }
     if moving {
-        // A reading still on its way down a chain of calls has not met every read.
-        uses.clear();
+        // A reading still on its way down a chain of calls has not met every read: each function
+        // is read as anything, since a test alone, or no read, would prove a truth.
+        let all = open.iter().flat_map(|(key, waits)| {
+            let called = waits.uses.iter().map(|(callee, _)| callee);
+            std::iter::once(key).chain(&waits.handed).chain(called)
+        });
+        uses = all.map(|key| (*key, Usage::Mixed)).collect();
     }
     uses
+}
+
+/// How the calls through each line's slot read its result, by the least function of the line; `Mixed` where a delegate or code no part read may reach a function of it.
+// A call through a type reaches the function the type's slot holds or one that overrides it, all
+// of one line, or one of the functions that implement the slot of an interface. ⚠ A call through
+// a type no table resolves may reach any line of its slot, and a result handed on through a slot
+// is read where the function that hands it is: as anything here.
+fn slot_reads(
+    project: &Project,
+    open: &BTreeMap<FunctionKey, Open>,
+    roots: &BTreeMap<FunctionKey, FunctionKey>,
+    opaque: &BTreeSet<FunctionKey>,
+) -> BTreeMap<FunctionKey, Usage> {
+    let mut lines: BTreeMap<FunctionKey, Usage> = BTreeMap::new();
+    // Code no part read may call through these slots, `ANY` through every one.
+    let mut unresolved: BTreeSet<u32> = project.unseen_slots.clone();
+    let read = |lines: &mut BTreeMap<FunctionKey, Usage>, root: FunctionKey, usage: Usage| {
+        let held = lines.entry(root).or_default();
+        *held = held.join(usage);
+    };
+    for (member, root) in roots {
+        if opaque.contains(member) {
+            read(&mut lines, *root, Usage::Mixed);
+        }
+    }
+    let reached = |(ty, slot): &Slot| -> Vec<FunctionKey> {
+        let Some(ty) = ty else {
+            return Vec::new();
+        };
+        let held = project.slot(*ty, *slot);
+        let implemented = project
+            .implemented
+            .get(ty)
+            .and_then(|slots| slots.get(slot));
+        held.into_iter()
+            .chain(implemented.into_iter().flatten().copied())
+            .collect()
+    };
+    for waits in open.values() {
+        let called = waits.slot_uses.iter().map(|(slot, usage)| (slot, *usage));
+        let handed_on = waits.handed_slots.iter().map(|slot| (slot, Usage::Mixed));
+        for (slot, usage) in called.chain(handed_on) {
+            let targets = reached(slot);
+            let rooted: Vec<FunctionKey> = targets
+                .iter()
+                .filter_map(|target| roots.get(target).copied())
+                .collect();
+            if rooted.is_empty() || rooted.len() != targets.len() {
+                unresolved.insert(slot.1);
+            }
+            for root in rooted {
+                read(&mut lines, root, usage);
+            }
+        }
+    }
+    let every = unresolved.contains(&ANY);
+    for facts in project.types.values() {
+        for (slot, function) in &facts.slots {
+            let root = (roots.get(function)).filter(|_| every || unresolved.contains(slot));
+            if let Some(root) = root {
+                read(&mut lines, *root, Usage::Mixed);
+            }
+        }
+    }
+    for slots in project.implemented.values() {
+        for (slot, functions) in slots {
+            if !(every || unresolved.contains(slot)) {
+                continue;
+            }
+            for root in functions.iter().filter_map(|function| roots.get(function)) {
+                read(&mut lines, *root, Usage::Mixed);
+            }
+        }
+    }
+    lines
 }
 
 /// Gives each function of a line whose result is constants alone the kind the rest of the line states, where the whole line agrees.

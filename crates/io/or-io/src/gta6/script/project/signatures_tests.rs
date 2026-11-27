@@ -2,7 +2,7 @@ use super::*;
 use crate::gta6::script::ir::TypeKey;
 use crate::gta6::script::listing::Listing;
 use crate::gta6::script::passes::{types, values};
-use crate::gta6::script::program::FunctionRow;
+use crate::gta6::script::program::{EntryRow, FunctionRow};
 use crate::gta6::script::project::TypeFacts;
 use crate::gta6::script::Stats;
 
@@ -84,9 +84,10 @@ fn parts_of(listings: &[String]) -> Project {
         for read in listing.functions() {
             let read = read.expect("the function reads");
             let mut f = cfg::lower(read).expect("the function lowers");
+            let first = first_read(&f);
             values::run(&mut f, &names, &mut stats);
             types::run(&mut f, &names, &mut stats);
-            of_function(&mut project, &f);
+            of_function_read(&mut project, &f, first);
         }
     }
     project
@@ -294,6 +295,36 @@ fn a_compiled_program_states_the_cells_of_each_function() {
     assert!(!project.signatures.contains_key(&FunctionKey::new(7, 0x30)));
 }
 
+#[test]
+fn a_function_the_engine_runs_has_a_caller_no_code_shows() {
+    let program = Program {
+        program: 1,
+        code: vec![0; 64],
+        entries: vec![EntryRow { name: 9, at: 0x10 }],
+        main: Some(0x20),
+        ..Program::default()
+    };
+    let functions = [
+        function("void", 0x10, 1, "return;"),
+        function("void", 0x20, 1, "return;"),
+        function("void", 0x30, 1, "return;"),
+        function(
+            "void",
+            0x40,
+            0,
+            "func_000010(1); func_000020(2); func_000030(3); return;",
+        ),
+    ];
+    let mut project = parts_of(&[listing(1, &functions)]);
+    of_program(&mut project, &program);
+    let marks = BTreeSet::from([key(0x10), key(0x20)]);
+    assert_eq!(project.unseen, marks);
+    settle(&mut project);
+    let cells = |at: u32| project.widened.get(&key(at)).cloned().unwrap_or_default();
+    assert!(cells(0x10).is_empty() && cells(0x20).is_empty());
+    assert_eq!(cells(0x30), BTreeSet::from([0]));
+}
+
 const FLAG: &str = "if (((as_u32(p0) == 0))) { return 0; } return 1;";
 const FLOAT: &str = "((as_f32(p0) * as_f32(2.5f)))";
 const TAKES: &str = "Native.DEMO.USE(p0); return;";
@@ -392,8 +423,9 @@ fn a_result_handed_on_or_kept_is_read_as_what_holds_it_is() {
     // Only the function that hands it on is tested: the test reads both.
     assert_eq!(result(&project, 0x20), Kind::Bool);
     assert_eq!(result(&project, 0x10), Kind::Bool);
-    // The variable that keeps the result is tested, and handed to a native that says nothing.
-    assert_eq!(result(&project, 0x40), Kind::Bool);
+    // ⚠ The variable that keeps the result is tested, and handed whole to a native, which may
+    // read it as anything.
+    assert_eq!(result(&project, 0x40), Kind::Unknown);
 }
 
 #[test]
@@ -655,7 +687,7 @@ fn a_parameter_every_call_passes_an_int_widened_by_its_sign_is_proved_one() {
             "func_000060(p0); func_000060(local_1); return;",
         ),
         function("void", 0x60, 1, "Native.DEMO.USE(p0); return;"),
-        // A 32-bit reading and a load say what the kinds pass reads, not what the cell holds.
+        // A 32-bit reading and a load, as the code first reads, are what the cell holds.
         function(
             "void",
             0x70,
@@ -673,7 +705,8 @@ fn a_parameter_every_call_passes_an_int_widened_by_its_sign_is_proved_one() {
     let cells = |at: u32| project.widened.get(&key(at)).cloned().unwrap_or_default();
     assert_eq!(cells(0x10), BTreeSet::from([0, 1]));
     assert_eq!(cells(0x30), BTreeSet::from([0]));
-    assert!(cells(0x60).is_empty() && cells(0x80).is_empty());
+    assert!(cells(0x60).is_empty());
+    assert_eq!(cells(0x80), BTreeSet::from([0, 1]));
     // No call names the function at 0x20 or 0x50: their callers are not known.
     assert!(cells(0x20).is_empty() && cells(0x50).is_empty());
 }
@@ -766,6 +799,13 @@ fn a_native_a_function_hands_back_is_a_truth_where_every_call_of_the_function_on
     let taken = "Native.DEMO.USE(Vm.Function(0x00000001U, 0x000020));";
     let project = project_of(&[listing(1, &functions(taken))]);
     assert_eq!(project.native_truths, BTreeSet::from([5]));
+    // The function's result handed whole to a call, or kept and handed so, reaches it as a number.
+    let handed = "Native.DEMO.USE(func_000010(p0));";
+    let project = project_of(&[listing(1, &functions(handed))]);
+    assert_eq!(project.native_truths, BTreeSet::from([6]));
+    let kept = "local_0 = func_000010(p0); Native.DEMO.USE(local_0);";
+    let project = project_of(&[listing(1, &functions(kept))]);
+    assert_eq!(project.native_truths, BTreeSet::from([6]));
 }
 
 /// The key of the invented type `n` of program 1, as a call through a slot names it.
@@ -1001,4 +1041,274 @@ fn a_slots_parameters_are_what_every_function_of_its_line_that_mentions_them_sta
     assert_eq!(param(&project, 0x40, 1), Kind::Unknown);
     // One reads all of its second cell, as nothing types it.
     assert_eq!(project.slot_parameters(invented(3), 3), None);
+}
+
+#[test]
+fn an_argument_as_first_read_is_an_int_widened_by_its_sign_by_what_makes_it() {
+    let handed = [
+        // A load of four bytes or of one, a reading of 32 bits, an operator at 32 bits.
+        "load_i32(p0, 0x8)",
+        "load_u8(p0, 0x1)",
+        "as_i32(Native.DEMO.GET(1))",
+        "((as_i32(Native.DEMO.GET(2)) + as_i32(1)))",
+        // The nearest that are not: 32 bits widened by zeroes, and a load of the whole cell.
+        "as_u32(Native.DEMO.GET(3))",
+        "((as_u32(Native.DEMO.GET(4)) + as_u32(1)))",
+        "load_u64(p0, 0x0)",
+    ];
+    let functions = [
+        function("void", 0x10, 7, "return;"),
+        function(
+            "void",
+            0x20,
+            1,
+            &format!("func_000010({}); return;", handed.join(", ")),
+        ),
+    ];
+    let project = project_of(&[listing(1, &functions)]);
+    let cells = project.widened.get(&key(0x10)).cloned().unwrap_or_default();
+    assert_eq!(cells, BTreeSet::from([0, 1, 2, 3]));
+}
+
+#[test]
+fn a_result_handed_on_is_an_int_widened_by_its_sign_where_its_signature_says_so() {
+    let functions = [
+        function("void", 0x10, 1, "return;"),
+        function("VmValue", 0x20, 1, "return ((as_i32(p0) < 5));"),
+        function("VmValue", 0x30, 1, "return Native.DEMO.GET(p0);"),
+        function("void", 0x40, 1, "return;"),
+        // Each result kept in a variable only that assignment writes, and handed on.
+        function(
+            "void",
+            0x50,
+            0,
+            "v_000001_0 = func_000020(1); func_000010(v_000001_0); local_1 = func_000030(1); func_000040(local_1); return;",
+        ),
+    ];
+    let project = project_of(&[listing(1, &functions)]);
+    let cells = |at: u32| project.widened.get(&key(at)).cloned().unwrap_or_default();
+    assert_eq!(result(&project, 0x20), Kind::Bool);
+    assert_eq!(cells(0x10), BTreeSet::from([0]));
+    assert!(
+        cells(0x40).is_empty(),
+        "a result of no kind may be any cell"
+    );
+}
+
+#[test]
+fn a_local_is_what_its_assignments_make_it_only_where_no_address_reaches_it() {
+    let functions = [
+        function("void", 0x10, 1, "return;"),
+        function("void", 0x20, 1, "return;"),
+        function("void", 0x30, 1, "return;"),
+        function(
+            "void",
+            0x40,
+            0,
+            "local_0 = 0; local_0 = ((as_i32(local_0) + as_i32(1))); func_000010(local_0); return;",
+        ),
+        // Its own address taken: what is written through it is not said.
+        function(
+            "void",
+            0x50,
+            0,
+            "local_0 = 0; Native.DEMO.USE(Vm.Address(locals, 0)); func_000020(local_0); return;",
+        ),
+        // A parameter's address taken: nothing bounds what it reaches.
+        function(
+            "void",
+            0x60,
+            1,
+            "local_0 = 0; Native.DEMO.USE(Vm.Address(parameters, 0)); func_000030(local_0); return;",
+        ),
+    ];
+    let project = project_of(&[listing(1, &functions)]);
+    let cells = |at: u32| project.widened.get(&key(at)).cloned().unwrap_or_default();
+    assert_eq!(cells(0x10), BTreeSet::from([0]));
+    assert!(cells(0x20).is_empty() && cells(0x30).is_empty());
+}
+
+#[test]
+fn a_parameter_past_one_whose_address_is_taken_is_not_what_its_callers_handed() {
+    let functions = [
+        function("void", 0x10, 1, "return;"),
+        function(
+            "void",
+            0x20,
+            2,
+            "Native.DEMO.USE(Vm.Address(parameters, 0)); func_000010(p1); return;",
+        ),
+        function("void", 0x30, 0, "func_000020(1, 2); return;"),
+    ];
+    let project = project_of(&[listing(1, &functions)]);
+    let cells = |at: u32| project.widened.get(&key(at)).cloned().unwrap_or_default();
+    assert_eq!(cells(0x20), BTreeSet::from([0, 1]));
+    assert!(cells(0x10).is_empty());
+}
+
+#[test]
+fn a_function_code_no_part_read_may_call_takes_nothing_from_the_calls_that_name_it() {
+    let functions = [
+        function("void", 0x10, 1, "return;"),
+        function("void", 0x20, 1, "return;"),
+        function("void", 0x30, 0, "func_000010(1); func_000020(2); return;"),
+    ];
+    let listings = [listing(1, &functions)];
+    let cells = |project: &Project, at: u32| {
+        let held = project.widened.get(&key(at));
+        held.cloned().unwrap_or_default()
+    };
+    let mut named = parts_of(&listings);
+    unseen(&mut named, 1, &[], Some(BTreeSet::from([key(0x10)])));
+    settle(&mut named);
+    assert!(cells(&named, 0x10).is_empty());
+    assert_eq!(cells(&named, 0x20), BTreeSet::from([0]));
+    assert!(named.unseen.is_empty(), "a settled project keeps none");
+
+    // Where the code's instructions were not read either, any function of the program and of those it imports.
+    let mut any = parts_of(&listings);
+    unseen(&mut any, 1, &[2], None);
+    let marks = BTreeSet::from([FunctionKey::new(1, ANY), FunctionKey::new(2, ANY)]);
+    assert_eq!(any.unseen, marks);
+    settle(&mut any);
+    assert!(cells(&any, 0x10).is_empty() && cells(&any, 0x20).is_empty());
+}
+
+#[test]
+fn a_line_of_a_slot_whose_every_call_only_tests_its_result_of_zeroes_and_ones_returns_a_truth() {
+    let tested = "if (((as_u32(Virtual.type_00000001000000C1.Method_3(p0, p1)) != 0))) { Native.DEMO.USE(1); } if (((as_u32(func_000020(p0, p1)) == 0))) { return; } return;";
+    let line = |also: &str| {
+        let functions = [
+            function("VmValue", 0x10, 2, FLAG),
+            function("VmValue", 0x20, 2, "return 0;"),
+            function("void", 0x30, 2, tested),
+            function("void", 0x40, 2, &format!("{also} return;")),
+        ];
+        let mut project = parts_of(&[listing(1, &functions)]);
+        project.types.insert(invented(0xC1), fills(None, 0x10));
+        project
+            .types
+            .insert(invented(0xC2), fills(Some(invented(0xC1)), 0x20));
+        settle(&mut project);
+        project
+    };
+    // Through the slot and by name, every call tests it.
+    let project = line("");
+    assert_eq!(
+        (result(&project, 0x10), result(&project, 0x20)),
+        (Kind::Bool, Kind::Bool)
+    );
+    assert_eq!(project.slot_result(invented(0xC1), 3), Some(&Kind::Bool));
+    // One call counts with it: the number stands.
+    let counted =
+        "Native.DEMO.USE(((as_i32(Virtual.type_00000001000000C1.Method_3(p0, p1)) + as_i32(1))));";
+    assert_eq!(result(&line(counted), 0x10), Kind::I32);
+    // A call through a type no table resolves may reach any line of the slot.
+    let elsewhere =
+        "Native.DEMO.USE(((as_i32(Virtual.type_00000001000000D1.Method_3(p0, p1)) + as_i32(1))));";
+    let project = line(elsewhere);
+    assert_eq!(
+        (result(&project, 0x10), result(&project, 0x20)),
+        (Kind::Unknown, Kind::Unknown)
+    );
+    // Handed whole to a call, the result is read as anything there.
+    let handed = "Native.DEMO.USE(Virtual.type_00000001000000C1.Method_3(p0, p1));";
+    assert_eq!(result(&line(handed), 0x10), Kind::Unknown);
+}
+
+#[test]
+fn what_a_function_of_a_slot_hands_on_is_read_wherever_the_function_is() {
+    let hands = |also: &str| {
+        let functions = [
+            function("VmValue", 0x10, 2, "return func_000050(p0, p1);"),
+            function("VmValue", 0x50, 2, FLAG),
+            // By name, a test; through the slot, a number.
+            function(
+                "void",
+                0x30,
+                2,
+                &format!("if (((as_u32(func_000010(p0, p1)) == 0))) {{ return; }} {also} return;"),
+            ),
+        ];
+        let mut project = parts_of(&[listing(1, &functions)]);
+        project.types.insert(invented(0xC1), fills(None, 0x10));
+        settle(&mut project);
+        project
+    };
+    assert_eq!(result(&hands(""), 0x50), Kind::Bool);
+    let counted =
+        "Native.DEMO.USE(((as_i32(Virtual.type_00000001000000C1.Method_3(p0, p1)) + as_i32(1))));";
+    assert_eq!(result(&hands(counted), 0x50), Kind::I32);
+    // A delegate of the function is called where no code says.
+    let taken = "Native.DEMO.USE(Vm.Function(0x00000001U, 0x000010));";
+    assert_eq!(result(&hands(taken), 0x50), Kind::Unknown);
+}
+
+#[test]
+fn a_reading_still_on_its_way_down_a_chain_of_calls_reads_the_end_of_it_as_anything() {
+    // Each function hands on the result of one at a lower offset, so a round carries a reading one step.
+    let chain = |steps: u32| {
+        let at = |n: u32| 0x1000 + 0x10 * n;
+        let mut functions = vec![
+            function("VmValue", at(0), 1, "return Native.DEMO.ASK(p0);"),
+            function(
+                "void",
+                0x10,
+                1,
+                &format!(
+                    "if (((as_u32(func_{:06X}(p0)) != 0))) {{ return; }} return;",
+                    at(steps)
+                ),
+            ),
+        ];
+        for n in 1..=steps {
+            let body = format!("return func_{:06X}(p0);", at(n - 1));
+            functions.push(function("VmValue", at(n), 1, &body));
+        }
+        project_of(&[listing(1, &functions)])
+    };
+    assert!(chain(3).native_truths.contains(&5));
+    let past = u32::try_from(ROUNDS).expect("the rounds are few") + 4;
+    assert!(!chain(past).native_truths.contains(&5));
+}
+
+#[test]
+fn a_slot_or_a_native_code_no_part_read_calls_is_read_as_anything_there() {
+    let tested = "if (((as_u32(Virtual.type_00000001000000C1.Method_3(p0, p1)) != 0))) { Native.DEMO.USE(1); } return;";
+    let asks = "if (((as_u32(Native.DEMO.ASK(p0)) != 0))) { Native.DEMO.USE(1); } return;";
+    let line = |calls: Option<(BTreeSet<u32>, BTreeSet<u64>)>| {
+        let functions = [
+            function("VmValue", 0x10, 2, FLAG),
+            function("void", 0x30, 2, tested),
+            function("void", 0x40, 2, asks),
+        ];
+        let mut project = parts_of(&[listing(1, &functions)]);
+        project.types.insert(invented(0xC1), fills(None, 0x10));
+        if let Some(calls) = calls {
+            unseen_calls(&mut project, Some(calls));
+        }
+        settle(&mut project);
+        project
+    };
+    let read = line(None);
+    assert_eq!(result(&read, 0x10), Kind::Bool);
+    assert!(read.native_truths.contains(&5), "{:?}", read.native_truths);
+    // A call through slot 3 and a call of the native, in code that did not lift.
+    let unread = line(Some((BTreeSet::from([3]), BTreeSet::from([5]))));
+    assert_eq!(result(&unread, 0x10), Kind::Unknown);
+    assert!(!unread.native_truths.contains(&5));
+    // Code whose instructions were not read may call anything.
+    let mut blind = parts_of(&[listing(
+        1,
+        &[
+            function("VmValue", 0x10, 2, FLAG),
+            function("void", 0x30, 2, tested),
+            function("void", 0x40, 2, asks),
+        ],
+    )]);
+    blind.types.insert(invented(0xC1), fills(None, 0x10));
+    unseen(&mut blind, 2, &[], None);
+    settle(&mut blind);
+    assert_eq!(result(&blind, 0x10), Kind::Unknown);
+    assert!(blind.native_truths.is_empty());
 }

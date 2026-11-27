@@ -37,7 +37,19 @@ mod sites;
 
 use shared::Shared;
 pub(crate) use sites::native_key;
-use sites::{Given, Sites, Usage};
+use sites::{Firsts, Given, Sites, Slot, Usage, Widening};
+
+/// The offset [`Project::unseen`] names a program by where any function of it may be called by code no part read.
+pub const ANY: u32 = u32::MAX;
+
+/// What one function's code says of its calls as first read, before any pass: kept for [`of_function_read`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FirstRead(Firsts);
+
+/// Reads `f` as it is, before any pass changes it.
+pub fn first_read(f: &cfg::Function) -> FirstRead {
+    FirstRead(Firsts::of(f))
+}
 
 /// The parameter cells a function may have: a table or a head that states more is not believed.
 const MAX_PARAMS: u32 = 1024;
@@ -76,10 +88,22 @@ pub fn of_program(project: &mut Project, program: &Program) {
         let key = FunctionKey::new(program.program, row.at);
         project.signatures.insert(key, signature);
     }
+    // ⚠ The engine runs these by a name's hash or by the header's word: it hands them what it will
+    // and reads what they return as it will.
+    let engine = program.entries.iter().map(|entry| entry.at);
+    let engine = engine.chain(program.main).chain(program.initialize);
+    let called = engine.map(|at| FunctionKey::new(program.program, at));
+    project.unseen.extend(called);
 }
 
-/// Adds the calls one function makes, and what its code shows of its own parameters and result.
+/// Adds the calls one function makes, and what its code shows of its own parameters and result, where `f` is as first read.
 pub fn of_function(project: &mut Project, f: &cfg::Function) {
+    of_function_read(project, f, first_read(f));
+}
+
+/// [`of_function`] of `f` as the passes left it, with what [`first_read`] read of it before them.
+pub fn of_function_read(project: &mut Project, f: &cfg::Function, first: FirstRead) {
+    let FirstRead(first) = first;
     let head = &f.head;
     let key = FunctionKey::new(head.program, head.at);
     let body = Body::of(f);
@@ -192,9 +216,15 @@ pub fn of_function(project: &mut Project, f: &cfg::Function) {
     open.returned_natives.clone_from(&sites.returned_natives);
     open.uses = sites.uses;
     open.handed = sites.handed;
-    open.taken = sites.taken;
+    // A reference a pass took off as dead was still taken by the code as it is.
+    let mut taken: BTreeSet<FunctionKey> = sites.taken.into_iter().collect();
+    taken.extend(first.taken);
+    open.taken = taken.into_iter().collect();
     open.gives = sites.gives;
     open.narrow = sites.narrow;
+    open.widening = first.widening;
+    open.slot_uses = sites.slot_uses;
+    open.handed_slots = sites.handed_slots;
 
     let mut signature = Signature {
         params,
@@ -221,6 +251,9 @@ pub fn absorb(into: &mut Project, from: &mut Project) {
     for (native, truth) in std::mem::take(&mut from.native_uses) {
         *into.native_uses.entry(native).or_insert(true) &= truth;
     }
+    into.unseen.append(&mut from.unseen);
+    into.unseen_slots.append(&mut from.unseen_slots);
+    into.blind_natives |= from.blind_natives;
 }
 
 /// Once every part is in: carries kinds along the calls until nothing changes, a bounded number of rounds.
@@ -257,6 +290,47 @@ pub fn settle(project: &mut Project) {
         })
         .map(|(native, _)| native)
         .collect();
+    if project.blind_natives {
+        project.native_truths.clear();
+    }
+    project.unseen.clear();
+    project.unseen_slots.clear();
+    project.blind_natives = false;
+}
+
+/// Notes what code that no part reads may call or refer to: `named`, or, where its instructions were not read either, any function of `program` and of each program in `imports`.
+pub fn unseen(
+    project: &mut Project,
+    program: u32,
+    imports: &[u32],
+    named: Option<BTreeSet<FunctionKey>>,
+) {
+    match named {
+        Some(named) => project.unseen.extend(named),
+        None => {
+            let programs = std::iter::once(program).chain(imports.iter().copied());
+            project
+                .unseen
+                .extend(programs.map(|program| FunctionKey::new(program, ANY)));
+            unseen_calls(project, None);
+        }
+    }
+}
+
+/// Notes the slots and natives code no part reads calls: a call through such a slot may reach any line of it, and the native's result is read as anything; `None` where any slot and native may be called.
+pub fn unseen_calls(project: &mut Project, calls: Option<(BTreeSet<u32>, BTreeSet<u64>)>) {
+    match calls {
+        Some((slots, natives)) => {
+            project.unseen_slots.extend(slots);
+            for native in natives {
+                project.native_uses.insert(native, false);
+            }
+        }
+        None => {
+            project.unseen_slots.insert(ANY);
+            project.blind_natives = true;
+        }
+    }
 }
 
 /// The function a call reaches, where it is a function of a program: this one's, or another's by its hash and offset.
@@ -345,6 +419,15 @@ struct Open {
     /// The parameter cells the function's code never mentions, in rising order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     unread: Vec<u32>,
+    /// What the function's calls, as first read, hand each parameter cell of their callees, as `int`s widened by their sign.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    widening: Vec<Widening>,
+    /// How the function reads the result of each virtual slot it calls through, where a read says anything.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    slot_uses: Vec<(Slot, Usage)>,
+    /// The virtual slots a call through which the function returns, whatever else it returns.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    handed_slots: Vec<Slot>,
 }
 
 /// A result one `return` hands on as its own.
@@ -1302,6 +1385,7 @@ fn results(project: &mut Project, open: &BTreeMap<FunctionKey, Open>, shared: &S
             let found = kinds.get(key).filter(|found| !found.dead && !unsettled);
             let kind = found.and_then(|found| {
                 let kind = resolved(project, found).or_else(|| shared.read_as(key, found));
+                let kind = kind.or_else(|| shared.line_read_as(key, found));
                 kind.filter(|kind| holds(kind, found))
             });
             if let Some(held) = project.signatures.get_mut(key) {

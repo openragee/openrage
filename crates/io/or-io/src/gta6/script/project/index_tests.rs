@@ -557,3 +557,37 @@ fn a_file_written_before_cells_were_kept_still_reads() {
     assert_eq!((facts.parameters, facts.constants.len()), (0, 2));
     assert!(facts.constant_names.is_empty());
 }
+
+#[test]
+fn a_function_a_listing_holds_no_body_for_may_call_any_function_its_program_reaches() {
+    let text = "// import 1: program_0x0A0B0C0D, types [2, 100)
+[VmProgram(0x51525354U)]
+public static class Program_51525354
+{
+    [VmFunction(0x000300)]
+    public static void func_000300(VmValue arg0) // 0x000300
+    {
+        // INCOMPLETE: no body.
+        throw new global::System.NotSupportedException(\"func_000300: no body.\");
+    }
+
+    [VmFunction(0x000400)]
+    public static void main() // 0x000400
+    {
+        VmValue[] parameters = new VmValue[] {  };
+        VmValue[] locals = new VmValue[0];
+        return;
+        throw new global::System.InvalidOperationException(\"Unexpected bytecode fallthrough.\");
+    }
+}
+";
+    let part = of_listing(text).expect("the listing reads");
+    let any = |program: u32| FunctionKey::new(program, signatures::ANY);
+    // `main` besides: the engine runs it.
+    let main = FunctionKey::new(0x5152_5354, 0x400);
+    let marks = BTreeSet::from([any(0x5152_5354), any(0x0A0B_0C0D), main]);
+    assert_eq!(part.unseen, marks);
+    assert!(merge(vec![part]).unseen.is_empty());
+    let whole = of_listing(&listing(0x5152_5354)).expect("the listing reads");
+    assert_eq!(whole.unseen, BTreeSet::from([main]));
+}

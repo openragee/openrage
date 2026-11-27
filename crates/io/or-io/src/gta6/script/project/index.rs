@@ -18,8 +18,9 @@ use crate::gta6::script::ir::{
     Callee, Expr, FunctionKey, Kind, Scalar, Stmt, StoreKind, TypeKey, Var,
 };
 use crate::gta6::script::listing::Listing;
-use crate::gta6::script::program::Program;
-use crate::gta6::script::{cfg, lift, passes, Context, Names, Options, Pass, Stats};
+use crate::gta6::script::opcode::Op;
+use crate::gta6::script::program::{FunctionRow, Program};
+use crate::gta6::script::{cfg, decode, lift, passes, Context, Names, Options, Pass, Stats};
 
 /// The version a project file states; a file of another version is refused.
 const VERSION: u32 = 1;
@@ -73,10 +74,22 @@ pub fn of_listing(text: &str) -> Result<Project, ProjectError> {
     let names = Names::default();
     let cx = Context::baseline(&names);
     let mut stats = Stats::default();
+    let imported: Vec<u32> = listing
+        .imports
+        .iter()
+        .map(|import| import.program)
+        .collect();
     for read in listing.functions() {
         let read = read?;
+        // The engine runs these by the header's word, with what it will.
+        if matches!(read.head.name.as_str(), "main" | "initialize") {
+            let engine = BTreeSet::from([FunctionKey::new(read.head.program, read.head.at)]);
+            signatures::unseen(&mut project, listing.program, &[], Some(engine));
+        }
         // A function the listing holds no body for shows nothing, and an empty body would be read as one that does nothing.
+        // ⚠ Its code still runs and calls what it calls: nothing says which.
         if read.head.incomplete.is_some() {
+            signatures::unseen(&mut project, listing.program, &imported, None);
             continue;
         }
         let function = read.head.name.clone();
@@ -86,10 +99,11 @@ pub fn of_listing(text: &str) -> Result<Project, ProjectError> {
         // ⚠ What a parameter's address reaches is read off the code as it is: a pass may leave out
         // a read no later code takes, which the code still makes.
         reach::of_function(&mut project, &f);
+        let first = signatures::first_read(&f);
         // The facts are read off the code as the first two passes leave it: values whole, kinds known.
         passes::values::run_in(&mut f, &cx, &mut stats);
         passes::types::run_in(&mut f, &cx, &mut stats);
-        gather(&mut project, &f);
+        gather(&mut project, &f, first);
     }
     Ok(project)
 }
@@ -194,9 +208,22 @@ pub fn of_program_in(bytes: &[u8], tables: &Tables) -> Result<Project, ProjectEr
     let cx = Context::baseline(&names);
     let mut stats = Stats::default();
     // Lifted as the decompiler lifts the program: what one function settles of a slot sizes the rest.
-    for lifted in lift::program_in(&program, &tables.project) {
+    let lifted = lift::program_in(&program, &tables.project);
+    for (row, lifted) in program.functions.iter().zip(lifted) {
         // A function that does not lift shows nothing: what the tables state of it stands, and the rest of the program is read.
         let Ok(lifted) = lifted else {
+            let named = named_by(&program, &tables.project, row);
+            let imported: Vec<u32> = program
+                .imports
+                .iter()
+                .map(|import| import.program)
+                .collect();
+            let (functions, calls) = match named {
+                Some(named) => (Some(named.functions), Some((named.slots, named.natives))),
+                None => (None, None),
+            };
+            signatures::unseen(&mut project, program.program, &imported, functions);
+            signatures::unseen_calls(&mut project, calls);
             continue;
         };
         let mut f = lifted.function;
@@ -204,21 +231,76 @@ pub fn of_program_in(bytes: &[u8], tables: &Tables) -> Result<Project, ProjectEr
         // ⚠ What a parameter's address reaches is read off the code as it is: a pass may leave out
         // a read no later code takes, which the code still makes.
         reach::of_function(&mut project, &f);
+        let first = signatures::first_read(&f);
         // No pass understands a fault's way to its handler.
         if lifted.regions.is_empty() {
             passes::values::run_in(&mut f, &cx, &mut stats);
             passes::types::run_in(&mut f, &cx, &mut stats);
         }
-        gather(&mut project, &f);
+        gather(&mut project, &f, first);
     }
     Ok(project)
 }
 
-/// Adds what one function's code shows to each table.
-fn gather(project: &mut Project, f: &cfg::Function) {
+/// The part of a program whose own part is refused or faults: its code may call any function of it and of the programs it imports, through any slot, and any native; `None` where its bytes are no program.
+pub fn unread_part(bytes: &[u8]) -> Option<Project> {
+    let program = Program::read(bytes).ok()?;
+    let mut project = Project::default();
+    project.programs.insert(program.program, program.info());
+    let imported: Vec<u32> = (program.imports.iter())
+        .map(|import| import.program)
+        .collect();
+    signatures::unseen(&mut project, program.program, &imported, None);
+    Some(project)
+}
+
+/// What the instructions of one function name: functions called or referred to, slots called through or taken, and natives called.
+#[derive(Default)]
+struct Named {
+    functions: BTreeSet<FunctionKey>,
+    slots: BTreeSet<u32>,
+    natives: BTreeSet<u64>,
+}
+
+/// What the instructions of one function name; `None` where they do not decode.
+fn named_by(program: &Program, tables: &Project, row: &FunctionRow) -> Option<Named> {
+    let insns = decode::function_in(program, tables, row).ok()?;
+    let mut named = Named::default();
+    let callee_of = |named: &mut Named, callee: &Callee| {
+        named
+            .functions
+            .extend(signatures::key_of(program.program, callee));
+        if let Callee::Virtual { slot, .. } = callee {
+            named.slots.insert(*slot);
+        }
+        named.natives.extend(signatures::native_key(callee));
+    };
+    for op in insns.iter().flat_map(|insn| &insn.ops) {
+        match op {
+            Op::Call { callee, .. } | Op::Unsized { callee, .. } => callee_of(&mut named, callee),
+            Op::VirtualFunctionRef { slot, .. } => {
+                named.slots.insert(*slot);
+            }
+            Op::Push { e, .. } => e.walk(&mut |e| match e {
+                Expr::FunctionRef { program, at } => {
+                    named.functions.insert(FunctionKey::new(*program, *at));
+                }
+                Expr::VirtualFunctionRef { slot, .. } => {
+                    named.slots.insert(*slot);
+                }
+                _ => {}
+            }),
+            _ => {}
+        }
+    }
+    Some(named)
+}
+
+/// Adds what one function's code shows to each table; `first` is what [`signatures::first_read`] read of it before any pass.
+fn gather(project: &mut Project, f: &cfg::Function, first: signatures::FirstRead) {
     types::of_function(project, f);
     layouts::of_function(project, f);
-    signatures::of_function(project, f);
+    signatures::of_function_read(project, f, first);
     passes::classes::of_function(project, f);
     called(project, f);
 }
@@ -418,6 +500,9 @@ pub fn view(project: &Project, program: u32) -> Project {
         cells: Cells::default(),
         truths: BTreeMap::new(),
         rows: Default::default(),
+        unseen: BTreeSet::new(),
+        unseen_slots: BTreeSet::new(),
+        blind_natives: false,
     }
 }
 

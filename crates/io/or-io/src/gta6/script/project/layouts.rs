@@ -2,7 +2,9 @@
 //! from every load and store through a base of known type.
 //!
 //! A base is of known type where it only ever holds an object the function itself makes of one
-//! type, or is the receiver of a function one type's virtual slots are the first to hold. A
+//! type, or is the receiver of a function one type's virtual slots are the first to hold; once
+//! every program is in, also a variable the kinds pass types and a member's receiver, which for a
+//! value type points at the value's first byte. A
 //! type's rows are evidence, one for each width and kind seen at an offset, until [`settle`]
 //! makes one field of the rows that agree, under the base type that holds it. A field's kind is
 //! the one every access of it in every program agrees on, and none where two disagree. One byte
@@ -465,6 +467,8 @@ fn uncast(e: &Expr) -> &Expr {
 /// One reading of a function for the fields its accesses show.
 struct Seen<'a> {
     bases: &'a BTreeMap<Var, TypeKey>,
+    /// The types among the bases' that are held in place: a base of one points at the value's first byte, where its first field lies.
+    values: &'a BTreeSet<TypeKey>,
     head: &'a Head,
     rows: Vec<(TypeKey, FieldFacts)>,
     /// Each byte accessed through a base, and whether every such access was of a truth.
@@ -500,10 +504,18 @@ impl Seen<'_> {
         }
     }
 
+    /// The offset the fields of a base of type `key` start at: an object's after its header, a value's at its first byte.
+    fn start(&self, key: TypeKey) -> u32 {
+        match self.values.contains(&key) {
+            true => 0,
+            false => HEADER,
+        }
+    }
+
     /// Notes whether an access of the one byte at `offset` from `addr` is of a truth, where that is a field of a base of known type.
     fn truth(&mut self, addr: &Expr, offset: u32, truth: bool) {
         if let Some((key, offset)) = self.place(addr, offset) {
-            if offset >= HEADER {
+            if offset >= self.start(key) {
                 self.truths.push(((key, offset), truth));
             }
         }
@@ -565,7 +577,7 @@ impl Seen<'_> {
     /// Notes `bytes` bytes of kind `kind` at `offset` from `addr`, where that is a field of a base of known type.
     fn row(&mut self, addr: &Expr, offset: u32, bytes: u32, kind: Kind) {
         if let Some((key, offset)) = self.place(addr, offset) {
-            if offset >= HEADER && bytes > 0 {
+            if offset >= self.start(key) && bytes > 0 {
                 let facts = FieldFacts {
                     offset,
                     bytes,
@@ -663,7 +675,7 @@ impl Seen<'_> {
     /// Notes that a reference field at `offset` from `addr` is stored an object of the script type `ty`, where that is a field of a base of known type.
     fn made_as(&mut self, addr: &Expr, offset: u32, ty: TypeKey) {
         if let Some((key, offset)) = self.place(addr, offset) {
-            if offset >= HEADER {
+            if offset >= self.start(key) {
                 self.made.push((key, offset, ty));
             }
         }
@@ -796,10 +808,10 @@ pub fn of_function(project: &mut Project, f: &cfg::Function) {
     };
     let sets = Sets::of(f, None);
     let bases = sets.bases(receiver);
-    seen_through(project, f, &bases);
+    seen_through(project, f, &bases, &BTreeSet::new());
 }
 
-/// Adds the fields one function's loads and stores show through what a settled project proves of it: the variables the kinds pass types as an object of a script type, the parameters its signature does, and the receiver of a member.
+/// Adds the fields one function's loads and stores show through what a settled project proves of it: the variables the kinds pass types as an object of a script type, and the receiver of a member, an object or a value.
 // ⚠ Read after every program is in, with the kinds the project gives: a part for [`refine`].
 pub fn of_typed_function(part: &mut Project, f: &cfg::Function, project: &Project) {
     let own = FunctionKey::new(f.head.program, f.head.at);
@@ -807,7 +819,13 @@ pub fn of_typed_function(part: &mut Project, f: &cfg::Function, project: &Projec
     let receiver = (project.members.get(&own))
         .filter(|member| !member.is_static && f.head.params > 0)
         .map(|member| member.owner)
-        .filter(|owner| object(*owner));
+        .filter(|owner| project.types.contains_key(owner));
+    // ⚠ A value type's method is handed a pointer to the value: its fields lie from the pointer's
+    // first byte, at the offsets the value type's member table states them at.
+    let values: BTreeSet<TypeKey> = receiver
+        .filter(|owner| !object(*owner))
+        .into_iter()
+        .collect();
     let sets = Sets::of(f, Some(project));
     let mut bases = sets.bases(receiver);
     for (var, info) in &f.head.vars {
@@ -819,16 +837,22 @@ pub fn of_typed_function(part: &mut Project, f: &cfg::Function, project: &Projec
             bases.entry(*var).or_insert(key);
         }
     }
-    seen_through(part, f, &bases);
+    seen_through(part, f, &bases, &values);
 }
 
-/// Adds the rows, the truths and the objects stored the accesses of `f` through `bases` show.
-fn seen_through(project: &mut Project, f: &cfg::Function, bases: &BTreeMap<Var, TypeKey>) {
+/// Adds the rows, the truths and the objects stored the accesses of `f` through `bases` show; a base of a type in `values` points at a value held in place.
+fn seen_through(
+    project: &mut Project,
+    f: &cfg::Function,
+    bases: &BTreeMap<Var, TypeKey>,
+    values: &BTreeSet<TypeKey>,
+) {
     if bases.is_empty() {
         return;
     }
     let mut seen = Seen {
         bases,
+        values,
         head: &f.head,
         rows: Vec::new(),
         truths: Vec::new(),
@@ -882,18 +906,26 @@ pub fn absorb(into: &mut Project, from: &mut Project) {
 }
 
 /// The type that declares the field a row was seen as on `key`: the furthest base type the field still lies in; `None` for a row `key` itself does not hold.
-// A type's fields lie after its base type's, so what ends within the base is the base's.
+// A type's fields lie after its base type's, so what ends within the base is the base's. A value
+// held in place has no header: its bytes are its fields'.
 pub(crate) fn declarer(
     types: &BTreeMap<TypeKey, TypeFacts>,
     key: TypeKey,
     row: &FieldFacts,
 ) -> Option<TypeKey> {
     let end = u64::from(row.offset) + u64::from(row.bytes);
-    let holds = |ty: &TypeFacts| end <= u64::from(HEADER) + u64::from(ty.byte_size);
+    let holds = |ty: &TypeFacts| {
+        let header = if ty.is_value() { 0 } else { HEADER };
+        end <= u64::from(header) + u64::from(ty.byte_size)
+    };
     let mut owner = key;
     let mut facts = types.get(&key);
     if facts.is_some_and(|ty| !holds(ty)) {
         return None;
+    }
+    // ⚠ The builtin a value type derives from holds none of its bytes.
+    if facts.is_some_and(TypeFacts::is_value) {
+        return Some(owner);
     }
     for _ in 0..MAX_BASES {
         let Some(base) = facts.and_then(|ty| ty.base) else {

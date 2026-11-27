@@ -6,6 +6,8 @@
 //! bytes the type holds. A reference is of known type where it is a base of one, a variable the
 //! kinds pass proves holds one, a parameter the project's signature types and the function
 //! leaves as it was passed, or a field the layouts give a type, loaded through such a reference.
+//! A member's receiver is one too, and of a value type it points at the value, whose first field
+//! lies at its first byte.
 
 use std::collections::BTreeMap;
 
@@ -97,8 +99,8 @@ fn objects(f: &mut tree::Function, project: &Project) -> BTreeMap<Var, TypeKey> 
         }
     }
 
-    // The receiver is its type's object only while the function leaves it as it was passed, and
-    // only an object's fields lie where the layouts say: a value type's method takes a pointer.
+    // The receiver is its type's object only while the function leaves it as it was passed. A
+    // value type's method takes a pointer to the value, whose fields lie from its first byte.
     let this = Var::Param(0);
     let member = project
         .members
@@ -106,7 +108,7 @@ fn objects(f: &mut tree::Function, project: &Project) -> BTreeMap<Var, TypeKey> 
     let receiver = member
         .filter(|member| !member.is_static && head.params > 0)
         .map(|member| member.owner)
-        .filter(|owner| (project.types.get(owner)).is_some_and(|ty| !ty.is_value()))
+        .filter(|owner| project.types.contains_key(owner))
         .filter(|_| !made.contains_key(&this) && !frame.reaches(this));
     if let Some(owner) = receiver {
         bases.insert(this, owner);
@@ -142,7 +144,12 @@ fn field_of(
             let agree = first.bytes == bytes && here.all(|field| field.bytes == bytes);
             return agree.then_some((ty, first));
         }
-        ty = project.types.get(&ty)?.base?;
+        // ⚠ The builtin a value type derives from holds none of its bytes.
+        let facts = project.types.get(&ty)?;
+        if facts.is_value() {
+            return None;
+        }
+        ty = facts.base?;
     }
     None
 }
@@ -190,10 +197,13 @@ fn pointee(project: &Project, bases: &BTreeMap<Var, TypeKey>, addr: &Expr) -> Op
 
 /// The type an access of `bytes` bytes at `offset` of an object of type `ty` lies in, where no row of `ty` or of its bases says anything at those bytes.
 // ⚠ Past the bytes `ty` holds the object may be of a type below it, whose field no row of `ty`
-// states: the access keeps the form it has, as it does at the object's header.
+// states: the access keeps the form it has, as it does at the object's header. A value held in
+// place has no header.
 fn unrowed(project: &Project, ty: TypeKey, offset: u32, bytes: u32) -> Option<TypeKey> {
     let end = u64::from(offset) + u64::from(bytes);
-    if offset < HEADER || bytes == 0 {
+    let value = (project.types.get(&ty)).is_some_and(|facts| facts.is_value());
+    let header = if value { 0 } else { HEADER };
+    if offset < header || bytes == 0 {
         return None;
     }
     let mut at = ty;
@@ -206,7 +216,8 @@ fn unrowed(project: &Project, ty: TypeKey, offset: u32, bytes: u32) -> Option<Ty
         if rows.into_iter().any(overlaps) {
             return None;
         }
-        match project.types.get(&at)?.base {
+        let facts = project.types.get(&at)?;
+        match facts.base.filter(|_| !facts.is_value()) {
             Some(base) => at = base,
             None => break,
         }

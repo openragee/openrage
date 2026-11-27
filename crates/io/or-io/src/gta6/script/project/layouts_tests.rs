@@ -525,6 +525,88 @@ fn a_variable_typed_by_the_project_and_a_members_receiver_add_their_accesses_onc
     assert_eq!(kind(0x18), Some((1, Kind::Bool)));
 }
 
+const VALUE: TypeKey = TypeKey(0x0A0A_0000_0000_0005);
+const BUILTIN: TypeKey = TypeKey(0x0A0A_0000_0000_0006);
+
+#[test]
+fn the_receiver_of_a_value_types_member_points_at_the_value_whose_bytes_are_its_own_fields() {
+    use crate::gta6::script::class::Role;
+    use crate::gta6::script::project::Member;
+    let at = |offset: u32| load(Scalar::I32, param(0), offset);
+    let body = vec![
+        // Masked as a `uint`, compared as an `int`.
+        set(
+            Var::Local(0),
+            worked(BinOp::Or, Kind::U32, load(Scalar::U32, param(0), 0), int(4)),
+        ),
+        set(Var::Local(0), worked(BinOp::Lt, Kind::I32, at(4), int(3))),
+        // A byte stored a truth and tested for zero.
+        store(StoreKind::U8, param(0), 8, int(1)),
+        set(
+            Var::Local(1),
+            Expr::binary(BinOp::Ne, load(Scalar::U8, param(0), 8), int(0)),
+        ),
+        set(Var::Local(2), at(0xC)),
+    ];
+    let member = function(0x30, body);
+    // Of twelve bytes, held in place, on a type that would hold the first 72 bytes of an object.
+    let typed = |flags: u32| {
+        let mut project = Project::default();
+        let own = TypeFacts {
+            byte_size: 12,
+            flags,
+            base: Some(BUILTIN),
+            ..TypeFacts::default()
+        };
+        let above = TypeFacts {
+            byte_size: 64,
+            ..TypeFacts::default()
+        };
+        project.types.insert(VALUE, own);
+        project.types.insert(BUILTIN, above);
+        let owner = Member {
+            owner: VALUE,
+            role: Role::Method,
+            is_static: false,
+            slot: None,
+        };
+        project
+            .members
+            .insert(FunctionKey::new(PROGRAM, 0x30), owner);
+        project
+    };
+    let refined = |mut project: Project, f: &Function| {
+        let mut part = Project::default();
+        of_typed_function(&mut part, f, &project);
+        refine(&mut project, vec![part]);
+        project.fields
+    };
+
+    // The value's bytes from the first are its fields, and none past its twelve is.
+    let fields = vec![
+        field(0, 4, Kind::U32),
+        field(4, 4, Kind::I32),
+        field(8, 1, Kind::Bool),
+    ];
+    assert_eq!(
+        refined(typed(0x04), &member),
+        BTreeMap::from([(VALUE, fields)])
+    );
+    // An object's first eight bytes are its header: what lies past them within its base type's
+    // bytes is the base type's.
+    let inherited = vec![field(8, 1, Kind::Bool), field(0xC, 4, Kind::Unknown)];
+    assert_eq!(
+        refined(typed(0), &member),
+        BTreeMap::from([(BUILTIN, inherited)])
+    );
+    // A function that takes no receiver says nothing of the type.
+    let mut project = typed(0x04);
+    if let Some(owner) = project.members.get_mut(&FunctionKey::new(PROGRAM, 0x30)) {
+        owner.is_static = true;
+    }
+    assert!(refined(project, &member).is_empty());
+}
+
 #[test]
 fn a_field_objects_are_stored_in_and_no_call_is_made_on_is_a_reference_and_no_more() {
     let body = vec![

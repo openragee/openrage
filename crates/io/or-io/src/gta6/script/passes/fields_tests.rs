@@ -214,16 +214,59 @@ fn the_receiver_of_a_member_is_an_object_of_the_members_type() {
     assigned.push(set(Var::Param(0), param(1)));
     let done = read(function(assigned.clone()), &project, Options::default());
     assert_eq!(done.body, assigned);
-    // A function that takes no receiver, and a type held in place, whose method takes a pointer to the value.
+    // A function that takes no receiver.
     project.members.insert(key, member(true));
     let done = read(function(reads()), &project, Options::default());
     assert_eq!(done.body, reads());
-    project.members.insert(key, member(false));
+}
+
+#[test]
+fn the_receiver_of_a_value_types_member_points_at_the_value_whose_first_field_is_at_its_first_byte()
+{
+    let member = Member {
+        owner: MADE,
+        role: Role::Method,
+        is_static: false,
+        slot: None,
+    };
+    let reads = || {
+        vec![
+            set(Var::Local(0), load(Scalar::I32, param(0), 0)),
+            set(Var::Local(1), load(Scalar::U64, param(0), 8)),
+            set(Var::Local(2), load(Scalar::I32, param(0), 0x10)),
+            set(Var::Local(3), load(Scalar::I32, param(0), 0x18)),
+        ]
+    };
+    let mut project = project();
+    project
+        .members
+        .insert(FunctionKey::new(PROGRAM, AT), member);
+    // An object's first eight bytes are its header, and its field at 8 is its base type's.
+    let done = read(function(reads()), &project, Options::default());
+    let wanted = vec![
+        set(Var::Local(0), load(Scalar::I32, param(0), 0)),
+        set(Var::Local(1), of(BASE, load(Scalar::U64, param(0), 8))),
+        set(Var::Local(2), of(MADE, load(Scalar::I32, param(0), 0x10))),
+        set(Var::Local(3), of(MADE, load(Scalar::I32, param(0), 0x18))),
+    ];
+    assert_eq!(done.body, wanted);
+
+    // Held in place, the 24 bytes are the value's own from the first, and no type it derives
+    // from holds any of them.
     if let Some(ty) = project.types.get_mut(&MADE) {
         ty.flags = 0x04;
     }
     let done = read(function(reads()), &project, Options::default());
-    assert_eq!(done.body, reads());
+    let wanted = vec![
+        set(Var::Local(0), of(MADE, load(Scalar::I32, param(0), 0))),
+        set(Var::Local(1), of(MADE, load(Scalar::U64, param(0), 8))),
+        set(Var::Local(2), of(MADE, load(Scalar::I32, param(0), 0x10))),
+        // Past the bytes the value holds.
+        set(Var::Local(3), load(Scalar::I32, param(0), 0x18)),
+    ];
+    assert_eq!(done.body, wanted);
+    // The way back is the body as it was.
+    assert_eq!(tree::desugar(done.body), reads());
 }
 
 const HELD: TypeKey = TypeKey(0x0A0A_0000_0000_0004);

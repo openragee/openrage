@@ -622,14 +622,19 @@ fn a_parameter_every_call_passes_an_int_widened_by_its_sign_is_proved_one() {
             2,
             "Native.DEMO.USE(p0); Native.DEMO.USE(p1); return;",
         ),
-        // A constant of an `int`'s range, a 32-bit reading, and the caller's own such parameter.
-        function("void", 0x20, 1, "func_000010(-5, as_i32(p0)); return;"),
+        // A constant of an `int`'s range, a comparison, and the caller's own such parameter.
+        function(
+            "void",
+            0x20,
+            1,
+            "func_000010(-5, ((as_i32(p0) < as_i32(3)))); return;",
+        ),
         function("void", 0x30, 1, "func_000010(7, p0); return;"),
         function(
             "void",
             0x40,
             0,
-            "func_000030(load_i32(local_0, 0x8)); return;",
+            "func_000030(((as_i32(local_0) == as_i32(2)))); return;",
         ),
         // A variable, of which nothing here says how it widened.
         function(
@@ -639,12 +644,25 @@ fn a_parameter_every_call_passes_an_int_widened_by_its_sign_is_proved_one() {
             "func_000060(p0); func_000060(local_1); return;",
         ),
         function("void", 0x60, 1, "Native.DEMO.USE(p0); return;"),
+        // A 32-bit reading and a load say what the kinds pass reads, not what the cell holds.
+        function(
+            "void",
+            0x70,
+            1,
+            "func_000080(as_i32(p0), load_i32(local_0, 0x8)); return;",
+        ),
+        function(
+            "void",
+            0x80,
+            2,
+            "Native.DEMO.USE(p0); Native.DEMO.USE(p1); return;",
+        ),
     ];
     let project = project_of(&[listing(1, &functions)]);
     let cells = |at: u32| project.widened.get(&key(at)).cloned().unwrap_or_default();
     assert_eq!(cells(0x10), BTreeSet::from([0, 1]));
     assert_eq!(cells(0x30), BTreeSet::from([0]));
-    assert!(cells(0x60).is_empty());
+    assert!(cells(0x60).is_empty() && cells(0x80).is_empty());
     // No call names the function at 0x20 or 0x50: their callers are not known.
     assert!(cells(0x20).is_empty() && cells(0x50).is_empty());
 }

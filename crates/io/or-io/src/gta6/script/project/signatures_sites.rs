@@ -479,26 +479,15 @@ impl Scan<'_, '_> {
     }
 }
 
-/// Whether `e`, by its own form, is an `int` widened by its sign to its cell: a constant of that range, a reading or a load of 32 bits or fewer that widens so, an operator that works at such a width, a truth.
-// ⚠ Not a variable, nor a result: what a variable holds is not said here.
+/// Whether `e`, by its own form, is an `int` widened by its sign to its cell: a constant of that range, a truth, a comparison.
+// ⚠ Not a variable, nor a result. Nor a load, a reading or an operator: the facts are read off
+// the code as the kinds pass leaves it, whose readings and widths are those every read of the
+// value agrees on, and a call hands on the whole cell, whose upper half they do not state.
 fn widened_i32(e: &Expr) -> bool {
-    let small = |ty: &Scalar| {
-        matches!(
-            ty,
-            Scalar::I8 | Scalar::U8 | Scalar::I16 | Scalar::U16 | Scalar::I32
-        )
-    };
     match e {
         Expr::Const(c) => c.bits as i64 == i64::from(c.bits as i32),
         Expr::Sugar { e, .. } => widened_i32(e),
-        Expr::Cast { to, .. } | Expr::Load { ty: to, .. } => small(to),
-        Expr::Binary { op, at, .. } => {
-            op.is_logical()
-                || matches!(
-                    at,
-                    Kind::Bool | Kind::I8 | Kind::U8 | Kind::I16 | Kind::U16 | Kind::I32
-                )
-        }
+        Expr::Binary { op, .. } => op.is_logical() || op.is_comparison(),
         Expr::Truth(_) | Expr::Unary { op: UnOp::Not, .. } => true,
         _ => false,
     }

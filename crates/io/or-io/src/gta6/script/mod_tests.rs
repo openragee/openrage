@@ -162,6 +162,7 @@ fn a_function_of_more_blocks_than_the_passes_are_given_is_written_as_its_blocks(
             locals: 0,
             vars: [(named, ir::VarInfo::new(ir::Width::Cell))].into(),
             incomplete: None,
+            value_types: Default::default(),
         };
         let cfg = cfg::Cfg {
             blocks: (0..blocks).map(block).collect(),
@@ -303,6 +304,7 @@ fn the_constructs_given_to_the_printer_are_counted_and_a_hidden_is_no_statement_
         locals: 2,
         vars: Default::default(),
         incomplete: None,
+        value_types: Default::default(),
     };
     let f = tree::Function { head, body };
     let names = Names::default();

@@ -102,6 +102,7 @@ fn head() -> Head {
         locals: 8,
         vars: BTreeMap::new(),
         incomplete: None,
+        value_types: BTreeMap::new(),
     }
 }
 

@@ -175,6 +175,9 @@ pub struct Project {
     /// The kind of the one cell a call through a virtual slot yields, by each function the slot holds, where every function the slot holds down its line proves that kind.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub slot_results: BTreeMap<FunctionKey, Kind>,
+    /// The parameters a call through a virtual slot passes, by each function the slot holds: each of the kind every function of its line that mentions it states, else `Unknown`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub slot_params: BTreeMap<FunctionKey, Vec<Param>>,
     /// The natives every read of whose result, over every program, is only ever whether it is zero, by `signatures::native_key`.
     // ⚠ How the code reads a result, not what the native returns: a reading of a test of one as
     // the truth it is holds only where only the truth is read.
@@ -276,6 +279,12 @@ impl Project {
     /// The kind of the one cell a call of virtual slot `slot` on an object of type `ty` yields, where every function the call may reach proves it.
     pub fn slot_result(&self, ty: TypeKey, slot: u32) -> Option<&Kind> {
         self.slot_results.get(&self.slot(ty, slot)?)
+    }
+
+    /// The parameters a call of virtual slot `slot` on an object of type `ty` passes, as every function the call may reach that mentions each agrees.
+    pub fn slot_parameters(&self, ty: TypeKey, slot: u32) -> Option<&[Param]> {
+        let params = self.slot_params.get(&self.slot(ty, slot)?)?;
+        Some(params.as_slice())
     }
 
     /// Whether `ty` is `ancestor`, derives from it or implements it.

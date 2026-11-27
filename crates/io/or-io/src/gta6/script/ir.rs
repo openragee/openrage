@@ -1060,6 +1060,11 @@ pub struct Head {
     pub vars: BTreeMap<Var, VarInfo>,
     /// Why the listing holds no body for the function, where it holds none.
     pub incomplete: Option<String>,
+    /// The value type and its cells that instructions name for the variable starting at each key: a whole value of the type stored there, made there or taken out of a box into it; `None` where they name two.
+    // ⚠ Each is what one place of the code states: a frame cell may hold another value elsewhere,
+    // so a pass reads it as evidence beside the variable's own cells, and a variable merged with
+    // another keeps no promise of it. A listing states none.
+    pub value_types: BTreeMap<Var, Option<(TypeKey, u32)>>,
 }
 
 #[cfg(test)]

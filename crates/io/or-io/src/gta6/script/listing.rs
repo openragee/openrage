@@ -895,6 +895,7 @@ impl<'a, 'd> Parser<'a, 'd> {
             locals: 0,
             vars: Default::default(),
             incomplete: None,
+            value_types: Default::default(),
         };
         // The comment that says a body is missing comes before any token of it.
         let incomplete = self.lexer.incomplete().map(str::to_owned);

@@ -51,6 +51,8 @@ pub enum Pass {
     HashText,
     NativeParams,
     RoleNames,
+    WideJoins,
+    Repeats,
     Fields,
     Classes,
     Receivers,
@@ -78,10 +80,11 @@ pub enum Pass {
     Nullable,
     Tuples,
     Boxing,
+    Conditions,
 }
 
 impl Pass {
-    pub const ALL: [Pass; 44] = [
+    pub const ALL: [Pass; 47] = [
         Pass::Values,
         Pass::Escape,
         Pass::Forward,
@@ -99,6 +102,8 @@ impl Pass {
         Pass::HashText,
         Pass::NativeParams,
         Pass::RoleNames,
+        Pass::WideJoins,
+        Pass::Repeats,
         Pass::Fields,
         Pass::Classes,
         Pass::Receivers,
@@ -126,6 +131,7 @@ impl Pass {
         Pass::Nullable,
         Pass::Tuples,
         Pass::Boxing,
+        Pass::Conditions,
     ];
 
     /// The four passes `decompile` has always run.
@@ -151,6 +157,8 @@ impl Pass {
             Pass::HashText => "hash-text",
             Pass::NativeParams => "native-params",
             Pass::RoleNames => "role-names",
+            Pass::WideJoins => "wide-joins",
+            Pass::Repeats => "repeats",
             Pass::Fields => "fields",
             Pass::Classes => "classes",
             Pass::Receivers => "receivers",
@@ -178,6 +186,7 @@ impl Pass {
             Pass::Nullable => "nullable",
             Pass::Tuples => "tuples",
             Pass::Boxing => "boxing",
+            Pass::Conditions => "conditions",
         }
     }
 
@@ -280,7 +289,6 @@ impl Pass {
     /// The names no pass reads yet: each is taken wherever a pass is named, and rebuilds nothing.
     // ⚠ Kept by hand: a pass that starts to read one of these names takes it out of here.
     pub const INERT: &'static [Pass] = &[
-        Pass::Properties,
         Pass::Iterators,
         Pass::Wait,
         Pass::LocalFunctions,

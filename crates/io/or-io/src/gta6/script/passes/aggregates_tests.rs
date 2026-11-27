@@ -59,6 +59,7 @@ fn used(at: u32, args: Vec<Expr>) -> Stmt {
 /// A function of one block, `params` parameter cells and eight locals.
 fn function(params: u32, stmts: Vec<Stmt>, term: Terminator) -> Function {
     let head = Head {
+        value_types: Default::default(),
         program: PROGRAM,
         at: AT,
         name: "func_000040".to_owned(),
@@ -151,6 +152,7 @@ fn a_parameter_the_signature_gives_two_cells_is_one_variable() {
     let counted = Made {
         params: 1,
         locals: 0,
+        bytes: 0,
     };
     assert_eq!(apply(&mut function(3, body(), both()), &project), counted);
 
@@ -594,4 +596,121 @@ fn what_the_code_suggests_gives_way_to_what_something_states() {
         shape(&made, Var::Local(4)),
         Some((Width::Cells, Kind::Aggregate(3)))
     );
+}
+
+#[test]
+fn bytes_taken_out_of_a_group_of_one_cell_are_bytes_of_that_cell() {
+    let body = |value: Expr| {
+        let taken = Expr::cast(Scalar::I32, extract(value, 4, 4));
+        vec![set(Var::Local(0), taken)]
+    };
+    let f = function(2, body(Expr::Cells(vec![param(1)])), leaves());
+    let made = grouped(f.clone(), Project::empty(), on());
+    assert_eq!(made.cfg.blocks[0].stmts, body(param(1)));
+    let counted = Made {
+        bytes: 1,
+        ..Made::default()
+    };
+    assert_eq!(apply(&mut f.clone(), Project::empty()), counted);
+
+    // With the pass switched off nothing changes, and a group of two is no one cell.
+    let off = on().without(Pass::Aggregates);
+    assert_eq!(grouped(f.clone(), Project::empty(), off), f);
+    let two = function(2, body(Expr::Cells(vec![param(0), param(1)])), leaves());
+    assert_eq!(grouped(two.clone(), Project::empty(), on()), two);
+}
+
+#[test]
+fn bytes_out_of_bytes_they_lie_within_are_bytes_of_the_value_under_both() {
+    let group = || Expr::Cells(vec![param(0), param(1), param(2)]);
+    let body = |taken: Expr| vec![used(0x100, vec![taken])];
+    let f = function(3, body(extract(extract(group(), 4, 16), 8, 4)), leaves());
+    let made = grouped(f, Project::empty(), on());
+    assert_eq!(made.cfg.blocks[0].stmts, body(extract(group(), 12, 4)));
+
+    // Bytes past those taken first, or bytes first taken past their value's cells, stay as they are.
+    let past = function(3, body(extract(extract(group(), 4, 8), 4, 8)), leaves());
+    assert_eq!(grouped(past.clone(), Project::empty(), on()), past);
+    let beyond = function(3, body(extract(extract(group(), 20, 8), 0, 4)), leaves());
+    assert_eq!(grouped(beyond.clone(), Project::empty(), on()), beyond);
+}
+
+#[test]
+fn every_byte_of_a_value_whose_cells_a_call_states_is_the_value() {
+    let body = |taken: Expr| vec![used(0x200, vec![taken])];
+    let result = |cells: u32| call(0x100, vec![], Some(cells));
+    let f = function(1, body(extract(result(2), 0, 16)), leaves());
+    let made = grouped(f, Project::empty(), on());
+    assert_eq!(made.cfg.blocks[0].stmts, body(result(2)));
+
+    // Fewer bytes than the value holds, and every byte of one cell, stay bytes.
+    let fewer = function(1, body(extract(result(3), 0, 16)), leaves());
+    assert_eq!(grouped(fewer.clone(), Project::empty(), on()), fewer);
+    let one = function(1, body(extract(result(1), 0, 8)), leaves());
+    assert_eq!(grouped(one.clone(), Project::empty(), on()), one);
+}
+
+/// `f` with local 4 a variable of two cells, as a pass before this one makes one.
+fn with_pair(mut f: Function) -> Function {
+    let held = VarInfo {
+        width: Width::Cells,
+        kind: Kind::Aggregate(2),
+        name: None,
+        single: false,
+    };
+    f.head.vars.insert(Var::Local(4), held);
+    f
+}
+
+#[test]
+fn the_cells_of_a_local_made_of_two_before_are_that_local_in_order() {
+    let body = |row: Vec<Expr>| {
+        let taken = extract(cell(local(4), 1), 0, 4);
+        vec![used(0x100, row), set(Var::Local(0), taken)]
+    };
+    let f = with_pair(function(
+        1,
+        body(vec![cell(local(4), 0), cell(local(4), 1)]),
+        leaves(),
+    ));
+    let made = grouped(f, Project::empty(), on());
+    let whole = [
+        used(0x100, vec![local(4)]),
+        set(Var::Local(0), extract(local(4), 8, 4)),
+    ];
+    assert_eq!(made.cfg.blocks[0].stmts, whole);
+    assert_eq!(
+        shape(&made, Var::Local(4)),
+        Some((Width::Cells, Kind::Aggregate(2)))
+    );
+
+    // Out of order the cells stay cells.
+    let turned = vec![cell(local(4), 1), cell(local(4), 0)];
+    let f = with_pair(function(1, body(turned.clone()), leaves()));
+    let made = grouped(f, Project::empty(), on());
+    assert_eq!(made.cfg.blocks[0].stmts[0], used(0x100, turned));
+}
+
+#[test]
+fn a_parameter_given_each_cell_of_a_local_made_before_in_order_is_given_the_local() {
+    let project = knowing(AT, takes(&[(1, Kind::Unknown), (2, Kind::Unknown)]));
+    let body = |second: Expr| {
+        vec![
+            set(Var::Param(1), cell(local(4), 0)),
+            set(Var::Param(2), second),
+            used(0x100, vec![param(1), param(2)]),
+        ]
+    };
+    let f = with_pair(function(3, body(cell(local(4), 1)), leaves()));
+    let made = grouped(f, &project, on());
+    assert_eq!(
+        made.cfg.blocks[0].stmts,
+        [set(Var::Param(1), local(4)), used(0x100, vec![param(1)])]
+    );
+
+    // A cell of the local twice is no copy of it: the parameter takes the two cells as they are.
+    let f = with_pair(function(3, body(cell(local(4), 0)), leaves()));
+    let made = grouped(f, &project, on());
+    let cells = Expr::Cells(vec![cell(local(4), 0), cell(local(4), 0)]);
+    assert_eq!(made.cfg.blocks[0].stmts[0], set(Var::Param(1), cells));
 }

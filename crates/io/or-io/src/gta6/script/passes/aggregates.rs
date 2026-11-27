@@ -7,6 +7,7 @@
 //! A run of locals the code only ever uses as one value is one too, while nothing states
 //! otherwise; a row of statements that assigns every cell of a run in order is one assignment,
 //! and bytes taken out of a run are a load through its address where that address is taken already.
+//! Bytes taken out of a group of one item, or out of bytes they lie within, are bytes of that value.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -102,7 +103,11 @@ fn cells_of(head: &Head, widths: &BTreeMap<Var, u32>, e: &Expr, depth: u32) -> O
         Expr::BuiltinGlobal(_) => None,
         Expr::Var(var) => match head.vars.get(var) {
             Some(info) if info.width == Width::Cells => match var.is_temporary() {
-                true => widths.get(var).copied(),
+                // A temporary assigned in several arms states its cells by the kind declared of it.
+                true => widths.get(var).copied().or(match info.kind {
+                    Kind::Aggregate(cells) => Some(cells),
+                    _ => None,
+                }),
                 false => kind_cells(&info.kind),
             },
             _ => Some(1),
@@ -856,6 +861,88 @@ fn is_cell(e: &Expr, var: Var, index: u32) -> bool {
     matches!(e, Expr::Cell { base, index: at } if *at == index && **base == Expr::Var(var))
 }
 
+/// The cells of a frame variable of several cells a pass before this one made, as its kind states them.
+fn held_cells(head: &Head, var: Var) -> Option<u32> {
+    let info = head
+        .vars
+        .get(&var)
+        .filter(|info| info.width == Width::Cells)?;
+    kind_cells(&info.kind)
+}
+
+/// Takes off what `extract_bytes` wraps its value in and says nothing by, and is the value itself where it takes every byte of it.
+// A group of one item is that item. Bytes out of an extract they lie within are bytes of that
+// extract's value, where that extract lies within its own value's stated cells, so no reach past
+// a value's end goes with it. Every byte of a value of two cells or more is the value; a value
+// of one cell is a cell, which bytes of it as whole cells are not.
+fn plainer(head: &Head, widths: &BTreeMap<Var, u32>, e: &mut Expr) -> bool {
+    let mut changed = false;
+    let whole = {
+        let Expr::ExtractBytes {
+            value,
+            offset,
+            bytes,
+        } = &mut *e
+        else {
+            return false;
+        };
+        for _ in 0..NESTED {
+            let taken = match &mut **value {
+                Expr::Cells(items) if items.len() == 1 => items.pop().map(|item| (item, *offset)),
+                Expr::ExtractBytes {
+                    value: under,
+                    offset: at,
+                    bytes: of,
+                } => {
+                    let inside = u64::from(*offset) + u64::from(*bytes) <= u64::from(*of);
+                    let stated = cells_of(head, widths, under, DEPTH).is_some_and(|cells| {
+                        u64::from(*at) + u64::from(*of) <= 8 * u64::from(cells)
+                    });
+                    match at.checked_add(*offset) {
+                        Some(moved) if inside && stated => {
+                            Some((std::mem::replace(&mut **under, Expr::GuidEmpty), moved))
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            let Some((inner, moved)) = taken else {
+                break;
+            };
+            **value = inner;
+            *offset = moved;
+            changed = true;
+        }
+        let cells = cells_of(head, widths, value, DEPTH);
+        *offset == 0
+            && cells.is_some_and(|cells| cells >= 2 && u64::from(*bytes) == 8 * u64::from(cells))
+    };
+    if whole {
+        if let Expr::ExtractBytes { value, .. } = std::mem::replace(e, Expr::GuidEmpty) {
+            *e = *value;
+        }
+    }
+    changed || whole
+}
+
+/// Makes every `extract_bytes` of the function plainer, with the count of those changed.
+fn plainer_all(f: &mut cfg::Function, widths: &BTreeMap<Var, u32>) -> usize {
+    let mut count = 0;
+    let head = &f.head;
+    for block in &mut f.cfg.blocks {
+        for stmt in &mut block.stmts {
+            stmt.each_expr_mut(&mut |top| {
+                top.walk_mut(&mut |e| count += usize::from(plainer(head, widths, e)));
+            });
+        }
+        if let Some(e) = block.term.expr_mut() {
+            e.walk_mut(&mut |e| count += usize::from(plainer(head, widths, e)));
+        }
+    }
+    count
+}
+
 /// Replaces each row `x[0], x[1], ..` that names every cell of a variable `x` of several cells, in order, by `x`.
 fn joined(wide: &impl Fn(Var) -> Option<u32>, items: &mut Vec<Expr>) {
     let mut at = 0;
@@ -1063,9 +1150,16 @@ fn fielded(
 
 /// Rewrites one expression for the runs made: a cell alone is `run[n]`, an address counts its cells from the run's first, every cell in order is the run, and bytes taken out of cells of it are bytes of it.
 // `Expr::walk_mut` reaches a node after those inside it, so a row of cells is found as `run[n]`s.
-fn regrouped(top: &mut Expr, runs: &Runs, widths: &BTreeMap<Var, u32>, exposed: &Exposed) {
+// A frame variable of several cells made before this pass is as one: no run takes a cell of it.
+fn regrouped(
+    top: &mut Expr,
+    head: &Head,
+    runs: &Runs,
+    widths: &BTreeMap<Var, u32>,
+    exposed: &Exposed,
+) {
     let wide = |var: Var| match frame_cell(var) {
-        Some(key) => runs.get(&key).copied(),
+        Some(key) => (runs.get(&key).copied()).or_else(|| held_cells(head, var)),
         None => widths.get(&var).copied(),
     };
     top.walk_mut(&mut |e| {
@@ -1134,11 +1228,12 @@ fn regrouped(top: &mut Expr, runs: &Runs, widths: &BTreeMap<Var, u32>, exposed: 
     });
 }
 
-/// What one run did, each a count of runs made one variable.
+/// What one run did: counts of runs made one variable, and of `extract_bytes` made plainer.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Made {
     pub params: usize,
     pub locals: usize,
+    pub bytes: usize,
 }
 
 /// Makes one variable of each run of cells that holds one value, and passes a value of several cells whole.
@@ -1152,6 +1247,7 @@ pub fn run(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) {
         function = %f.head.name,
         params = done.params,
         locals = done.locals,
+        bytes = done.bytes,
         "aggregates"
     );
 }
@@ -1167,7 +1263,10 @@ pub(crate) fn apply(f: &mut cfg::Function, project: &Project) -> Made {
     let hints = suggested(f, &wanted);
     take_hints(&mut wanted, hints);
     let made = sound(f, &widths, wanted);
-    if made.is_empty() && widths.is_empty() {
+    done.bytes = plainer_all(f, &widths);
+    let premade = (f.head.vars.iter())
+        .any(|(var, info)| frame_cell(*var).is_some() && info.width == Width::Cells);
+    if made.is_empty() && widths.is_empty() && !premade {
         return done;
     }
     let runs: Runs = made
@@ -1196,12 +1295,13 @@ pub(crate) fn apply(f: &mut cfg::Function, project: &Project) -> Made {
     }
     // After the whole writes: one that was a store through the run's address takes that address away.
     let exposed = exposure(f, &runs);
+    let head = &f.head;
     for block in &mut f.cfg.blocks {
         for stmt in &mut block.stmts {
-            stmt.each_expr_mut(&mut |top| regrouped(top, &runs, &widths, &exposed));
+            stmt.each_expr_mut(&mut |top| regrouped(top, head, &runs, &widths, &exposed));
         }
         if let Some(e) = block.term.expr_mut() {
-            regrouped(e, &runs, &widths, &exposed);
+            regrouped(e, head, &runs, &widths, &exposed);
         }
     }
 

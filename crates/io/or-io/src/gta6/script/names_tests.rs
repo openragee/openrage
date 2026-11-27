@@ -637,3 +637,171 @@ fn a_proved_runtime_type_name_is_written_in_the_spelling_of_csharp() {
     assert_eq!(names.read_list("deep.tsv", &row), Ok(1));
     assert_eq!(names.type_name(murmur_low(deep.as_bytes())), None);
 }
+
+#[test]
+fn a_row_of_a_program_and_an_offset_names_that_function() {
+    let mut names = Names::default();
+    let text = "0x0A0B0C0D:0x614E09 Demo_Run\n\
+                ZorbleTown:func_000100 SpinUp\n\
+                program_0000ABCD:0X20 Snoozle\n\
+                zorbletown:0x200\n";
+    assert_eq!(names.read_list("functions.txt", text), Ok(3));
+    assert_eq!(names.rows, [(0, 3)], "a function's name is taken on trust");
+    let town = folded32("zorbletown");
+    assert_eq!(
+        names.function(FunctionKey::new(0x0A0B_0C0D, 0x0061_4E09)),
+        Some("Demo_Run")
+    );
+    assert_eq!(
+        names.function(FunctionKey::new(town, 0x100)),
+        Some("SpinUp"),
+        "a program by its name is the program of that name's hash, in any case"
+    );
+    assert_eq!(
+        names.function(FunctionKey::new(0xABCD, 0x20)),
+        Some("Snoozle")
+    );
+    assert_eq!(names.function(FunctionKey::new(town, 0x200)), None);
+    assert_eq!(
+        names.program(u64::from(town)),
+        None,
+        "a function's row names no program"
+    );
+
+    // The same rows again name nothing new.
+    assert_eq!(names.read_list("functions.txt again", text), Ok(0));
+
+    let p = folded32("p");
+    assert_eq!(
+        refused("p:0x10 Plinked\np:0x10 Wobbling\n"),
+        (
+            2,
+            format!("the function at 0x{p:08X}:0x10 is named `Wobbling` here and `Plinked` before")
+        )
+    );
+    assert_eq!(
+        refused("p:0x10 demo.run\n"),
+        (1, "`demo.run` is not a name".to_owned())
+    );
+    // Sixteen digits are a module's hash, and nine an offset no program has.
+    for line in ["0x0000000000000011:0x10 Wobbling", "p:0x123456789 Wobbling"] {
+        let text = format!("0x11:0x10 Plinked\n{line}\n");
+        assert_eq!(
+            refused(&text),
+            (2, "the line starts with no `0x` hash".to_owned()),
+            "{line}"
+        );
+    }
+}
+
+#[test]
+fn an_entry_the_container_states_by_hash_is_named_by_the_text_a_row_proves() {
+    let (plaza, dock) = (folded32("zorbleplaza"), folded32("zorbledock"));
+    let (spaced, quay) = (folded32("zorble plaza"), folded32("zorblequay"));
+    let mut names = Names::default();
+    let text = format!(
+        "hash32\ttext\n0x{plaza:08X}\tZorblePlaza\n0x{dock:08X}\tZorbleDock\n\
+         0x{spaced:08X}\tzorble plaza\n"
+    );
+    assert_eq!(names.read_list("entries.tsv", &text), Ok(3));
+    // A word is no proof of a 32-bit hash.
+    assert_eq!(names.read_list("words.txt", "zorblequay\n"), Ok(1));
+    assert_eq!(names.words.folded32(quay), Some("zorblequay"));
+
+    let entry = |name: u32, at: u32| EntryRow { name, at };
+    let program = 0x5566_7788;
+    let entries = [
+        entry(plaza, 0x40),
+        entry(spaced, 0x80),
+        entry(quay, 0xC0),
+        entry(0, 0xE0),
+        entry(0x1234_5678, 0x100),
+    ];
+    assert_eq!(names.bind_entries(program, &entries), 1);
+    assert_eq!(
+        names.function(FunctionKey::new(program, 0x40)),
+        Some("ZorblePlaza")
+    );
+    for at in [0x80, 0xC0, 0xE0, 0x100] {
+        assert_eq!(
+            names.function(FunctionKey::new(program, at)),
+            None,
+            "{at:X}"
+        );
+    }
+    assert_eq!(names.bind_entries(program, &entries), 0, "nothing new");
+
+    // A name the user gave the function stays.
+    let mut mine = names.clone();
+    mine.functions
+        .insert(FunctionKey::new(0x99, 0x40), "Mine".to_owned());
+    assert_eq!(mine.bind_entries(0x99, &[entry(plaza, 0x40)]), 0);
+    assert_eq!(mine.function(FunctionKey::new(0x99, 0x40)), Some("Mine"));
+
+    // One hash stated at two functions, and two at one function, name neither.
+    let mut apart = names.clone();
+    let twice = [entry(plaza, 0x10), entry(plaza, 0x20)];
+    assert_eq!(apart.bind_entries(0xAA, &twice), 0);
+    let both = [entry(plaza, 0x10), entry(dock, 0x10)];
+    assert_eq!(apart.bind_entries(0xBB, &both), 0);
+    assert_eq!(apart.bind_entries(0xCC, &[entry(dock, 0x10)]), 1);
+    assert_eq!(
+        apart.function(FunctionKey::new(0xCC, 0x10)),
+        Some("ZorbleDock")
+    );
+}
+
+#[test]
+fn a_table_of_enum_members_names_a_value_of_its_enum_under_either_reading_of_its_sign() {
+    let mut names = Names::default();
+    let (e1, e2) = (TypeKey(0xE1), TypeKey(0xE2));
+    assert_eq!(names.enum_member(e1, 0, 4), None, "no list, no member");
+    let text = "enum_type_hash64\tmember\tvalue\n\
+                0x00000000000000E1\tPlinked\t0\n\
+                0x00000000000000E1\tWobbling\t1\n\
+                0x00000000000000E1\tFrazzled\t-1\n\
+                type_00000000000000E1\tTwinkled\t0x7F\n\
+                0x00000000000000E1\tFlimsy\t0\n\
+                0x00000000000000E2\tQuibble\t4294967295\n\
+                0x00000000000000E2\tSnoozle\t-1\n\
+                0x00000000000000E2\t\t9\n";
+    assert_eq!(names.read_list("members.tsv", text), Ok(6));
+    assert_eq!(names.rows, [(0, 7)]);
+
+    for (value, bytes, member) in [
+        (0, 4, Some("Plinked")),
+        (1, 1, Some("Wobbling")),
+        (0xFFFF_FFFF, 4, Some("Frazzled")),
+        (0xFF, 1, Some("Frazzled")),
+        (u64::MAX, 8, Some("Frazzled")),
+        (0x7F, 1, Some("Twinkled")),
+        (2, 4, None),
+        // More than the enum's bytes hold, and no width an enum has.
+        (0x1_0000_0000, 4, None),
+        (0, 0, None),
+        (0, 9, None),
+    ] {
+        assert_eq!(
+            names.enum_member(e1, value, bytes),
+            member,
+            "{value:X} in {bytes}"
+        );
+    }
+    // Two members of the two readings of one value's sign name neither; eight bytes have one reading.
+    assert_eq!(names.enum_member(e2, 0xFFFF_FFFF, 4), None);
+    assert_eq!(names.enum_member(e2, 0xFFFF_FFFF, 8), Some("Quibble"));
+    assert_eq!(names.enum_member(TypeKey(0xE3), 0, 4), None);
+
+    let head = "enum_type_hash64\tmember\tvalue\n";
+    assert_eq!(
+        refused(&format!("{head}0xE1\tPlinked\tten\n")),
+        (
+            2,
+            "the row does not start as its column names say".to_owned()
+        )
+    );
+    assert_eq!(
+        refused(&format!("{head}0xE1\tdemo.member\t1\n")),
+        (2, "`demo.member` is not a name".to_owned())
+    );
+}

@@ -7,6 +7,7 @@ use crate::gta6::script::{Options, Project};
 
 fn head(params: u32, locals: u32) -> Head {
     Head {
+        value_types: Default::default(),
         program: 0x1122_3344,
         at: 0x40,
         name: "func_000040".to_owned(),
@@ -1055,4 +1056,119 @@ fn a_value_only_ever_stored_whole_to_one_named_field_takes_that_fields_role() {
         ),
         (Some("tint"), Some("shade"), None, None)
     );
+}
+
+/// The name the names pass gives `v` of `body`.
+fn slot_name(head: Head, body: Vec<tree::Stmt>, cx: &Context<'_>, v: Var) -> Option<String> {
+    let (f, _) = applied(head, body, cx);
+    name_of(&f, v).map(str::to_owned)
+}
+
+#[test]
+fn a_slot_every_assignment_of_which_gives_one_role_takes_it() {
+    let mut names = Names::default();
+    names.types.insert(0xAA, "Lantern".to_owned());
+    let cx = with(&names, &[Pass::RoleNames]);
+    let get = || native("GET_DEMO_THING", 0xA1, vec![]);
+    let other = || native("GET_DEMO_OTHER", 0xA2, vec![]);
+    let unnamed = || native("_0x00000000000000A3", 0xA3, vec![]);
+    let lantern = || object("type_00000000000000AA");
+    let slot = Var::Local(0);
+    fn name(body: Vec<tree::Stmt>, cx: &Context<'_>) -> Option<String> {
+        slot_name(head(0, 1), body, cx, Var::Local(0))
+    }
+
+    let gets = || vec![assign(slot, get()), assign(slot, get())];
+    assert_eq!(name(gets(), &cx).as_deref(), Some("demoThing"));
+    let lanterns = vec![assign(slot, lantern()), assign(slot, lantern())];
+    assert_eq!(name(lanterns, &cx).as_deref(), Some("lantern"));
+
+    // Two roles, a value of no role, and a value of one kind beside one of another name nothing.
+    for body in [
+        vec![assign(slot, get()), assign(slot, other())],
+        vec![assign(slot, get()), assign(slot, unnamed())],
+        vec![assign(slot, get()), assign(slot, int(0))],
+        vec![assign(slot, get()), assign(slot, lantern())],
+    ] {
+        assert_eq!(name(body.clone(), &cx), None, "{body:?}");
+    }
+
+    // A parameter holds what its caller passed too.
+    let param = Var::Param(0);
+    let given = vec![assign(param, get()), assign(param, get())];
+    assert_eq!(slot_name(head(1, 0), given, &cx, param), None);
+
+    // With `role-names` off only a slot given once takes a native's role.
+    let off = with(&names, &[]);
+    assert_eq!(name(gets(), &off), None);
+    let once = vec![assign(slot, get())];
+    assert_eq!(name(once, &off).as_deref(), Some("demoThing"));
+}
+
+#[test]
+fn a_variable_of_one_value_takes_the_name_of_the_parameter_it_is_passed_as() {
+    let names = list(vec![
+        (
+            0xB5,
+            listed("HANDLE_DEMO", &[("Ped", "ped"), ("int", "flags")]),
+        ),
+        (0xB3, listed("COUNT_DEMO", &[("int", "count")])),
+    ]);
+    let cx = with(&names, &[Pass::RoleNames]);
+    let (given, flags, twice) = (Var::Local(0), Var::Param(0), Var::Local(1));
+    let mut wide = head(1, 2);
+    wide.vars.insert(given, handle());
+    let body = vec![
+        assign(given, native("_0x00000000000000A3", 0xA3, vec![])),
+        eval(native("HANDLE_DEMO", 0xB5, vec![var(given), var(flags)])),
+        // Each also handed to a call no list names.
+        eval(native("USE", 0xA4, vec![var(given), var(flags)])),
+        // Given two values, one of them passed as `count`.
+        assign(twice, int(1)),
+        eval(native("COUNT_DEMO", 0xB3, vec![var(twice)])),
+        assign(twice, int(2)),
+        eval(native("USE", 0xA4, vec![var(twice)])),
+    ];
+    let (f, did) = applied(wide.clone(), body.clone(), &cx);
+    assert_eq!(
+        (name_of(&f, given), name_of(&f, flags), name_of(&f, twice)),
+        (Some("ped"), Some("flags"), None)
+    );
+    assert_eq!(did.roles, 2);
+
+    // Passed as two parameters of different names: neither.
+    let apart = vec![
+        assign(twice, int(1)),
+        eval(native("COUNT_DEMO", 0xB3, vec![var(twice)])),
+        eval(native("HANDLE_DEMO", 0xB5, vec![var(given), var(twice)])),
+        eval(native("USE", 0xA4, vec![var(twice)])),
+    ];
+    assert_eq!(slot_name(wide.clone(), apart, &cx, twice), None);
+
+    // With `role-names` off only a variable every read of which passes it is named.
+    let off = named(wide, body, &names);
+    assert_eq!((name_of(&off, given), name_of(&off, flags)), (None, None));
+}
+
+#[test]
+fn a_variable_takes_the_role_of_the_named_field_whose_bytes_it_copies() {
+    let owner = TypeKey(0xA0);
+    let copy = |offset: u32| {
+        let bytes = Expr::LoadBytes {
+            addr: Box::new(var(Var::Param(0))),
+            offset,
+            bytes: 24,
+        };
+        Expr::sugar(ExprSugar::Field { owner }, bytes)
+    };
+    let mut names = Names::default();
+    names.fields.insert((owner, 0x20), "Quibble".to_owned());
+    let (a, b) = (Var::Local(0), Var::Local(1));
+    let body = || vec![assign(a, copy(0x20)), assign(b, copy(0x40))];
+    let (f, did) = applied(head(1, 2), body(), &with(&names, &[Pass::RoleNames]));
+    assert_eq!((name_of(&f, a), name_of(&f, b)), (Some("quibble"), None));
+    assert_eq!(did.roles, 1);
+
+    let off = named(head(1, 2), body(), &names);
+    assert_eq!(name_of(&off, a), None);
 }

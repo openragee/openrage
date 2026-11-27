@@ -11,13 +11,18 @@
 //! A list may also be words alone, one a line with no hash, or the vocabulary OpenRage keeps of a
 //! GTA VI install. A word states nothing, so it is a candidate: it names what one of its own four
 //! hashes is found to be the stated hash of ([`Words`]), and a row with a hash always goes before it.
+//!
+//! A row may also name a function as `program:offset name`, the program by its hash or its name,
+//! and a table under `enum_type_hash64`, `member`, `value` names the members of an enum.
 
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
 use std::sync::Arc;
 
 use super::ir::{Callee, FunctionKey, TypeKey};
 use super::listing::{Declarations, Target};
+use super::program::EntryRow;
 use crate::gta5::script::natives::{NativeDb, NativeName};
 use crate::gta6::hash::literal_hash64 as murmur_low;
 use crate::hash::literal_string_hash;
@@ -85,6 +90,8 @@ pub struct Names {
     pub words: Arc<Words>,
     /// For each list of `lists`, the words it gave as candidates.
     pub candidates: Vec<usize>,
+    /// Enum member names by the enum's type and the member's value as 64 bits, a negative one with its sign.
+    pub enum_members: HashMap<(TypeKey, u64), String>,
 }
 
 /// Why a names list was refused.
@@ -121,6 +128,8 @@ enum Table {
     BuiltinTypes,
     /// `hash`, `rva`: a native's hash and the address of its handler in the executable the scripts were built for.
     NativeAddresses,
+    /// `enum_type_hash64`, `member`: an enum's type, the name of one of its members, and the member's value.
+    EnumMembers,
     /// No hash and one word a line: candidates, which name only what their own hashes are found to be.
     Words,
     /// The vocabulary OpenRage keeps of a GTA VI install: under its first line, a kind or `--` and a name a line, read as words.
@@ -146,7 +155,9 @@ impl Table {
             ("type_index", "method_index") => Table::Builtins,
             ("index", "name") => Table::BuiltinTypes,
             ("hash", "rva") => Table::NativeAddresses,
+            ("enum_type_hash64", "member") => Table::EnumMembers,
             (first, _) if hash_of(first).is_some() => return Ok(None),
+            (first, _) if function_key(first).is_some() => return Ok(None),
             _ if fields.contains(&"text") => Table::Texts,
             _ => Table::Names,
         }))
@@ -203,6 +214,29 @@ impl Names {
 
     pub fn function(&self, function: FunctionKey) -> Option<&str> {
         self.functions.get(&function).map(String::as_str)
+    }
+
+    /// The member of the enum `ty` a list names for the value whose low `bytes` bytes `value` is; `None` where `value` holds more, or two members of the two readings of its sign.
+    // A list states `-1` or `4294967295` for one value of four bytes, as its enum's sign has it.
+    pub fn enum_member(&self, ty: TypeKey, value: u64, bytes: u32) -> Option<&str> {
+        if self.enum_members.is_empty() || !(1..=8).contains(&bytes) {
+            return None;
+        }
+        let mask = match bytes {
+            8 => u64::MAX,
+            _ => (1u64 << (bytes * 8)) - 1,
+        };
+        if value & !mask != 0 {
+            return None;
+        }
+        let negative = value >> (bytes * 8 - 1) != 0;
+        let signed = if negative { value | !mask } else { value };
+        let zero = self.enum_members.get(&(ty, value));
+        let sign = self.enum_members.get(&(ty, signed));
+        match (zero, sign) {
+            (Some(a), Some(b)) if a != b => None,
+            (a, b) => a.or(b).map(String::as_str),
+        }
     }
 
     /// The one text `hash` is the hash of in the user's vocabulary; `None` for a number too small, or too near -1, to be a name's hash.
@@ -285,6 +319,43 @@ impl Names {
         };
         self.fields.entry((owner, offset)).or_insert(name);
         true
+    }
+
+    /// Names each function of the program `program` that one of its `entries` states the hash of a name for, as the text a row with a hash proves that hash of; returns how many it newly named.
+    // ⚠ A row's text only, never a hashless word: some word of a large list has any 32-bit hash.
+    // A name the user gave the function stays. A hash stated at two functions, or a function
+    // stated under two hashes, names neither.
+    pub fn bind_entries(&mut self, program: u32, entries: &[EntryRow]) -> usize {
+        let mut at_of: HashMap<u32, Option<u32>> = HashMap::new();
+        let mut hash_at: HashMap<u32, Option<u32>> = HashMap::new();
+        for entry in entries.iter().filter(|entry| entry.name != 0) {
+            let at = at_of.entry(entry.name).or_insert(Some(entry.at));
+            if *at != Some(entry.at) {
+                *at = None;
+            }
+            let hash = hash_at.entry(entry.at).or_insert(Some(entry.name));
+            if *hash != Some(entry.name) {
+                *hash = None;
+            }
+        }
+        let mut named = 0;
+        for (hash, at) in at_of {
+            let Some(at) = at.filter(|at| hash_at.get(at) == Some(&Some(hash))) else {
+                continue;
+            };
+            let Some(text) = self.texts.get(&hash) else {
+                continue;
+            };
+            let proved = literal_string_hash(text.to_ascii_lowercase().as_bytes()) == hash;
+            if !(proved && identifier(text)) {
+                continue;
+            }
+            if let Entry::Vacant(free) = self.functions.entry(FunctionKey::new(program, at)) {
+                free.insert(text.clone());
+                named += 1;
+            }
+        }
+        named
     }
 
     /// Names the program of 32-bit hash `program` as its file of 64-bit hash `file` is named, where that name's own 32-bit hash is `program`; `false` where no name has both hashes or the program has another name.
@@ -393,7 +464,10 @@ impl Names {
         let shape = || Err("the row does not start as its column names say".to_owned());
         let again = |name: &str, held: String| format!("`{name}` here was `{held}` before");
         let new = match table {
-            Table::Names => return self.names_row(fields, false),
+            Table::Names => match function_key(field(0)) {
+                Some(key) => return self.function_row(key, field(1)),
+                None => return self.names_row(fields, false),
+            },
             Table::Texts => return self.names_row(fields, true),
             // ⚠ Any other line is refused, a row of hashes among them: a file that only opens
             // with one word is some other text, and read as words it would name nothing and say so
@@ -473,6 +547,26 @@ impl Names {
                     held => held.is_none(),
                 }
             }
+            Table::EnumMembers => {
+                let ty = TypeKey::of_name(field(0)).or_else(|| hash(0).map(TypeKey));
+                let (Some(ty), member, Some(value)) = (ty, field(1), number(field(2))) else {
+                    return shape();
+                };
+                if member.is_empty() {
+                    return Ok(Taken::Nothing);
+                }
+                if !identifier(member) {
+                    return Err(format!("`{member}` is not a name"));
+                }
+                // Two members of one value are one constant: the first named is written.
+                match self.enum_members.entry((ty, value)) {
+                    Entry::Occupied(_) => false,
+                    Entry::Vacant(free) => {
+                        free.insert(member.to_owned());
+                        true
+                    }
+                }
+            }
             Table::BuiltinTypes => {
                 // A builtin type's key is its index under the top bit of 32.
                 let builtin = index(0).filter(|n| *n < 0x8000_0000);
@@ -495,6 +589,30 @@ impl Names {
     /// Holds `word` as a candidate.
     fn word(&mut self, word: &str) -> Taken {
         Taken::Word(Arc::make_mut(&mut self.words).add(word))
+    }
+
+    /// Takes one row that names the function `key`, on trust: no hash of a function's name is stated anywhere.
+    fn function_row(&mut self, key: FunctionKey, name: &str) -> Result<Taken, String> {
+        if name.is_empty() {
+            return Ok(Taken::Nothing);
+        }
+        if !identifier(name) {
+            return Err(format!("`{name}` is not a name"));
+        }
+        let new = match self.functions.get(&key) {
+            Some(held) if held == name => false,
+            Some(held) => {
+                let (program, at) = (key.program(), key.at());
+                return Err(format!(
+                    "the function at 0x{program:08X}:0x{at:X} is named `{name}` here and `{held}` before"
+                ));
+            }
+            None => {
+                self.functions.insert(key, name.to_owned());
+                true
+            }
+        };
+        Ok(Taken::Trusted(usize::from(new)))
     }
 
     /// Takes one row of hashes and a name: proved where every hash is a hash of the name, on trust where none is and the row is no text's.
@@ -770,6 +888,41 @@ fn lone_word<'f>(fields: &[&'f str]) -> Option<&'f str> {
     let word = filled.next().filter(|word| hash_of(word).is_none())?;
     let letters = |c: char| c.is_alphanumeric() || "_-+@./:$".contains(c);
     (filled.next().is_none() && word.chars().all(letters)).then_some(word)
+}
+
+/// The function a `program:offset` field names: the program by its hash of eight digits or fewer, as `program_` and its eight, or by its name, whose lower-cased Jenkins hash a program's hash is; the offset in hex after `0x` or `func_`.
+fn function_key(field: &str) -> Option<FunctionKey> {
+    let (program, at) = field.rsplit_once(':')?;
+    let digits = ["0x", "0X", "func_"]
+        .iter()
+        .find_map(|mark| at.strip_prefix(*mark))?;
+    let hex = (1..=8).contains(&digits.len()) && digits.bytes().all(|b| b.is_ascii_hexdigit());
+    let at = hex
+        .then(|| u32::from_str_radix(digits, 16).ok())
+        .flatten()?;
+    let stated = program
+        .strip_prefix("program_")
+        .filter(|digits| digits.len() == 8 && digits.bytes().all(|b| b.is_ascii_hexdigit()));
+    let program = match (hash_of(program), stated) {
+        // Sixteen digits are a module's hash, which names no program's functions.
+        (Some((_, true)), _) => return None,
+        (Some((hash, false)), _) => u32::try_from(hash).ok()?,
+        (None, Some(digits)) => u32::from_str_radix(digits, 16).ok()?,
+        (None, None) if !program.is_empty() && program.chars().all(spelled) => {
+            literal_string_hash(program.to_ascii_lowercase().as_bytes())
+        }
+        (None, None) => return None,
+    };
+    Some(FunctionKey::new(program, at))
+}
+
+/// The 64 bits a value of an enum's row spells: decimal with or without a sign, or `0x` hex.
+fn number(field: &str) -> Option<u64> {
+    if let Some((bits, _)) = hash_of(field) {
+        return Some(bits);
+    }
+    let signed = field.parse::<i64>().ok().map(|value| value as u64);
+    signed.or_else(|| field.parse::<u64>().ok())
 }
 
 /// Whether `kind` is the two characters the vocabulary writes a resource's kind as.

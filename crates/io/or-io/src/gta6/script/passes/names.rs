@@ -3,7 +3,9 @@
 //! A variable is named from the native it holds the only result of, `playerPed` from
 //! `PLAYER_PED_ID`, or from the parameter of a native it is passed as on every use. Under
 //! `role-names` the type of a new object, what a getter gets and a named field name the variable
-//! that holds them, and the index a `for` counts with is `i`, `j` or `k`; under `native-params`
+//! that holds them, a variable every assignment of which gives one role takes it, one of a single
+//! value takes the parameter's name it is passed as however else it is read, and the index a
+//! `for` counts with is `i`, `j` or `k`; under `native-params`
 //! the pointer parameter a native fills a variable through names it. Natives, types and programs
 //! take their names where the printer writes them, from [`Names`].
 //!
@@ -88,9 +90,10 @@ fn apply(f: &mut tree::Function, cx: &Context<'_>) -> Did {
     };
 
     // In the order of the variables, so that which of two takes the bare name never changes.
+    let more = cx.options.on(Pass::RoleNames);
     for (var, facts) in &facts {
         let named = (f.head.vars.get(var)).is_some_and(|info| info.name.is_some());
-        let role = role(*var, facts, &exposed, &f.head);
+        let role = role(*var, facts, &exposed, &f.head, more);
         let role = role.or_else(|| counters.get(var).map(|letter| (*letter).to_owned()));
         let Some(role) = role.filter(|_| !named) else {
             continue;
@@ -217,8 +220,14 @@ struct Facts {
     assigned: u32,
     /// The role of the native an assignment holds the result of.
     result_of: Option<String>,
+    /// The assignments that hold the result of a named native, and whether two give different roles.
+    results: u32,
+    results_apart: bool,
     /// The role of what else an assignment holds: a new object, what a getter gets, a named field.
     holds: Option<String>,
+    /// The assignments that hold such a thing, and whether two give different roles.
+    holding: u32,
+    holds_apart: bool,
     /// Every read, the taking of its address included.
     read: u32,
     /// How often its address is taken.
@@ -348,10 +357,16 @@ impl Gathered {
             return;
         };
         if let Some(role) = result_role(value, cx.names) {
-            self.facts.entry(*target).or_default().result_of = Some(role);
+            let facts = self.facts.entry(*target).or_default();
+            facts.results += 1;
+            facts.results_apart |= (facts.result_of.as_ref()).is_some_and(|held| *held != role);
+            facts.result_of = Some(role);
         } else if cx.options.on(Pass::RoleNames) {
             if let Some(role) = held_role(value, head, cx) {
-                self.facts.entry(*target).or_default().holds = Some(role);
+                let facts = self.facts.entry(*target).or_default();
+                facts.holding += 1;
+                facts.holds_apart |= (facts.holds.as_ref()).is_some_and(|held| *held != role);
+                facts.holds = Some(role);
             }
         }
     }
@@ -553,7 +568,7 @@ fn held_role(value: &Expr, head: &Head, cx: &Context<'_>) -> Option<String> {
                 kind: ExprSugar::Field { owner },
                 e,
             } => {
-                let Expr::Load { offset, .. } = &**e else {
+                let (Expr::Load { offset, .. } | Expr::LoadBytes { offset, .. }) = &**e else {
                     return None;
                 };
                 return camel(cx.names.field(*owner, *offset)?);
@@ -596,8 +611,11 @@ fn method_name<'a>(callee: &'a Callee, head: &Head, cx: &Context<'a>) -> Option<
     }
 }
 
-/// The role one fact gives `var`: the result of a native, then the parameter of one, then what else it holds, or the parameter it is filled through.
-fn role(var: Var, facts: &Facts, exposed: &[u32], head: &Head) -> Option<String> {
+/// The role one fact gives `var`: the result of a native, then the parameter of one, then what else it holds, or the parameter it is filled through; under `more` also a role every value it is given has, and a parameter's name its one value is passed as.
+// ⚠ One slot may be several variables whose lives do not meet. Under `more` a slot assigned
+// several times takes a role only where every assignment gives that one role, and a parameter's
+// name names only a slot given one value, which is then what the parameter is passed.
+fn role(var: Var, facts: &Facts, exposed: &[u32], head: &Head, more: bool) -> Option<String> {
     if matches!(var, Var::Global { .. }) {
         return None;
     }
@@ -611,8 +629,11 @@ fn role(var: Var, facts: &Facts, exposed: &[u32], head: &Head) -> Option<String>
         return facts.filled_as.clone().filter(|_| filled);
     }
     // ⚠ A parameter also holds what its caller passed: no assignment is its only value.
-    let holds_one = facts.assigned == 1 && !matches!(var, Var::Param(_)) && apart;
-    if let Some(role) = facts.result_of.as_ref().filter(|_| holds_one) {
+    let local = !matches!(var, Var::Param(_)) && apart;
+    let holds_one = facts.assigned == 1 && local;
+    let every = |given: u32, differ: bool| more && local && given == facts.assigned && !differ;
+    let results = every(facts.results, facts.results_apart);
+    if let Some(role) = facts.result_of.as_ref().filter(|_| holds_one || results) {
         return Some(role.clone());
     }
     let always = facts.read > 0 && facts.read == facts.passed && !facts.disagree;
@@ -625,7 +646,12 @@ fn role(var: Var, facts: &Facts, exposed: &[u32], head: &Head) -> Option<String>
     if let Some(role) = facts.stored_as.as_ref().filter(|_| kept && given) {
         return Some(role.clone());
     }
-    facts.holds.clone().filter(|_| holds_one)
+    let holding = every(facts.holding, facts.holds_apart);
+    if let Some(role) = facts.holds.as_ref().filter(|_| holds_one || holding) {
+        return Some(role.clone());
+    }
+    let passed = more && given && facts.passed > 0 && !facts.disagree;
+    facts.parameter.clone().filter(|_| passed)
 }
 
 /// Whether a write through the address of an earlier local reaches `var`.

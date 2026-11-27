@@ -17,6 +17,8 @@ use crate::gta6::script::{Context, Pass, Project, Stats};
 
 #[path = "types_kinds.rs"]
 mod kinds;
+#[path = "types_objects.rs"]
+mod objects;
 
 use kinds::Lat;
 
@@ -131,6 +133,9 @@ impl<'a> Around<'a> {
     // taken only where that name is on, and only for a truth or an integer: with it off the
     // result only types what it is assigned to and tested as.
     fn yields(&self, callee: &Callee, returns: Option<u32>) -> (Lat, Option<Kind>) {
+        if let Some(slot) = self.slot_yields(callee, returns) {
+            return slot;
+        }
         let one = |own: &&Signature| own.returns == 1 && returns.is_none_or(|cells| cells == 1);
         match self.signature(callee).filter(one) {
             Some(own) => {
@@ -262,6 +267,8 @@ struct Facts {
     /// The one named reference each variable is handed on as, a conflict where two calls take two.
     // ⚠ Kept from the joins: what is passed may derive from what is taken, so an assignment says more.
     wanted: HashMap<Var, Lat>,
+    /// The one script type each variable a virtual call is made on is called as, a conflict where calls name two.
+    received: HashMap<Var, Lat>,
     /// An expression was nested too deep to read.
     deep: bool,
 }
@@ -281,6 +288,11 @@ impl Facts {
             scan.stated();
         }
         scan.function(&f.cfg);
+        if around.kinds {
+            if let Some(this) = objects::receiver(f, around.project) {
+                scan.note(Var::Param(0), &Lat::Is(this));
+            }
+        }
         (!facts.deep).then_some(facts)
     }
 }
@@ -1091,6 +1103,9 @@ impl Scan<'_> {
                 self.expr(els, read, d);
             }
             Expr::Call { callee, args, .. } => {
+                if let Some((var, kind)) = self.around.receiver_of(callee, args, self.wide) {
+                    self.receive(var, kind);
+                }
                 let reads = self.around.arg_reads(callee, args, self.wide);
                 for (arg, read) in args.iter().zip(&reads) {
                     self.expr(arg, read, d);
@@ -1411,6 +1426,9 @@ impl Typing<'_> {
             if self.handed_on() && !self.flow(cfg) {
                 return false;
             }
+            if self.receivers(cfg) && !self.flow(cfg) {
+                return false;
+            }
             if !around.project.fields.is_empty() && !self.fields(cfg) {
                 return false;
             }
@@ -1470,6 +1488,11 @@ impl Typing<'_> {
                 // ⚠ Four bytes loaded as an `int` are not a float until a read says so.
                 let says = !matches!(lat, Lat::None | Lat::Is(Kind::F32));
                 if says && self.typed(target) {
+                    found.push((target, lat));
+                }
+            }
+            if let Some(lat) = self.field_element(peeled(value, 8)) {
+                if self.typed(target) {
                     found.push((target, lat));
                 }
             }
@@ -1789,8 +1812,13 @@ impl Typing<'_> {
                 ty => Lat::Is(ty.kind()),
             },
             Expr::Call {
-                callee, returns, ..
-            } => self.around.yields(callee, *returns).0,
+                callee,
+                args,
+                returns,
+            } => match self.element(callee, args) {
+                Some(lat) => lat,
+                None => self.around.yields(callee, *returns).0,
+            },
             Expr::NewObject(ty) => Lat::Is(Kind::Object(ty.name.clone())),
             // An array is a reference to its elements: objects, or values held in place.
             Expr::NewArray { ty, .. } if self.around.kinds => {
@@ -2336,12 +2364,16 @@ impl Typing<'_> {
         }
         // A value of several cells an instruction names the type of is a value of that type.
         if self.around.kinds {
-            for (var, ty) in values(&f.cfg, f.head.program, &self.wide, self.around.project) {
+            let named = values(&f.cfg, &f.head, &self.wide, self.around.project);
+            for (var, ty, stated) in named {
                 let held = found
                     .get(&var)
                     .or_else(|| f.head.vars.get(&var).map(|info| &info.kind));
-                if let Some(Kind::Aggregate(cells)) = held.cloned() {
-                    found.insert(var, Kind::Value { ty, cells });
+                match held.cloned() {
+                    Some(Kind::Aggregate(cells)) if stated.is_none_or(|n| n == cells) => {
+                        found.insert(var, Kind::Value { ty, cells });
+                    }
+                    _ => {}
                 }
             }
         }
@@ -2420,13 +2452,14 @@ impl Typing<'_> {
     }
 }
 
-/// The value type each variable of several cells is an instance of, by what names its type: a `box<T>` of the whole variable, a call of a method of a value type `T` handed the variable's address as its receiver, or a builtin's constructor so handed it; none where two types are named.
+/// The value type each variable of several cells is an instance of, by what names its type: an instruction that stores, makes or unboxes the whole value, a `box<T>` of the whole variable, a call of a method of a value type `T` handed the variable's address as its receiver, or a builtin's constructor so handed it, with the cells an instruction names; none where two types are named.
 fn values(
     cfg: &cfg::Cfg,
-    program: u32,
+    head: &Head,
     wide: &HashSet<Var>,
     project: &Project,
-) -> Vec<(Var, String)> {
+) -> Vec<(Var, String, Option<u32>)> {
+    let program = head.program;
     let mut named: HashMap<Var, Option<String>> = HashMap::new();
     let mut name = |var: Var, ty: String| {
         let held = named.entry(var).or_insert_with(|| Some(ty.clone()));
@@ -2434,6 +2467,27 @@ fn values(
             *held = None;
         }
     };
+    // The type an instruction names for a whole value of the variable, with the cells it names.
+    // ⚠ Not a builtin's: its constructor's path is the name a list gives, which its key is not.
+    let mut stated: HashMap<Var, u32> = HashMap::new();
+    for (var, held) in head
+        .value_types
+        .iter()
+        .filter(|(var, _)| wide.contains(var))
+    {
+        match held {
+            Some((ty, cells)) if ty.builtin().is_none() => {
+                name(*var, ty.to_string());
+                stated.insert(*var, *cells);
+            }
+            Some(_) => {}
+            // Two types named: no type.
+            None => {
+                name(*var, String::new());
+                name(*var, "-".to_owned());
+            }
+        }
+    }
     let member_of = |callee: &Callee| {
         let key = signatures::key_of(program, callee)?;
         let member = project
@@ -2484,8 +2538,8 @@ fn values(
             note(e);
         }
     }
-    let mut values: Vec<(Var, String)> = (named.into_iter())
-        .filter_map(|(var, ty)| Some((var, ty?)))
+    let mut values: Vec<(Var, String, Option<u32>)> = (named.into_iter())
+        .filter_map(|(var, ty)| Some((var, ty?, stated.get(&var).copied())))
         .collect();
     values.sort();
     values

@@ -140,6 +140,7 @@ fn intrinsic(name: &str, args: Vec<Expr>) -> Expr {
 /// A function of one block that holds `stmts`.
 fn function(stmts: Vec<Stmt>) -> Function {
     let head = Head {
+        value_types: Default::default(),
         program: 0x1122_3344,
         at: 0,
         name: "func_000000".to_owned(),

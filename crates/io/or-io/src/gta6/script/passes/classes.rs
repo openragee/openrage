@@ -9,12 +9,16 @@
 //! is the first to hold it; every mention of it in the install runs it on an object of one type
 //! just made, before anything else uses the object; every mention binds it as the delegate of
 //! a closure object of one compiler-made type; or every mention hands it, first, the receiver a
-//! member was given, and it reads or writes through that parameter a field its type adds to what
-//! the type's base holds. An object of a type passed first proves no member: a static function
-//! takes one the same way.
+//! member was given, and of the receivers' type and its bases one alone is of the function's
+//! program and holds every byte it reaches through that parameter. An object of a type passed
+//! first proves no member: a static function takes one the same way.
 //!
 //! ⚠ The fourth proof cannot tell a method from a static function that is only ever handed
 //! `this` and works on that type's own fields: the two are one function in the code.
+//!
+//! ⚠ Every way into a function counts against these proofs: a call or reference of a function
+//! that does not lift, read off its instructions; a function the engine calls by name or by the
+//! header's word; a reference whatever flags it carries.
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
@@ -23,16 +27,23 @@ use crate::gta6::script::cfg;
 use crate::gta6::script::class::{Carried, Class, ClassKind, Field, Method, Role, Unit};
 use crate::gta6::script::ir::{
     self, Callee, Expr, ExprSugar, FunctionKey, Head, Kind, Returns, Scalar, TypeKey, Var, VmType,
+    Width,
 };
 use crate::gta6::script::listing::Import;
 use crate::gta6::script::opcode;
-use crate::gta6::script::program::Program;
+use crate::gta6::script::program::{FunctionRow, Program};
 use crate::gta6::script::project::{FieldFacts, Member, Project, TypeFacts};
 use crate::gta6::script::tree::{self, Group, Stmt, Sugar};
 use crate::gta6::script::{Context, Pass, Stats};
 use crate::hash::literal_string_hash;
 
 use super::sugar_expressions::Reached;
+
+#[path = "classes_properties.rs"]
+mod properties;
+
+use properties::{accessed, standing, Stands};
+pub use properties::{accessor, Accessor};
 
 /// The names this file's rewrites are switched by; `Pass::Classes` switches the grouping `unit` does.
 pub const PASSES: &[Pass] = &[
@@ -68,6 +79,9 @@ const STATIC_CONSTRUCTOR: u32 = literal_string_hash(b".cctor");
 
 /// The links a walk up a chain of bases or of enclosing classes follows before it gives up: a ring must end.
 const MAX_CHAIN: usize = 64;
+
+/// The bits of a function reference that are the function's offset; the top byte holds the reference's flags.
+const OFFSET: u32 = 0x00FF_FFFF;
 
 /// The owner of a note that names no type: what the gathering holds of a function that is no membership.
 // ⚠ Notes live in `Project::members` between `of_function` and `settle` only, and `settle` leaves
@@ -139,7 +153,7 @@ fn callee_key(program: u32, callee: &Callee) -> Option<FunctionKey> {
 fn referred(program: u32, e: &Expr) -> Option<FunctionKey> {
     match e {
         Expr::Call { callee, .. } => callee_key(program, callee),
-        Expr::FunctionRef { program, at } => Some(FunctionKey::new(*program, *at)),
+        Expr::FunctionRef { program, at } => Some(FunctionKey::new(*program, *at & OFFSET)),
         _ => None,
     }
 }
@@ -306,7 +320,7 @@ fn site<'a>(
             Callee::Builtin { ty: of, .. },
             [object, target, bound @ Expr::FunctionRef { program: home, at }],
         ) if made_of(object, *of, assigned) => {
-            let function = FunctionKey::new(*home, *at);
+            let function = FunctionKey::new(*home, *at & OFFSET);
             let Expr::Var(target) = whole(target) else {
                 return None;
             };
@@ -375,10 +389,102 @@ fn carry(into: &mut Carried, from: Carried) {
         let held = into.reach.entry(function).or_insert(end);
         *held = (*held).min(end);
     }
+    for (function, named) in from.unread {
+        into.unread.entry(function).or_default().extend(named);
+    }
+    into.blind.extend(from.blind);
 }
 
-/// Adds what a compiled program's method records state: a record under the name of a constructor makes its function the constructor of the type the record belongs to.
+/// The script functions the instructions of `row` call or take a reference to; `None` where a word of it is no instruction, or names an import the program does not hold.
+// ⚠ Read off the bytes, since a function that does not lift shows nothing else: what it hands
+// the functions it calls is never seen.
+fn named_in(program: &Program, row: &FunctionRow) -> Option<BTreeSet<FunctionKey>> {
+    let code = program.code.as_slice();
+    let end = (row.end as usize).min(code.len());
+    let mut named = BTreeSet::new();
+    let mut at = row.at as usize;
+    while at < end {
+        let word = code.get(at..at + 2)?;
+        let op = opcode::of_word(u16::from_le_bytes([word[0], word[1]]));
+        // Every instruction is two bytes at least, so each step moves on.
+        let spec = opcode::spec(op)?;
+        let len = spec.bytes() as usize;
+        let operands = code.get(at + 2..at + len)?;
+        let byte = |n: usize| {
+            let stored = operands.get(n)?;
+            Some(u32::from(opcode::plain(*stored, n)))
+        };
+        // The lowest byte first.
+        let number = |from: usize, width: usize| {
+            let mut bytes = (from..from + width).rev();
+            bytes.try_fold(0u32, |held, n| Some((held << 8) | byte(n)?))
+        };
+        // The operand of that name, at the place and width the table's row gives it.
+        let field = |name: &str| {
+            let mut from = 0usize;
+            for opcode::Field(named, ty) in spec.fields {
+                let width = ty.bytes() as usize;
+                if *named == name {
+                    return number(from, width);
+                }
+                from += width;
+            }
+            None
+        };
+        // A call and a reference pushed name a script function by an import and an offset.
+        let target = match spec.act {
+            opcode::Act::Call | opcode::Act::PushFunction => {
+                Some((field("import")?, field("offset")?))
+            }
+            _ => None,
+        };
+        if let Some((import, to)) = target {
+            named.insert(FunctionKey::new(program.imported(import)?, to));
+        }
+        at += len;
+    }
+    Some(named)
+}
+
+/// Adds what a compiled program's container and bytes state: a record under the name of a constructor makes its function the constructor of the type the record belongs to; what the engine calls, and what each function's instructions name, until it is read, are mentions no code shows.
 pub fn of_program(project: &mut Project, program: &Program) {
+    records(project, program);
+    // The engine runs these by a name's hash or by the header's word, and hands them what it will.
+    let engine = program.entries.iter().map(|entry| entry.at);
+    let rows = &program.functions;
+    for at in engine.chain(program.main).chain(program.initialize) {
+        // One that takes nothing is handed nothing.
+        let row = rows.binary_search_by_key(&at, |row| row.at).ok();
+        let takes = row
+            .and_then(|n| rows.get(n))
+            .is_none_or(|row| row.params > 0);
+        if takes {
+            note(project, FunctionKey::new(program.program, at), disputed());
+        }
+    }
+    let mut carried = Carried::default();
+    for row in &program.functions {
+        match named_in(program, row) {
+            Some(named) if named.is_empty() => {}
+            Some(named) => {
+                let own = FunctionKey::new(program.program, row.at);
+                carried.unread.insert(own, named);
+            }
+            None => {
+                carried.blind.insert(program.program);
+            }
+        }
+    }
+    if carried == Carried::default() {
+        return;
+    }
+    let row = project.programs.entry(program.program).or_default();
+    row.program = program.program;
+    carry(&mut row.carried, carried);
+}
+
+/// Adds what a compiled program's method records state of constructors.
+fn records(project: &mut Project, program: &Program) {
     for record in &program.methods {
         // A name's hash has an upper half: a row without one is no type the registry keeps.
         let owner = program.types.get(record.owner as usize);
@@ -403,9 +509,16 @@ pub fn of_program(project: &mut Project, program: &Program) {
 pub fn of_function(project: &mut Project, f: &cfg::Function) {
     let program = f.head.program;
     let own = FunctionKey::new(program, f.head.at);
+    // Its code is read now, and says more than its instructions did.
+    if let Some(row) = project.programs.get_mut(&program) {
+        row.carried.unread.remove(&own);
+    }
     let assigned = assigned(f);
-    // ⚠ The first parameter is the receiver only while the function leaves it as it was given.
-    let written = assigned.contains_key(&Var::Param(0));
+    // ⚠ The first parameter is the receiver only while the function leaves it as it was given,
+    // and only where it is one cell: a value of several is no reference.
+    let first = f.head.vars.get(&Var::Param(0));
+    let wide = first.is_some_and(|info| info.width == Width::Cells);
+    let written = assigned.contains_key(&Var::Param(0)) || wide;
     let receiver = (f.head.params > 0 && !written).then_some(Var::Param(0));
     let mut found: Vec<(FunctionKey, Said)> = Vec::new();
     let mut end = 0u32;
@@ -455,7 +568,7 @@ pub fn of_function(project: &mut Project, f: &cfg::Function) {
     if end > 0 {
         carried.reach.insert(own, end);
     }
-    if carried.handed.is_empty() && carried.reach.is_empty() {
+    if carried == Carried::default() {
         return;
     }
     let row = project.programs.entry(program).or_default();
@@ -470,7 +583,7 @@ pub fn absorb(into: &mut Project, from: &mut Project) {
     }
     for (program, info) in &mut from.programs {
         let carried = std::mem::take(&mut info.carried);
-        if carried.handed.is_empty() && carried.reach.is_empty() {
+        if carried == Carried::default() {
             continue;
         }
         let row = into.programs.entry(*program).or_default();
@@ -636,35 +749,49 @@ fn chained(
     }
 }
 
-/// Whether a function handed receivers of the type `owner` is that type's own: it is of the program that states the type, and through its receiver it reads or writes a field the type adds to what its base holds.
-// ⚠ The receivers say the type that declares the function is `owner` or a base of it; the field
-// says it is no base. A value type's method takes a pointer to the value, which no call is
-// written with as a receiver, so none is taken.
-fn declares(project: &Project, owner: TypeKey, function: FunctionKey, reach: Option<u32>) -> bool {
-    let (Some(facts), Some(end)) = (project.types.get(&owner), reach) else {
-        return false;
-    };
-    if facts.is_value() || facts.home != function.program() {
-        return false;
-    }
-    let Some(base) = facts.base else {
-        return false;
-    };
-    let held = match project.types.get(&base) {
-        Some(base) => Some(base.byte_size),
-        None => {
-            let index = base.builtin().map(|id| id & !BUILTIN);
-            index.and_then(opcode::builtin_type).map(|(bytes, _)| bytes)
+/// The one type that declares a function handed receivers of the type `arrived`: `arrived` or a base of it, of the program that holds the function, and holding every byte the function reaches through its receiver; `None` where no type, or more than one, may.
+// ⚠ The receivers say the type that declares the function is `arrived` or a base of it, and a
+// type of another program holds none of this program's functions. A generic type's functions
+// may be made in any program that uses it, and a base no program states may be anything: either
+// in the line leaves the function free. A value type's method takes a pointer to the value,
+// which no call is written with as a receiver, so none is taken. A builtin type holds no function
+// of a script, and nor does a type above it.
+fn declarer(
+    project: &Project,
+    arrived: TypeKey,
+    function: FunctionKey,
+    reach: Option<u32>,
+) -> Option<TypeKey> {
+    let end = reach.unwrap_or(0);
+    let mut found = None;
+    let mut ty = arrived;
+    for _ in 0..MAX_CHAIN {
+        if ty.builtin().is_some() {
+            return found;
         }
-    };
-    let Some(held) = held else {
-        return false;
-    };
-    let own = HEADER.saturating_add(held);
-    own < end && end <= HEADER.saturating_add(facts.byte_size)
+        let facts = project.types.get(&ty)?;
+        if facts.is_value() {
+            return None;
+        }
+        // Sizes are not taken to fall up the line: a base too small holds nothing, and the walk goes on.
+        let holds = end <= HEADER.saturating_add(facts.byte_size);
+        let own = facts.home == function.program();
+        let generic = facts.generic.is_some() || facts.parameters > 0;
+        if holds && (generic || (own && (found.is_some() || facts.base.is_none()))) {
+            return None;
+        }
+        if holds && own {
+            found = Some(ty);
+        }
+        match facts.base {
+            Some(base) => ty = base,
+            None => return found,
+        }
+    }
+    None
 }
 
-/// Settles the functions every mention of which hands them a receiver: each is a method of the nearest type all those receivers are of, where `declares` holds.
+/// Settles the functions every mention of which hands them a receiver: each is a method of the one type `declarer` names for the nearest type all those receivers are of.
 fn received(
     project: &Project,
     carried: &Carried,
@@ -737,30 +864,51 @@ fn received(
     }
 
     for (function, claim) in &open {
-        let Some(Arrives::One(owner)) = arrives.get(function).copied() else {
+        let Some(Arrives::One(arrived)) = arrives.get(function).copied() else {
             continue;
         };
-        let (role, proved) = match claim.role {
+        let proved = match claim.role {
             // A lambda stays its closure's own: every receiver it is handed is that closure.
-            Role::Lambda => (Role::Lambda, claim.seed == Some(owner)),
+            Role::Lambda => (claim.seed == Some(arrived)).then_some((arrived, Role::Lambda)),
             _ => {
                 let reach = carried.reach.get(function).copied();
-                (Role::Method, declares(project, owner, *function, reach))
+                let owner = declarer(project, arrived, *function, reach);
+                owner.map(|owner| (owner, Role::Method))
             }
         };
-        if proved {
+        if let Some((owner, role)) = proved {
             members.insert(*function, provisional(owner, role));
         }
     }
 }
 
+/// Notes as mentioned like any function what a function no reading lifted names, and every function of a program whose instructions could not all be read, or of a program it imports.
+fn unseen(project: &Project, carried: &Carried, gathered: &mut BTreeMap<FunctionKey, Member>) {
+    for named in carried.unread.values().flatten() {
+        gathered.insert(*named, disputed());
+    }
+    let mut blind = carried.blind.clone();
+    for program in &carried.blind {
+        let info = project.programs.get(program);
+        let imports = info.map(|info| info.imports.as_slice()).unwrap_or_default();
+        blind.extend(imports.iter().map(|import| import.program));
+    }
+    let known = gathered.keys().chain(carried.handed.keys());
+    let known = known.filter(|function| blind.contains(&function.program()));
+    let known: Vec<FunctionKey> = known.copied().collect();
+    for function in known {
+        gathered.insert(function, disputed());
+    }
+}
+
 /// Once every part is in: adds the functions the types' virtual slots name, drops a function two types claim, and settles the functions handed a receiver.
 pub fn settle(project: &mut Project) {
-    let gathered = std::mem::take(&mut project.members);
+    let mut gathered = std::mem::take(&mut project.members);
     let mut carried = Carried::default();
     for info in project.programs.values_mut() {
         carry(&mut carried, std::mem::take(&mut info.carried));
     }
+    unseen(project, &carried, &mut gathered);
     // The types whose table holds each function, each with the lowest slot it holds it in.
     let mut holders: BTreeMap<FunctionKey, BTreeMap<TypeKey, u32>> = BTreeMap::new();
     for (ty, facts) in &project.types {
@@ -910,17 +1058,20 @@ fn declared_type<'a>(receiver: &'a Expr, head: &'a Head, project: &'a Project) -
 /// Whether a names list names virtual slot `slot` of the type `ty`, on the type or on a base of it.
 // ⚠ The printer looks a slot's name up the same way: a call this takes is written under that name.
 fn named(cx: &Context<'_>, ty: TypeKey, slot: u32) -> bool {
+    slot_name(cx, ty, slot).is_some()
+}
+
+/// The name a names list gives virtual slot `slot` of the type `ty`, on the type or on a base of it.
+fn slot_name<'a>(cx: &Context<'a>, ty: TypeKey, slot: u32) -> Option<&'a str> {
+    let names = cx.names;
     let mut ty = ty;
     for _ in 0..MAX_CHAIN {
-        if cx.names.method(ty, slot).is_some() {
-            return true;
+        if let Some(name) = names.method(ty, slot) {
+            return Some(name);
         }
-        match cx.project.types.get(&ty).and_then(|facts| facts.base) {
-            Some(base) => ty = base,
-            None => return false,
-        }
+        ty = cx.project.types.get(&ty)?.base?;
     }
-    false
+    None
 }
 
 /// Whether a call's first argument is the object its callee is a method of, and the callee's own name says which method.
@@ -963,17 +1114,31 @@ fn is_operator(path: &str) -> bool {
     )
 }
 
-/// Reads one call as the method call or the operator it is proved to be.
-fn read(e: &mut Expr, head: &Head, cx: &Context<'_>) {
-    let Expr::Call { callee, args, .. } = &*e else {
+/// Reads one call as the method call, the use of a property or the operator it is proved to be.
+fn read(e: &mut Expr, stands: Stands, head: &Head, cx: &Context<'_>) {
+    let Expr::Call {
+        callee,
+        args,
+        returns,
+    } = &*e
+    else {
         return;
     };
     let options = &cx.options;
+    let property = || {
+        let read = options.on(Pass::Properties);
+        read && accessed(callee, args, *returns, stands)
+    };
     let kind = match callee {
         Callee::Builtin { path, .. } => {
             let operator = options.on(Pass::Operators) && args.len() == 2 && is_operator(path);
-            operator.then_some(ExprSugar::Operator)
+            match (operator, property()) {
+                (true, _) => Some(ExprSugar::Operator),
+                (false, true) => Some(ExprSugar::Property),
+                (false, false) => None,
+            }
         }
+        _ if property() => Some(ExprSugar::Property),
         _ => {
             let method = options.on(Pass::Receivers) && on_receiver(callee, args, head, cx);
             method.then_some(ExprSugar::Method)
@@ -987,7 +1152,8 @@ fn read(e: &mut Expr, head: &Head, cx: &Context<'_>) {
 /// Reads a call on a receiver as `receiver.Method(..)`, an object made and constructed as `new T(..)` and a type's own `==` as the operator.
 pub fn run(f: &mut tree::Function, cx: &Context<'_>, _stats: &mut Stats) {
     let options = &cx.options;
-    let calls = options.on(Pass::Receivers) || options.on(Pass::Operators);
+    let calls =
+        options.on(Pass::Receivers) || options.on(Pass::Operators) || options.on(Pass::Properties);
     let constructors = options.on(Pass::Constructors) && !cx.project.members.is_empty();
     if !calls && !constructors {
         return;
@@ -1006,7 +1172,18 @@ pub fn run(f: &mut tree::Function, cx: &Context<'_>, _stats: &mut Stats) {
         }
         for stmt in list {
             if calls {
-                tree::own_exprs_mut(stmt, &mut |top| top.walk_mut(&mut |e| read(e, head, cx)));
+                let root = standing(stmt);
+                tree::own_exprs_mut(stmt, &mut |top| {
+                    let whole: *const Expr = &*top;
+                    top.walk_mut(&mut |e| {
+                        // The walk reaches the whole expression last, at the place it was handed.
+                        let stands = match std::ptr::eq(&*e, whole) {
+                            true => root,
+                            false => Stands::Inside,
+                        };
+                        read(e, stands, head, cx);
+                    });
+                });
             }
             work.extend(tree::nested_mut(stmt));
         }
@@ -1232,9 +1409,10 @@ pub fn unit(
         };
         let base = project.types.get(&found.owner).and_then(|t| t.base);
         let filled = |(slot, base): (u32, TypeKey)| project.slot(base, slot).is_some();
+        let role = found.role;
         let method = Method {
             function: f,
-            role: found.role,
+            role,
             is_static: found.is_static,
             is_async,
             slot: found.slot,
@@ -1249,8 +1427,6 @@ pub fn unit(
     unrowed.add(&mut classes, project, program);
     for class in classes.values_mut() {
         class.methods.sort_by_key(|method| method.function.head.at);
-        // ⚠ No method is made the accessor of a property: every call of it still names it as a
-        // method, and a property nothing reads as one would be declared under a name no call uses.
         if class.methods.iter().any(|m| m.role == Role::Lambda) {
             class.kind = ClassKind::Closure;
         }
@@ -1285,6 +1461,8 @@ pub struct Counts {
     pub constructions: usize,
     /// Calls read as an operator.
     pub operators: usize,
+    /// Calls read as the use of a property.
+    pub properties: usize,
 }
 
 /// Counts a unit's classes and members, and the readings `run` left in its functions.
@@ -1319,6 +1497,10 @@ pub fn counts(unit: &Unit) -> Counts {
                     kind: ExprSugar::Operator,
                     ..
                 } => counts.operators += 1,
+                Expr::Sugar {
+                    kind: ExprSugar::Property,
+                    ..
+                } => counts.properties += 1,
                 _ => {}
             });
         });

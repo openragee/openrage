@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use super::*;
 use crate::gta6::script::cfg::{Block, Cfg, Terminator};
 use crate::gta6::script::ir::{StoreKind, VarInfo, Width};
-use crate::gta6::script::program::{MethodRow, TypeRow};
+use crate::gta6::script::program::{EntryRow, MethodRow, TypeRow};
 use crate::gta6::script::project::Signature;
 use crate::gta6::script::{Names, Options};
 
@@ -34,6 +34,7 @@ fn key(at: u32) -> FunctionKey {
 
 fn head(at: u32, params: u32, returns: Returns) -> Head {
     Head {
+        value_types: Default::default(),
         program: PROGRAM,
         at,
         name: format!("func_{at:06X}"),
@@ -749,6 +750,7 @@ fn a_units_classes_members_and_readings_are_counted() {
         method_calls: 1,
         constructions: 1,
         operators: 0,
+        properties: 0,
     };
     assert_eq!(counts(&done), expected);
 }
@@ -829,14 +831,19 @@ fn a_function_handed_only_the_receiver_of_members_is_a_method_of_their_type() {
     // Handed the receiver of a method of T1, it stores to a field T1 adds to what its base holds.
     let direct = [hands_on(0x100, 0x200, p(0)), works(8)];
     assert_eq!(said(&direct, 0x200), Some(method(T1, None)));
-    // The receiver comes through a function that is no member itself: it works on no field.
+    // The receiver comes through a function that works on no field: the one type of its line in its program holds it too.
     let through = [
         hands_on(0x100, 0x300, p(0)),
         hands_on(0x300, 0x200, p(0)),
         works(8),
     ];
     assert_eq!(said(&through, 0x200), Some(method(T1, None)));
-    assert_eq!(said(&through, 0x300), None);
+    assert_eq!(said(&through, 0x300), Some(method(T1, None)));
+    let idle = [
+        hands_on(0x100, 0x200, p(0)),
+        blocks(0x200, Returns::Void, Vec::new()),
+    ];
+    assert_eq!(said(&idle, 0x200), Some(method(T1, None)));
     // Handed the receivers of T1 and of a type made from it, it is the method of T1.
     let both = |offset: u32| {
         [
@@ -863,15 +870,10 @@ fn a_function_handed_only_the_receiver_of_members_is_a_method_of_their_type() {
     };
     let handed = ir::Stmt::Eval(call(0x200, vec![p(0), p(1)]));
     // Each of these leaves it a function like any other.
-    let left: [Vec<cfg::Function>; 9] = [
-        // A field its base holds may be the base's to work on; a field past the type is no field of it.
+    let left: [Vec<cfg::Function>; 8] = [
+        // A field its base of the same program holds may be the base's to work on; a field past the type is no field of it.
         derived(8).to_vec(),
         both(32).to_vec(),
-        // It works on no field of its receiver.
-        vec![
-            hands_on(0x100, 0x200, p(0)),
-            blocks(0x200, Returns::Void, Vec::new()),
-        ],
         // A function no type claims hands it its first parameter; a member hands it something else.
         vec![
             hands_on(0x100, 0x200, p(0)),
@@ -967,10 +969,10 @@ fn a_constructor_handed_the_receiver_of_a_derived_types_constructor_stays_one() 
     assert_eq!(said(chained.clone(), 0x200), constructor(T1));
     assert_eq!(said(chained, 0x400), constructor(T2));
 
-    // A method of T2 hands it its receiver too: it is no constructor, and a method of T1 where it works on a field of T1.
+    // A method of T2 hands it its receiver too: it is no constructor, and a method of T1, the one type of its line in its program.
     let works = blocks(0x200, Returns::Void, vec![writes(8)]);
     let by_method = vec![hands_on(0x400, 0x200, p(0)), hands_on(0x410, 0x200, p(0))];
-    assert_eq!(said(by_method.clone(), 0x200), None);
+    assert_eq!(said(by_method.clone(), 0x200), Some(method(T1, None)));
     let mut working = by_method;
     working.push(works);
     assert_eq!(said(working, 0x200), Some(method(T1, None)));
@@ -1106,36 +1108,67 @@ fn what_two_parts_gathered_of_receivers_is_settled_together() {
 }
 
 #[test]
-fn the_runtimes_own_type_under_a_class_is_sized_by_the_runtimes_table() {
-    // The project states no row for the builtin type the class is made from.
-    let mut project = Project::default();
-    project.types.insert(T1, sized(OBJECT, 24, &[]));
-    assert!(declares(&project, T1, key(0x200), Some(12)));
-    // Nothing reached, the header alone, a byte past the object, a function of another program.
-    assert!(!declares(&project, T1, key(0x200), None));
-    assert!(!declares(&project, T1, key(0x200), Some(HEADER)));
-    assert!(!declares(&project, T1, key(0x200), Some(HEADER + 25)));
-    assert!(!declares(
-        &project,
-        T1,
-        FunctionKey::new(PROGRAM + 1, 0x200),
-        Some(12)
-    ));
-    // A value type's method takes a pointer, and a type that states no base is no class.
+fn the_one_type_of_the_receivers_line_in_the_functions_program_declares_it() {
+    // T2 is made from T1, which another program states and which holds 24 bytes; T3 is made from T2.
+    let elsewhere = TypeFacts {
+        home: PROGRAM + 1,
+        ..sized(OBJECT, 24, &[])
+    };
+    let line = |base: TypeFacts| {
+        let mut project = Project::default();
+        project.types.insert(T1, base);
+        project.types.insert(T2, sized(T1, 40, &[]));
+        project.types.insert(T3, sized(T2, 56, &[]));
+        project
+    };
+    let project = line(elsewhere.clone());
+    let of = |arrived: TypeKey, reach: Option<u32>| declarer(&project, arrived, key(0x200), reach);
+
+    // No field reached, a field of the base of the other program, the last byte of T2.
+    assert_eq!(of(T2, None), Some(T2));
+    assert_eq!(of(T2, Some(12)), Some(T2));
+    assert_eq!(of(T2, Some(HEADER + 40)), Some(T2));
+    // A byte past T2; two types of the program that hold what it reaches; one alone that does.
+    assert_eq!(of(T2, Some(HEADER + 41)), None);
+    assert_eq!(of(T3, Some(12)), None);
+    assert_eq!(of(T3, Some(HEADER + 41)), Some(T3));
+    // A function of the other program is the base's, where the base holds what it reaches.
+    let theirs = FunctionKey::new(PROGRAM + 1, 0x200);
+    assert_eq!(declarer(&project, T2, theirs, Some(12)), Some(T1));
+    assert_eq!(declarer(&project, T2, theirs, Some(HEADER + 30)), None);
+
+    // A generic base may hold a function of any program, where it holds what is reached.
+    let generic = TypeFacts {
+        generic: Some((T4, Vec::new())),
+        ..elsewhere.clone()
+    };
+    let project = line(generic);
+    assert_eq!(declarer(&project, T2, key(0x200), Some(12)), None);
+    assert_eq!(
+        declarer(&project, T2, key(0x200), Some(HEADER + 30)),
+        Some(T2)
+    );
+
+    // A base no program states, a value type, a type of the program that states no base.
+    let mut project = line(elsewhere);
+    project
+        .types
+        .insert(T5, sized(TypeKey(0x99 << 40), 40, &[]));
     let of_struct = TypeFacts {
         flags: STRUCT,
         ..sized(OBJECT, 24, &[])
     };
-    project.types.insert(T2, of_struct);
-    assert!(!declares(&project, T2, key(0x200), Some(12)));
-    let rootless = TypeFacts {
+    project.types.insert(T4, of_struct);
+    let rootless = TypeKey(0x66 << 40);
+    let no_base = TypeFacts {
         byte_size: 24,
         ..facts(None, &[])
     };
-    project.types.insert(T3, rootless);
-    assert!(!declares(&project, T3, key(0x200), Some(12)));
+    project.types.insert(rootless, no_base);
+    for arrived in [T5, T4, rootless] {
+        assert_eq!(declarer(&project, arrived, key(0x200), None), None);
+    }
 }
-
 #[test]
 fn a_slot_of_an_interface_reads_as_a_method_on_a_receiver_declared_to_hold_it() {
     let mut project = Project::default();
@@ -1222,4 +1255,299 @@ fn a_slot_a_names_list_names_reads_as_a_method_on_its_receiver() {
     // A name is looked for on the bases of the type a call names, as the printer looks for it.
     assert!(named(&cx, T3, 3));
     assert!(!named(&cx, T3, 4));
+}
+
+/// The opcode the table names `name`.
+fn op(name: &str) -> u16 {
+    let found = (0..opcode::COUNT).find(|op| opcode::name(*op) == Some(name));
+    found.expect("the table names the instruction")
+}
+
+/// The bytes a program's code keeps an instruction in: its opcode's word, then its operand bytes enciphered.
+fn instruction(op: u16, operands: &[u8]) -> Vec<u8> {
+    // The inverses of what `of_word` and `plain` multiply by.
+    let word = op.wrapping_mul(0x843D);
+    assert_eq!(opcode::of_word(word), op);
+    let mut bytes = word.to_le_bytes().to_vec();
+    for (n, plain) in operands.iter().enumerate() {
+        let stored = plain.wrapping_mul(0x65) ^ opcode::key(n);
+        assert_eq!(opcode::plain(stored, n), *plain);
+        bytes.push(stored);
+    }
+    bytes
+}
+
+#[test]
+fn what_a_function_no_reading_lifted_names_is_handed_what_no_code_shows() {
+    let types = [(T1, sized(OBJECT, 24, &[(4, 0x100)]))];
+    let proved = [
+        hands_on(0x100, 0x200, p(0)),
+        blocks(0x200, Returns::Void, vec![writes(8)]),
+    ];
+    // A program of one function at 0, whose code is `code`.
+    let program = |code: Vec<u8>, entries: Vec<EntryRow>| Program {
+        program: PROGRAM,
+        functions: vec![FunctionRow {
+            at: 0,
+            end: code.len() as u32,
+            ..FunctionRow::default()
+        }],
+        code,
+        entries,
+        ..Program::default()
+    };
+    let said = |program: &Program, read: &[cfg::Function]| {
+        let mut project = Project::default();
+        project.types.insert(OBJECT, TypeFacts::default());
+        project.types.extend(types.iter().cloned());
+        of_program(&mut project, program);
+        for f in read {
+            of_function(&mut project, f);
+        }
+        settle(&mut project);
+        project.members.get(&key(0x200)).cloned()
+    };
+    let mut all = proved.to_vec();
+    all.push(blocks(0, Returns::Void, Vec::new()));
+
+    // The function at 0 calls the function at 0x200: read, it is seen to hand it nothing of note.
+    let calls = program(
+        instruction(op("call"), &[0, 0x00, 0x02, 0x00, 0]),
+        Vec::new(),
+    );
+    assert_eq!(said(&calls, &all), Some(method(T1, None)));
+    // Unread, a call, a short call and a reference pushed may each hand it anything.
+    let short = instruction(op("call_short"), &[0, 0x00, 0x02]);
+    let pushed = instruction(op("push_function"), &[0, 0x00, 0x02, 0x00, 0]);
+    for code in [calls.code.clone(), short, pushed] {
+        assert_eq!(said(&program(code, Vec::new()), &proved), None);
+    }
+    // Code that names nothing hides nothing.
+    assert_eq!(
+        said(&program(Vec::new(), Vec::new()), &proved),
+        Some(method(T1, None))
+    );
+    // An import the program does not hold, and code that ends inside an instruction: what the
+    // program's code calls is not known, whatever is read.
+    let foreign = instruction(op("call"), &[1, 0x00, 0x02, 0x00, 0]);
+    let cut = calls.code[..3].to_vec();
+    for code in [foreign, cut] {
+        assert_eq!(said(&program(code, Vec::new()), &all), None);
+    }
+    // The engine calls it by the hash of a name.
+    let entry = EntryRow {
+        name: 0x5EED,
+        at: 0x200,
+    };
+    assert_eq!(said(&program(Vec::new(), vec![entry]), &proved), None);
+}
+
+#[test]
+fn a_reference_whatever_its_flags_and_a_first_parameter_of_several_cells_prove_no_member() {
+    let types = [(T1, sized(OBJECT, 24, &[(4, 0x100)]))];
+    let works = blocks(0x200, Returns::Void, vec![writes(8)]);
+    let said = |functions: &[cfg::Function]| {
+        let project = settled(&types, functions);
+        project.members.get(&key(0x200)).cloned()
+    };
+    let handed = hands_on(0x100, 0x200, p(0));
+    assert_eq!(
+        said(&[handed.clone(), works.clone()]),
+        Some(method(T1, None))
+    );
+
+    // The top byte of a reference holds its flags.
+    let flagged = ir::Stmt::Assign {
+        target: Var::Local(0),
+        value: Expr::FunctionRef {
+            program: PROGRAM,
+            at: 0x200 | 0x0100_0000,
+        },
+    };
+    let refers = blocks(0x300, Returns::Void, vec![flagged]);
+    assert_eq!(said(&[handed.clone(), works.clone(), refers]), None);
+    // Its first parameter is a value of two cells.
+    let mut wide = works;
+    let info = VarInfo {
+        width: Width::Cells,
+        kind: Kind::Unknown,
+        name: None,
+        single: false,
+    };
+    wide.head.vars.insert(Var::Param(0), info);
+    assert_eq!(said(&[handed, wide]), None);
+}
+
+#[test]
+fn an_accessors_name_says_what_it_does_and_names_its_property() {
+    assert_eq!(accessor("get_Zorp"), Some((Accessor::Get, "Zorp")));
+    assert_eq!(accessor("set_Zorp"), Some((Accessor::Set, "Zorp")));
+    assert_eq!(accessor("set__zorp2"), Some((Accessor::Set, "_zorp2")));
+    for name in [
+        "Zorp",
+        "get_",
+        "get_2Zorp",
+        "get_Zo.rp",
+        "Get_Zorp",
+        "func_000200",
+    ] {
+        assert_eq!(accessor(name), None, "{name}");
+    }
+}
+
+#[test]
+fn a_call_of_an_accessor_on_its_receiver_reads_as_the_use_of_its_property() {
+    let builtin = |path: &str, args: Vec<Expr>, returns: u32| Expr::Call {
+        callee: Callee::Builtin {
+            path: path.to_owned(),
+            ty: 3,
+            method: 1,
+        },
+        args,
+        returns: Some(returns),
+    };
+    let get = builtin("Example.Thing.get_Zorp", vec![p(1)], 1);
+    let set = builtin("Example.Thing.set_Zorp", vec![p(1), p(0)], 0);
+    let as_property = |e: Expr| Expr::sugar(ExprSugar::Property, e);
+    let taken = |value: Expr| {
+        Stmt::Simple(ir::Stmt::Assign {
+            target: Var::Local(0),
+            value,
+        })
+    };
+    let empty = Project::empty();
+
+    // A getter whose value is taken, and a setter that is a statement of its own.
+    let body = vec![taken(get.clone()), eval(set.clone())];
+    let done = ran(&body, empty, Options::default());
+    let read = vec![
+        taken(as_property(get.clone())),
+        eval(as_property(set.clone())),
+    ];
+    assert_eq!(done, read);
+    // The readings come off again, and none is made with the name off.
+    assert_eq!(tree::desugar(done), body);
+    let off = Options::default().without(Pass::Properties);
+    assert_eq!(ran(&body, empty, off), body);
+    // A getter run for nothing, a setter whose value is taken, accessors of other shapes, and
+    // a value's getter handed the value's address.
+    let place = Expr::AddrOf {
+        var: Var::Local(1),
+        cell: 0,
+    };
+    for left in [
+        taken(builtin("Example.Thing.get_Zorp", vec![place], 1)),
+        eval(get),
+        Stmt::Return(Some(set)),
+        eval(builtin("Example.Thing.set_Zorp", vec![p(1), p(0), p(0)], 0)),
+        taken(builtin("Example.Thing.get_Zorp", vec![p(1), p(0)], 1)),
+        taken(builtin("Example.Thing.get_Zorp", vec![p(1)], 0)),
+    ] {
+        assert_eq!(
+            ran(std::slice::from_ref(&left), empty, Options::default()),
+            [left]
+        );
+    }
+
+    // A script's function, by the user's name and on a receiver it is proved a method of, is the
+    // method call it is: its declaration stays a method too.
+    let mut project = Project::default();
+    project.types.insert(T1, facts(Some(OBJECT), &[]));
+    project.members.insert(key(0x300), method(T1, None));
+    let yields = Signature {
+        returns: 1,
+        ..Signature::default()
+    };
+    project.signatures.insert(key(0x300), yields);
+    let mut names = Names::default();
+    names.functions.insert(key(0x300), "get_Zorp".to_owned());
+    let cx = Context::new(&names, &project, Options::default());
+    let got = call(0x300, vec![p(0)]);
+    let mut f = function(0x100, 2, vec![Stmt::Return(Some(got.clone()))]);
+    run(&mut f, &cx, &mut Stats::default());
+    let as_method = Expr::sugar(ExprSugar::Method, got.clone());
+    assert_eq!(f.body, [Stmt::Return(Some(as_method.clone()))]);
+    let unnamed = ran(
+        &[Stmt::Return(Some(got.clone()))],
+        &project,
+        Options::default(),
+    );
+    assert_eq!(unnamed, [Stmt::Return(Some(as_method))]);
+}
+
+#[test]
+fn a_member_an_accessor_by_its_name_is_still_a_method() {
+    let mut project = Project::default();
+    project.types.insert(T1, facts(Some(OBJECT), &[]));
+    for at in [0x110, 0x120, 0x130] {
+        project.members.insert(key(at), method(T1, None));
+    }
+    let mut names = Names::default();
+    names.functions.insert(key(0x110), "get_Zorp".to_owned());
+    names.functions.insert(key(0x120), "set_Zorp".to_owned());
+    // A getter by its name that takes a cell besides its receiver and yields nothing.
+    names.functions.insert(key(0x130), "get_Zorp".to_owned());
+    let getter = tree::Function {
+        head: head(0x110, 1, Returns::Cell),
+        body: Vec::new(),
+    };
+    let functions = vec![
+        getter,
+        function(0x120, 2, Vec::new()),
+        function(0x130, 2, Vec::new()),
+    ];
+    let roles = |options: Options| {
+        let cx = Context::new(&names, &project, options);
+        let done = unit(PROGRAM, Vec::new(), functions.clone(), &cx);
+        methods(&done.classes[0])
+    };
+
+    // A call `obj.get_Zorp();` standing alone, or in a loop's head, is read as no property's use,
+    // so a member declared a property would be invoked as a method no C# can call.
+    let plain = [
+        (0x110, Role::Method, false),
+        (0x120, Role::Method, false),
+        (0x130, Role::Method, false),
+    ];
+    assert_eq!(roles(Options::default()), plain);
+    let off = roles(Options::default().without(Pass::Properties));
+    assert_eq!(off, plain);
+}
+
+#[test]
+fn what_the_engine_runs_with_nothing_handed_keeps_what_its_record_states() {
+    let record = MethodRow {
+        name: STATIC_CONSTRUCTOR,
+        at: Some(0x300),
+        ..MethodRow::default()
+    };
+    // The header names the function at 0x300, which takes `params` cells.
+    let settled_with = |params: u32| {
+        let program = Program {
+            program: PROGRAM,
+            types: vec![TypeRow {
+                name: T1.0,
+                ..TypeRow::default()
+            }],
+            methods: vec![record],
+            functions: vec![FunctionRow {
+                at: 0x300,
+                params,
+                ..FunctionRow::default()
+            }],
+            initialize: Some(0x300),
+            ..Program::default()
+        };
+        let mut project = Project::default();
+        of_program(&mut project, &program);
+        settle(&mut project);
+        project.members.get(&key(0x300)).cloned()
+    };
+    let of_static = Member {
+        is_static: true,
+        ..provisional(T1, Role::StaticConstructor)
+    };
+    assert_eq!(settled_with(0), Some(of_static));
+    // One that takes a cell is handed what the engine will.
+    assert_eq!(settled_with(1), None);
 }

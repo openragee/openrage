@@ -132,4 +132,11 @@ pub struct Carried {
     >,
     /// For a function that leaves its first parameter as given: one past the last byte it reads or writes through it.
     pub reach: std::collections::BTreeMap<super::ir::FunctionKey, u32>,
+    /// For a function of a compiled program no reading has lifted yet: the script functions its instructions call or refer to.
+    pub unread: std::collections::BTreeMap<
+        super::ir::FunctionKey,
+        std::collections::BTreeSet<super::ir::FunctionKey>,
+    >,
+    /// The programs some function of which holds a word that is no instruction, so that what it calls is not known.
+    pub blind: std::collections::BTreeSet<u32>,
 }

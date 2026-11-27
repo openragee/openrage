@@ -1,5 +1,5 @@
 use super::*;
-use crate::gta6::script::project::{Param, Signature};
+use crate::gta6::script::project::{Param, Signature, TypeFacts};
 
 fn address(n: u32) -> Expr {
     Expr::AddrOf {
@@ -270,4 +270,61 @@ fn an_object_made_and_filled_straight_before_a_field_takes_it_is_inside_the_init
         let done = initialised(simples(&stmts));
         assert_eq!(parts_at(&done, 0), head_only, "{why}");
     }
+}
+
+#[test]
+fn the_first_address_handed_to_a_function_of_no_type_or_to_a_structs_method_is_read_too() {
+    let key = FunctionKey::new(1, 0x200);
+    // `func_000200` takes two cells and writes the whole of the first before it reads it.
+    let mut project = Project::default();
+    let one = Param {
+        kind: Kind::Unknown,
+        cells: 1,
+    };
+    let signature = Signature {
+        params: vec![one; 2],
+        ..Signature::default()
+    };
+    project.signatures.insert(key, signature);
+    let held = uses(8, reach::Mode::Out, 8, true);
+    project.reach.insert(key, [(0, held)].into_iter().collect());
+    let plain = call(0x200, vec![address(4), p(0)]);
+    let by = |kind: ExprSugar| call(0x200, vec![Expr::sugar(kind, address(4)), p(0)]);
+    let read = |project: &Project| {
+        let done = referred_in(head(&[]), vec![evaluated(plain.clone())], project);
+        value_at(&done, 0)
+    };
+
+    // A function of no type takes no receiver: what it writes first is an `out`.
+    assert_eq!(read(&project), by(ExprSugar::Out));
+
+    // A struct's method works on its value's address, which is `ref this`, never an `out`.
+    let owner = TypeKey(0x0F0F_0F0F_0F0F_0F0F);
+    let member = |role: Role| Member {
+        owner,
+        role,
+        is_static: false,
+        slot: None,
+    };
+    let value = TypeFacts {
+        flags: 0x04,
+        ..TypeFacts::default()
+    };
+    let mut on_value = project.clone();
+    on_value.types.insert(owner, value.clone());
+    on_value.members.insert(key, member(Role::Method));
+    assert_eq!(read(&on_value), by(ExprSugar::Ref));
+
+    // ⚠ A class's method, a struct's constructor and a method of a type nothing states may be
+    // handed their receiver first.
+    let mut on_class = project.clone();
+    on_class.types.insert(owner, TypeFacts::default());
+    on_class.members.insert(key, member(Role::Method));
+    assert_eq!(read(&on_class), plain);
+    let mut made = on_value.clone();
+    made.members.insert(key, member(Role::Constructor));
+    assert_eq!(read(&made), plain);
+    let mut unstated = project.clone();
+    unstated.members.insert(key, member(Role::Method));
+    assert_eq!(read(&unstated), plain);
 }

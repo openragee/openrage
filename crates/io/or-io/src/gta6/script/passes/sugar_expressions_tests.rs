@@ -1063,10 +1063,11 @@ fn the_address_of_a_variable_handed_to_a_call_is_a_ref() {
         ])
     );
 
-    // ⚠ The first cell handed to a function not proved to take no receiver may be its receiver.
+    // ⚠ The first cell handed to a method not proved to take no receiver may be its receiver; a
+    // function of no type takes none.
     let own = call(0x200, vec![address(1), address(2)]);
     let after_first = call(0x200, vec![address(1), by_ref(2)]);
-    assert_eq!(read(&own, none), after_first);
+    assert_eq!(read(&own, none), call(0x200, vec![by_ref(1), by_ref(2)]));
     let mut project = Project::default();
     let member = |is_static: bool| Member {
         owner: TypeKey(7),

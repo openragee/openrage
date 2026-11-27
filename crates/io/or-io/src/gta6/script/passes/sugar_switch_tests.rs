@@ -101,6 +101,10 @@ fn value(e: &Expr, x: u64) -> u64 {
             r,
             ..
         } => u64::from(value(l, x) != 0 && value(r, x) != 0),
+        Expr::Select { cond, then, els } => match value(cond, x) != 0 {
+            true => value(then, x),
+            false => value(els, x),
+        },
         Expr::Binary { op, at, l, r } => {
             let (a, b) = (value(l, x) as u32, value(r, x) as u32);
             let ordering = match at {
@@ -523,4 +527,126 @@ fn an_ordering_test_holds_of_a_constant_as_its_width_and_sign_say() {
     assert!(!order(BinOp::Le, true, true, 20).holds(minus_one));
     assert!(order(BinOp::Le, true, true, 20).holds(u64::MAX));
     assert!(!order(BinOp::Le, false, true, 20).holds(u64::MAX));
+}
+
+fn either(l: Expr, r: Expr) -> Expr {
+    Expr::Binary {
+        op: BinOp::LogicalOr,
+        at: Kind::Bool,
+        l: Box::new(l),
+        r: Box::new(r),
+    }
+}
+
+/// `cond ? then : els`.
+fn choice(cond: Expr, then: Expr, els: Expr) -> Expr {
+    Expr::Select {
+        cond: Box::new(cond),
+        then: Box::new(then),
+        els: Box::new(els),
+    }
+}
+
+#[test]
+fn a_choice_whose_ordering_test_halves_the_constants_of_one_value_is_a_switch() {
+    // `if (x > 20 ? x == 30 || x == 40 : x == 10 || x == 20) { func_50(); } func_99();`, the
+    // first side read with its sign and the other without.
+    let above = compare(BinOp::Gt, Kind::I32, 20);
+    let signed = |constant: i64| compare(BinOp::Eq, Kind::I32, constant);
+    let low = either(equal(10), equal(20));
+    let sel = choice(above.clone(), either(signed(30), signed(40)), low.clone());
+    let body = vec![when(sel, vec![does(0x50)], Vec::new()), does(0x99)];
+    let done = read_whole(&body, &VALUES);
+    let [only, after] = done.as_slice() else {
+        panic!("two statements: {done:?}");
+    };
+    let (constants, default) = arms_of(only);
+    let each: Vec<Vec<u64>> = vec![vec![30, 40, 10, 20]];
+    assert_eq!(constants, each);
+    assert!(default.is_empty());
+    assert_eq!(*after, does(0x99));
+    // The arm is written with the first equality's value and type, and gives back an `if` of them.
+    let Stmt::Sugar(sugar) = only else {
+        panic!("a construct: {only:?}");
+    };
+    let Sugar::SwitchOn { arms, .. } = &**sugar else {
+        panic!("a switch: {sugar:?}");
+    };
+    let spelt = test(&arms[0].test).map(|test| (test.value.clone(), test.at.clone()));
+    assert_eq!(spelt, Some((read_at(&Kind::I32), Kind::I32)));
+    assert!(matches!(
+        tree::desugar(done.clone()).first(),
+        Some(Stmt::If {
+            cond: Expr::Binary {
+                op: BinOp::LogicalOr,
+                ..
+            },
+            ..
+        })
+    ));
+
+    // The other sense: where the value is none of them it leaves, and the rest is the arm.
+    let none = choice(above.clone(), none_of(30, 40), none_of(10, 20));
+    let body = vec![when(none, vec![leave()], Vec::new()), does(0x99)];
+    let done = read_whole(&body, &VALUES);
+    let [only] = done.as_slice() else {
+        panic!("one statement: {done:?}");
+    };
+    let (constants, default) = arms_of(only);
+    assert_eq!(constants, each);
+    assert_eq!(default, [leave()].as_slice());
+
+    // ⚠ Each stays a choice where it is not the test that the value is one of the constants.
+    let stays = vec![
+        (
+            "a constant on the side its ordering test does not send it",
+            choice(
+                above.clone(),
+                either(equal(10), equal(40)),
+                either(equal(30), equal(20)),
+            ),
+        ),
+        (
+            "two senses",
+            choice(above.clone(), either(equal(30), equal(40)), none_of(10, 20)),
+        ),
+        (
+            "another value",
+            choice(
+                above.clone(),
+                either(equal(30), equal(40)),
+                Expr::Binary {
+                    op: BinOp::Eq,
+                    at: Kind::U32,
+                    l: Box::new(Expr::cast(Scalar::U32, Expr::Var(Var::Param(2)))),
+                    r: Box::new(Expr::Const(Const {
+                        bits: 10,
+                        kind: Kind::U32,
+                    })),
+                },
+            ),
+        ),
+        (
+            "an ordering test of whole cells over tests of 32 bits",
+            choice(
+                compare(BinOp::Gt, Kind::I64, 20),
+                either(equal(30), equal(40)),
+                low.clone(),
+            ),
+        ),
+        (
+            "two constants are no switch",
+            choice(above.clone(), equal(30), equal(10)),
+        ),
+        (
+            "a choice of no ordering test",
+            choice(equal(5), either(equal(30), equal(40)), low.clone()),
+        ),
+    ];
+    for (why, cond) in stays {
+        let body = vec![when(cond, vec![does(0x50)], Vec::new()), does(0x99)];
+        let mut list = body.clone();
+        switched(&mut list, 0, true);
+        assert_eq!(list, body, "{why}");
+    }
 }

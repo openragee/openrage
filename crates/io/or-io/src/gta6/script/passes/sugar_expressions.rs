@@ -1,6 +1,6 @@
 //! Sugar for expressions and simple statements: tests of one value as a `switch`, the null
-//! operators, compound assignment, string concatenation, initialisers, one inside another, and
-//! `ref` and `out`.
+//! operators, compound assignment, string concatenation, initialisers, one inside another,
+//! `ref` and `out`, and a box handed on whole as the conversion C# writes in its place.
 //!
 //! Works on the structured form, last before `names`. An expression is read through an
 //! `ExprSugar` and statements through a `Group` or a `Sugar::SwitchOn`, and `tree::desugar` gives
@@ -17,6 +17,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::gta6::script::class::Role;
 use crate::gta6::script::ir::{
     self, BinOp, Callee, Expr, ExprSugar, FunctionKey, Head, Kind, Scalar, Var, Width,
 };
@@ -38,6 +39,7 @@ pub const PASSES: &[Pass] = &[
     Pass::RefOut,
     Pass::Nullable,
     Pass::Tuples,
+    Pass::Boxing,
 ];
 
 /// The most statements one initialiser is read from: each store is held against every one before it.
@@ -82,7 +84,7 @@ pub fn run(f: &mut tree::Function, cx: &Context<'_>, _stats: &mut Stats) {
     let refs = options.on(Pass::RefOut);
     // An explicit stack: a body nests as deep as its listing does. With each list, whether a
     // `switch` may take the statements after its first test into its arms.
-    let mut work: Vec<(&mut Vec<Stmt>, bool)> = vec![(body, true)];
+    let mut work: Vec<(&mut Vec<Stmt>, bool)> = vec![(&mut *body, true)];
     while let Some((list, whole)) = work.pop() {
         if options.on(Pass::Initialisers) {
             initialisers(list, &around);
@@ -136,6 +138,10 @@ pub fn run(f: &mut tree::Function, cx: &Context<'_>, _stats: &mut Stats) {
             let nested = tree::nested_mut(stmt).into_iter().enumerate();
             work.extend(nested.map(|(index, list)| (list, index < bodies)));
         }
+    }
+    // Last, so that no reading above meets a box as anything but the call it is.
+    if options.on(Pass::Boxing) {
+        boxes::run(body, head, project);
     }
 }
 
@@ -757,24 +763,40 @@ fn apart(
     })
 }
 
+/// What the first cell handed to the script function `key` is: the first argument that is no receiver, and whether that argument is the value a struct's method works on.
+// A function of no type, or a static one, takes no receiver. A struct's method takes the address
+// of its value, `ref this`, which a frame variable's address is; a class's object never is one.
+// Any other member's first cell may be the receiver the classes pass writes before the dot.
+fn receiver(project: &Project, key: FunctionKey) -> (usize, bool) {
+    let Some(member) = project.members.get(&key) else {
+        return (0, false);
+    };
+    let owner = project.types.get(&member.owner);
+    let method = matches!(member.role, Role::Method);
+    match member.is_static {
+        true => (0, false),
+        false if method && owner.is_some_and(|facts| facts.is_value()) => (0, true),
+        false => (1, false),
+    }
+}
+
 /// Reads the address of a variable handed to a call as `ref`, where it reaches that variable alone, and as `out` where the script function it is handed to writes it whole before it reads it.
 // ⚠ Never the first cell of a call that may be made on it: a receiver is written before the dot.
-// Only a native, and a function proved to take no receiver, are handed no receiver. An `out`
-// also needs that nothing else the callee can reach holds the variable's address: no other
-// argument, and no address of it, or of a cell before it, taken elsewhere and kept.
+// Only a native, and a script function proved to take no receiver or to be a struct's method, are
+// handed no receiver; a struct's value is `ref this` and never an `out`. An `out` also needs that
+// nothing else the callee can reach holds the variable's address: no other argument, and no
+// address of it, or of a cell before it, taken elsewhere and kept.
 fn referred(e: &mut Expr, head: &Head, project: &Project, kept: &Reached) {
     match e {
         Expr::Call { callee, args, .. } => {
-            let free = |program: u32, at: u32| {
-                let member = project.members.get(&ir::FunctionKey::new(program, at));
-                member.is_some_and(|member| member.is_static)
-            };
-            let first = match callee {
+            let (first, this) = match callee {
                 Callee::Intrinsic { .. } => return,
-                Callee::Native { .. } => 0,
-                Callee::Local { at, .. } => usize::from(!free(head.program, *at)),
-                Callee::Import { program, at, .. } => usize::from(!free(*program, *at)),
-                Callee::Builtin { .. } | Callee::Virtual { .. } => 1,
+                Callee::Native { .. } => (0, false),
+                Callee::Local { at, .. } => receiver(project, FunctionKey::new(head.program, *at)),
+                Callee::Import { program, at, .. } => {
+                    receiver(project, FunctionKey::new(*program, *at))
+                }
+                Callee::Builtin { .. } | Callee::Virtual { .. } => (1, false),
             };
             let key = signatures::key_of(head.program, callee);
             let all: &[Expr] = args.as_slice();
@@ -785,7 +807,10 @@ fn referred(e: &mut Expr, head: &Head, project: &Project, kept: &Reached) {
                     if index < first {
                         return None;
                     }
-                    let alone = || !kept.has(var) && apart(index, var, all, &proved, head);
+                    let alone = || {
+                        let own = !(this && index == 0);
+                        own && !kept.has(var) && apart(index, var, all, &proved, head)
+                    };
                     match handed {
                         Handed::Out if alone() => Some(ExprSugar::Out),
                         Handed::Out | Handed::Within => Some(ExprSugar::Ref),
@@ -1426,6 +1451,9 @@ fn initialisers(list: &mut Vec<Stmt>, around: &Around<'_>) {
 
 #[path = "sugar_switch.rs"]
 mod switch;
+
+#[path = "sugar_boxes.rs"]
+mod boxes;
 
 #[cfg(test)]
 #[path = "sugar_expressions_tests.rs"]

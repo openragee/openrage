@@ -1,5 +1,6 @@
 //! The `switch` a compiler laid out as tests of one value: a chain of equalities, the ordering
-//! tests that halve a sparse set of cases, and the small switches left under them.
+//! tests that halve a sparse set of cases, the small switches left under them, and a condition
+//! whose ordering tests choose among such equalities.
 //!
 //! ⚠ The `Sugar::SwitchOn` made here holds each arm under the equality that leads to it and no
 //! ordering test: `tree::desugar` gives a chain of `if`s that runs as the tests did, not the tests
@@ -64,6 +65,11 @@ pub(super) enum What<'a> {
     /// `x != a`, or `x != a && x != b`: each constant as it is compared, and as it is written where it is compared at the type of the first.
     Unequal(Vec<(u64, Option<&'a Expr>)>),
     Ordered(Order),
+    /// `x > k ? x == a || x == b : x == c`: ordering tests that choose among tests of one value, which come to whether the value is one of the constants (`held`) or none of them.
+    Among {
+        constants: Vec<(u64, Option<&'a Expr>)>,
+        held: bool,
+    },
 }
 
 /// A condition that compares one value with constants.
@@ -90,6 +96,9 @@ fn width(at: &Kind) -> Option<(bool, bool)> {
 
 /// The test a condition is, where it compares one value with constants.
 pub(super) fn test(cond: &Expr) -> Option<Test<'_>> {
+    if let Expr::Select { .. } = cond {
+        return among(cond);
+    }
     if let Expr::Binary { op, at, l, r } = cond {
         let ordered = matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge);
         if ordered || *op == BinOp::Ne {
@@ -231,6 +240,105 @@ fn under(e: &Expr, wide: bool) -> &Expr {
     }
 }
 
+/// Whether `value`, read at the width `wide`, is the one value `subject` holds; the first is, unless reading it again could see another value.
+fn one_value<'a>(subject: &mut Option<(&'a Expr, bool)>, value: &'a Expr, wide: bool) -> bool {
+    let read = under(value, wide);
+    match *subject {
+        Some((held, as_wide)) => as_wide == wide && same(held, read),
+        None if level(read) > 1 => false,
+        None => {
+            *subject = Some((read, wide));
+            true
+        }
+    }
+}
+
+/// The test a choice is where its ordering tests choose among tests of one value against constants: `x > k ? x == a || x == b : x == c`.
+// ⚠ Only where every constant stands on the way its ordering tests send it: a value equal to one
+// then takes the way to that constant's own test, and a value equal to none finds none on
+// whichever way it takes, so the choice holds where the value is one of them all. Every way ends
+// in tests of one sense, all `==` or all `!=`, at one width.
+fn among(cond: &Expr) -> Option<Test<'_>> {
+    // Each ordering test met twice, the way on where it holds and then where it does not, with
+    // the one it is reached through.
+    let mut path: Vec<(Order, bool, Option<usize>)> = Vec::new();
+    let mut open: Vec<(&Expr, Option<usize>)> = vec![(cond, None)];
+    let mut subject: Option<(&Expr, bool)> = None;
+    // The first equality's value and type, which the arm is written with.
+    let mut first: Option<(&Expr, &Kind)> = None;
+    let mut held: Option<bool> = None;
+    let mut constants: Vec<(u64, Option<&Expr>)> = Vec::new();
+    while let Some((e, above)) = open.pop() {
+        if path.len() + constants.len() >= TESTS {
+            return None;
+        }
+        if let Expr::Select {
+            cond: order,
+            then,
+            els,
+        } = e
+        {
+            let ordered = matches!(
+                &**order,
+                Expr::Binary {
+                    op: BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge,
+                    ..
+                }
+            );
+            if !ordered {
+                return None;
+            }
+            let asked = test(order)?;
+            let (value, wide) = (asked.value, asked.wide);
+            let What::Ordered(order) = asked.what else {
+                return None;
+            };
+            if !one_value(&mut subject, value, wide) {
+                return None;
+            }
+            let at = path.len();
+            path.push((order, true, above));
+            path.push((order, false, above));
+            open.push((&**els, Some(at + 1)));
+            open.push((&**then, Some(at)));
+            continue;
+        }
+        // A way's end: a test of the value, which is no choice and so reads no further.
+        if !matches!(e, Expr::Binary { .. }) {
+            return None;
+        }
+        let asked = test(e)?;
+        let (value, at, wide) = (asked.value, asked.at, asked.wide);
+        let (found, equal): (Vec<(u64, Option<&Expr>)>, bool) = match asked.what {
+            What::Equal(found) => (found.into_iter().map(|(c, w)| (c, Some(w))).collect(), true),
+            What::Unequal(found) => (found, false),
+            _ => return None,
+        };
+        if *held.get_or_insert(equal) != equal || !one_value(&mut subject, value, wide) {
+            return None;
+        }
+        let (_, kind) = *first.get_or_insert((value, at));
+        for (constant, written) in found {
+            let mut up = above;
+            while let Some(index) = up {
+                let (order, way, over) = *path.get(index)?;
+                if order.holds(constant) != way {
+                    return None;
+                }
+                up = over.filter(|over| *over < index);
+            }
+            constants.push((constant, written.filter(|_| kind == at)));
+        }
+    }
+    let ((value, at), held, (_, wide)) = (first?, held?, subject?);
+    Some(Test {
+        value,
+        at,
+        wide,
+        what: What::Among { constants, held },
+    })
+}
+
 /// The constant a case is written as in a test at `at`.
 fn label(constant: u64, at: &Kind) -> Expr {
     let bits = match at {
@@ -331,6 +439,8 @@ struct Reading<'a> {
     defaults: Vec<(&'a [Stmt], Option<usize>)>,
     tests: usize,
     looks: usize,
+    /// Whether an arm was read from a choice its own ordering tests halve.
+    halved: bool,
 }
 
 impl<'a> Reading<'a> {
@@ -524,6 +634,25 @@ impl<'a> Reading<'a> {
                     rest: None,
                 });
             }
+            // The arm is written as the equalities the choice comes to, never as the choice.
+            What::Among { constants, held } => {
+                let values: Vec<u64> = constants.iter().map(|(constant, _)| *constant).collect();
+                if !self.takes(&values, above) {
+                    return false;
+                }
+                self.halved = true;
+                let arm = self.written(asked.value, asked.at, constants, None);
+                let (body, on, rest) = match *held {
+                    true => (then, other, after),
+                    false => (other, then, None),
+                };
+                self.arms.push((arm, body));
+                more.push(Open {
+                    list: on,
+                    above,
+                    rest,
+                });
+            }
         }
         true
     }
@@ -636,6 +765,7 @@ fn read(top: &[Stmt]) -> Option<Read> {
         defaults: Vec::new(),
         tests: 0,
         looks: LOOKS,
+        halved: false,
     };
     let mut open = vec![Open {
         list: top,
@@ -649,7 +779,8 @@ fn read(top: &[Stmt]) -> Option<Read> {
     }
     // An ordering test halves the cases of a `switch` and no test a source writes, so under one
     // the constants count, however few arms they lead to.
-    let halved = !reading.orders.is_empty() && reading.seen.len() >= ARMS;
+    let ordered = !reading.orders.is_empty() || reading.halved;
+    let halved = ordered && reading.seen.len() >= ARMS;
     if reading.arms.len() < ARMS && !halved {
         return None;
     }

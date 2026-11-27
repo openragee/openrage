@@ -1683,6 +1683,20 @@ draw it, and `lights_vars` the variables of the timecycle frame the lights read.
 depends on `or-world`, `or-io`, `or-title` and `or-job`, and on no other adapter
 (`no_adapter_crate_depends_on_another_or_above_itself`).
 
+What [R71b](../direction/Roadmap.md#r71b-the-gta-vi-world-behind-the-contract)'s row leaves to this
+document. The move changed no behaviour: the tests of the moved files run in their new crates,
+changed in imports alone, and `the_world_reads_as_its_reference_says` held after it to the digests
+written before it, and failed with the key snapshot kept from `index::build`. The app keeps
+`src/state/gta6_worldview/index_shell.rs` (the configuration folder and key snapshot it opens with,
+and `land_and_water`) and every file of the viewer that names the renderer or the app. ⚠ A line a
+moved file logs below an error no longer reaches the terminal, and one below `info` no longer
+reaches the Log panel: both are filtered by crate (`src/diagnostics/mod.rs`). Left: parts 3 to 5;
+the adapter's title and registry line, which wait for a registry crate and for readers a title
+opens with; and the pool's workers keeping their open files in the contract's `Worker`. The
+contract as built changes the later parts: the world thread is rewritten around the core's driver,
+so GTA VI's rules go to its rows' gates, its body and its policy, and the kit, which opens a world
+through the title's own `open`, passes only with the last part.
+
 **The world core.** The modules of `or-world` listed here name no game and are what every title's
 world sits behind ([R71a](../direction/Roadmap.md#r71a-the-world-contract-the-conformance-kit-and-the-fake-title),
 [Unified_World_Plan.md](../direction/Unified_World_Plan.md#the-contract)); the rest of the crate is

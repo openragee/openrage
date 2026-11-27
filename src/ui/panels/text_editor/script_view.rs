@@ -21,6 +21,8 @@ pub struct ScriptAsk {
     pub references: bool,
     /// The documents whose source was written anew, each with the line of it the caret goes to.
     pub landed: Vec<(DocumentId, u32)>,
+    /// Whether this session asked to build a project, which it asks once.
+    pub project_asked: bool,
 }
 
 impl PanelState for ScriptAsk {
@@ -106,6 +108,44 @@ fn find_every(state: &mut EditorState, pattern: String) {
     state.find.last_dispatched_flags = u32::MAX;
 }
 
+/// Asks once a session, over the first script of an archive decompiled with no project, whether to build one: OpenRage ships none, since one holds for one build of the game.
+fn ask_project(
+    ctx: &egui::Context,
+    app_state: &mut AppState,
+    doc_id: DocumentId,
+    script: &crate::state::Gta6ScriptDocument,
+) {
+    let waits = script.read.project.is_none()
+        && script.archive.is_some()
+        && app_state.gta6_script_job(doc_id).is_none();
+    if !waits || app_state.panels.get::<ScriptAsk>().project_asked {
+        return;
+    }
+    let title = tr!("Build the project of this archive?");
+    let answer = crate::ui::panels::question(ctx, title, |ui| {
+        ui.set_max_width(460.0);
+        ui.label(tr!(
+            "This script was decompiled alone: a function that needs what another program states has no body. A project reads every program of this archive once, which takes minutes, and keeps what they state of each other in the names folder, where every script opened after it reads it. The inspector can build it later"
+        ));
+        ui.add_space(crate::ui::theme::SPACING_SNUG);
+        ui.horizontal(|ui| {
+            if ui.button(tr!("Build project from this archive")).clicked() {
+                return Some(true);
+            }
+            ui.button(tr!("Not now")).clicked().then_some(false)
+        })
+        .inner
+    });
+    let answer = answer.or(crate::ui::panels::question_escaped(ctx, title).then_some(false));
+    let Some(build) = answer else {
+        return;
+    };
+    app_state.panels.get::<ScriptAsk>().project_asked = true;
+    if build {
+        app_state.build_gta6_project(doc_id);
+    }
+}
+
 /// A script's source, read-only: OpenRage writes no bytecode back.
 pub(super) fn draw(ui: &mut egui::Ui, app_state: &mut AppState, doc_id: DocumentId) {
     let script = match app_state.document(doc_id).map(|d| &d.payload) {
@@ -128,6 +168,7 @@ pub(super) fn draw(ui: &mut egui::Ui, app_state: &mut AppState, doc_id: Document
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(150));
     }
+    ask_project(ui.ctx(), app_state, doc_id, &script);
     if let Some(doc) = app_state.document(doc_id) {
         draw_footer(ui, doc, &script.source, "UTF-8", "LF", &state.caret, true);
     }

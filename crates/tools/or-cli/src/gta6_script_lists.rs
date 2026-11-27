@@ -164,11 +164,12 @@ pub fn names_dir(config_root: &Path) -> PathBuf {
 }
 
 /// The lists of the folder `dir`, each file read by the one rule; a folder that is not there holds none.
+#[cfg(test)]
 pub fn folder(dir: &Path) -> Folder {
     folders(&[dir])
 }
 
-/// [`folder`] over several folders, a later folder's file in place of an earlier one's of its name.
+/// The lists of the folders `dirs`, each file read by the one rule, a later folder's file in place of an earlier one's of its name; a folder that is not there holds none.
 pub fn folders(dirs: &[&Path]) -> Folder {
     let mut by_name: std::collections::BTreeMap<std::ffi::OsString, PathBuf> = Default::default();
     for dir in dirs {
@@ -256,7 +257,7 @@ pub fn supplied(
     let read = match named.is_empty() {
         // The lists a package ships are read first; a file of the user's folder stands in place of one of its name.
         true => config.map_or_else(Folder::default, |root| {
-            let shipped = or_io::container::rpf::shipped_dir(NAMES_FOLDER);
+            let shipped = or_io::container::rpf::shipped_script_names_dir();
             let user = names_dir(root);
             let dirs: Vec<&Path> = (shipped.iter().map(PathBuf::as_path))
                 .chain([user.as_path()])

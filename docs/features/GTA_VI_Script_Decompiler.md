@@ -165,7 +165,13 @@ the functions of one program are written by one thread.
 A package ships the GTA VI lists of `assets/gta6_script_names` (a natives list, a handler table and
 names lists) in a `gta6_script_names` folder beside the executable; the editor and the CLI read
 them before the names folder of the configuration directory, where a file of the same name stands
-in place of the shipped one. No project ships: the inspector builds one from the user's archive.
+in place of the shipped one; `OPENRAGE_GTA6_SCRIPT_NAMES` names another folder in place of the shipped
+one, and `just dev` sets it, with `OPENRAGE_GTA6_NAMES`, to the folders of `assets/`. No project
+ships, since one holds for one build of the game: the editor asks once a session, over the first
+script of an archive it decompiles with none, whether to build that archive's (the inspector's
+button does it later), and a CLI `decompile` or `disasm` with no project named, beside the program
+or in the names folder builds one as `--project auto` does and keeps it there. `--alone` reads and
+builds none, which is faster.
 The first lines of a decompiled source say which lists named things; `disasm` and the facts of a
 program consult no list.
 

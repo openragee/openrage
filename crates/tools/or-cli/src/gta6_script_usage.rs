@@ -53,9 +53,12 @@ Usage: openrage-cli script <src> [--natives|--strings|--statics|--functions] [--
               constructs its compiler's expansions prove, each by a pass `script passes`
               names. A GTA VI program decompiled with no project is decompiled alone: a
               function that needs what another program states is written as a comment
-              saying so, and stderr says how many were. The project.json beside the program
-              is read without being named, and the first lines say so; --project auto builds
-              one in memory.
+              saying so, and stderr says how many were. With no --project, the project.json
+              beside the program is read, else the one of the `{NAMES_FOLDER}` folder, else
+              one is built as --project auto builds it and kept in that folder, which the
+              editor reads too: the first decompile takes minutes, the next ones read it.
+              No project ships, since one holds for one build of the game. --alone
+              decompiles with none, lightly and faster.
   check       Decode each script and check it against its own file, each by the reader its
               first bytes ask for. A folder stands for every file under it that starts as a
               GTA VI program does. Exits non-zero if any script does not decode.
@@ -110,7 +113,9 @@ Usage: openrage-cli script <src> [--natives|--strings|--statics|--functions] [--
                    nested in it) the --entry is read from; stderr says how far it is. It reads
                    at most 4 GiB, and --threads <n> sets its threads. A file called `auto` is
                    named as ./auto. (GTA VI)
-  --alone          Decompile with no project, whatever lies beside the program. (GTA VI)
+  --alone          Decompile with no project: none is read and none is built, so a function
+                   that needs another program's has no body, and the decompile is faster.
+                   (GTA VI)
   --threads <n>    The threads an export, or --project auto, works on at most. Default: 8.
   --json      The same facts as JSON, for `script <src>` and `list`. (GTA VI)
   -o <path>   Write to a file (a folder for export) instead of printing. (GTA VI)

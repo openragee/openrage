@@ -50,11 +50,12 @@ const LABELS: &str = "labels";
 // natives list in use is the one naming most of the hashes the names lists give handlers'
 // addresses: a compiled program states an address, so with no such hash no natives list names anything.
 // ponytail: read again for every script opened; cache them if opening scripts in bulk shows the cost.
+#[cfg(test)]
 pub fn supplied(dir: Option<&Path>) -> Supplied {
     supplied_over(None, dir)
 }
 
-/// [`supplied`] over the lists a package ships in `shipped` and the folder `dir`, a file of `dir` in place of a shipped one of its name.
+/// The lists of the folder `shipped` a package ships, then of the folder `dir`, as the one rule reads them, a file of `dir` in place of a shipped one of its name.
 pub fn supplied_over(shipped: Option<&Path>, dir: Option<&Path>) -> Supplied {
     let mut out = Supplied::default();
     let mut lists: Vec<NativeDb> = Vec::new();

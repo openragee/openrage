@@ -68,12 +68,16 @@ test-affected *ARGS:
 slow-tier *ARGS:
     @cargo xtask slow-tier {{ ARGS }}
 
-# Run the editor. ⚠ Opens a window and takes the desktop's focus: the owner's recipe, never an agent's.
-dev:
+# The names folders of `assets/` a package ships beside the executable, which `dev` and `dev-fast` run with from the tree, unless the variable is set already.
+gta6_names := env_var_or_default("OPENRAGE_GTA6_NAMES", justfile_directory() / "assets" / "gta6_names")
+gta6_script_names := env_var_or_default("OPENRAGE_GTA6_SCRIPT_NAMES", justfile_directory() / "assets" / "gta6_script_names")
+
+# Run the editor, reading the names folders a package ships from `assets/`. ⚠ Opens a window and takes the desktop's focus: the owner's recipe, never an agent's.
+dev $OPENRAGE_GTA6_NAMES=gta6_names $OPENRAGE_GTA6_SCRIPT_NAMES=gta6_script_names:
     cargo run --package openrage --bin openrage
 
 # Run the editor as `dev` does, built with LLVM and the interface's crates optimised: a frame is about a tenth of `dev`'s, the first build a few minutes. ⚠ Opens a window: the owner's recipe.
-dev-fast:
+dev-fast $OPENRAGE_GTA6_NAMES=gta6_names $OPENRAGE_GTA6_SCRIPT_NAMES=gta6_script_names:
     cargo run --profile editor --package openrage --bin openrage
 
 # Draw every panel, workspace and window through real egui frames with no window; `--viewport` adds a surfaceless wgpu device.

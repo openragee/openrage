@@ -487,6 +487,7 @@ fn one(verb: Verb, asked: &Asked) -> Result<String, String> {
     // ⚠ Before this program's own records: a name is bound once, in the order an export binds it.
     let built = match (asked.auto, verb) {
         (true, Verb::Disasm | Verb::Decompile) => Some(auto_project(asked, &mut lists.names)?),
+        (false, Verb::Disasm | Verb::Decompile) => kept_or_built(asked, &mut lists.names),
         _ => None,
     };
     bind(&mut lists.names, &program);
@@ -594,6 +595,70 @@ fn held(asked: &Asked) -> Result<Held, String> {
             }
         },
     })
+}
+
+/// The project of the names folder where none is named, none lies beside the program and --alone is not asked; where the folder holds none, the one built as `--project auto` builds it and kept there, which the editor reads too.
+// ⚠ A project holds for one build of the game, so OpenRage ships none: the first decompile builds it.
+fn kept_or_built(asked: &Asked, names: &mut Names) -> Option<Held> {
+    let beside = match (asked.paths.as_slice(), &asked.entry) {
+        ([path], None) => {
+            (Path::new(path).parent()).is_some_and(|at| at.join(PROJECT_FILE).is_file())
+        }
+        _ => false,
+    };
+    if asked.alone || asked.project.is_some() || beside {
+        return None;
+    }
+    let root = or_title::config::config_dir()?;
+    let file = lists::names_dir(&root).join(PROJECT_FILE);
+    if file.is_file() {
+        return match project_at(&file) {
+            Ok((said, project)) => Some(Held {
+                project: Some(project),
+                said: format!("{said} of the names folder; --alone decompiles without it"),
+                unread: None,
+            }),
+            Err(why) => {
+                super::note(&format!(
+                    "note: the names folder's project was not read: {why}"
+                ));
+                None
+            }
+        };
+    }
+    let mut held = match auto_project(asked, names) {
+        Ok(held) => held,
+        Err(why) => {
+            super::note(&format!("note: no project was built: {why}"));
+            return None;
+        }
+    };
+    let kept = (held.project.as_ref()).map(|project| keep(&file, project));
+    match kept {
+        Some(Ok(())) => {
+            held.said = held
+                .said
+                .replace("kept in no file", "kept in the names folder");
+            super::note(&format!(
+                "note: the project is kept as {}, which every decompile after this one reads; \
+                 delete it to build it again, and --alone decompiles without one, faster",
+                file.display()
+            ));
+        }
+        Some(Err(why)) => super::note(&format!("note: the project was not kept: {why}")),
+        None => {}
+    }
+    Some(held)
+}
+
+/// Writes `project` to `file` by way of a part file beside it, so a run stopped halfway leaves no project half written.
+fn keep(file: &Path, project: &Project) -> Result<(), String> {
+    let bytes = index::save(project).map_err(|e| e.to_string())?;
+    let folder = file.parent().ok_or("the project file has no folder")?;
+    std::fs::create_dir_all(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
+    let part = folder.join(".project.json.part");
+    std::fs::write(&part, bytes).map_err(|e| format!("{}: {e}", part.display()))?;
+    std::fs::rename(&part, file).map_err(|e| format!("{}: {e}", file.display()))
 }
 
 /// Where `--project auto` finds the programs to build a project of: the folder a program file lies in, or the archive an entry is read from.

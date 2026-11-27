@@ -17497,3 +17497,9 @@ msgstr "História"
 
 msgid "Multiplayer"
 msgstr "Multijogador"
+
+msgid "Build the project of this archive?"
+msgstr "Criar o projeto deste arquivo?"
+
+msgid "This script was decompiled alone: a function that needs what another program states has no body. A project reads every program of this archive once, which takes minutes, and keeps what they state of each other in the names folder, where every script opened after it reads it. The inspector can build it later"
+msgstr "Este script foi descompilado sozinho: uma função que precisa do que outro programa declara não tem corpo. Um projeto lê uma vez cada programa deste arquivo, o que leva minutos, e guarda o que eles declaram uns dos outros na pasta de nomes, onde cada script aberto depois o lê. O inspetor pode criá-lo mais tarde"

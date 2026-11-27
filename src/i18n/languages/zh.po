@@ -17497,3 +17497,9 @@ msgstr "故事"
 
 msgid "Multiplayer"
 msgstr "多人游戏"
+
+msgid "Build the project of this archive?"
+msgstr "要构建此归档的项目吗?"
+
+msgid "This script was decompiled alone: a function that needs what another program states has no body. A project reads every program of this archive once, which takes minutes, and keeps what they state of each other in the names folder, where every script opened after it reads it. The inspector can build it later"
+msgstr "此脚本是单独反编译的：需要其他程序所声明内容的函数没有函数体。项目会将此归档中的每个程序读取一次（需要几分钟），并把它们彼此声明的内容保存在名称文件夹中，之后打开的每个脚本都会读取它。也可以稍后在检查器中构建"

@@ -92,9 +92,6 @@ pub fn set_labels(on: bool) {
     LABELS.store(on, Ordering::Relaxed);
 }
 
-/// The folder of lists a package ships beside the executable, read before the names folder's.
-const SHIPPED_FOLDER: &str = "gta6_script_names";
-
 /// Where natives lists, names lists and a project for GTA VI scripts are read from, in the configuration directory.
 pub fn names_dir() -> Option<PathBuf> {
     crate::state::prefs::config_root().map(|root| root.join("gta6_script_names"))
@@ -435,7 +432,7 @@ fn written(
     progress: Option<&Progress>,
 ) -> Result<Gta6ScriptDocument, String> {
     let folder = names_dir();
-    let shipped = or_io::container::rpf::shipped_dir(SHIPPED_FOLDER);
+    let shipped = or_io::container::rpf::shipped_script_names_dir();
     let mut supplied = lists::supplied_over(shipped.as_deref(), folder.as_deref());
     if labels_on() {
         lists::labelled(&mut supplied, folder.as_deref());

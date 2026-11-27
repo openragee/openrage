@@ -36,6 +36,17 @@ pub fn shipped_dir(name: &str) -> Option<std::path::PathBuf> {
     (SHIPPED_AT.iter().map(|at| beside.join(at).join(name))).find(|folder| folder.is_dir())
 }
 
+/// The variable naming the folder of GTA VI script lists a run reads before the user's, in place of the one shipped.
+pub const GTA6_SCRIPT_NAMES_ENV: &str = "OPENRAGE_GTA6_SCRIPT_NAMES";
+
+/// The folder of GTA VI script lists read before the user's names folder: the one [`GTA6_SCRIPT_NAMES_ENV`] names, else the one shipped with the executable.
+pub fn shipped_script_names_dir() -> Option<std::path::PathBuf> {
+    if let Some(named) = std::env::var_os(GTA6_SCRIPT_NAMES_ENV) {
+        return Some(named.into());
+    }
+    shipped_dir("gta6_script_names")
+}
+
 /// The names folder a run reads when it is given none: the one [`GTA6_NAMES_ENV`] names, else the one shipped with the executable.
 pub fn default_names_dir() -> Option<std::path::PathBuf> {
     if let Some(named) = std::env::var_os(GTA6_NAMES_ENV) {

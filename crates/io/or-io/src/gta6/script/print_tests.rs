@@ -2815,3 +2815,62 @@ fn bytes_taken_out_of_a_variable_are_its_field_read_as_the_unsigned_number_they_
         "extract_bytes(local_0, 0, 12)"
     );
 }
+
+#[test]
+fn a_variable_used_apart_in_sibling_blocks_each_entered_at_its_assignment_is_declared_in_each() {
+    let simple = |s: Stmt| tree::Stmt::Simple(s);
+    let used = |n: u32| simple(Stmt::Eval(native("USE", vec![local(n)])));
+    let apart = |els: Vec<tree::Stmt>| tree::Stmt::If {
+        cond: param(0),
+        then: vec![simple(assign(Var::Local(0), int(1))), used(0)],
+        els,
+    };
+    let written_with = |els: Vec<tree::Stmt>| {
+        let mut head = kinds(&[]);
+        head.locals = 1;
+        let f = tree::Function {
+            head,
+            body: vec![apart(els)],
+        };
+        written(&f, &Names::default())
+    };
+    let both = written_with(vec![simple(assign(Var::Local(0), int(2))), used(0)]);
+    let expected = "\
+void func_000040(var p0)
+{
+    if (p0)
+    {
+        var local_0 = 1;
+        DEMO.USE(local_0);
+    }
+    else
+    {
+        var local_0 = 2;
+        DEMO.USE(local_0);
+    }
+}
+";
+    assert_eq!(both, expected);
+    // A block that reads the variable before it assigns it reads what the other left, or zero.
+    let read_first = written_with(vec![used(0), simple(assign(Var::Local(0), int(2)))]);
+    assert!(read_first.contains("    var local_0;\n"), "{read_first}");
+}
+
+#[test]
+fn either_arm_of_a_choice_where_32_bits_are_taken_stands_without_its_cast() {
+    let chosen = Expr::Select {
+        cond: Box::new(param(0)),
+        then: Box::new(int(0x8C0D_0E0Fu32 as i32)),
+        els: Box::new(int(1)),
+    };
+    let body = vec![tree::Stmt::Simple(assign(Var::Local(0), chosen))];
+    let mut head = kinds(&[(Var::Local(0), Kind::I32)]);
+    head.locals = 1;
+    let f = tree::Function { head, body };
+    let names = Names::default();
+    let text = written_in(
+        &f,
+        &Context::new(&names, Project::empty(), Options::default()),
+    );
+    assert!(text.contains("? 0x8C0D0E0F : 1;"), "{text}");
+}

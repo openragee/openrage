@@ -227,11 +227,22 @@ impl Writer<'_> {
     // ⚠ Never for an operand: `x < 0x9A3B5C7D` compares with a `uint` in C#, and `x + 1.0f` adds floats.
     // `exact` says the place holds 32 bits and no more; an argument of a native is taken as 32
     // bits by the words of the header alone, so a float's reading stays written there.
-    pub(super) fn narrow(&self, e: &Expr, exact: bool) -> Option<String> {
+    pub(super) fn narrow(&mut self, e: &Expr, exact: bool) -> Option<String> {
         if !self.sharp {
             return None;
         }
         let e = bits(e);
+        // Either arm of a choice stands where the choice does.
+        if let Expr::Select { cond, then, els } = e {
+            let (a, b) = (self.narrow(then, exact), self.narrow(els, exact));
+            if a.is_none() && b.is_none() {
+                return None;
+            }
+            let cond = self.cond(cond, 2);
+            let a = a.unwrap_or_else(|| self.expr(bits(then), 2));
+            let b = b.unwrap_or_else(|| self.expr(bits(els), 2));
+            return Some(format!("{cond} ? {a} : {b}"));
+        }
         let (mut inner, mut read) = (e, false);
         while let Expr::Cast { to, e: under } = inner {
             if to.bytes() < 4 || to.kind().is_float() {

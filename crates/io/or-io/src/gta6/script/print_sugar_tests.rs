@@ -1129,6 +1129,7 @@ fn a_constant_stored_whole_to_a_field_of_a_byte_or_a_truth_is_that_kinds_literal
         field(0x11, 1, Kind::Bool),
         field(0x12, 2, Kind::I16),
         field(0x14, 4, Kind::Unknown),
+        field(0x18, 1, Kind::Unknown),
     ];
     project.fields.insert(owner, fields);
     let byte = |offset: u32, value: i32| {
@@ -1143,8 +1144,10 @@ fn a_constant_stored_whole_to_a_field_of_a_byte_or_a_truth_is_that_kinds_literal
             Group::Field { owner },
             vec![store(StoreKind::U16, param(0), 0x12, int(-2))],
         ),
-        // A field of no proved kind, and a store narrower than its field, keep the width said.
+        // A store narrower than its field keeps the width said; one as wide as a field of no
+        // proved kind fills the bytes the field is declared as.
         byte(0x14, 0),
+        byte(0x18, 200),
     ];
     let names = Names::default();
     let cx = Context::new(&names, &project, Options::default());
@@ -1155,6 +1158,7 @@ fn a_constant_stored_whole_to_a_field_of_a_byte_or_a_truth_is_that_kinds_literal
         "p0.f_11 = false;",
         "p0.f_12 = -2;",
         "p0.f_14 = (byte)0;",
+        "p0.f_18 = 200;",
     ] {
         assert!(text.contains(line), "no `{line}` in:\n{text}");
     }

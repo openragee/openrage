@@ -3290,6 +3290,8 @@ struct Placer<'h> {
     /// The parent and the depth of each block; block 0 is the function's.
     blocks: Vec<(u32, u32)>,
     seen: BTreeMap<Var, Seen>,
+    /// Every mention of each variable: its block, the assignment where it is one that may declare, and its position.
+    mentions: BTreeMap<Var, Vec<(u32, Option<*const Stmt>, u32)>>,
     /// The positions of the labels, rising.
     labels: Vec<u32>,
     /// The position of what is being walked, counted in source order.
@@ -3301,6 +3303,51 @@ impl Placer<'_> {
         let depth = self.blocks[parent as usize].1 + 1;
         self.blocks.push((parent, depth));
         (self.blocks.len() - 1) as u32
+    }
+
+    /// The block just inside `outer` that holds `block`, where `outer` holds it and is not it.
+    fn below(&self, mut block: u32, outer: u32) -> Option<u32> {
+        while block != 0 {
+            let (above, _) = self.blocks[block as usize];
+            if above == outer {
+                return Some(block);
+            }
+            block = above;
+        }
+        None
+    }
+
+    /// Whether a jump to a label between `first` and `last` may go round what stands at `first`.
+    fn jumped(&self, first: u32, last: u32) -> bool {
+        let next = self.labels.partition_point(|label| *label <= first);
+        (self.labels.get(next)).is_some_and(|label| *label <= last)
+    }
+
+    /// The assignments that declare a variable once in each block just inside the one that holds every mention, where no mention stands in that one itself and each such block's first mention is an assignment in the block that holds the rest of its mentions.
+    // ⚠ Each declaration then starts what the variable holds there: no value reaches one block
+    // from another, as the blocks are siblings and each is entered at its assignment.
+    fn split(&self, var: Var, within: u32) -> Option<Vec<*const Stmt>> {
+        let mentions = self.mentions.get(&var)?;
+        let mut parts: BTreeMap<u32, Vec<(u32, Option<*const Stmt>, u32)>> = BTreeMap::new();
+        for mention in mentions {
+            let part = self.below(mention.0, within)?;
+            parts.entry(part).or_default().push(*mention);
+        }
+        if parts.len() < 2 {
+            return None;
+        }
+        let mut sites = Vec::with_capacity(parts.len());
+        for part in parts.values() {
+            let (first_block, site, first) = *part.first()?;
+            let last = part.last()?.2;
+            let common =
+                (part.iter()).fold(first_block, |held, mention| self.common(held, mention.0));
+            if common != first_block || self.jumped(first, last) {
+                return None;
+            }
+            sites.push(site?);
+        }
+        Some(sites)
     }
 
     /// The innermost block that holds both `a` and `b`.
@@ -3321,6 +3368,10 @@ impl Placer<'_> {
             return;
         }
         let at = self.at;
+        self.mentions
+            .entry(var)
+            .or_default()
+            .push((block, site, at));
         match self.seen.get(&var).map(|seen| seen.within) {
             Some(within) => {
                 let within = self.common(within, block);
@@ -3496,19 +3547,21 @@ fn placement(body: &[tree::Stmt], old: bool, head: Option<&Head>) -> Placement {
         sites: HashSet::new(),
         hoisted: BTreeSet::new(),
     };
-    for (var, seen) in placer.seen {
+    for (var, seen) in &placer.seen {
         // ⚠ A jump to a label after the assignment may have gone round it.
-        let next = placer.labels.partition_point(|label| *label <= seen.first);
-        let jumped = (placer.labels.get(next)).is_some_and(|label| *label <= seen.last);
+        let jumped = placer.jumped(seen.first, seen.last);
         // The address of a local can be read through before the local is assigned.
         let exposed = seen.addressed && matches!(var, Var::Local(_));
         match seen.site {
             Some(site) if seen.within == seen.first_block && !jumped && !exposed => {
                 placement.sites.insert(site);
             }
-            _ => {
-                placement.hoisted.insert(var);
-            }
+            _ => match placer.split(*var, seen.within).filter(|_| !exposed) {
+                Some(sites) => placement.sites.extend(sites),
+                None => {
+                    placement.hoisted.insert(*var);
+                }
+            },
         }
     }
     placement

@@ -539,6 +539,8 @@ impl Writer<'_> {
             (Kind::I8, 1) => Some((low as u8 as i8).to_string()),
             (Kind::U16, 2) => Some(low.to_string()),
             (Kind::I16, 2) => Some((low as u16 as i16).to_string()),
+            // A field of no proved kind is declared as its bytes, which a number fills.
+            (Kind::Unknown, 1 | 2) => Some(low.to_string()),
             _ => None,
         }
     }

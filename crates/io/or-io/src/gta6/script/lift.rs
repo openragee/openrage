@@ -16,7 +16,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use super::cfg::{self, Block, BlockId, Cfg, Terminator};
 use super::decode::{self, DisasmError, Insn};
-use super::ir::{Callee, Expr, FunctionKey, Head, Kind, Returns, Stmt, Var, VarInfo, Width};
+use super::ir::{
+    Callee, Expr, FunctionKey, Head, Kind, Returns, Stmt, TypeKey, Var, VarInfo, Width,
+};
 use super::listing::Import;
 use super::opcode::Op;
 use super::program::{FunctionRow, Program, ProgramError};
@@ -27,9 +29,15 @@ use super::{Context, DecompileError, Names, Output, Stats};
 #[path = "lift_sized.rs"]
 mod sizing;
 
+use sizing::{counts, learn, sized, Learned, Reached, Sizes, Slots, AMBIGUOUS, TOO_MANY};
 #[cfg(test)]
 use sizing::{elements, Elements};
-use sizing::{sized, Reached, Sizes, Slots};
+
+/// The most rounds in which a program's functions that failed for want of a count are lifted again, each with what the rounds before it learned.
+const ROUNDS: usize = 4;
+
+/// The count each call of a virtual slot in a function was sized with.
+type Counts = Vec<((TypeKey, u32), u32)>;
 
 /// The deepest an expression may nest before its function is refused: every walk of one recurses.
 const NESTING: u32 = 256;
@@ -79,6 +87,15 @@ fn function_with(
     slots: &Slots<'_>,
     row: &FunctionRow,
 ) -> Result<Lifted, LiftError> {
+    function_counted(program, slots, row).map(|(lifted, _)| lifted)
+}
+
+/// [`function_with`], with the count each call of a virtual slot in the function was sized with.
+fn function_counted(
+    program: &Program,
+    slots: &Slots<'_>,
+    row: &FunctionRow,
+) -> Result<(Lifted, Counts), LiftError> {
     // A handler is entered by no jump, so the walk from the entry would leave it out unseen.
     let guarded = |h: &super::program::HandlerRow| {
         (h.from < row.end && row.at < h.to) || (row.at..row.end).contains(&h.handler)
@@ -91,12 +108,117 @@ fn function_with(
         });
     }
     let insns = decode::function_in(program, slots.project, row)?;
-    let mut function = steps(program.program, row, &insns, slots)?;
+    counted(program, slots, row, &insns)
+}
+
+/// Lifts a function's decoded instructions, with the value types they name and the counts its slot calls were sized with.
+fn counted(
+    program: &Program,
+    slots: &Slots<'_>,
+    row: &FunctionRow,
+    insns: &[Insn],
+) -> Result<(Lifted, Counts), LiftError> {
+    let types = decode::value_types(program, slots.project, insns);
+    let (mut function, found) = steps_typed(program.program, row, insns, slots, &types)?;
     function.head.name = name(program, row);
-    Ok(Lifted {
-        function,
-        regions: Vec::new(),
-    })
+    let regions = Vec::new();
+    Ok((Lifted { function, regions }, found))
+}
+
+/// A function that failed for want of a count, lifted again where the counts the program's other functions were found to take for its calls are not those `last` it was tried with; `None` where they are.
+fn retried(
+    program: &Program,
+    slots: &Slots<'_>,
+    row: &FunctionRow,
+    last: &mut Counts,
+) -> Option<Result<(Lifted, Counts), LiftError>> {
+    let insns = match decode::function_in(program, slots.project, row) {
+        Ok(insns) => insns,
+        Err(why) => return Some(Err(why.into())),
+    };
+    let bearing = slots.bearing(&insns);
+    if bearing.is_empty() || bearing == *last {
+        return None;
+    }
+    *last = bearing;
+    Some(counted(program, slots, row, &insns))
+}
+
+/// Whether a function failed only for want of a count that the other functions of its program may give.
+fn settled_later(why: &LiftError) -> bool {
+    let LiftError::Stack { what, .. } = why else {
+        return false;
+    };
+    what.as_str() == AMBIGUOUS || what.as_str() == TOO_MANY
+}
+
+/// Lifts again, round by round, the functions of `rows` at the places `waiting` that failed for want of a count, each round holding the counts the functions lifted so far agree on; each that lifts, or fails for another reason, goes to `settle` with its place.
+// ⚠ A count is only learned from a function whose calls one choice alone balances, the rule the
+// search itself rests on, and a slot two functions took differently is held to nothing. The
+// functions lifted at first are not lifted again: what they learned is all they give.
+fn again(
+    program: &Program,
+    slots: &Slots<'_>,
+    rows: &[FunctionRow],
+    learned: &mut Learned,
+    mut waiting: Vec<usize>,
+    settle: &mut dyn FnMut(usize, Result<Lifted, LiftError>),
+) -> Vec<usize> {
+    // The counts each was last tried with: one is not tried again under the same.
+    let mut tried: BTreeMap<usize, Counts> = BTreeMap::new();
+    for _ in 0..ROUNDS {
+        if waiting.is_empty() || !slots.install(learned) {
+            break;
+        }
+        let mut still = Vec::new();
+        for place in waiting {
+            let Some(row) = rows.get(place) else {
+                still.push(place);
+                continue;
+            };
+            match retried(program, slots, row, tried.entry(place).or_default()) {
+                None => still.push(place),
+                Some(Ok((lifted, found))) => {
+                    learn(learned, &found);
+                    settle(place, Ok(lifted));
+                }
+                Some(Err(why)) if settled_later(&why) => still.push(place),
+                Some(Err(why)) => settle(place, Err(why)),
+            }
+        }
+        waiting = still;
+    }
+    waiting
+}
+
+/// Lifts every function of a program as [`functions`] does: those that fail for want of a count again, with what the others were found to take of their slots.
+pub fn program_in(program: &Program, project: &Project) -> Vec<Result<Lifted, LiftError>> {
+    let slots = Slots::new(project);
+    let mut learned = Learned::new();
+    let mut lifted = Vec::with_capacity(program.functions.len());
+    let mut waiting = Vec::new();
+    for (place, row) in program.functions.iter().enumerate() {
+        match function_counted(program, &slots, row) {
+            Ok((one, found)) => {
+                learn(&mut learned, &found);
+                lifted.push(Ok(one));
+            }
+            Err(why) => {
+                if settled_later(&why) {
+                    waiting.push(place);
+                }
+                lifted.push(Err(why));
+            }
+        }
+    }
+    let rows = &program.functions;
+    let mut settle = |place: usize, result: Result<Lifted, LiftError>| {
+        if let Some(held) = lifted.get_mut(place) {
+            *held = result;
+        }
+    };
+    again(program, &slots, rows, &mut learned, waiting, &mut settle);
+    lifted
 }
 
 /// The code of a function its entry does not reach, padding left out: where it starts and its bytes.
@@ -171,6 +293,30 @@ fn written(progress: Option<&Progress>) {
     }
 }
 
+/// A function lifted, given the passes the context asks for.
+fn finished(mut lifted: Lifted, cx: &Context<'_>, stats: &mut Stats) -> tree::Function {
+    hashed(&mut lifted.function, cx.names);
+    let head = &lifted.function.head;
+    stats.statements_in += lifted.function.cfg.statements();
+    stats.temporaries_in += head.vars.keys().filter(|v| v.is_temporary()).count();
+    // No pass understands a fault's way to its handler: such a function is written as its blocks.
+    match lifted.regions.is_empty() {
+        true => super::blocks_in(lifted.function, cx, stats),
+        false => cfg::flat(lifted.function),
+    }
+}
+
+/// A function that did not lift, as its head with the reason and no body.
+fn unlifted(program: &Program, row: &FunctionRow, why: &LiftError) -> tree::Function {
+    let mut head = head(program.program, row);
+    head.name = name(program, row);
+    head.incomplete = Some(format!("not lifted: {why}"));
+    tree::Function {
+        head,
+        body: Vec::new(),
+    }
+}
+
 /// Writes the functions `rows` of a program read, by the level and the passes asked; one that does not lift is written with no body and the reason.
 pub fn functions(program: &Program, rows: &[FunctionRow], cx: &Context<'_>) -> Output {
     functions_in(program, rows, cx, None)
@@ -197,38 +343,54 @@ pub fn functions_in(
     let mut done = Vec::with_capacity(rows.len());
     // One for the program: a slot looked up for one function is not looked up again for the next.
     let slots = Slots::new(cx.project);
+    let mut learned = Learned::new();
+    // The places of the functions that failed for want of a count, written as not lifted until they lift.
+    let mut waiting = Vec::new();
     for row in rows {
         if progress.is_some_and(Progress::stopped) {
             break;
         }
         stats.functions += 1;
-        let lifted = match function_with(program, &slots, row) {
-            Ok(mut lifted) => {
-                hashed(&mut lifted.function, cx.names);
-                lifted
+        match function_counted(program, &slots, row) {
+            Ok((lifted, found)) => {
+                learn(&mut learned, &found);
+                done.push(finished(lifted, cx, &mut stats));
+                written(progress);
             }
             // One function that does not lift leaves the rest of the program to be written.
             Err(why) => {
-                stats.incomplete += 1;
-                let mut head = head(program.program, row);
-                head.name = name(program, row);
-                head.incomplete = Some(format!("not lifted: {why}"));
-                done.push(tree::Function {
-                    head,
-                    body: Vec::new(),
-                });
-                written(progress);
-                continue;
+                match settled_later(&why) {
+                    true => waiting.push(done.len()),
+                    false => {
+                        stats.incomplete += 1;
+                        written(progress);
+                    }
+                }
+                done.push(unlifted(program, row, &why));
             }
+        }
+    }
+    if !progress.is_some_and(Progress::stopped) {
+        let mut settle = |place: usize, result: Result<Lifted, LiftError>| {
+            let Some(row) = rows.get(place) else {
+                return;
+            };
+            let function = match result {
+                Ok(lifted) => finished(lifted, cx, &mut stats),
+                Err(why) => {
+                    stats.incomplete += 1;
+                    unlifted(program, row, &why)
+                }
+            };
+            if let Some(held) = done.get_mut(place) {
+                *held = function;
+            }
+            written(progress);
         };
-        let head = &lifted.function.head;
-        stats.statements_in += lifted.function.cfg.statements();
-        stats.temporaries_in += head.vars.keys().filter(|v| v.is_temporary()).count();
-        // No pass understands a fault's way to its handler: such a function is written as its blocks.
-        done.push(match lifted.regions.is_empty() {
-            true => super::blocks_in(lifted.function, cx, &mut stats),
-            false => cfg::flat(lifted.function),
-        });
+        waiting = again(program, &slots, rows, &mut learned, waiting, &mut settle);
+    }
+    for _ in &waiting {
+        stats.incomplete += 1;
         written(progress);
     }
     let done = super::passes::async_await::joined(done, cx);
@@ -302,16 +464,30 @@ fn head(program: u32, row: &FunctionRow) -> Head {
         locals: row.locals.saturating_sub(4),
         vars: BTreeMap::new(),
         incomplete: None,
+        value_types: BTreeMap::new(),
     }
 }
 
 /// Lifts a function's decoded instructions, which are in the order of their offsets.
+#[cfg(test)]
 fn steps(
     program: u32,
     row: &FunctionRow,
     insns: &[Insn],
     slots: &Slots<'_>,
 ) -> Result<cfg::Function, LiftError> {
+    let types = BTreeMap::new();
+    steps_typed(program, row, insns, slots, &types).map(|(function, _)| function)
+}
+
+/// Lifts a function's decoded instructions, with the value type each names by its offset; and the count each of its slot calls was sized with.
+fn steps_typed(
+    program: u32,
+    row: &FunctionRow,
+    insns: &[Insn],
+    slots: &Slots<'_>,
+    types: &BTreeMap<u32, TypeKey>,
+) -> Result<(cfg::Function, Counts), LiftError> {
     let (reached, sizes) = sized(row.at, insns, slots)?;
     let mut lifter = Lifter {
         function: row.at,
@@ -321,6 +497,9 @@ fn steps(
         vars: BTreeMap::new(),
         locals: row.locals.saturating_sub(4),
         moved: 0,
+        types,
+        value_types: BTreeMap::new(),
+        widths: BTreeMap::new(),
     };
     let mut drafts = Vec::new();
     for first in 0..insns.len() {
@@ -329,14 +508,17 @@ fn steps(
             drafts.push(lifter.block(first)?);
         }
     }
+    let found = counts(insns, &lifter.sizes);
     let mut head = head(program, row);
     head.vars = lifter.vars;
+    head.value_types = lifter.value_types;
     // A listing counts the locals the code names, where that is more than the entry asks for.
     head.locals = lifter.locals;
-    Ok(cfg::Function {
+    let function = cfg::Function {
         head,
         cfg: assemble(row.at, drafts)?,
-    })
+    };
+    Ok((function, found))
 }
 
 /// One cell of the evaluation stack: the expression that yields it, and how deep that nests.
@@ -396,9 +578,68 @@ struct Lifter<'a> {
     locals: u32,
     /// The expression nodes copied and handed on so far, held to [`MOVED`].
     moved: u64,
+    /// The value type an instruction names for the value it stores, makes or unboxes, by its offset.
+    types: &'a BTreeMap<u32, TypeKey>,
+    /// What the instructions state of the value types of variables, for the head.
+    value_types: BTreeMap<Var, Option<(TypeKey, u32)>>,
+    /// The cells of each value the function named whole.
+    widths: BTreeMap<Var, u32>,
 }
 
 impl Lifter<'_> {
+    /// Notes that an instruction names `ty`, of `cells` cells, for the variable `var` starts; a second type named makes it none.
+    fn state(&mut self, var: Var, ty: TypeKey, cells: u32) {
+        if !matches!(var, Var::Local(_) | Var::Param(_) | Var::Value { .. }) {
+            return;
+        }
+        let held = self.value_types.entry(var).or_insert(Some((ty, cells)));
+        if *held != Some((ty, cells)) {
+            *held = None;
+        }
+    }
+
+    /// The variable whose whole value `cells` are, each in its place: a value the function named, or a run of frame cells from the first.
+    fn whole(&self, cells: &[Cell]) -> Option<Var> {
+        let count = u32::try_from(cells.len()).ok()?;
+        if let Some(var) = value_of(cells) {
+            return (self.widths.get(&var) == Some(&count)).then_some(var);
+        }
+        let first = match cells.first().map(|cell| &cell.e) {
+            Some(Expr::Var(var)) => *var,
+            _ => return None,
+        };
+        let run = cells
+            .iter()
+            .zip(0u32..)
+            .all(|(cell, k)| framed(first, k).is_some_and(|next| cell.e == Expr::Var(next)));
+        run.then_some(first)
+    }
+
+    /// The value type one instruction's stores carry on: each cell of a value stated whole, in its place, into a run of frame cells from the first.
+    fn copied(&self, stores: &[(Var, Expr)]) -> Option<(Var, TypeKey, u32)> {
+        let (first, e) = stores.first()?;
+        let source = match e {
+            Expr::Cell { base, index: 0 } => match **base {
+                Expr::Var(var @ Var::Value { .. }) => var,
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let (ty, cells) = self.value_types.get(&source).copied().flatten()?;
+        let count = u32::try_from(stores.len()).ok()?;
+        if count != cells || self.widths.get(&source) != Some(&cells) {
+            return None;
+        }
+        let placed = stores.iter().zip(0u32..).all(|((target, e), k)| {
+            let from = match e {
+                Expr::Cell { base, index } => *index == k && **base == Expr::Var(source),
+                _ => false,
+            };
+            from && framed(*first, k) == Some(*target)
+        });
+        placed.then_some((*first, ty, cells))
+    }
+
     fn refuse(&self, at: u32, what: &str) -> LiftError {
         LiftError::Stack {
             function: self.function,
@@ -520,7 +761,8 @@ impl Lifter<'_> {
     }
 
     /// Pushes the `cells` cells of a value the block has named.
-    fn push_cells(&self, run: &mut Run, var: Var, cells: u32) {
+    fn push_cells(&mut self, run: &mut Run, var: Var, cells: u32) {
+        self.widths.insert(var, cells);
         for index in 0..cells {
             let base = Box::new(Expr::Var(var));
             run.stack.push(named(Expr::Cell { base, index }));
@@ -597,6 +839,11 @@ impl Lifter<'_> {
                 Op::Push { e, cells, .. } => {
                     let e = e.clone();
                     self.count(&e);
+                    // The zero cells a builtin value is made in, under its constructor's arguments.
+                    let made = match e {
+                        Expr::ZeroSlots(_) => self.types.get(&at).copied(),
+                        _ => None,
+                    };
                     match e {
                         Expr::NewObject(_) if *cells == 1 => {
                             if let Some(floor) = floor_of_object(run.stack.len(), &ops[k..]) {
@@ -612,6 +859,9 @@ impl Lifter<'_> {
                         | Expr::Cells(_) => {
                             let var = self.assign(run, at, Width::Cells, e);
                             self.push_cells(run, var, *cells);
+                            if let Some(ty) = made {
+                                self.state(var, ty, *cells);
+                            }
                         }
                         Expr::GuidEmpty | Expr::BuiltinGlobal(_) => {
                             for index in 0..*cells {
@@ -636,6 +886,9 @@ impl Lifter<'_> {
                     }
                     self.spill(run, at);
                     stores.reverse();
+                    if let Some((first, ty, cells)) = self.copied(&stores) {
+                        self.state(first, ty, cells);
+                    }
                     run.stmts.extend(stored(stores));
                 }
                 Op::Drop { .. }
@@ -704,6 +957,10 @@ impl Lifter<'_> {
                     };
                     let var = self.assign(run, at, Width::Cells, e);
                     self.push_cells(run, var, bytes.div_ceil(8));
+                    // A value taken out of a box.
+                    if let Some(ty) = self.types.get(&at).copied() {
+                        self.state(var, ty, bytes.div_ceil(8));
+                    }
                 }
                 // A whole cell taken out of a value is that cell, which a listing reads by itself and names nothing for.
                 Op::ExtractBytes {
@@ -816,6 +1073,21 @@ impl Lifter<'_> {
                     ..
                 } => {
                     let taken = self.pop_many(run, at, *cells)?;
+                    let typed = self.types.get(&at).copied();
+                    // A whole value of the type the instruction names: what it is stored from, and where.
+                    if let (Some(ty), 0, true) = (typed, *offset, *bytes > 0) {
+                        if let Some(var) = self.whole(&taken) {
+                            self.state(var, ty, *cells);
+                        }
+                        if let Some(Cell {
+                            e: Expr::AddrOf { var, cell: 0 },
+                            ..
+                        }) = run.stack.last()
+                        {
+                            let var = *var;
+                            self.state(var, ty, *cells);
+                        }
+                    }
                     let value = Expr::Cells(taken.into_iter().map(|cell| cell.e).collect());
                     let addr = self.pop(run, at)?.e;
                     self.spill(run, at);
@@ -953,6 +1225,15 @@ fn floor_of_object(len: usize, rest: &[Op]) -> Option<usize> {
     let mut below = marks.iter().take(floor).enumerate();
     let untouched = below.all(|(i, mark)| *mark == Some(i));
     (moved && untouched).then_some(floor)
+}
+
+/// The frame cell `k` cells past `first`, which is a local or a parameter; `None` for any other variable.
+fn framed(first: Var, k: u32) -> Option<Var> {
+    match first {
+        Var::Local(n) => n.checked_add(k).map(Var::Local),
+        Var::Param(n) => n.checked_add(k).map(Var::Param),
+        _ => None,
+    }
 }
 
 /// The value a block named whose cells these are, in order from its first.

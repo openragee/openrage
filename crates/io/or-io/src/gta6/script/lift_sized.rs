@@ -52,16 +52,65 @@ enum Halt {
 // A slot of a type of the runtime is not asked.
 pub(super) struct Slots<'a> {
     pub(super) project: &'a Project,
-    /// Each slot asked for: `None` where no type below states a count, or two state different ones.
-    found: RefCell<BTreeMap<(TypeKey, u32), Option<u32>>>,
+    /// Each slot asked for, by what the types below state of it.
+    found: RefCell<BTreeMap<(TypeKey, u32), Said>>,
+    /// The count each slot returns by the functions of the program that lifted alone, held for a slot no type below states.
+    learned: RefCell<Learned>,
 }
+
+/// What the types below a slot state of the cells it returns.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Said {
+    Nothing,
+    Count(u32),
+    /// Two types below state different counts: the slot is no one signature, and nothing is taken for it.
+    Two,
+}
+
+/// The cells each slot returns by the calls of it that functions lifted with: `None` where two functions took different counts.
+pub(super) type Learned = BTreeMap<(TypeKey, u32), Option<u32>>;
+
+// The two refusals a count learned from the other functions of the program may settle: each held
+// count leaves fewer choices. One where no choice balances stays refused, since fewer never balance.
+
+/// The refusal of a function that more than one choice of counts balances.
+pub(super) const AMBIGUOUS: &str =
+    "more than one count of cells for a call's result balances the stack";
+
+/// The refusal of a function whose choices of counts are more than the search walks.
+pub(super) const TOO_MANY: &str = "too many ways to size its calls";
 
 impl<'a> Slots<'a> {
     pub(super) fn new(project: &'a Project) -> Self {
         Slots {
             project,
             found: RefCell::new(BTreeMap::new()),
+            learned: RefCell::new(Learned::new()),
         }
+    }
+
+    /// Holds the counts `learned` states from now on; whether any is new.
+    pub(super) fn install(&self, learned: &Learned) -> bool {
+        let mut held = self.learned.borrow_mut();
+        let changed = *held != *learned;
+        if changed {
+            *held = learned.clone();
+        }
+        changed
+    }
+
+    /// The counts learned from other functions that size calls of `insns` no type below states, a slot once and in order.
+    pub(super) fn bearing(&self, insns: &[Insn]) -> Vec<((TypeKey, u32), u32)> {
+        let slots = insns
+            .iter()
+            .flat_map(|insn| insn.ops.iter().filter_map(slot_of));
+        let wanted: BTreeSet<(TypeKey, u32)> = slots.map(|(slot, _)| slot).collect();
+        self.ask(&wanted);
+        let found = self.found.borrow();
+        let learned = self.learned.borrow();
+        let open = |slot: &&(TypeKey, u32)| found.get(*slot) == Some(&Said::Nothing);
+        let known = |slot: &(TypeKey, u32)| Some((*slot, learned.get(slot).copied().flatten()?));
+        wanted.iter().filter(open).filter_map(known).collect()
     }
 
     /// Finds every slot of `wanted` not asked for before, in one pass over the project's types.
@@ -98,14 +147,47 @@ impl<'a> Slots<'a> {
             }
         }
         for key in new {
-            let cells = said.get(&key).copied().flatten();
+            let cells = match said.get(&key) {
+                None => Said::Nothing,
+                Some(Some(cells)) => Said::Count(*cells),
+                Some(None) => Said::Two,
+            };
             found.insert(key, cells);
         }
     }
 
-    /// The cells a slot asked for returns.
+    /// The cells a slot asked for returns: what the types below state, else what the program's other functions were found to take.
     fn returns(&self, slot: (TypeKey, u32)) -> Option<u32> {
-        self.found.borrow().get(&slot).copied().flatten()
+        match self.found.borrow().get(&slot) {
+            Some(Said::Count(cells)) => Some(*cells),
+            Some(Said::Nothing) => self.learned.borrow().get(&slot).copied().flatten(),
+            Some(Said::Two) | None => None,
+        }
+    }
+}
+
+/// The cells each call of a virtual slot among `insns` was sized with, by `sizes`, as the slot's count.
+pub(super) fn counts(insns: &[Insn], sizes: &Sizes) -> Vec<((TypeKey, u32), u32)> {
+    let mut counts = Vec::new();
+    for (at, (_, returns)) in sizes {
+        let found = insns.binary_search_by_key(at, |insn| insn.at);
+        let Some(insn) = found.ok().and_then(|i| insns.get(i)) else {
+            continue;
+        };
+        if let Some((slot, _)) = insn.ops.iter().find_map(slot_of) {
+            counts.push((slot, *returns));
+        }
+    }
+    counts
+}
+
+/// Adds what one function's calls took to what the program's functions agree on.
+pub(super) fn learn(learned: &mut Learned, counts: &[((TypeKey, u32), u32)]) {
+    for (slot, cells) in counts {
+        let held = learned.entry(*slot).or_insert(Some(*cells));
+        if *held != Some(*cells) {
+            *held = None;
+        }
     }
 }
 
@@ -210,7 +292,7 @@ pub(super) fn sized(
         // Each walk lays out its tables for the whole function, however soon it stops.
         spent = spent.saturating_add(insns.len() as u64);
         if spent > budget {
-            return Err(refuse(function, "too many ways to size its calls"));
+            return Err(refuse(function, TOO_MANY));
         }
         let mut open = None;
         match elements(insns, &sizes, true, &mut spent) {
@@ -225,11 +307,7 @@ pub(super) fn sized(
                 };
                 match reach(function, insns, &sizes) {
                     Ok(reached) if ruled_out(&reached) => {}
-                    Ok(_) if found.is_some() => {
-                        let what =
-                            "more than one count of cells for a call's result balances the stack";
-                        return Err(refuse(function, what));
-                    }
+                    Ok(_) if found.is_some() => return Err(refuse(function, AMBIGUOUS)),
                     Ok(reached) => found = Some((reached, sizes.clone())),
                     Err(Halt::Unsized(i)) => open = Some(i),
                     // With nothing chosen the refusal is the function's own.

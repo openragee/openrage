@@ -5,9 +5,10 @@
 //! each stored under a key of its place. [`raw`] reads one against no table at all; [`decode_in`]
 //! adds the steps, which name types, functions and globals through the program's tables.
 
+use std::collections::BTreeMap;
 use std::fmt::Write;
 
-use super::ir::{Callee, Expr, FunctionKey};
+use super::ir::{Callee, Expr, FunctionKey, TypeKey};
 use super::names::Names;
 use super::native_addresses;
 use super::opcode::{self, Op, Spec, Status, Type};
@@ -181,6 +182,33 @@ pub fn function_in(
         insns.push(insn);
     }
     Ok(insns)
+}
+
+/// The value type each of `insns` names for the cells it stores, makes in place or takes out of a box, by the instruction's offset.
+pub fn value_types(program: &Program, project: &Project, insns: &[Insn]) -> BTreeMap<u32, TypeKey> {
+    let tables = Tables { program, project };
+    // Only these steps come of an instruction that names a value's type.
+    let shaped = |op: &Op| {
+        matches!(
+            op,
+            Op::StoreBytes { .. }
+                | Op::LoadBytes { .. }
+                | Op::Push {
+                    e: Expr::ZeroSlots(_),
+                    ..
+                }
+        )
+    };
+    let mut types = BTreeMap::new();
+    for insn in insns.iter().filter(|insn| insn.ops.iter().any(shaped)) {
+        let Ok((raw, spec)) = read(&program.code, insn.at) else {
+            continue;
+        };
+        if let Some(ty) = steps::value_type(&tables, &raw, spec) {
+            types.insert(insn.at, ty);
+        }
+    }
+    types
 }
 
 /// What a call reaches, as the disassembly names it: the user's name for a script function or a native, else the slot name.

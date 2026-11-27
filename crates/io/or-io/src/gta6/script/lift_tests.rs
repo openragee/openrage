@@ -1045,3 +1045,336 @@ fn a_function_starts_wherever_the_project_states_one_or_knows_one_called() {
     assert_eq!(starts(here, &project), BTreeSet::from([0x10, 0x40]));
     assert_eq!(starts(there, &project), BTreeSet::from([0x20, 0x50]));
 }
+
+/// The steps lifted with the value type each instruction numbered in `typed` names.
+fn lifted_typed(steps: Vec<Vec<Op>>, typed: &[(u32, TypeKey)]) -> Result<cfg::Function, LiftError> {
+    let insns = code(steps);
+    let row = FunctionRow {
+        at: AT,
+        end: at(insns.len() as u32),
+        params: 2,
+        locals: 0,
+        returns: 0,
+    };
+    let types: BTreeMap<u32, TypeKey> = typed.iter().map(|(n, ty)| (at(*n), *ty)).collect();
+    let slots = Slots::new(Project::empty());
+    super::steps_typed(0x1122_3344, &row, &insns, &slots, &types).map(|(f, _)| f)
+}
+
+fn address(var: Var) -> Op {
+    push(Expr::AddrOf { var, cell: 0 })
+}
+
+fn store_bytes(offset: u32, bytes: u32) -> Op {
+    let cells = bytes.div_ceil(8);
+    Op::StoreBytes {
+        offset,
+        bytes,
+        cells,
+    }
+}
+
+#[test]
+fn a_value_stored_whole_states_its_type_where_it_goes_and_where_it_comes_from() {
+    let thing = TypeKey(0xD1);
+    let steps = |offset: u32| {
+        vec![
+            vec![address(Var::Local(2)), push(local(6)), push(local(7))],
+            vec![store_bytes(offset, 16)],
+            done(),
+        ]
+    };
+    let f = lifted_typed(steps(0), &[(1, thing)]).expect("the function lifts");
+    let stated = BTreeMap::from([
+        (Var::Local(2), Some((thing, 2))),
+        (Var::Local(6), Some((thing, 2))),
+    ]);
+    assert_eq!(f.head.value_types, stated);
+    // The same store with no type named, and one into a part of what the address reaches.
+    let untyped = lifted_typed(steps(0), &[]).expect("the function lifts");
+    assert!(untyped.head.value_types.is_empty());
+    let inside = lifted_typed(steps(8), &[(1, thing)]).expect("the function lifts");
+    assert!(inside.head.value_types.is_empty());
+    // The statement is the same store of bytes whatever the type.
+    assert_eq!(block(&f, 0).stmts, block(&untyped, 0).stmts);
+}
+
+#[test]
+fn a_value_taken_out_of_a_box_states_its_type_and_so_do_the_cells_it_is_copied_to_in_order() {
+    let thing = TypeKey(0xD1);
+    let unboxed = vec![
+        push(p(0)),
+        Op::LoadBytes {
+            offset: 8,
+            bytes: 16,
+        },
+    ];
+    let f = lifted_typed(
+        vec![
+            unboxed.clone(),
+            vec![Op::Set(Var::Local(5)), Op::Set(Var::Local(4))],
+            done(),
+        ],
+        &[(0, thing)],
+    )
+    .expect("the function lifts");
+    let stated = BTreeMap::from([
+        (v(0, 0), Some((thing, 2))),
+        (Var::Local(4), Some((thing, 2))),
+    ]);
+    assert_eq!(f.head.value_types, stated);
+    // Its cells stored crossed over are no value of the type at either place.
+    let crossed = lifted_typed(
+        vec![
+            unboxed,
+            vec![Op::Set(Var::Local(4)), Op::Set(Var::Local(5))],
+            done(),
+        ],
+        &[(0, thing)],
+    )
+    .expect("the function lifts");
+    let only = BTreeMap::from([(v(0, 0), Some((thing, 2)))]);
+    assert_eq!(crossed.head.value_types, only);
+}
+
+#[test]
+fn a_builtin_value_made_in_place_states_its_type_and_two_types_named_state_none() {
+    let made = TypeKey(0x8000_0015);
+    let zeroed = Op::Push {
+        e: Expr::ZeroSlots(2),
+        cells: 2,
+    };
+    let steps = || {
+        vec![
+            vec![
+                zeroed.clone(),
+                Op::AddrOfTop { cells: 2 },
+                operate("ctor", 1, 0),
+            ],
+            vec![Op::Drop { cells: 2 }],
+            done(),
+        ]
+    };
+    let f = lifted_typed(steps(), &[(0, made)]).expect("the function lifts");
+    assert_eq!(
+        f.head.value_types,
+        BTreeMap::from([(v(0, 0), Some((made, 2)))])
+    );
+    // Zero cells made with no type named, as `alloc_value` makes them.
+    let alloc = lifted_typed(steps(), &[]).expect("the function lifts");
+    assert!(alloc.head.value_types.is_empty());
+
+    let (one, other) = (TypeKey(0xD1), TypeKey(0xD2));
+    let twice = lifted_typed(
+        vec![
+            vec![address(Var::Local(2)), push(local(6))],
+            vec![store_bytes(0, 8)],
+            vec![address(Var::Local(2)), push(local(6))],
+            vec![store_bytes(0, 8)],
+            done(),
+        ],
+        &[(1, one), (3, other)],
+    )
+    .expect("the function lifts");
+    let neither = BTreeMap::from([(Var::Local(2), None), (Var::Local(6), None)]);
+    assert_eq!(twice.head.value_types, neither);
+}
+
+/// A function that hands the results of slot 3 of two script types to a call of four cells.
+fn two_slots(first: u64, second: u64) -> Vec<Vec<Op>> {
+    vec![
+        vec![push(p(0)), slot_call(first)],
+        vec![push(p(1)), slot_call(second)],
+        vec![call(4, 0)],
+        done(),
+    ]
+}
+
+/// The steps lifted with `slots`, and the counts their slot calls were sized with.
+fn sized_with(
+    steps: Vec<Vec<Op>>,
+    slots: &Slots<'_>,
+) -> Result<(cfg::Function, Counts), LiftError> {
+    let insns = code(steps);
+    let row = FunctionRow {
+        at: AT,
+        end: at(insns.len() as u32),
+        params: 2,
+        locals: 0,
+        returns: 0,
+    };
+    super::steps_typed(0x1122_3344, &row, &insns, slots, &BTreeMap::new())
+}
+
+#[test]
+fn a_slot_another_function_sized_alone_settles_a_function_its_calls_left_open() {
+    let (known, open) = (TypeKey(0xC1), TypeKey(0xC2));
+    let alone = Slots::new(Project::empty());
+    // One slot handed to a call of two cells takes two.
+    let teacher = vec![
+        vec![push(p(0)), slot_call(known.0)],
+        vec![call(2, 0)],
+        done(),
+    ];
+    let (_, found) = sized_with(teacher, &alone).expect("the function lifts");
+    assert_eq!(found, vec![((known, 3), 2)]);
+    // Two slots handed to four cells balance in every split of them.
+    let refused = sized_with(two_slots(known.0, open.0), &alone);
+    assert!(matches!(&refused, Err(why) if settled_later(why)));
+
+    let mut learned = Learned::new();
+    learn(&mut learned, &found);
+    let slots = Slots::new(Project::empty());
+    assert!(slots.bearing(&code(two_slots(known.0, open.0))).is_empty());
+    assert!(slots.install(&learned));
+    assert!(!slots.install(&learned));
+    let bearing = slots.bearing(&code(two_slots(known.0, open.0)));
+    assert_eq!(bearing, vec![((known, 3), 2)]);
+    let settled = sized_with(two_slots(known.0, open.0), &slots);
+    let (f, settled) = settled.expect("the function lifts");
+    assert_eq!(first_returns(&f), Some(2));
+    assert_eq!(settled, vec![((known, 3), 2), ((open, 3), 2)]);
+    // A count learned of another slot says nothing here.
+    let elsewhere = Slots::new(Project::empty());
+    elsewhere.install(&BTreeMap::from([((TypeKey(0xC3), 3), Some(2))]));
+    assert!(elsewhere
+        .bearing(&code(two_slots(known.0, open.0)))
+        .is_empty());
+    assert!(sized_with(two_slots(known.0, open.0), &elsewhere).is_err());
+}
+
+#[test]
+fn a_slot_two_functions_or_two_types_below_disagree_on_is_learned_as_nothing() {
+    let (known, open) = (TypeKey(0xC1), TypeKey(0xC2));
+    let mut learned = Learned::new();
+    learn(&mut learned, &[((known, 3), 2)]);
+    learn(&mut learned, &[((known, 3), 1)]);
+    assert_eq!(learned.get(&(known, 3)), Some(&None));
+    let slots = Slots::new(Project::empty());
+    slots.install(&learned);
+    assert!(slots.bearing(&code(two_slots(known.0, open.0))).is_empty());
+    assert!(sized_with(two_slots(known.0, open.0), &slots).is_err());
+
+    // ⚠ Two types below that state different counts make the slot no one signature: what a
+    // function took of it is not held either.
+    let under = |returns: u32| TypeFacts {
+        base: Some(known),
+        returns: BTreeMap::from([(3, returns)]),
+        ..TypeFacts::default()
+    };
+    let mut project = Project::default();
+    project.types.insert(known, TypeFacts::default());
+    project.types.insert(TypeKey(0xC4), under(1));
+    project.types.insert(TypeKey(0xC5), under(3));
+    let disputed = Slots::new(&project);
+    disputed.install(&BTreeMap::from([((known, 3), Some(2))]));
+    assert!(disputed
+        .bearing(&code(two_slots(known.0, open.0)))
+        .is_empty());
+    assert!(sized_with(two_slots(known.0, open.0), &disputed).is_err());
+}
+
+#[test]
+fn only_a_function_refused_for_want_of_a_count_is_lifted_again() {
+    let stack = |what: &str| LiftError::Stack {
+        function: AT,
+        at: AT,
+        what: what.to_owned(),
+    };
+    assert!(settled_later(&stack(AMBIGUOUS)));
+    assert!(settled_later(&stack(TOO_MANY)));
+    assert!(!settled_later(&stack(
+        "no count of cells for a call's result balances the stack"
+    )));
+    assert!(!settled_later(&LiftError::Disasm(DisasmError::Truncated {
+        at: AT
+    })));
+}
+
+/// An instruction written by hand: the word of the opcode named, then each operand byte under the key of its place.
+fn encoded(name: &str, operands: &[u8]) -> Vec<u8> {
+    let opcode = (0..512u16).find(|n| super::super::opcode::name(*n) == Some(name));
+    let opcode = opcode.expect("an opcode of that name");
+    let mut bytes = opcode.wrapping_mul(0x843D).to_le_bytes().to_vec();
+    let stored = operands.iter().enumerate().map(|(place, plain)| {
+        let key = 0x85 ^ 0x11u8.wrapping_mul(place as u8);
+        plain.wrapping_mul(0x65) ^ key
+    });
+    bytes.extend(stored);
+    bytes
+}
+
+#[test]
+fn a_program_lifts_a_function_its_calls_left_open_with_what_its_other_functions_took() {
+    let ty = |name: u64| super::super::program::TypeRow {
+        name,
+        ..Default::default()
+    };
+    // Slot 3 of the program's type `n`, handed its receiver; no table states what it returns.
+    let slot = |n: u8| encoded("call_virtual", &[1, n, 0, 3]);
+    let call = |at: u8| encoded("call_short", &[0, at, 0]);
+    let leave = || encoded("return", &[]);
+    let code = [
+        // 0x00 takes two cells and 0x02 four.
+        leave(),
+        leave(),
+        // 0x04: one slot's result handed to the function of two cells.
+        encoded("push_param_0", &[]),
+        slot(0),
+        call(0x00),
+        leave(),
+        // 0x13: the results of two slots handed to the function of four.
+        encoded("push_param_0", &[]),
+        slot(0),
+        encoded("push_param_1", &[]),
+        slot(1),
+        call(0x02),
+        leave(),
+    ]
+    .concat();
+    let row = |at: u32, end: u32, params: u32| FunctionRow {
+        at,
+        end,
+        params,
+        locals: 0,
+        returns: 0,
+    };
+    let program = Program {
+        program: 0x1122_3344,
+        code,
+        functions: vec![
+            row(0x00, 0x02, 2),
+            row(0x02, 0x04, 4),
+            row(0x04, 0x13, 1),
+            row(0x13, 0x2A, 2),
+        ],
+        types: vec![ty(0xC1), ty(0xC2)],
+        ..Program::default()
+    };
+    let learner = program.functions[3];
+    let alone = function_in(&program, Project::empty(), &learner);
+    assert!(matches!(&alone, Err(why) if settled_later(why)));
+
+    let all = program_in(&program, Project::empty());
+    assert_eq!(all.len(), 4);
+    let Some(Ok(lifted)) = all.get(3) else {
+        panic!("the function lifts with what the one before it took: {all:?}");
+    };
+    let start = lifted
+        .function
+        .cfg
+        .blocks
+        .iter()
+        .find(|b| b.at == Some(0x13));
+    let start = start.expect("a block starts at the function");
+    let results: Vec<Option<u32>> = (start.stmts.iter())
+        .filter_map(|stmt| match stmt {
+            Stmt::Assign {
+                value: Expr::Call { returns, .. },
+                ..
+            } => Some(*returns),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(results, vec![Some(2), Some(2)]);
+}

@@ -1347,3 +1347,35 @@ fn a_native_is_named_in_the_disassembly_where_a_list_states_its_handler() {
     names.native_hashes.insert(0x0102_0305, 0xAA);
     assert_eq!(text(&program, &names).as_ref(), Ok(&bare));
 }
+
+#[test]
+fn the_type_of_a_value_stored_made_or_unboxed_is_named_by_its_instruction() {
+    let bytes = code(&[
+        insn("store_value", &[0, 0, 0, 0]),
+        insn("unbox", &[1, 0, 0, 0]),
+        insn("store_value_builtin", &[11]),
+        insn("new_builtin_value", &[1, 21]),
+        insn("alloc_value", &[2, 2]),
+        insn("box", &[0, 0, 0, 0]),
+    ]);
+    let program = program(bytes);
+    let project = project();
+    let mut insns = Vec::new();
+    let mut at = 0u32;
+    while (at as usize) < program.code.len() {
+        let one = decode_in(&program, &project, at).expect("the instruction decodes");
+        at += one.len;
+        insns.push(one);
+    }
+    let types = value_types(&program, &project, &insns);
+    let at = |n: usize| insns[n].at;
+    let stated = BTreeMap::from([
+        (at(0), TypeKey(0x0123_4567_89AB_CDEF)),
+        // Type 1 is the imported program's first, which the project holds.
+        (at(1), TypeKey(0x1122_3344_5566_7788)),
+        (at(2), TypeKey(0x8000_000B)),
+        (at(3), TypeKey(0x8000_0015)),
+    ]);
+    // Zero cells made for a value name no type, and a box names its own in its call.
+    assert_eq!(types, stated);
+}

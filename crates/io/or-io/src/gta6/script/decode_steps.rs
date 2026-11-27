@@ -334,6 +334,24 @@ fn switch(code: usize, blob: &[u8], raw: &Raw) -> Result<Vec<(i64, u32)>, Disasm
     Ok(cases)
 }
 
+/// The value type an instruction names for the cells it stores, makes in place or takes out of a box; `None` for any other instruction and for a type the tables do not hold.
+// ⚠ Its steps say none of it: `store_value` is a store of bytes, `unbox` a load of them and
+// `new_builtin_value` zero cells under the constructor's arguments. `alloc_value` names no type.
+pub(super) fn value_type(tables: &Tables<'_>, raw: &Raw, spec: &Spec) -> Option<TypeKey> {
+    if spec.status == Status::Unseen {
+        return None;
+    }
+    let n = |i: usize| raw.fields[i] as u32;
+    let ty = match spec.act {
+        Act::StoreValue(builtin) | Act::UnboxValue(builtin) => {
+            tables.ty(raw.at, n(0), builtin).ok()?
+        }
+        Act::NewBuiltinValue => builtin_type(n(1)),
+        _ => return None,
+    };
+    TypeKey::of(&ty)
+}
+
 /// The steps of one instruction.
 pub(super) fn of(tables: &Tables<'_>, raw: &Raw, spec: &Spec) -> Result<Vec<Op>, DisasmError> {
     let at = raw.at;

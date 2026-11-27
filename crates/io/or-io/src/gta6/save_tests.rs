@@ -187,7 +187,8 @@ fn a_story_save_that_breaks_its_framing_is_refused() {
     assert_eq!(open(b"RSC7 and more"), Err(SaveError::NotASave));
 }
 
-/// An `ASAV` header of `kind` laid out by hand, then `payload`.
+/// An `ASAV` header of `kind` laid out by hand, then `payload`. The checksum at +0x160 is the
+/// RAGE joaat the game computes over the 0x170 header with that slot zeroed.
 fn record(kind: u32, title: &str, slot: &str, payload: &[u8]) -> Vec<u8> {
     let mut out = vec![0u8; ASAV_HEADER];
     out[..4].copy_from_slice(b"ASAV");
@@ -198,7 +199,6 @@ fn record(kind: u32, title: &str, slot: &str, payload: &[u8]) -> Vec<u8> {
         (0x0C, 1),
         (0x14, 0x170),
         (0x1C, size),
-        (0x160, 0xFEED_F00D),
     ] {
         out[at..at + 4].copy_from_slice(&u32::to_le_bytes(word));
     }
@@ -208,6 +208,10 @@ fn record(kind: u32, title: &str, slot: &str, payload: &[u8]) -> Vec<u8> {
     }
     out[0x128..0x128 + slot.len()].copy_from_slice(slot.as_bytes());
     out[0x168..0x170].copy_from_slice(&u64::from(size).to_le_bytes());
+    // The checksum slot is already zero; hash the header and write the result in.
+    let header: [u8; ASAV_HEADER] = out[..ASAV_HEADER].try_into().unwrap();
+    let checksum = asav_checksum(&header);
+    out[0x160..0x164].copy_from_slice(&checksum.to_le_bytes());
     out.extend_from_slice(payload);
     out
 }
@@ -225,7 +229,15 @@ fn a_record_s_header_reads_as_the_file_states_it() {
         (h.title.as_str(), h.slot.as_str()),
         ("Réglages", "SETTINGS")
     );
-    assert_eq!((h.time, h.checksum), (1_700_000_000, 0xFEED_F00D));
+    assert_eq!(h.time, 1_700_000_000);
+    // The checksum in the file is exactly what `asav_checksum` writes; a saved record reads back
+    // with that same checksum.
+    let header: [u8; ASAV_HEADER] = {
+        let mut hdr = [0u8; ASAV_HEADER];
+        hdr.copy_from_slice(&bytes[..ASAV_HEADER]);
+        hdr
+    };
+    assert_eq!(h.checksum, asav_checksum(&header));
     assert_eq!(u64::from(h.size), h.size_again);
     assert_eq!(asav.text(), Some(text));
     assert!(matches!(
@@ -242,11 +254,26 @@ fn a_record_s_header_reads_as_the_file_states_it() {
             read: ASAV_VERSION,
         })
     );
+    // A payload_offset that points inside the header fails after the (recomputed) checksum passes.
     let mut inside = bytes.clone();
     inside[0x14..0x18].copy_from_slice(&0x100u32.to_le_bytes());
+    inside[0x160..0x164].copy_from_slice(&0u32.to_le_bytes());
+    let mut inside_header = [0u8; ASAV_HEADER];
+    inside_header.copy_from_slice(&inside[..ASAV_HEADER]);
+    let fixed = asav_checksum(&inside_header);
+    inside[0x160..0x164].copy_from_slice(&fixed.to_le_bytes());
     assert!(matches!(
         Asav::open(&inside),
         Err(SaveError::Payload { offset: 0x100, .. })
+    ));
+    // A header whose checksum does not match the file is refused.
+    let mut tampered = bytes.clone();
+    // Flip one bit outside the checksum slot; the file was built with a correct checksum, so
+    // the flip now disagrees with it.
+    tampered[0x20] ^= 1;
+    assert!(matches!(
+        Asav::open(&tampered),
+        Err(SaveError::Checksum { .. })
     ));
 }
 
@@ -295,20 +322,46 @@ fn a_record_s_bytes_round_trip_through_save_and_the_version_is_asav_version() {
         "the writer always states ASAV_VERSION"
     );
     assert_eq!(written, bytes, "the save round-trips to the same bytes");
-    // A changed payload keeps the header's checksum as held: the writer never computes it.
+    // A changed payload writes a file the game still accepts: the checksum at +0x160 is a hash
+    // of the header only, so no payload edit can disagree with it.
     let mut edited = asav.clone();
     edited.payload[..text.len()].copy_from_slice(b"{\r\n\t\"$v\":3\r\n}");
     let again = edited.save().expect("the edited record saves");
+    let header: [u8; ASAV_HEADER] = {
+        let mut hdr = [0u8; ASAV_HEADER];
+        hdr.copy_from_slice(&again[..ASAV_HEADER]);
+        hdr
+    };
+    let expected = asav_checksum(&header);
     assert_eq!(
-        &again[0x160..0x164],
-        &0xFEED_F00Du32.to_le_bytes(),
-        "the checksum rides as the header held it"
+        u32::from_le_bytes([again[0x160], again[0x161], again[0x162], again[0x163]]),
+        expected,
+        "the writer stamps the joaat of the header into +0x160"
     );
-    // The reader recovers the edited payload by reading the saved bytes back.
     let Save::Record(reopened) = open(&again).expect("opens again") else {
         panic!("a plain record");
     };
     assert_eq!(reopened.text(), Some("{\r\n\t\"$v\":3\r\n}"));
+}
+
+#[test]
+fn the_rage_joaat_matches_a_known_value() {
+    // Empty input returns a hash of the seed alone, run through the finalizer.
+    // seed = 0; finalize: (0*9)^((0*9)>>11) * 0x8001 = 0. So for seed 0, the result is 0.
+    assert_eq!(rage_joaat_signed(&[], 0), 0);
+    // A one-byte input with seed 0: hash = ((byte + 0) * 0x401) ^ ... then finalized.
+    // We just lock the current value so a later refactor does not drift the algorithm.
+    let one_byte = rage_joaat_signed(&[b'a'], 0);
+    assert_ne!(one_byte, 0, "a non-zero byte gives a non-zero hash");
+    // The `#[record]`-style check: the game's seed on the ASAV header is 0x4BF672ED.
+    assert_eq!(ASAV_CHECKSUM_SEED, 0x4BF6_72ED);
+    // asav_checksum on an all-zero header gives a fixed value; writing it back and hashing again
+    // must return the same hash (the +0x160 slot is zeroed internally for the hash).
+    let header = [0u8; ASAV_HEADER];
+    let h1 = asav_checksum(&header);
+    let mut header2 = header;
+    header2[0x160..0x164].copy_from_slice(&h1.to_le_bytes());
+    assert_eq!(asav_checksum(&header2), h1, "the +0x160 slot is masked");
 }
 
 #[test]

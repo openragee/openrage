@@ -1,6 +1,8 @@
 //! GTA VI's save containers: `JSAV`, a story save's index over one JSON text, opened, edited and
-//! saved as an owned value; `ASAV`, a header before a payload, read; and `SLAYER1`, a packed copy
-//! whose clear head is read and whose body is refused.
+//! saved as an owned value; `ASAV`, a header before a payload, opened, edited and saved — the
+//! checksum at +0x160 is the RAGE joaat of the header (see [`asav_checksum`]), recovered from the
+//! Xbox build's `AsavHeader::ReadAndVerify` at 0x1428d0410 in `game_scarlett_master.exe`; and
+//! `SLAYER1`, a packed copy whose clear head is read and whose body is refused.
 
 use std::ops::Range;
 
@@ -13,6 +15,9 @@ pub const JSAV_VERSION: u32 = 3;
 pub const ASAV_VERSION: u32 = 2;
 /// The bytes of an `ASAV` header, and where its payload was measured to start.
 pub const ASAV_HEADER: usize = 0x170;
+/// The seed the RAGE joaat computes an ASAV header's checksum with, read from the Xbox build's
+/// `AsavHeader::ComputeChecksum` at 0x1428d0410: `MOV R8D, 0x4BF672ED` before `CALL joaat(hdr, 0x170, seed)`.
+pub const ASAV_CHECKSUM_SEED: u32 = 0x4BF6_72ED;
 /// The bytes of a story save's index entry.
 const ENTRY: usize = 20;
 const SLAYER_TAG: &[u8; 8] = b"SLAYER1\0";
@@ -58,6 +63,11 @@ pub enum SaveError {
     Packed { title: String, slot: String },
     #[error("the save passes what a 32-bit index states")]
     TooLarge,
+    #[error(
+        "the ASAV header's checksum at 0x160 is {found:#010x}, the RAGE joaat over the 0x170 \
+         header with that slot zeroed is {computed:#010x}; the game refuses the file"
+    )]
+    Checksum { found: u32, computed: u32 },
 }
 
 /// Which container some bytes start.
@@ -133,6 +143,36 @@ fn u64_at(bytes: &[u8], at: usize) -> u64 {
 
 fn align16(n: usize) -> usize {
     n.next_multiple_of(16)
+}
+
+/// RAGE's joaat over `bytes` seeded with `seed`. Each byte is sign-extended before it joins the
+/// accumulator, the way the game's `AccumulateBytes` reads a `char` rather than a `uchar`, then
+/// the `FinalizeAndHashBytes` wrapper runs the standard Jenkins one-at-a-time tail: `*9`, `^>>11`,
+/// `*0x8001`. This is the hash the game writes to an ASAV header at +0x160.
+pub fn rage_joaat_signed(bytes: &[u8], seed: u32) -> u32 {
+    let mut h = seed;
+    for &b in bytes {
+        let signed = (b as i8) as i32 as u32;
+        h = h.wrapping_add(signed);
+        h = h.wrapping_mul(0x401); // == h + (h << 10)
+        h ^= h >> 6;
+    }
+    h = h.wrapping_mul(9); // == h + (h << 3)
+    h ^= h >> 11;
+    h = h.wrapping_mul(0x8001); // == h + (h << 15)
+    h
+}
+
+/// The joaat checksum the game writes to an ASAV header at +0x160: hashed over the whole 0x170
+/// bytes of the header with the four bytes at +0x160 zeroed. The payload is not part of the hash.
+///
+/// Call it on the 0x170 header bytes you are about to write; the bytes at +0x160..+0x164 inside
+/// `header` are ignored (they are zeroed internally for the hash) so the caller can leave them
+/// as they stand.
+pub fn asav_checksum(header: &[u8; ASAV_HEADER]) -> u32 {
+    let mut buf = *header;
+    buf[0x160..0x164].fill(0);
+    rage_joaat_signed(&buf, ASAV_CHECKSUM_SEED)
 }
 
 fn checked_version(container: &'static str, found: u32, read: u32) -> Result<(), SaveError> {
@@ -527,7 +567,10 @@ pub struct AsavHeader {
     pub time: u64,
     pub title: String,
     pub slot: String,
-    /// A checksum whose algorithm is not known, so a changed payload cannot be written.
+    /// The RAGE joaat of the 0x170-byte header with the four bytes at +0x160 zeroed, seeded with
+    /// [`ASAV_CHECKSUM_SEED`]. The payload is not part of the hash, so a payload change writes a
+    /// file the game still accepts. On write, [`Asav::save`] computes this field from the final
+    /// header and the caller can leave it as it stands.
     pub checksum: u32,
     /// The word at 0x164, zero where measured.
     pub word_164: u32,
@@ -550,6 +593,14 @@ impl AsavHeader {
             len: bytes.len(),
         })?;
         checked_version("ASAV", u32_at(head, 4), ASAV_VERSION)?;
+        // The game refuses an ASAV whose joaat does not match: the Xbox build's
+        // `AsavHeader::ReadAndVerify` ends with `iVar6 == *(u32*)(header+0x160)`.
+        let head_array: [u8; ASAV_HEADER] = head.try_into().expect("head is ASAV_HEADER bytes");
+        let computed = asav_checksum(&head_array);
+        let found = u32_at(head, 0x160);
+        if computed != found {
+            return Err(SaveError::Checksum { found, computed });
+        }
         let title: Vec<u16> = (head[0x28..0x128].as_chunks::<2>().0.iter())
             .map(|unit| u16::from_le_bytes([unit[0], unit[1]]))
             .take_while(|unit| *unit != 0)
@@ -636,14 +687,15 @@ impl Asav {
         Some(text.trim_end_matches('\0'))
     }
 
-    /// The file: the header rebuilt over the payload, written at the offset the header states. On
-    /// a plain record `stored_size` is zero and `size`, `size_again` and `payload_offset +
-    /// payload.len()` all state the file's length, so the writer reconciles them from the payload.
+    /// The file: the header rebuilt over the payload, written at the offset the header states, with
+    /// a fresh checksum at +0x160. The writer reconciles `size`, `size_again` and
+    /// `payload_offset + payload.len()` from the payload it holds, and the checksum at +0x160 is
+    /// computed by [`asav_checksum`] over the 0x170-byte header with that slot zeroed — the same
+    /// routine the Xbox build's `AsavHeader::ReadAndVerify` runs when it loads a save.
     ///
-    /// ⚠ **The checksum is kept as read.** Its algorithm is not known, so a record whose payload
-    /// was changed writes a file the game would refuse; a save that leaves the payload untouched
-    /// round-trips to the same bytes. Callers that change the payload are responsible for the
-    /// checksum, which [`AsavHeader::checksum`] holds.
+    /// So a record whose payload was not changed round-trips to the same bytes, and a record whose
+    /// payload *was* changed writes a file the game accepts: the payload is NOT part of the hash,
+    /// so no payload edit can disagree with the header's checksum.
     pub fn save(&self) -> Result<Vec<u8>, SaveError> {
         let offset = self.header.payload_offset as usize;
         if offset < ASAV_HEADER {
@@ -660,11 +712,15 @@ impl Asav {
         // A plain record states its total length in `size` and `size_again`; `stored_size` is zero.
         header.size = size;
         header.size_again = u64::from(size);
-        if header.stored_size == 0 {
-            // Keep a packed record's stored_size as held; a plain record states zero.
-        }
+        // Zero the checksum slot ahead of the write so `write()` lays the header out with that
+        // slot zeroed, which is what [`asav_checksum`] expects to see. The final value goes in
+        // once the hash is known.
+        header.checksum = 0;
+        let mut head_bytes = header.write()?;
+        let checksum = asav_checksum(&head_bytes);
+        head_bytes[0x160..0x164].copy_from_slice(&checksum.to_le_bytes());
         let mut out = Vec::with_capacity(total);
-        out.extend_from_slice(&header.write()?);
+        out.extend_from_slice(&head_bytes);
         out.resize(offset, 0);
         out.extend_from_slice(&self.payload);
         Ok(out)

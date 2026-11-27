@@ -510,6 +510,7 @@ not (
   | binary_id(=or-wardrobe::the_size_map_of_a_build_totals_the_files_it_writes)
   | binary_id(=or-wardrobe::the_texture_optimiser_copies_a_source_and_the_garments_in_scope_name_the_copy)
   | binary_id(=or-wardrobe::two_packs_of_one_collection_are_refused_and_a_tampered_build_fails_its_check)
+  | binary_id(=or-world::a_shape_edit_of_an_install_saves_the_same_with_and_without_a_snapshot)
   | binary_id(=or-world::naming_every_scenario_point)
   | binary_id(=or-world::what_a_map_holds_besides_entities)
   | binary_id(=or-world::what_the_flags_of_a_manifest_entry_follow)

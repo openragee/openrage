@@ -179,6 +179,101 @@ an extension of an entity, is refused by that class's name
 (`a_copy_that_holds_a_record_of_a_class_this_file_lacks_is_refused_by_name_and_never_by_the_schema`).
 ⚠ A class a table only names, for an array that holds nothing, is no class to lay a record out by
 (`a_room_put_into_a_file_whose_table_only_names_its_class_is_refused_by_name`).
+
+⚠ **An installed snapshot takes no part in laying out what a document's own type table holds.** A
+typed root that leaves the layout it arrived with (an array grew or shrank, a record was built or
+copied in) is laid out from three sources in this order: the families declared in code, then each
+class and enum its own table states, as the table states it, then the installed snapshot, for a
+class the table neither states nor names (`type_tables::layered`,
+`a_documents_own_table_outranks_a_snapshot_and_a_type_it_only_names_stays_empty`). A snapshot is of
+one build of the game and a class grows between builds, so a class laid out by the snapshot demands
+members the document's records do not hold and drops the ones only they hold. A class the table
+only names stays declared empty whatever the snapshot declares of it: the class of an array that
+holds nothing is written into a synthesised table, and the snapshot's class there would make a
+process that installed one write other bytes than a process with none
+(`a_record_of_a_class_the_table_only_names_is_refused_by_name_though_the_snapshot_declares_it`).
+
+Before, a process with a snapshot took the snapshot's class over the table's, which is the refusal
+two lanes measured on every shape edit of an Enhanced type file
+([R70h](../direction/Roadmap.md#r70h-one-vocabulary-of-world-edits),
+[R70m](../direction/Roadmap.md#r70m-interiors)): a copy of an archetype was saved without the two
+members the Enhanced type files state and the staged snapshot lacks; a class the snapshot declares
+with more members than the file was refused in the writer's words,
+`'CEntityDef' is missing field 'lodLevel'`; and a parked vehicle copied into a file whose `CCarGen`
+states a member the copy lacks was refused the same way with a snapshot and with none.
+
+What follows from the rule, each on files built by hand as PSO and as RBM:
+
+- **A record built for a class the document states takes the document's members**, each one no
+  typed record names at its empty value, and a member the record sets that the class lacks there is
+  refused by name
+  (`a_map_has_an_entity_taken_out_and_one_built_whatever_the_snapshot_declares_of_its_class`,
+  `a_region_takes_a_point_copied_and_a_point_built_whatever_the_snapshot_declares_of_its_class`). A
+  scenario region that arrived is saved this way too, so a point built in one needs no snapshot.
+- **A copy of a class the document states takes the members the class has there and the copy
+  lacks**: a member its record types at the value the record holds, which is the engine's `init`
+  where the file it came from stated none, and any other at its empty value
+  (`a_parked_vehicle_copied_between_files_takes_the_members_the_file_it_enters_states`,
+  `a_copy_of_a_class_the_file_states_takes_the_members_it_lacks_and_so_does_a_record_it_holds`).
+- **One missing member is refused, by its name**: one the table states with a type no value is
+  built for, a run of bytes nothing counts or a type byte no reader names
+  (`a_copy_that_lacks_a_member_of_a_type_no_value_is_built_for_is_refused_by_name`).
+- **A member the copy holds and the class lacks is still refused, never dropped**
+  (`a_parked_vehicle_that_holds_a_member_the_file_it_enters_lacks_is_refused_by_name`).
+- **An interior takes a room as a copy, a room built there, a portal and an attachment, and loses
+  each**, whatever the snapshot declares of its classes
+  (`an_interior_takes_rooms_a_portal_and_an_attachment_whatever_the_snapshot_declares_of_its_classes`).
+  The install measure below adds and removes an archetype, and no room, portal or attachment.
+
+`crates/io/or-io/tests/a_shape_edit_is_laid_out_by_what_the_document_states.rs` holds these in a
+process that installed a snapshot whose classes state fewer, more and other members than the files',
+and holds each save and each refusal to what the same binary writes and says as a child that
+installed none (`every_shape_edit_saves_the_bytes_a_process_with_no_snapshot_saves`). ⚠ An installed
+snapshot is state of the whole process, set once and never removed, and a gate runs the tests of one
+binary as threads of one process: a test that installs one makes every other test of its binary a
+test with a snapshot, so such a suite is a binary of its own, and its process with no snapshot is
+the binary run again as a child.
+
+On both installs, one type file in fifty takes an archetype added as a copy and removed again, and
+one map in fifty its last entity removed and put back, each step saved, read back equal and saved
+again to the same bytes, in a process that installed the staged snapshot as the app does and in one
+that installed none
+(`a_sample_of_an_installs_type_files_and_maps_takes_a_shape_edit_with_and_without_the_staged_snapshot`
+in `crates/domain/or-world/tests/a_shape_edit_of_an_install_saves_the_same_with_and_without_a_snapshot.rs`,
+slow tier, 2026-11-27):
+
+| Install | Edit | Files edited, 2026-11-27 | With no snapshot | With the staged snapshot |
+|---|---|---|---|---|
+| Legacy | archetype | 56 | 56 saved | 56 saved, to the same bytes |
+| Legacy | entity | 336, and 52 more with none to take | 336 removals saved; 280 put back, 56 refused | 336 removals saved, to the same bytes; 336 put back, 280 to the same bytes |
+| Enhanced | archetype | 58 | 58 saved | 58 saved, to the same bytes |
+| Enhanced | entity | 352, and 48 more with none to take | 352 removals saved; 291 put back, 61 refused | 352 removals saved, to the same bytes; 292 put back, 291 to the same bytes, and 60 refused |
+
+The run with the snapshot proves more than the run with none only where a file states a class
+otherwise than the snapshot declares it, which the suite counts: on Enhanced 58 of the 58 sampled
+type files state `CBaseArchetypeDef` and 314 of the 314 sampled maps that state `CEntityDef` state
+it with another set of members than the staged snapshot's class, and on Legacy none of 56 and none
+of 296 does (the same suite, 2026-11-27). The Enhanced files state two members of
+`CBaseArchetypeDef` the snapshot lacks, `hash_73B8AA83` and `padding1`, and the first of them in
+`CEntityDef` (a reading of the same sample, 2026-11-27). With the snapshot's class laid over the
+table's again where a root outgrows its layout, none of the 58 Enhanced type files passes: each copy
+saves and reads back as another value (the same suite, 2026-11-27). An edit taken back before the
+file is read again, as an undo does it, saves the bytes of the file as read, in every file of the
+sample.
+
+⚠ **Left for the owner to rule: whether a snapshot may lay out any class of a document that carries
+its own table.** The refusals in the table are of one kind. A map saved without the last entity of
+its class no longer states that class, the entity put back into the file as saved is a copy of a
+class the file lacks, and an RBM class carries a signature nothing derives, so a process with no
+snapshot refuses it. A process that installed one lays the record out by the snapshot's class
+instead, as it did before this change, with a zero signature, which no shipped file carries
+(`a_copy_of_a_class_an_rbm_file_neither_states_nor_names_is_laid_out_by_the_snapshot_and_refused_with_none`):
+on Legacy the 56 are saved so, and on Enhanced 1 is and 60 are refused for a member the snapshot's
+class lacks. Those 56 of the 444 lines of the Legacy measure and 61 of the 458 of the Enhanced one
+are every line on which the two processes part (the same suite, 2026-11-27). The rule that closes
+it is that a document with a type table is laid out with no snapshot at all, which is
+`type_tables::extend` in place of `type_tables::layered`: the two processes then agree on every
+line, and a developer's machine loses the saves above, which no user's machine makes.
 `crates/io/or-io/src/meta/typed/interior.rs` types the four records of an interior as members of
 `CMloArchetypeDef`: `CMloRoomDef`, `CMloPortalDef`, `CMloEntitySet` and `CMloTimeCycleModifier`, each
 with the members the installs state for it

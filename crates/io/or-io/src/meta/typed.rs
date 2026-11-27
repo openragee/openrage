@@ -1331,9 +1331,24 @@ fn open_root<T>(
     ))
 }
 
-/// Encodes a root with the layout it arrived with, or one synthesised from the
-/// installed schema when it outgrew that layout, holds a `reshaped` record,
-/// or was built with none.
+/// The types a document that arrived with the type table `tables` is laid out by once it leaves the layout it arrived
+/// with: the families declared in code, then each class `tables` states as it states it, then the installed snapshot.
+///
+/// ⚠ The installed schema is a developer's artifact, of one build of the game, and no user has one: it gives only a
+/// class the document's own table neither states nor names, so an edit of the records a document holds saves the same
+/// bytes with one installed and with none.
+fn types_of(tables: &SchemaLibrary) -> SchemaLibrary {
+    type_tables::layered(
+        ped_types::family(),
+        tables,
+        crate::meta::snapshot::installed(),
+    )
+}
+
+/// Encodes a root with the layout it arrived with, or a synthesised one when
+/// it outgrew that layout, holds a `reshaped` record, or was built with none:
+/// from `types` where a caller conformed its records to them, from
+/// [`types_of`] its own type table where it only outgrew its layout.
 ///
 /// ⚠ Synthesis is the fallback, never the default: it reproduces no shipped
 /// document byte for byte, where the arrival layout reproduces them all. The
@@ -1376,14 +1391,15 @@ fn encode(
                 .map_err(|e| save(e.to_string()));
         }
     }
-    // ⚠ The installed schema is a developer's artifact and no user has one, so
-    // what the document's own tables state stands in for what it lacks.
     let own = layout.map(type_tables::of_layout);
     let family = ped_types::library(crate::meta::default_library());
     let library = match (types, &own) {
         // The records built here were conformed to these, so the layout is made of the same.
         (Some(types), _) => Cow::Borrowed(types),
-        (None, Some(tables)) => type_tables::extend(&family, tables),
+        // ⚠ Only a root of the ped families reaches this arm: a record built in one was conformed to the families'
+        // classes and the installed schema's, and laid out by another class the writer drops its members and says nothing.
+        (None, Some(tables)) if reshaped => type_tables::extend(&family, tables),
+        (None, Some(tables)) => Cow::Owned(types_of(tables)),
         (None, None) => Cow::Borrowed(&*family),
     };
     let library = &*library;
@@ -1453,7 +1469,8 @@ fn save_root_as(
     )
 }
 
-/// [`save_root`] for a root of the world family, which saves a record built here where no snapshot is installed.
+/// [`save_root`] for a map, a type file and a region that arrived, each laid out by the classes its own type table
+/// states: a record built here takes the members its class has there, with a snapshot installed and with none.
 ///
 /// ⚠ A root built here is written as PSO: an RBM class carries a signature word that nothing derives ([`world_types`]).
 fn save_world_root(
@@ -1463,6 +1480,12 @@ fn save_world_root(
     carry: &Carry,
     mut reshaped: bool,
 ) -> Result<Vec<u8>, Error> {
+    if let Some(reason) = broken {
+        return Err(Error::Refused {
+            ext,
+            reason: crate::error::Reason::new(reason),
+        });
+    }
     let arrival = carry.arrival.as_deref();
     if let (Some(arrival), false) = (arrival, reshaped) {
         let root = write();
@@ -1474,22 +1497,28 @@ fn save_world_root(
         };
         // Nothing was built or copied here, so nothing is conformed and the arrival's own layout stands.
         if !copied {
+            let root = root.map_err(|why| Error::Save { ext, why })?;
+            let layout = arrival.layout.as_ref();
             // ⚠ A copy of a class this file states may hold a member the class lacks here, which the layout has no place for.
-            if let (Ok(root), Some(layout), None) = (&root, &arrival.layout, &broken) {
-                if let Some((class, member)) = world_types::first_member_unstated(layout, root) {
-                    let why = world_types::would_drop_stated(class, member);
-                    return Err(Error::Save { ext, why });
-                }
+            if let Some((class, member)) =
+                layout.and_then(|layout| world_types::first_member_unstated(layout, &root))
+            {
+                let why = world_types::would_drop_stated(class, member);
+                return Err(Error::Save { ext, why });
             }
-            return save_root(ext, broken, root, carry, reshaped);
+            // ⚠ Or lack a member the class has here, which no writer has a value for: the save is then made again as
+            // one that holds a record built here is, with the copy conformed to the class.
+            let lacks_a_member = || {
+                layout.is_some_and(|layout| {
+                    world_types::first_member_missing(layout, &root).is_some()
+                })
+            };
+            match encode(ext, Some(arrival), &root, false, None) {
+                Err(Error::Save { .. }) if lacks_a_member() => {}
+                saved => return saved,
+            }
         }
         reshaped = true;
-    }
-    if let Some(reason) = broken {
-        return Err(Error::Refused {
-            ext,
-            reason: crate::error::Reason::new(reason),
-        });
     }
     let saving = Rc::new(world_types::Saving::of(arrival));
     let root = while_saving(&saving, write)
@@ -1742,7 +1771,12 @@ impl File for CScenarioPointRegion {
                 .chains
                 .iter()
                 .any(|c| built_here(&c.carry, "CScenarioChain"));
-        save_root(Self::EXTENSION, broken, self.write(), &self.carry, reshaped)
+        // ⚠ No class of a region is declared in code, so one built from nothing is saved against the installed schema.
+        if self.carry.arrival.is_none() {
+            return save_root(Self::EXTENSION, broken, self.write(), &self.carry, reshaped);
+        }
+        let write = || self.write();
+        save_world_root(Self::EXTENSION, broken, write, &self.carry, reshaped)
     }
 }
 

@@ -215,16 +215,11 @@ pub fn declared() -> &'static SchemaLibrary {
     })
 }
 
-/// `base` with the family's types.
-///
-/// ⚠ **The family's definition wins over a snapshot's**, unlike every other shipped transcription:
-/// a snapshot states a class by its members, so it leaves out the bytes of a class that no member
-/// names, and a table synthesised from it is smaller than any shipped one. A suite holds the
-/// transcription to the tables the documents state.
-pub fn library(base: &'static SchemaLibrary) -> Cow<'static, SchemaLibrary> {
+/// The types declared in code, which a save lays out as declared whatever a snapshot or a document's own table states.
+pub(super) fn family() -> &'static SchemaLibrary {
     // The alternate-variation types go beside it: a root of that family is built and saved the same way.
     static FAMILY: OnceLock<SchemaLibrary> = OnceLock::new();
-    let family = FAMILY.get_or_init(|| {
+    FAMILY.get_or_init(|| {
         let mut lib = declared().clone();
         let alternate = super::alternate_types::declared();
         lib.structs.extend(
@@ -241,7 +236,17 @@ pub fn library(base: &'static SchemaLibrary) -> Cow<'static, SchemaLibrary> {
                 .map(|(n, d)| (n.clone(), d.clone())),
         );
         lib
-    });
+    })
+}
+
+/// `base` with the family's types.
+///
+/// ⚠ **The family's definition wins over a snapshot's**, unlike every other shipped transcription:
+/// a snapshot states a class by its members, so it leaves out the bytes of a class that no member
+/// names, and a table synthesised from it is smaller than any shipped one. A suite holds the
+/// transcription to the tables the documents state.
+pub fn library(base: &'static SchemaLibrary) -> Cow<'static, SchemaLibrary> {
+    let family = family();
     if base.is_empty() {
         return Cow::Borrowed(family);
     }

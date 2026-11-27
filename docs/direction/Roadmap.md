@@ -9870,10 +9870,11 @@ a session for each pack it edits, written when the project is saved
 built entity, a type file and a base archetype made
 with no donor and no snapshot (`crates/domain/or-world/src/create.rs`), behind
 `openrage-cli world new-map` and `world archetypes`, which pass the rules of a pack
-(`a_map_and_a_type_file_made_from_nothing_enter_a_pack_and_break_none_of_its_rules`). A placement
-whose scale is not above nought is refused, there and by the operation that stands an entity
-somewhere, since a map streams by a box spread from each entity by its scale
-(`a_scale_that_is_not_above_nought_is_refused_before_anything_is_placed`).
+(`a_map_and_a_type_file_made_from_nothing_enter_a_pack_and_break_none_of_its_rules`).
+
+A typed root that leaves its layout is laid out by its own type table, whatever snapshot the
+process installed (⚠
+[the rule, the install measure and what is left for the owner](../reference/Crate_Reference.md#io-crates)).
 
 ⚠ They are written as PSO, and RBM is refused (`rbm_is_refused_with_the_word_nothing_derives_named`,
 [R62](#r62-the-rbm-layout-synthesiser)); whether the game, whose own world files are RBM, loads
@@ -10089,8 +10090,9 @@ rules of `or_maps::interior` stand beside `interior-broken`
 (`what_the_interior_rules_say_of_the_install`, slow tier, on top of `94f8a639b`, 2026-11-26): room 0
 is the outside in 541 of 541 interiors of Legacy and 556 of 556 of Enhanced; no rule that warns
 fires; and 45 of the 48 type files sampled on each took a room with a portal and were put back, the
-other 3 holding no portal. With the staged schema snapshot installed, as the app installs it, the 48
-of the Enhanced sample are each refused unchanged, which is `or-io`'s to answer. Left: every screen,
+other 3 holding no portal. With the staged schema snapshot installed, the 48
+of the Enhanced sample were each refused unchanged, which `or-io` has mended, on interiors built
+by hand ([R70h](#r70h-one-vocabulary-of-world-edits)). Left: every screen,
 with the builder, which waits for ruling 2; the entity set switches and their script lines; the
 first edit of an interior of the game; the sound passages; and the rules of the brief not built.
 

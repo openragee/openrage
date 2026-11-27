@@ -98,6 +98,28 @@ pub fn extend<'a>(library: &'a SchemaLibrary, tables: &SchemaLibrary) -> Cow<'a,
     Cow::Owned(lib)
 }
 
+/// `declared`, then what `tables` states that it lacks, then `snapshot` for a type neither holds nor names.
+pub fn layered(
+    declared: &SchemaLibrary,
+    tables: &SchemaLibrary,
+    snapshot: Option<&SchemaLibrary>,
+) -> SchemaLibrary {
+    // ⚠ A document's own table outranks an installed snapshot: a snapshot is of one build of the game and a class
+    // grows between builds, so a class laid out by the snapshot demands members the document's records do not hold
+    // and leaves out the ones only they hold.
+    // ⚠ A type `tables` only names stays declared empty, as `extend` declares it, whatever the snapshot declares of
+    // it: the element class of an array that holds nothing is written into a synthesised table, so the snapshot's
+    // class in its place would make a process that installed one write other bytes than a process with none.
+    let own = extend(declared, tables).into_owned();
+    let Some(snapshot) = snapshot else {
+        return own;
+    };
+    let mut library = snapshot.clone();
+    library.structs.extend(own.structs);
+    library.enums.extend(own.enums);
+    library
+}
+
 fn referenced(ty: &FieldType, structs: &mut Vec<String>, enums: &mut Vec<String>) {
     match ty {
         FieldType::Struct(name) => structs.push(name.clone()),
@@ -382,5 +404,69 @@ fn rbm_type(owner: &RbmClass, entry: &RbmClassEntry) -> FieldType {
         }
         PsoType::Invalid => FieldType::Unknown("invalid".into()),
         PsoType::Unknown(b) => FieldType::Unknown(format!("rbm type {b:#04X}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::meta::build_library;
+
+    fn library(psc: &str) -> SchemaLibrary {
+        let psc = format!("<ParserSchema>{psc}</ParserSchema>");
+        build_library([("classes.psc", psc.as_bytes())]).expect("the classes parse")
+    }
+
+    /// The members `library` gives `class`, or `None` where it holds no such class.
+    fn members(library: &SchemaLibrary, class: &str) -> Option<Vec<String>> {
+        let def = library.struct_(class)?;
+        Some(def.fields.iter().map(|f| f.name.clone()).collect())
+    }
+
+    #[test]
+    fn a_documents_own_table_outranks_a_snapshot_and_a_type_it_only_names_stays_empty() {
+        // The file states `Held` with a member of its own and names `Element` for an array that holds nothing.
+        let tables = library(
+            r#"<structdef type="Held">
+                 <u32 name="shared"/>
+                 <u32 name="onlyTheFileStates"/>
+                 <array name="elements" type="atArray"><struct type="Element"/></array>
+               </structdef>"#,
+        );
+        assert_eq!(members(&tables, "Element"), None, "the file only names it");
+        let snapshot = library(
+            r#"<structdef type="Held"><u32 name="shared"/><u32 name="ofALaterBuild"/></structdef>
+               <structdef type="Element"><u32 name="ofTheSnapshot"/></structdef>
+               <structdef type="Family"><u32 name="ofTheSnapshot"/></structdef>
+               <structdef type="NoFileHolds"><u32 name="ofTheSnapshot"/></structdef>"#,
+        );
+        let declared =
+            library(r#"<structdef type="Family"><u32 name="declaredInCode"/></structdef>"#);
+
+        let with = layered(&declared, &tables, Some(&snapshot));
+        let without = layered(&declared, &tables, None);
+        let names = |names: &[&str]| Some(names.iter().map(|n| n.to_string()).collect::<Vec<_>>());
+        assert_eq!(
+            members(&with, "Held"),
+            names(&["shared", "onlyTheFileStates", "elements"]),
+            "as the file's own table states it"
+        );
+        assert_eq!(
+            members(&with, "Element"),
+            names(&[]),
+            "a class the table only names is declared empty, whatever the snapshot declares of it"
+        );
+        assert_eq!(members(&with, "Family"), names(&["declaredInCode"]));
+        assert_eq!(
+            members(&with, "NoFileHolds"),
+            names(&["ofTheSnapshot"]),
+            "the snapshot gives a class the table does not hold"
+        );
+        // Whatever a process with no snapshot lays out, one that installed a snapshot lays out the same.
+        assert_eq!(without.structs.len(), 3);
+        for class in without.structs.keys() {
+            assert_eq!(members(&with, class), members(&without, class), "{class}");
+        }
+        assert_eq!(members(&without, "NoFileHolds"), None);
     }
 }

@@ -1,0 +1,95 @@
+# The reference of the GTA VI World screen: fixed cameras, hours, modes and weathers. Each stop is
+# settled and converged, then shot and dumped, so that two runs of one build draw and select alike.
+#
+#   OPENRAGE_GTA6_BUILD=<the build's folder> OPENRAGE_GTA6_EXE=<its executable> \
+#       OPENRAGE_CONFIG_DIR=<a scratch folder> OPENRAGE_GAME_PACK=<a baked shader pack> \
+#       just shots scripts/shots/gta6_world_reference.shots OUT
+#
+# With no pack the frame is lit by the plain pass, and a shot is the same at every hour.
+# It judges nothing. A run of it at the revision before a change is the reference, and
+# gta6_world_reference_compare.shots holds a run after the change to it. The digests of
+# src/state/gta6_worldview/reference_tests.rs are taken at the cameras, hours, modes and weathers
+# of these shots.
+size 1600 900
+game gta6 ${OPENRAGE_GTA6_BUILD}
+workspace World
+world clean on
+world modes base
+world weather clear
+
+# A dense city block, from over its roofs.
+world camera -300 350 60 30 -15 60
+world hour 12
+world settle 1800
+world converge 600
+shot city-noon
+world dump city-noon.json
+world hour 18.5
+world settle 1800
+world converge 600
+shot city-dusk
+world dump city-dusk.json
+world hour 22
+world settle 1800
+world converge 600
+shot city-night
+world dump city-night.json
+
+# Inside an interior, in its largest room.
+world camera -571.67 1471.68 6.33 45 -5 60
+world hour 12
+world settle 1800
+world converge 600
+shot interior-noon
+world dump interior-noon.json
+world hour 22
+world settle 1800
+world converge 600
+shot interior-night
+world dump interior-night.json
+
+# Open country.
+world camera -1500 3000 60 0 -12 60
+world hour 12
+world settle 1800
+world converge 600
+shot country-noon
+world dump country-noon.json
+world hour 18.5
+world settle 1800
+world converge 600
+shot country-dusk
+world dump country-dusk.json
+world hour 22
+world settle 1800
+world converge 600
+shot country-night
+world dump country-night.json
+
+# The sea, with the coast on the horizon.
+world camera 3300 1400 30 100 -4 60
+world hour 12
+world settle 1800
+world converge 600
+shot sea-noon
+world dump sea-noon.json
+
+# A far view from height: in the base game, with every mode on, and in the rain at dusk.
+world camera 0 0 2500 0 -60 60
+world hour 12
+world settle 1800
+world converge 600
+shot height-noon
+world dump height-noon.json
+world modes base story minigames
+world settle 1800
+world converge 600
+shot height-every-mode
+world dump height-every-mode.json
+world modes base
+world weather rain
+world hour 18.5
+world settle 1800
+world converge 600
+shot height-rain-dusk
+world dump height-rain-dusk.json

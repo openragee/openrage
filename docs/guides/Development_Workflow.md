@@ -479,7 +479,10 @@ clean checkout sees it.
 
 The script is one step per line, and `#` starts a comment. It is read whole
 before anything is drawn, so a wrong line fails at once with its number.
-Coordinates are points on a 1600×900 screen unless `size` changes it.
+Coordinates are points on a 1600×900 screen unless `size` changes it. A
+`${NAME}` in a line is the environment variable of that name, so that a script
+kept in the tree names no folder of the machine it runs on; a variable that is
+not set fails the line that names it.
 
 A run draws on a fixed clock, `or_transport::clock`: each frame is a sixtieth
 of a second whatever it took, the game time moves a sixtieth a frame from
@@ -520,7 +523,7 @@ so that what reads that clock draws the same frames in two runs.
 | `world clean on`, `world clean off` | draws the world alone over the whole window, with no panel, line or toast over it, so that a `shot` is the frame at the size `size` gives; `off` puts the view back in the dock |
 | `world settle [SECONDS]` | draws frames until the viewer holds an index, waits for no map, model or texture, the exposure has arrived, and nothing streamed in has changed for two frames in a row; after `SECONDS`, 180 with no number, the run fails and says what was still arriving |
 | `world converge [SECONDS]` | over a settled world, twice in a row with nothing arriving, has the exposure taken whole from the camera's place and waits for it to arrive, then forgets the temporal history and draws 64 frames from the first camera offset with the game time started at nought, so that a `shot` after it is the same frame in any run; after `SECONDS`, 120 with no number, the run fails |
-| `world dump FILE` | writes, as JSON in the output folder, what the World screen's viewer wants and draws at its camera: the names of the maps wanted and loaded, the nodes of the loaded maps and those that draw by kind and level, the instances its lists draw, its far cards, the hour and the groups on, and each node that draws with how opaque; `FILE` is a name, not a path |
+| `world dump FILE` | writes, as JSON in the output folder, what the World screen's viewer wants and draws at its camera: the names of the maps wanted and loaded, the nodes of the loaded maps and those that draw by kind and level, the instances its lists draw, its far cards, the hour and the groups on, and each node that draws with how opaque, and under `frame` what the last frame drew and whether the game's passes lit it; `FILE` is a name, not a path |
 | `world modes MODE…` | streams the game modes named, each `base`, `story` or `minigames`, in place of those on; the groups on follow them |
 | `world fly VX VY VZ SECONDS` | draws frames for `SECONDS`, moving the World screen's camera by the velocity given in metres a second as each frame is drawn, so that a `world dump` after it sees the world as a moving camera does |
 | `world glide VX VY VZ SECONDS` | `world fly` by the shots run's frame clock, a sixtieth of a second a frame, in place of the wall's: two runs stop at the same places, however long each frame takes |
@@ -529,7 +532,8 @@ so that what reads that clock draws the same frames in two runs.
 | `world group ID on\|off` | switches the script-managed group whose id is `ID` in hexadecimal on or off, as ticking it in the World panel does; from then on the hour and the modes no longer set the groups |
 | `model perf FRAMES FILE [full]` | draws `FRAMES` frames of the open GTA VI model at rest, then as many with the camera turned once round it by even steps of its yaw, and writes as JSON in the output folder what they cost: each frame's time on the CPU, the three stages of its own passes where the device times them (the shadow, the targets, the mask and the meter), and what it asked of the device: passes, draws, bind groups set, the queue's writes and their bytes, buffer copies, and vertices times instances; before them, a digest of the bytes each target of its passes holds, by which two runs of one build are told apart, and the same digests drawn with the vertices fitted to each surface and with the most an instance has, which the step fails on where they differ; the step is refused unless the model is drawn in Shaded by its own passes. A frame draws again only the passes whose inputs moved, so at rest it draws no surface; with `full` every frame draws every pass, which is what a frame cost before that |
 | `model passes` | forgets every pass built of the open GTA VI model's own programs, so that the frames after it build them again with its maps decoded already: the log then says when its first frame and its last surface were drawn by them, and what each prepare cost |
-| `compare NAME REFERENCE.png TOLERANCE` | measures the shot `NAME` against the image at `REFERENCE.png`, which must be of its size: prints the mean absolute difference of red, green and blue in levels of 255 and the share of pixels with a channel more than 16 levels away, and saves `NAME.diff.png` beside the shot; a mean over `TOLERANCE` fails the run at its end, so one run judges every comparison, and with no file at `REFERENCE.png` the shot is a candidate for it and nothing fails |
+| `compare NAME REFERENCE.png MEAN SHARE` | measures the shot `NAME` against the image at `REFERENCE.png`, which must be of its size: prints the mean absolute difference of red, green and blue in levels of 255 and the share of pixels with a channel more than 16 levels away, and saves `NAME.diff.png` beside the shot; a mean over `MEAN`, or a share over `SHARE` percent, fails the run at its end, so one run judges every comparison, and so does a reference that is not there. A line with one bound is refused: a mean alone lets through a small region that is wholly wrong |
+| `comparedump FILE REFERENCE.json` | holds the `world dump` written as `FILE` to the dump at `REFERENCE.json`, field by field over the list `COMPARED` of `src/self_check/shots/dumps.rs`: the camera, what is switched on, the maps wanted and loaded, the nodes by level, each node that draws with how opaque, the far cards, how many instances the frame was given and saw, and which pass lit it; the fields `LEFT_OUT` names there, how long a selection or a read took, how many reads the run made and what the device holds, are not compared. A field that differs, a field neither list names and a reference that is not there each fail the run at its end |
 
 A GTA VI model drawn in Shaded by its own translated programs has one developer
 option, the environment variable `OPENRAGE_GTA6_SHADED`: words separated by
@@ -583,6 +587,104 @@ message that names a path says `<path>`, the comparison ignores CRLF line ends, 
 a long scratch folder adds to a message are taken out of what lays out after it, so the record
 holds in any scratch folder that breaks a message into two lines at most, and a longer one stops
 the test and says so.
+
+### The reference of the GTA VI World screen
+
+A change that must leave the GTA VI World screen as it was is held by three checks, each made at
+the revision before the change and compared after it. No frame of a game and no digest of one is
+kept in the tree: a reference is made again in scratch, by the same commands, from the revision
+before.
+
+| Check | What it holds | What it cannot see |
+|---|---|---|
+| the digests, `the_world_reads_as_its_reference_says` | exactly: the index's rows, the vertices, indices and materials of models, the level bytes of textures, the selection, the lights and the occluders at each camera of the script and over maps, and the day's sky, water and wind at its hours | the device and the frame: nothing is drawn |
+| the dumps, `comparedump` | exactly: at each shot, the maps wanted and loaded, each node that draws with how opaque, the far cards, how many instances the frame was given and saw, and whether the game's passes lit it | what a node looks like |
+| the shots, `compare` | within two bounds a shot: the frame as it is drawn | a difference smaller than two runs of one build show |
+
+Every command takes the build from the environment: `OPENRAGE_GTA6_BUILD` is the folder that holds
+its archives and `OPENRAGE_GTA6_EXE` its executable, which the keys are read from. Set
+`OPENRAGE_CONFIG_DIR` to a scratch folder kept between runs, so the index is built once, and
+`OPENRAGE_GAME_PACK` to a baked shader pack. ⚠ With no pack the frame is lit by the plain pass,
+which draws no sky, sun or lamp, and a shot is then the same at every hour (measured: the noon and
+dusk shots of a run with no pack were the same file). A dump says which pass lit its frame
+(`frame.lit_by_the_game`), and `comparedump` fails a run lit by one pass against a reference lit by
+the other.
+
+**The shots and the dumps.** At the revision before the change, in a lane of it:
+
+```
+just shots scripts/shots/gta6_world_reference.shots REFERENCE
+```
+
+and after the change:
+
+```
+just shots scripts/shots/gta6_world_reference.shots AFTER
+OPENRAGE_WORLD_REFERENCE=REFERENCE just shots scripts/shots/gta6_world_reference_compare.shots AFTER
+```
+
+The first script draws twelve stops (a city block and open country at noon, dusk and night, an
+interior at noon and night, the sea, and a view from height in the base game, with every mode on
+and in the rain at dusk), each settled and converged, then shot and dumped. The second draws
+nothing and fails on a shot over either of its bounds, a dump field that differs, a dump field
+neither list of `src/self_check/shots/dumps.rs` names, and a reference that is not there.
+`every_shot_of_the_reference_is_settled_then_converged_then_dumped` and
+`the_script_that_holds_names_every_shot_and_dump_of_the_script_that_draws_and_draws_nothing` hold
+the two scripts to each other.
+
+**The digests.** At the revision before the change, then after it:
+
+```
+OPENRAGE_GTA6_WORLD_DIGESTS_WRITE=REFERENCE.txt cargo nextest run --profile all -p openrage --bin openrage -E 'test(the_world_reads_as_its_reference_says)'
+OPENRAGE_GTA6_WORLD_DIGESTS=REFERENCE.txt cargo nextest run --profile all -p openrage --bin openrage -E 'test(the_world_reads_as_its_reference_says)'
+```
+
+The suite is `src/state/gta6_worldview/reference_tests.rs`, of the slow tier. It builds the
+install's index afresh and digests each of its tables; the models of archetypes evenly spaced
+among those the index places, in the order of their words; textures of the packs evenly spaced in
+the order of their keys, and some of those the digested models name; the selection, the lights,
+the occluders and the day at each shot of the script; and the selection over maps evenly spaced
+among those that stream at rest. How many of each is a constant at the head of the suite. No name
+of the game is written in it: every set is chosen by its place in an order. It writes a reference that is not there and never writes over one, fails on a digest
+that differs, one the reference lacks and one the world no longer gives, and skips unless the
+build and one of the two files are named. A part that moves the code the suite reads moves the
+suite's imports with it and changes nothing else of it: a digest whose making changed is a
+difference the part has to explain.
+
+**What two runs of one build measured.** On the Apple M5 Ultra desktop at `071ede9c4` with this
+part's dump field, 2026-11-27, load averages between 85 and 97 with other lanes building, a second
+run of the script against a first (`compare` and `comparedump` over its twelve stops):
+
+- **The digests agree exactly**: 961 of 961, a held run against a written one.
+- **The 24 compared fields of every dump agree exactly.**
+- **What the device holds does not agree**, and those fields are left out of the comparison: the
+  textures on the device differed in about one key in a hundred, the slots of the far stand-ins
+  in most, and the draws of a frame by 4 in 4,775 at the interior. They follow the order in which
+  reads arrive, which no step of a script fixes.
+- **The shots therefore differ**, in the far band and nowhere else: the smallest difference was a
+  mean of 0.015 levels with 0.02 % of pixels past 16 (the interior at noon), the largest 2.003
+  levels with 5.33 % (the view from height). A camera converged and shot twice in one process
+  gave the same file and the same dump; the same camera left and returned to gave 0.870 levels
+  and 2.58 %.
+
+Each shot's two bounds in the comparing script are twice what those two runs measured for it,
+rounded up to the next 0.05, and no less than 0.1: from 0.10 levels and 0.10 % for the interior at
+noon to 4.05 levels and 10.70 % from height. So the digests and the dumps are the exact check,
+and a shot catches what moves more of the frame than the far band does between two runs. A run
+on a quieter machine, or with another adapter, measures its own two runs before trusting these
+bounds.
+
+What each catches was measured on 2026-11-27 by planting two changes in scratch, the fade band of
+every level halved and the reach of placed lights halved, and holding that tree to the unchanged
+one: 200 of the 961 digests differed (the selection at every stop and over every map, the lights
+at 8 stops), every one of the twelve dumps failed in 7 of its 24 fields, and 2 of the twelve
+shots went over a bound, the city and the country at night. The other ten shots stayed inside
+theirs, so a shot that passes says little without its dump and the digests.
+
+**What it costs.** On that machine under that load, 2026-11-27, a run of the drawing script took 37 and 39
+minutes, of which the rain at dusk waited 13 for its exposure; a first run in a new configuration
+folder builds the index first, 8 minutes more. The digest suite took between 6 and 19 minutes
+as the load rose, the index's build most of them. The comparing script takes a minute.
 
 ## The nightly Cranelift build
 

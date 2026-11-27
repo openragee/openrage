@@ -306,6 +306,34 @@ impl WorldIndex {
         })
     }
 
+    /// Each table of the index by name, with how many rows it holds and their bytes.
+    #[cfg(test)]
+    pub(super) fn tables(&self) -> Vec<(&'static str, usize, &[u8])> {
+        fn of<'a, T: Pod>(name: &'static str, rows: &'a [T]) -> (&'static str, usize, &'a [u8]) {
+            (name, rows.len(), bytemuck::cast_slice(rows))
+        }
+        vec![
+            of("maps", &self.maps),
+            of("parents", &self.parents),
+            of("archetypes", &self.archetypes),
+            of("models", &self.models),
+            of("dictionaries", &self.dictionaries),
+            of("interiors", &self.interiors),
+            of("lights", &self.lights),
+            of("slod", &self.slod),
+            of("switches", &self.switches),
+            of("places", &self.places),
+            of("outlines", &self.outlines),
+            of("report", std::slice::from_ref(&self.report)),
+        ]
+    }
+
+    /// Every archetype of the index, by its word.
+    #[cfg(test)]
+    pub(super) fn archetypes(&self) -> &[ArchetypeRow] {
+        &self.archetypes
+    }
+
     /// The map of the name `name`, by its place among the maps.
     pub fn map_named(&self, name: u32) -> Option<usize> {
         self.by_name.get(&name).map(|at| *at as usize)

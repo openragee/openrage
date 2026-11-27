@@ -342,12 +342,13 @@ fn hex(names: &[u32]) -> Vec<String> {
 /// Write what the viewer wants and draws at its camera to `path` as JSON, the swaps the last frame
 /// drew open (`open`, of the selection of its version) in place of what they hold until then, and
 /// what the device holds of it (`textures`, `stand_ins`).
-/// `whole` is the models told once whole, the seconds they waited on the device for their maps in all, and the most.
+/// `whole` is the models told once whole, the seconds they waited on the device for their maps in all, and the most; `frame` is what the last frame drew.
 fn dump(
     path: &Path,
     (version, open): (u64, Vec<bool>),
     (textures, stand_ins): (Vec<String>, Vec<String>),
     whole: (usize, f64, f32),
+    frame: serde_json::Value,
 ) -> Result<(), String> {
     let mut viewer = viewer();
     let selected = (viewer.selected(&mut Vec::new()))
@@ -416,9 +417,11 @@ fn dump(
         "swaps": { "held": selected.swaps.len(), "open": open.iter().filter(|o| **o).count() },
         "jumps": viewer.jumps,
         "cards": { "lists": selected.cards.len(), "records": records },
-        // ⚠ A texture is `KEY:ASKED:WIDTHxHEIGHT` and a stand-in `ID:SLOT:LEVEL`: two runs of one scene should hold the same.
+        // ⚠ A texture is `KEY:ASKED:WIDTHxHEIGHT` and a stand-in `ID:SLOT:LEVEL`: they follow the order the reads arrived in, so two runs of one scene do not hold the same.
         "device_textures": textures,
         "device_stand_ins": stand_ins,
+        // ⚠ With no shader pack read the frame is lit by the plain pass, which draws no sky, sun or lamp: a shot of it is the same at every hour.
+        "frame": frame,
         "models_whole": { "count": whole.0, "waits_s": whole.1, "most_s": whole.2 },
         "models_taken": { "count": taken[0].0, "waits_s": taken[0].1, "most_s": taken[0].2, "stale": viewer.stale[0] },
         "textures_taken": { "count": taken[1].0, "waits_s": taken[1].1, "most_s": taken[1].2, "stale": viewer.stale[1] },
@@ -479,7 +482,25 @@ impl Shell {
                 let (version, open) = self.bridge.world_open();
                 let open = (version, open.to_vec());
                 let residency = self.bridge.world_residency();
-                dump(&out.join(name), open, residency, self.bridge.world_whole())?;
+                let drawn = self.bridge.world_drawn();
+                let frame = serde_json::json!({
+                    "lit_by_the_game": drawn.lit_by_the_game,
+                    "selected": drawn.selected,
+                    "seen": drawn.seen,
+                    "draws": drawn.draws,
+                    "models": drawn.models,
+                    "textures": drawn.textures,
+                    "textures_unread": drawn.textures_unread,
+                    "pages": drawn.pages,
+                    "bytes": drawn.bytes,
+                });
+                dump(
+                    &out.join(name),
+                    open,
+                    residency,
+                    self.bridge.world_whole(),
+                    frame,
+                )?;
             }
             // The groups follow the modes, as they do on the screen until a group is ticked.
             WorldStep::Modes(modes) => viewer().enabled.modes = *modes,

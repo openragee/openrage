@@ -313,6 +313,12 @@ impl Streamer {
         }
     }
 
+    /// How many map bodies and occluder maps are asked for and not read yet.
+    #[cfg(test)]
+    pub(super) fn waiting(&self) -> usize {
+        self.streaming.maps_waiting + self.occluders.waiting()
+    }
+
     /// Switch on what `enabled` names in place of what was on; whether that is a change.
     pub(super) fn set_enabled(&mut self, enabled: Enabled) -> bool {
         if self.enabled == enabled {

@@ -32,6 +32,9 @@ mod lights_vars;
 mod model;
 mod occluders;
 mod pool;
+#[cfg(test)]
+#[path = "reference_tests.rs"]
+mod reference;
 pub(crate) mod sky;
 mod sky_night;
 mod sky_weather;

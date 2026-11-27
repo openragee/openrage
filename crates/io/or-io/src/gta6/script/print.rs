@@ -1947,7 +1947,21 @@ impl<'a> Writer<'a> {
 
     /// The name a type prints under: the user's for a `type_` hash they named, else the listing's.
     fn type_name(&self, listed: &str) -> String {
-        type_name(listed, self.names, self.sharp)
+        // An instance of a generic type a list names is that type and its arguments, as its class head is.
+        let instance = TypeKey::of_name(listed).filter(|key| {
+            let generic = self
+                .project
+                .types
+                .get(key)
+                .is_some_and(|facts| facts.generic.is_some());
+            self.sharp && generic && self.names.listed_type(listed).is_none()
+        });
+        match instance {
+            Some(key) => {
+                crate::gta6::script::project::types::display(self.project, self.names, key)
+            }
+            None => type_name(listed, self.names, self.sharp),
+        }
     }
 
     /// The type a variable is declared with where a type must stand: its kind where one is known.
@@ -1968,7 +1982,11 @@ impl<'a> Writer<'a> {
 
     /// The C#-like name of a kind, for a declaration.
     fn kind_text(&self, kind: &Kind) -> String {
-        kind_text(kind, self.names, self.sharp)
+        match kind {
+            Kind::Object(name) | Kind::Value { ty: name, .. } => self.type_name(name),
+            Kind::Array(of) => format!("{}[]", self.kind_text(of)),
+            _ => kind_text(kind, self.names, self.sharp),
+        }
     }
 
     /// What `e` is, as far as its own shape and the kinds of its variables say.

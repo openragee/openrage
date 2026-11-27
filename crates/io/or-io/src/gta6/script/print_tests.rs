@@ -2874,3 +2874,41 @@ fn either_arm_of_a_choice_where_32_bits_are_taken_stands_without_its_cast() {
     );
     assert!(text.contains("? 0x8C0D0E0F : 1;"), "{text}");
 }
+
+#[test]
+fn an_instance_of_a_generic_type_a_list_names_is_written_as_that_type_and_its_arguments() {
+    use crate::gta6::script::project::TypeFacts;
+    let (of, arg, instance) = (
+        TypeKey(0xA0A0_0001),
+        TypeKey(0xA0A0_0002),
+        TypeKey(0xA0A0_0003),
+    );
+    let mut project = Project::default();
+    let facts = TypeFacts {
+        generic: Some((of, vec![arg])),
+        ..TypeFacts::default()
+    };
+    project.types.insert(instance, facts);
+    let mut names = Names::default();
+    names.types.insert(of.0, "Shelf_1".to_owned());
+    names.types.insert(arg.0, "Item".to_owned());
+    let mut head = kinds(&[(Var::Local(0), Kind::Object(instance.to_string()))]);
+    head.locals = 1;
+    let made = Expr::NewObject(crate::gta6::script::ir::VmType {
+        name: instance.to_string(),
+        byte_size: 16,
+        id: 1,
+        flags: 0,
+    });
+    let body = vec![tree::Stmt::Simple(assign(Var::Local(0), made))];
+    let f = tree::Function { head, body };
+    let text = written_in(&f, &Context::new(&names, &project, Options::default()));
+    assert!(
+        text.contains("Shelf<Item> local_0 = new Shelf<Item>();"),
+        "{text}"
+    );
+    // Of no list that names the generic type, the instance keeps its own hash.
+    names.types.remove(&of.0);
+    let text = written_in(&f, &Context::new(&names, &project, Options::default()));
+    assert!(text.contains(&format!("new {instance}()")), "{text}");
+}

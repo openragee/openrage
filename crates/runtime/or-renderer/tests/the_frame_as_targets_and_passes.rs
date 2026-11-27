@@ -3,8 +3,10 @@
 //! steps of the two frames `render_deferred` draws are listed in order with the kind of each, so
 //! that the kinds a declared list of passes needs are counted and not estimated.
 //!
-//! A pass added to or taken from the source, or a label this list names that its file no longer
-//! holds, fails here until the list is read again.
+//! A pass added to or taken from the source, a call that records into the frame added to, taken
+//! from or moved within `render_deferred`, or a label this list names that its file no longer
+//! holds, fails here until the list is read again; a step's kind, program and count are a reading
+//! entered by hand.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -110,9 +112,11 @@ enum Times {
 /// Why a step cannot be a row of a list of passes as it stands; none where it can.
 type Named = Option<&'static str>;
 
-/// One step of a frame: the pass it is drawn in by that pass's label and the file that holds the
-/// label, what it writes, which frames draw it, its kind, its program and how often.
+/// One step of a frame: the call of `render_deferred` that records it, the pass it is drawn in by
+/// that pass's label and the file that holds the label, what it writes, which frames draw it, its
+/// kind, its program and how often.
 struct Step {
+    call: &'static str,
     label: &'static str,
     file: &'static str,
     writes: &'static str,
@@ -124,14 +128,15 @@ struct Step {
 }
 
 const fn step(
-    label: &'static str,
-    file: &'static str,
+    call: &'static str,
+    (label, file): (&'static str, &'static str),
     writes: &'static str,
     frames: u8,
     kind: Kind,
     from: From,
 ) -> Step {
     Step {
+        call,
         label,
         file,
         writes,
@@ -155,24 +160,24 @@ fn steps() -> Vec<Step> {
     let sun_turned = "drawn only when the sun has turned since the texture was last marched";
     vec![
         step(
-            "viewport-gbuffer-pass",
-            FRAME,
+            "scene.record_gbuffer",
+            ("viewport-gbuffer-pass", FRAME),
             "G-buffer, depth and stencil",
             LEGACY,
             Surfaces,
             From::Game,
         ),
         step(
-            "viewport-gbuffer-pass",
-            FRAME,
+            "world.draw_gbuffer",
+            ("viewport-gbuffer-pass", FRAME),
             "G-buffer, depth and stencil",
             WORLD,
             Buckets,
             From::Host,
         ),
         step(
-            "sun-shadow-cast",
-            "game_shaders/shadow.rs",
+            "scene.record_shadow",
+            ("sun-shadow-cast", "game_shaders/shadow.rs"),
             "shadow map",
             LEGACY,
             Surfaces,
@@ -181,8 +186,8 @@ fn steps() -> Vec<Step> {
         Step {
             named: Some(tiles),
             ..step(
-                "sun-shadow-cast",
-                "game_shaders/shadow.rs",
+                "world.draw_shadow",
+                ("sun-shadow-cast", "game_shaders/shadow.rs"),
                 "shadow map",
                 WORLD,
                 Buckets,
@@ -190,8 +195,8 @@ fn steps() -> Vec<Step> {
             )
         },
         step(
-            "sun-shadow-receive",
-            "game_shaders/shadow.rs",
+            "passes.record_shadow_receive",
+            ("sun-shadow-receive", "game_shaders/shadow.rs"),
             "G-buffer 2, alpha",
             BOTH,
             Screen,
@@ -200,8 +205,8 @@ fn steps() -> Vec<Step> {
         Step {
             named: Some(sun_turned),
             ..step(
-                "world-terrain-bake",
-                "world/shadow_terrain.rs",
+                "terrain.record",
+                ("world-terrain-bake", "world/shadow_terrain.rs"),
                 "terrain shadow",
                 WORLD,
                 Screen,
@@ -209,56 +214,56 @@ fn steps() -> Vec<Step> {
             )
         },
         step(
-            "world-terrain-receive",
-            "world/shadow_terrain.rs",
+            "terrain.record",
+            ("world-terrain-receive", "world/shadow_terrain.rs"),
             "G-buffer 2, alpha",
             WORLD,
             Screen,
             From::Host,
         ),
         step(
-            "ssao-downscale",
-            "game_shaders/ambient.rs",
+            "passes.record_ambient",
+            ("ssao-downscale", "game_shaders/ambient.rs"),
             "half depth",
             BOTH,
             Screen,
             From::Game,
         ),
         step(
-            "ssao-process",
-            "game_shaders/ambient.rs",
+            "passes.record_ambient",
+            ("ssao-process", "game_shaders/ambient.rs"),
             "half occlusion",
             BOTH,
             Screen,
             From::Game,
         ),
         step(
-            "ssao-blur-x",
-            "game_shaders/ambient.rs",
+            "passes.record_ambient",
+            ("ssao-blur-x", "game_shaders/ambient.rs"),
             "half occlusion",
             BOTH,
             Screen,
             From::Game,
         ),
         step(
-            "ssao-blur-y",
-            "game_shaders/ambient.rs",
+            "passes.record_ambient",
+            ("ssao-blur-y", "game_shaders/ambient.rs"),
             "half occlusion",
             BOTH,
             Screen,
             From::Game,
         ),
         step(
-            "ssao-upscale",
-            "game_shaders/ambient.rs",
+            "passes.record_ambient",
+            ("ssao-upscale", "game_shaders/ambient.rs"),
             "G-buffer 3, red and green",
             BOTH,
             Screen,
             From::Game,
         ),
         step(
-            "viewport-lighting-pass",
-            FRAME,
+            "passes.record_lighting",
+            ("viewport-lighting-pass", FRAME),
             "lit frame",
             BOTH,
             Screen,
@@ -267,8 +272,8 @@ fn steps() -> Vec<Step> {
         Step {
             times: Times::Fixed(3),
             ..step(
-                "viewport-lighting-pass",
-                FRAME,
+                "passes.record_lighting",
+                ("viewport-lighting-pass", FRAME),
                 "lit frame",
                 BOTH,
                 Instances,
@@ -279,8 +284,8 @@ fn steps() -> Vec<Step> {
             times: Times::Rooms,
             named: Some(rooms),
             ..step(
-                "room-mask",
-                "game_shaders/deferred.rs",
+                "passes.record_rooms",
+                ("room-mask", "game_shaders/deferred.rs"),
                 "stencil",
                 WORLD,
                 Instances,
@@ -291,8 +296,8 @@ fn steps() -> Vec<Step> {
             times: Times::Rooms,
             named: Some(rooms),
             ..step(
-                "room-lights",
-                "game_shaders/deferred.rs",
+                "passes.record_rooms",
+                ("room-lights", "game_shaders/deferred.rs"),
                 "lit frame",
                 WORLD,
                 Instances,
@@ -300,8 +305,8 @@ fn steps() -> Vec<Step> {
             )
         },
         step(
-            "sky-noise-pass",
-            "game_shaders/dome.rs",
+            "passes.record_sky_noise",
+            ("sky-noise-pass", "game_shaders/dome.rs"),
             "cloud noise",
             BOTH,
             Screen,
@@ -310,8 +315,8 @@ fn steps() -> Vec<Step> {
         Step {
             times: Times::Fixed(3),
             ..step(
-                "viewport-sky-pass",
-                FRAME,
+                "passes.record_sky",
+                ("viewport-sky-pass", FRAME),
                 "lit frame",
                 BOTH,
                 Surfaces,
@@ -319,24 +324,24 @@ fn steps() -> Vec<Step> {
             )
         },
         step(
-            "viewport-sky-pass",
-            FRAME,
+            "passes.record_sky",
+            ("viewport-sky-pass", FRAME),
             "lit frame",
             WORLD,
             Screen,
             From::Host,
         ),
         step(
-            "viewport-water-fog-pass",
-            FRAME,
+            "scene.record_water_fog",
+            ("viewport-water-fog-pass", FRAME),
             "lit frame and a sink",
             LEGACY,
             Surfaces,
             From::Game,
         ),
         step(
-            "viewport-glow-pass",
-            FRAME,
+            "world.draw_glow",
+            ("viewport-glow-pass", FRAME),
             "lit frame",
             WORLD,
             Buckets,
@@ -345,8 +350,8 @@ fn steps() -> Vec<Step> {
         Step {
             times: Times::Fixed(2),
             ..step(
-                "viewport-glow-pass",
-                FRAME,
+                "passes.record_distant_lights",
+                ("viewport-glow-pass", FRAME),
                 "lit frame",
                 WORLD,
                 Instances,
@@ -354,24 +359,24 @@ fn steps() -> Vec<Step> {
             )
         },
         step(
-            "refraction",
-            FRAME,
+            "encoder.copy_texture_to_texture",
+            ("refraction", FRAME),
             "copy of the lit frame",
             BOTH,
             Copy,
             From::None,
         ),
         step(
-            "viewport-blended-pass",
-            FRAME,
+            "scene.record_blended",
+            ("viewport-blended-pass", FRAME),
             "lit frame",
             LEGACY,
             Surfaces,
             From::Game,
         ),
         step(
-            "viewport-blended-pass",
-            FRAME,
+            "world.draw_lit",
+            ("viewport-blended-pass", FRAME),
             "lit frame",
             WORLD,
             Buckets,
@@ -380,8 +385,8 @@ fn steps() -> Vec<Step> {
         Step {
             times: Times::Fixed(2),
             ..step(
-                "viewport-blended-pass",
-                FRAME,
+                "passes.record_distant_lights",
+                ("viewport-blended-pass", FRAME),
                 "lit frame",
                 WORLD,
                 Instances,
@@ -389,8 +394,8 @@ fn steps() -> Vec<Step> {
             )
         },
         step(
-            "viewport-fog-volume-pass",
-            FRAME,
+            "passes.record_fog",
+            ("viewport-fog-volume-pass", FRAME),
             "lit frame",
             BOTH,
             Instances,
@@ -399,8 +404,8 @@ fn steps() -> Vec<Step> {
         Step {
             named: Some(history),
             ..step(
-                "post",
-                "viewport/post.rs",
+                "post.record_temporal",
+                ("post", "viewport/post.rs"),
                 "history",
                 WORLD,
                 Screen,
@@ -408,8 +413,8 @@ fn steps() -> Vec<Step> {
             )
         },
         step(
-            "post",
-            "viewport/post.rs",
+            "post.record_temporal",
+            ("post", "viewport/post.rs"),
             "lit frame",
             WORLD,
             Copy,
@@ -419,8 +424,8 @@ fn steps() -> Vec<Step> {
             times: Times::Fixed(2),
             named: Some(read_back),
             ..step(
-                "viewport-meter",
-                "viewport/meter.rs",
+                "meter.record",
+                ("viewport-meter", "viewport/meter.rs"),
                 "counts",
                 BOTH,
                 Measure,
@@ -428,38 +433,27 @@ fn steps() -> Vec<Step> {
             )
         },
         step(
-            "grade",
-            "game_shaders/grade.rs",
+            "grade.record",
+            ("grade", "game_shaders/grade.rs"),
             "scratch",
             WORLD,
             Screen,
             From::Host,
         ),
         step(
-            "grade",
-            "game_shaders/grade.rs",
+            "grade.record",
+            ("grade", "game_shaders/grade.rs"),
             "lit frame",
             WORLD,
             Copy,
             From::None,
         ),
         Step {
-            times: Times::BloomPlan,
-            ..step(
-                "bloom",
-                "game_shaders/bloom.rs",
-                "bloom buffers, lit frame",
-                LEGACY,
-                Screen,
-                From::Game,
-            )
-        },
-        Step {
             // The halvings, the doublings and the composite.
             times: Times::Fixed(BLOOM_SIZES + (BLOOM_SIZES - 1) + 1),
             ..step(
-                "post",
-                "viewport/post.rs",
+                "post.record_bloom",
+                ("post", "viewport/post.rs"),
                 "bloom sizes, scratch",
                 WORLD,
                 Screen,
@@ -469,37 +463,65 @@ fn steps() -> Vec<Step> {
         Step {
             times: Times::Fixed(2),
             ..step(
-                "post",
-                "viewport/post.rs",
+                "post.record_bloom",
+                ("post", "viewport/post.rs"),
                 "local light, lit frame",
                 WORLD,
                 Copy,
                 From::None,
             )
         },
+        Step {
+            times: Times::BloomPlan,
+            ..step(
+                "passes.record_bloom",
+                ("bloom", "game_shaders/bloom.rs"),
+                "bloom buffers, lit frame",
+                LEGACY,
+                Screen,
+                From::Game,
+            )
+        },
         step(
-            "viewport-resolve-pass",
-            FRAME,
+            "passes.record_resolve",
+            ("viewport-resolve-pass", FRAME),
+            "mapped frame or screen",
+            BOTH,
+            Screen,
+            From::Game,
+        ),
+        // Where nothing was drawn: the sky's frame mapped in place of the background, else the bloom that spills there.
+        step(
+            "passes.record_background",
+            ("viewport-resolve-pass", FRAME),
             "mapped frame or screen",
             BOTH,
             Screen,
             From::Game,
         ),
         step(
-            "viewport-antialias-pass",
-            FRAME,
-            "screen",
+            "passes.record_halo",
+            ("viewport-resolve-pass", FRAME),
+            "mapped frame or screen",
             LEGACY,
             Screen,
             From::Game,
         ),
         step(
-            "post",
-            "viewport/post.rs",
+            "post.record_sharpen",
+            ("post", "viewport/post.rs"),
             "screen",
             WORLD,
             Screen,
             From::Host,
+        ),
+        step(
+            "passes.record_antialias",
+            ("viewport-antialias-pass", FRAME),
+            "screen",
+            LEGACY,
+            Screen,
+            From::Game,
         ),
     ]
 }
@@ -533,6 +555,34 @@ fn calls(text: &str) -> [usize; 3] {
         .next()
         .unwrap_or(text);
     CALLS.map(|call| code.matches(call).count())
+}
+
+/// The call of `render_deferred` that opens the pass both casts of the sun's shadow draw in.
+const OPENS: &str = "passes.record_shadow_cast";
+
+/// The calls in the body of `render_deferred` that record into the frame, in the order the source holds them, each as the last name of what it is called on and its own.
+fn recorded(text: &str) -> Vec<String> {
+    let body = (text.split("fn render_deferred(").nth(1)).expect("the frame's function is there");
+    // The function's own closing brace is the first at a method's depth.
+    let body = body.split("\n    }\n").next().unwrap_or(body);
+    let name = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut calls = Vec::new();
+    for (dot, _) in body.match_indices('.') {
+        let after = &body[dot + 1..];
+        let len = after.bytes().take_while(|b| name(*b)).count();
+        let (method, rest) = after.split_at(len);
+        let records = method == "record"
+            || method.starts_with("record_")
+            || method.starts_with("draw_")
+            || method == "copy_texture_to_texture";
+        if !records || !rest.starts_with('(') {
+            continue;
+        }
+        let on = body[..dot].trim_end().trim_end_matches(')');
+        let start = on.bytes().rposition(|b| !name(b)).map_or(0, |at| at + 1);
+        calls.push(format!("{}.{method}", &on[start..]));
+    }
+    calls
 }
 
 #[test]
@@ -585,6 +635,27 @@ fn the_frame_is_listed_in_the_passes_the_source_labels_and_the_kinds_it_needs_ar
     // Every file of the frame is named by a step: a pass of the frame the list leaves out fails.
     let listed: BTreeSet<&str> = steps.iter().map(|s| s.file).collect();
     assert_eq!(listed, frame_files);
+    // The steps are in the order the frame's function records them, and none of its calls is left out.
+    let text = std::fs::read_to_string(root.join(FRAME)).expect("the frame's source reads");
+    let recorded: Vec<String> = (recorded(&text).into_iter())
+        .filter(|call| call != OPENS)
+        .collect();
+    let mut listed: Vec<&str> = steps.iter().map(|s| s.call).collect();
+    listed.dedup();
+    assert_eq!(
+        recorded, listed,
+        "what render_deferred records (left) is not what the steps list (right): read the call that changed and enter it"
+    );
+    // What a call is made on says whose program draws: a scene's surfaces by the game's, the world's buckets by the host's, and a copy by none.
+    for step in &steps {
+        let whose = match step.call.split_once('.') {
+            Some(("scene", _)) => (Kind::Surfaces, From::Game),
+            Some(("world", _)) => (Kind::Buckets, From::Host),
+            Some(("encoder", _)) => (Kind::Copy, From::None),
+            _ => continue,
+        };
+        assert_eq!((step.kind, step.from), whose, "{}", step.call);
+    }
 
     // The targets a pass kind states are of the formats the frame is made in.
     eprintln!(

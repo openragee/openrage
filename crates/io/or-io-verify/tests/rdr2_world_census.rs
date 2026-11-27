@@ -513,6 +513,18 @@ fn the_world_files_of_an_rdr2_install_are_counted_and_put_to_every_reader() {
     // Every file is counted under one extension.
     let summed: usize = mounted.extensions.values().map(|e| e.files).sum();
     assert_eq!(summed, mounted.files);
+    let named: usize = mounted.extensions.values().map(|e| e.named).sum();
+    eprintln!(
+        "rdr2 files: {named} of {} carry a name, the others a hash alone",
+        mounted.files
+    );
+    // What the reference states of a world's files: the row of every one says it is a resource.
+    for (ext, _) in WORLD {
+        let counted = mounted.extensions.get(ext);
+        let (files, resources) = counted.map_or((0, 0), |c| (c.files, c.resources));
+        assert!(files > 0, "{ext}: the install holds none");
+        assert_eq!(resources, files, "{ext}: a file whose row is no resource's");
+    }
 
     let library = SchemaLibrary::default();
     let rows = rows_of(&mounted);
@@ -582,6 +594,16 @@ fn the_world_files_of_an_rdr2_install_are_counted_and_put_to_every_reader() {
                 "  {found} of the {} names are stated by a body of the sample",
                 names.len() - 1
             );
+        }
+        // What the reference states of every world file read, and of the one format with a reader: an RSC8 by its head, and a texture dictionary that opens.
+        assert_eq!(
+            read.containers.get("RSC8").copied().unwrap_or(0),
+            read.bodies,
+            "{ext}: a body that is no RSC8"
+        );
+        if let Some((tried, opened, why)) = read.readers.get("RDR2's texture dictionary") {
+            assert_eq!(opened, tried, "{ext}: the declaration refused one: {why:?}");
+            assert_eq!(*tried, read.bodies, "{ext}: a body not put to it");
         }
         // What the reference states of a map and a type file: each is paged metadata that names GTA V's own root type.
         if let Some((_, [root, ..])) = groups.first() {

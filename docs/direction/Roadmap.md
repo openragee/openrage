@@ -11011,7 +11011,20 @@ counted, and whether a fallback surface and a game's program can share targets; 
 the contract asks of a title
 ([brief](Unified_World_Plan.md#the-measures-that-decide-the-design-r71m)).
 
-**Where it stands.** Not started; none of it is measured.
+**Where it stands.** Measured on 2026-11-27, at `cb55fc42` with this change, on the owner's Mac;
+the answers and their commands are in [what a build's programs come
+to](../features/GTA_VI_Xbox_Build.md#what-a-builds-programs-come-to) and [what the measures
+found](../reference/Crate_Reference.md#what-the-measures-found). Nearly every GTA VI program
+translates and almost no pass binds as it stands, for what the game fills at run time; a Metal
+device builds the passes that shade a model; and the lighting is not run for want of what feeds it,
+not of translation. The frame is six kinds of step and five passes no kind states
+(`the_frame_is_listed_in_the_passes_the_source_labels_and_the_kinds_it_needs_are_counted`), and a
+fallback surface and a game's program fill one G-buffer in the GTA V frame
+(`a_surface_of_the_games_own_effect_and_an_instance_of_the_world_fill_one_g_buffer_and_hide_each_other_by_its_one_depth`).
+RDR2's maps and type files are GTA V's by name, under a head no reader takes
+(`crates/io/or-io-verify/tests/rdr2_world_census.rs`). Left: the share by the fallback's families,
+a frame of a model compared on Metal, the order RDR2's archives mount in, and what a model of its
+states.
 
 **Depends on.** Nothing; its questions are those of the contract of [R71a](#r71a-the-world-contract-the-conformance-kit-and-the-fake-title).
 

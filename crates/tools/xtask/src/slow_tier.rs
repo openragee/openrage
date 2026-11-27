@@ -51,6 +51,7 @@ const ALWAYS_SLOW: &[&str] = &[
     "or-io::rel_interiors_of_an_install",
     "or-maps::what_the_interior_rules_say_of_the_install",
     "or-depends::the_models_of_a_real_install",
+    "or-io-verify::rdr2_world_census",
 ];
 
 const BEGIN: &str = "# slow-tier:begin";

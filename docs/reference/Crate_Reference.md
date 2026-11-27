@@ -2058,6 +2058,55 @@ surface draws as Material with that reason. The app opens a card two backends
 hold under Vulkan with no code of its own: an instance ranks adapters by their
 kind and lists Vulkan's first.
 
+### What the measures found
+
+What [R71m](../direction/Roadmap.md#r71m-the-measures-that-decide-the-design) measured of the frame and of RDR2 on 2026-11-27, at `cb55fc42` with this change, each with the command that measures it again; GTA VI's programs are in [GTA_VI_Xbox_Build.md](../features/GTA_VI_Xbox_Build.md#what-a-builds-programs-come-to).
+
+**The deferred frame is six kinds of step and five passes no kind states.** `render_deferred` in `crates/runtime/or-renderer/src/viewport/game_frame.rs` draws two frames today: a GTA V drawable in Shaded, and the GTA VI World screen, which branches on whether the day carries GTA VI's post. `crates/runtime/or-renderer/tests/the_frame_as_targets_and_passes.rs` lists both in order and counts the kinds (`cargo nextest run -p or-renderer --test the_frame_as_targets_and_passes --no-capture` prints the list); a pass added to the source fails it until it is entered.
+
+| Target | Format | Written by |
+|---|---|---|
+| The G-buffer, four targets | `GBUFFER_FORMAT` | the G-buffer pass; the third's alpha by the shadow's receive and the terrain's, the fourth's red and green by the occlusion's last pass |
+| Depth and stencil | `DEPTH_STENCIL_FORMAT` | the G-buffer pass, the nearer the greater; the stencil holds a material (`MATERIAL_DEFAULT`, `MATERIAL_TREE`, `MATERIAL_CLEAR` where nothing drew) and, above it, a room's marks (`ROOM_BIT`) |
+| The sun's shadow | `MAP_FORMAT` of `shadow`, four tiles one above the other | the cast |
+| The depth at half size, and two of occlusion | 16-bit float, 8-bit | the occlusion's passes |
+| The lit frame | `HDR_FORMAT` | the lighting pass and every pass after it until the frame is mapped |
+| The map of the sky | 16-bit float, with levels | the CPU, when the day changes (`ReflectionMap`) |
+| The cloud noise, the terrain's shadow, the copy water reads, the bloom's buffers, a history of two | their own | one pass or copy each |
+| The mapped frame, then the screen | the display's | the resolve, then the anti-aliasing or the sharpening |
+
+| Kind of step | What it is | Where the frame uses it |
+|---|---|---|
+| Surfaces | a scene's surfaces, each by the program its material's effect has for the pass's route | the G-buffer, the cast, what blends, the water's fog, the dome and its two discs |
+| Buckets | the host's own shader over its buckets of instances | the World screen alone: the G-buffer, the cast, what glows, what blends |
+| Screen | one program over the whole target, with its stencil test, blend and write mask | the shadow's receive, the occlusion, the directional light, the noise, the bloom, the resolve, the anti-aliasing; GTA VI's history, grade, bloom and sharpening; the terrain's shadow |
+| Instances | one program over a mesh the host keeps, once a record of a list the frame wrote | the point, spot and capsule lights, the fog volumes, the distant lights, the coronas, a room's marks |
+| Copy | one texture into another | the copy water reads; GTA VI's history, grade and bloom back into the lit frame |
+| Measure | a compute program whose counts are read back late | the exposure's meter |
+
+The GTA V frame takes five of the six, every one but Buckets, and the World screen all six (`the_frame_is_listed_in_the_passes_the_source_labels_and_the_kinds_it_needs_are_counted`). A row of a list must also state what the reading found in every kind: a condition on the frame's values (the occlusion's strength, whether the sun shines, whether a camera stands in a fog volume), one of several passes of a technique picked by them (the sky's variants, the directional light's), a stencil reference, a blend constant, and whether the pass keeps or clears what its target held. Five passes are no row as they stand, and each is code in `or-renderer` today:
+
+- **The world's cast**: four tiles of one target, each with its viewport, its view and the instances the CPU culled to it (`Cascades`, `draw_shadow`).
+- **The rooms' lamps**: a pass that marks the stencil and a pass of lamps for each box a frame has, up to `MOST_BOXES`, the marks kept or cleared by whether two boxes share their lamps (`record_rooms`).
+- **The terrain's shadow** is marched again only when the sun has turned since it last was.
+- **GTA VI's history**: two targets swapped from frame to frame, a camera offset every earlier step takes, and a history thrown away by how far the camera went.
+- **The meter**: counts read back a frame or two late, which set a later frame's exposure, and no pass while a read is pending. It is the one such pass of the GTA V frame.
+
+Between passes the CPU fits the cascades and culls the instances to them, picks the sky's variant and writes its constants, builds the map of the sky when the day changes, writes each list of lights as records, and writes every constant: a game program's by the name its reflection gives it (`EngineConstants::values`, `lighting_values` and each pass's own), a host shader's as one block. The bloom of the GTA V frame is already a list of steps as data (`plan` in `crates/runtime/or-renderer/src/game_shaders/bloom.rs`). Of the World screen's steps that run a program, more are GTA V Legacy's than OpenRage's: the shadow's receive, the occlusion, the directional light and the light volumes, the sky's noise, dome and discs, the distant lights, the coronas, the fog volumes and the resolve all come from the borrowed pack.
+
+**A fallback surface and a game's program share one frame's targets in the GTA V frame.** The G-buffer pass records the scene's surfaces by the pack's programs and then the host's buckets by its own shader into the same four targets and the same depth and stencil; the cast and the pass of what blends take both the same way. Each brings its own vertex buffers and pipeline, so nothing of a vertex layout is shared; what is shared is the encoding, which the host's shader writes as the game's programs do (`the_games_passes_light_an_instance_of_the_world_as_they_light_a_surface_of_the_default_effect`), and the stencil's material. `a_surface_of_the_games_own_effect_and_an_instance_of_the_world_fill_one_g_buffer_and_hide_each_other_by_its_one_depth` draws one of each into one frame and reads the G-buffer where each hides the other. Both need a pack (`OPENRAGE_GAME_PACK`) and a device, so the default tier ignores them. GTA VI's own frame is another matter: its pixel programs write their own targets over a float depth with no stencil (`TARGETS` in `crates/runtime/or-renderer/src/game_shaders/meshlets.rs`), and a surface its programs do not draw is drawn after the frame is lit, as Material over the same depth, never into those targets.
+
+**RDR2's maps and types are GTA V's, in paged metadata under another head.** `crates/io/or-io-verify/tests/rdr2_world_census.rs` mounts an install with the keys its executable unlocks, counts every file by extension, puts a sample of each world extension to every reader that could take it, and looks in the bodies for what a world asks (`OPENRAGE_GAME_ROOT`, then `cargo nextest run --profile all -p or-io-verify --test rdr2_world_census --no-capture`). On the owner's install:
+
+- **Mounting.** Every top-level archive opens, 89 of 89, and 4,871 of the 4,874 archives inside them; the three refused are sealed with a key the bundled snapshot lacks. Of the 488,718 files they hold, four carry a name, the shader containers; every other row is a hash and an extension. No mount exists: nothing orders the archives or lets one replace another's file, and the order was not measured, since the rows state none.
+- **What a world is made of.** 13,577 maps (`ymap`), 2,494 type files (`ytyp`), 69,684 drawables (`ydr`), 33,744 drawable dictionaries (`ydd`), 10,021 fragments (`yft`), 88,356 texture dictionaries (`ytd`) and 26,064 bounds (`ybn`), every one an RSC8 resource.
+- **What opens.** Of a sample of about 240 of each, every body comes out of its archive and every RSC8 container opens but one drawable's, whose Oodle stream the decoder refuses. The texture dictionary reads through its declaration, 240 of 240. Nothing else has a reader: every GTA V declaration stops at the head (`Invalid RSC7 magic`), and the metadata reader at `binary meta: unknown leading magic`, because it takes paged metadata only under an RSC7 head.
+- **What a map and a type file state.** All 239 sampled maps and all 227 sampled type files are paged metadata by the sentinel GTA V's carry, and they name their types and members by the hashes of GTA V's own names: all 34 names looked for of a map (its two boxes, its parent, an entity's place, parent index, level and distances, an interior's instance, the occluders, the distant lights, the instance lists) and all 25 of a type file (an archetype's box, sphere and dictionaries, an interior's rooms and portals). An interior's instance is named by 14 of the 239 maps, and an interior's archetype by 27 of the 227 type files. The measure reads a body for a name's hash and does not decode it, so it says what a body's schema names, not what its arrays hold; a name no file states is found in none.
+- **How a file is named.** By the hash its row carries: the 227 type bodies hold 35,864 words that are the hash of a model's row and 16,065 that are a texture dictionary's, and 100 of the 239 maps hold another map's, where as many hashes found nowhere match 14, 12 and 6.
+- **The shader containers** are four files of one head: two hold Direct3D bytecode (12,255 and 367 programs by their magic) and two hold SPIR-V (12,875 and 369), which no front end has to translate.
+
+⚠ A metadata body names a member by the hash of its name as spelled. The hash that folds case finds only the names that are lower case already, which reads as six of the map's names where the census finds them all.
+
 ## Tool crates
 
 **or-cli** holds the `openrage-cli` subcommands (`openrage-cli help` lists

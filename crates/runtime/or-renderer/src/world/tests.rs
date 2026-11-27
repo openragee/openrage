@@ -987,6 +987,98 @@ fn the_games_passes_light_an_instance_of_the_world_as_they_light_a_surface_of_th
     ignore = "needs a GPU adapter: acquisition can hang, not just fail"
 )]
 #[test]
+fn a_surface_of_the_games_own_effect_and_an_instance_of_the_world_fill_one_g_buffer_and_hide_each_other_by_its_one_depth(
+) {
+    use crate::game_shaders::mesh::{Image, Material};
+    use crate::game_shaders::synthetic::quad;
+    let test = "a_surface_of_the_games_own_effect_and_an_instance_of_the_world_fill_one_g_buffer";
+    let Some((device, queue)) = gpu(test) else {
+        return;
+    };
+    let Some(pack) = real_pack(test) else {
+        return;
+    };
+    let camera = overhead();
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    // The albedo each writes: the game's effect its texture's grey, the world's shader the root of its tint
+    const GAME: u8 = 64;
+    const WORLD: u8 = 200;
+    // One frame of both: the game's quad of a metre to each side at the height `game`, drawn by the pack's own program, and one instance of a square of `half` at the height `world`, drawn by the world's shader. The first target of the G-buffer and the screen at each of `points`, and the screen's corner.
+    let both = |game: f32, (world, half): (f32, f32), points: [Vec3; 2]| {
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let mut renderer = ViewportRenderer::new(&device, &queue, format, SIZE, SIZE);
+        renderer.set_background(BACKGROUND);
+        renderer.set_shadows(false);
+        let texture = Image {
+            width: 1,
+            height: 1,
+            rgba: vec![GAME, GAME, GAME, 255],
+            srgb: false,
+        };
+        let material = Material {
+            effect: "default".into(),
+            textures: [("DiffuseSampler".to_string(), texture)].into(),
+            ..Material::default()
+        };
+        let report = renderer
+            .prepare_deferred(&device, &queue, &pack, &[(quad(game), material)])
+            .expect("the deferred passes prepare");
+        assert_eq!(report, (1, Vec::new()));
+        let tint = (f32::from(WORLD) / 255.0).powi(2);
+        let material = plain(&device, &renderer, WorldBucket::Opaque);
+        renderer.set_world(
+            &device,
+            &queue,
+            &[WorldInstance::of(
+                Mat4::from_translation(Vec3::new(0.0, 0.0, world)),
+                [tint, tint, tint, 1.0],
+            )],
+            vec![WorldDraw {
+                mesh: square(&device, half, material),
+                instances: 0..1,
+            }],
+        );
+        let image = frame(&device, &queue, &renderer, &camera, ShadingMode::Shaded);
+        let at = points.map(|point| pixel_of(&camera, point));
+        let albedo = at.map(|at| words(&device, &queue, &renderer, at)[0]);
+        (albedo, at.map(|at| image[at]), image[0])
+    };
+    let grey = |level: u8| [level, level, level, 255];
+
+    // The world's square stands over the middle of the game's quad: it hides the quad there, and the quad shows beside it
+    let over = Vec3::new(0.0, 0.0, 0.5);
+    let beside = Vec3::new(0.8, 0.0, 0.0);
+    let (albedo, lit, corner) = both(0.0, (0.5, 0.5), [over, beside]);
+    assert!(near(albedo[0], grey(WORLD), 1), "{albedo:?}");
+    assert!(near(albedo[1], grey(GAME), 1), "{albedo:?}");
+    // One lighting pass lights both, and leaves what neither drew
+    for lit in lit {
+        assert!(lit[..3].iter().all(|c| *c > 8), "{lit:?}");
+        assert!(!near(lit, corner, 8), "{lit:?} {corner:?}");
+    }
+    assert!(
+        lit[0][0] > lit[1][0],
+        "the brighter albedo is lit brighter: {lit:?}"
+    );
+
+    // The game's quad stands over a world square that fills the frame: the quad hides it there, and the square shows beside it
+    let over = Vec3::new(0.0, 0.0, 0.0);
+    let beside = Vec3::new(1.6, 0.0, -0.5);
+    let (albedo, lit, _) = both(0.0, (-0.5, 4.0), [over, beside]);
+    assert!(near(albedo[0], grey(GAME), 1), "{albedo:?}");
+    assert!(near(albedo[1], grey(WORLD), 1), "{albedo:?}");
+    assert!(lit[1][0] > lit[0][0], "{lit:?}");
+    assert!(
+        pollster::block_on(validation.pop()).is_none(),
+        "the device accepted every pass"
+    );
+}
+
+#[cfg_attr(
+    not(feature = "gpu-tests"),
+    ignore = "needs a GPU adapter: acquisition can hang, not just fail"
+)]
+#[test]
 fn the_maps_and_the_bucket_of_a_material_reach_the_g_buffer_in_the_words_the_lighting_reads() {
     let test = "the_maps_and_the_bucket_of_a_material_reach_the_g_buffer";
     let Some((device, queue)) = gpu(test) else {

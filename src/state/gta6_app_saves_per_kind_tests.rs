@@ -138,7 +138,7 @@ fn line_for(kind: Kind, settled: &HashSet<Kind>) -> Option<(Kind, Editor)> {
         KINDS.iter().any(|(_, of, _)| *of == kind),
         "{kind} is no kind of the table"
     );
-    let open = |&(line, of, edit): &Line| Some((line, edit?)).filter(|_| of == kind);
+    let open = |&(line, of, edit): &Line| (of == kind).then_some((line, edit?));
     (KINDS.iter())
         .filter_map(open)
         .find(|(line, _)| !settled.contains(line))

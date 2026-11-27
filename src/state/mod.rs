@@ -303,7 +303,6 @@ mod pending_prompts;
 mod photo_documents;
 pub mod plugins;
 pub mod prefs;
-mod prefs_ago;
 pub mod presets;
 pub mod preview_scene;
 #[cfg(test)]

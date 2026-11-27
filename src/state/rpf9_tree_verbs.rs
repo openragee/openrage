@@ -945,7 +945,7 @@ impl AppState {
 mod adopt;
 
 #[path = "rpf9_tree_plan_job.rs"]
-pub(in crate::state) mod plan_job;
+pub(crate) mod plan_job;
 
 #[cfg(test)]
 #[path = "rpf9_tree_verbs_tests.rs"]

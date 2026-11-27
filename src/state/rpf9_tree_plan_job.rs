@@ -355,13 +355,21 @@ mod tests {
         assert_eq!(listed(dir.path()), ["source.rpf"]);
 
         // A save with no plan held, stopped while it planned, ends the same way.
+        state.jobs.clear();
         let out = dir.path().join("copy.rpf");
         lock(&ENDED).push((DOC, 0, out, Err(Unplanned::Stopped)));
         state.poll_archive_saves();
-        let stops = (state.jobs.ended().iter())
-            .filter(|e| e.outcome == Outcome::Stopped(Then::Nothing))
-            .count();
-        assert_eq!(stops, 2, "{:?}", toasts(&state));
+        let ended = state
+            .jobs
+            .ended()
+            .first()
+            .map(|e| (e.kind, e.outcome.clone()));
+        assert_eq!(
+            ended,
+            Some((JobKind::Save, Outcome::Stopped(Then::Nothing))),
+            "{:?}",
+            toasts(&state)
+        );
         assert!(
             !(state.toasts.iter()).any(|t| matches!(t.toast_type, ToastType::Error)),
             "{:?}",

@@ -542,7 +542,9 @@ impl RecentFile {
     }
 }
 
-pub use super::prefs_ago::ago;
+#[path = "prefs_ago.rs"]
+mod prefs_ago;
+pub use prefs_ago::ago;
 
 /// ⚠ Entry by entry, so one that does not read is one fewer; a path alone is a file on disk remembered before 6.
 fn readable_recent_files<'de, D: serde::Deserializer<'de>>(

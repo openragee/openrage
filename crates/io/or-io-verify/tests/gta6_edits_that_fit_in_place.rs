@@ -666,7 +666,7 @@ struct Tally {
     /// Optimal streams that do not inflate back to their chunk.
     optimal_wrong: usize,
     /// Chunks the optimal parse missed: content, framing, ceiling and the first stream's length.
-    missed: Vec<(Vec<u8>, bool, usize, usize)>,
+    missed: Vec<Missed>,
 }
 
 #[derive(Default)]
@@ -1128,9 +1128,12 @@ fn print(kind: &str, t: &Tally) {
     }
 }
 
+/// A chunk the first optimal parse missed: its content, framing, ceiling and the first stream's length.
+type Missed = (Vec<u8>, bool, usize, usize);
+
 /// Part (7): the patch writer's harder tries over every chunk the first optimal parse missed.
 fn harder_tries(st: &State) {
-    let missed: Vec<(&str, &(Vec<u8>, bool, usize, usize))> = (st.kinds.iter())
+    let missed: Vec<(&str, &Missed)> = (st.kinds.iter())
         .flat_map(|(k, t)| t.missed.iter().map(move |m| (*k, m)))
         .collect();
     let (mut rescued, mut within, mut unrun, mut wrong) = (0, 0, 0, 0);

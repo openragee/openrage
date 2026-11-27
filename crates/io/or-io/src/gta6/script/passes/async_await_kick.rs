@@ -5,7 +5,8 @@
 //! proves its start, and `untangle` then reads the rest as it reads a step function, through the
 //! variable that holds the machine's address. The other calls its step function, itself or
 //! through a start function that only calls it: `joined` puts that function's body where the call
-//! stood. Either way the method reads as one body, with what makes the machine out of sight.
+//! stood. Either way the method reads as one body, with what makes the machine out of sight, and
+//! a machine whose step function is read so is left out of what is written (`hide_machines`).
 //!
 //! ⚠ A statement that copies a parameter into the machine stays in sight: the body reads the
 //! machine's field, and nothing here proves the field never changes after it.
@@ -13,7 +14,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::gta6::script::cfg::{self, Block, Terminator};
-use crate::gta6::script::ir::{Callee, Expr, Head, Returns, Stmt, StoreKind, Var, VarInfo};
+use crate::gta6::script::class::{Class, ClassKind, Method, Unit};
+use crate::gta6::script::ir::{
+    Callee, Expr, Head, Returns, Stmt, StoreKind, TypeKey, Var, VarInfo,
+};
+use crate::gta6::script::print;
 use crate::gta6::script::tree::{self, Sugar};
 use crate::gta6::script::{Context, Pass};
 
@@ -953,9 +958,180 @@ pub fn joins(functions: &[tree::Function], cx: &Context<'_>) -> Vec<Join> {
 // A step function two kick-offs call is joined to neither: a method has one kick-off, and each
 // body is then copied once at the most.
 pub fn joined(functions: Vec<tree::Function>, cx: &Context<'_>) -> Vec<tree::Function> {
+    joined_steps(functions, cx).0
+}
+
+/// [`joined`], and the offsets of the step functions read into their kick-offs.
+pub fn joined_steps(
+    functions: Vec<tree::Function>,
+    cx: &Context<'_>,
+) -> (Vec<tree::Function>, BTreeSet<u32>) {
     let mut functions = functions;
-    for join in joins(&functions, cx) {
+    let made = joins(&functions, cx);
+    let steps = made
+        .iter()
+        .filter_map(|join| functions.get(join.step))
+        .map(|step| step.head.at)
+        .collect();
+    for join in made {
         functions[join.kick] = join.whole;
     }
-    functions
+    (functions, steps)
+}
+
+/// Counts in `named` each call of a function of `program` and each reference to one that `body` makes, by offset.
+fn names_in(body: &[tree::Stmt], program: u32, named: &mut BTreeMap<u32, u32>) {
+    tree::each_expr(body, &mut |top| {
+        top.walk(&mut |e| {
+            let at = match e {
+                Expr::Call {
+                    callee: Callee::Local { at, .. },
+                    ..
+                } => *at,
+                Expr::Call {
+                    callee:
+                        Callee::Import {
+                            program: of, at, ..
+                        },
+                    ..
+                }
+                | Expr::FunctionRef { program: of, at }
+                    if *of == program =>
+                {
+                    *at
+                }
+                _ => return,
+            };
+            let count = named.entry(at).or_default();
+            *count = count.saturating_add(1);
+        });
+    });
+}
+
+/// Whether a body is no more than what the compiler writes in a state machine's other methods: one store or call, and nothing else but a `return`.
+fn compilers_own(body: &[tree::Stmt]) -> bool {
+    let body = match body.split_last() {
+        Some((tree::Stmt::Return(None), rest)) => rest,
+        _ => body,
+    };
+    match body {
+        [] => true,
+        [only] => matches!(
+            simple_of(only),
+            Some(Stmt::Store { .. } | Stmt::StoreBytes { .. } | Stmt::Eval(_))
+        ),
+        _ => false,
+    }
+}
+
+/// Whether `class` is a state machine whose step function is read into its kick-off, the rest of it the compiler's, and none of its methods named outside it.
+fn hidden_machine(
+    class: &Class,
+    steps: &BTreeSet<u32>,
+    named: &BTreeMap<u32, u32>,
+    typed: &BTreeMap<TypeKey, BTreeSet<Option<TypeKey>>>,
+    program: u32,
+) -> bool {
+    // ⚠ A class nested in the machine holds code of the method, a lambda's, that nothing else writes.
+    if class.kind != ClassKind::StateMachine || !class.nested.is_empty() {
+        return false;
+    }
+    // ⚠ Nor may anything written outside it name its type, which would then be declared nowhere.
+    let namers = typed.get(&class.key).into_iter().flatten();
+    if namers.copied().any(|by| by != Some(class.key)) {
+        return false;
+    }
+    let mut own: BTreeMap<u32, u32> = BTreeMap::new();
+    for method in &class.methods {
+        names_in(&method.function.body, program, &mut own);
+    }
+    let count = |held: &BTreeMap<u32, u32>, at: u32| held.get(&at).copied().unwrap_or_default();
+    let read_in = class
+        .methods
+        .iter()
+        .any(|method| steps.contains(&method.function.head.at));
+    read_in
+        && class.methods.iter().all(|method| {
+            let at = method.function.head.at;
+            let apart = count(named, at) <= count(&own, at);
+            apart && (steps.contains(&at) || compilers_own(&method.function.body))
+        })
+}
+
+/// What of `f` the source level writes as code: an await as the statements it shows, and nothing of what it hides.
+// ⚠ An await's suspend and resume are the machine's own code, which names the machine: the source
+// writes `await` in their place.
+fn written(f: &tree::Function) -> tree::Function {
+    let mut f = f.clone();
+    let mut work: Vec<&mut Vec<tree::Stmt>> = vec![&mut f.body];
+    while let Some(list) = work.pop() {
+        let old = std::mem::take(list);
+        for stmt in old {
+            match stmt {
+                tree::Stmt::Sugar(sugar) => match *sugar {
+                    Sugar::Await { before, after, .. } => {
+                        list.extend(before.into_iter().chain(after).map(tree::Stmt::Simple));
+                    }
+                    Sugar::Hidden(_) => {}
+                    other => list.push(tree::Stmt::Sugar(Box::new(other))),
+                },
+                other => list.push(other),
+            }
+        }
+        for stmt in list {
+            work.extend(tree::nested_mut(stmt));
+        }
+    }
+    f
+}
+
+/// Takes out of what `unit` writes each state machine whose step function `steps` names, where nothing outside the machine names a method of it and its other methods are the compiler's; how many it took out.
+// ⚠ Only what is written leaves the machine out: the step function's body is the method's, and
+// the runtime still calls the step function at every resumed await. A program that calls it by
+// import would name a function written nowhere.
+pub fn hide_machines(unit: &mut Unit, steps: &BTreeSet<u32>) -> usize {
+    if steps.is_empty() {
+        return 0;
+    }
+    let program = unit.program;
+    let mut named: BTreeMap<u32, u32> = BTreeMap::new();
+    // The types each class's text, or the free functions' (`None`), names.
+    let mut typed: BTreeMap<TypeKey, BTreeSet<Option<TypeKey>>> = BTreeMap::new();
+    let mut note = |found: BTreeSet<TypeKey>, by: Option<TypeKey>| {
+        for ty in found {
+            typed.entry(ty).or_default().insert(by);
+        }
+    };
+    let mut open: Vec<&Class> = unit.classes.iter().collect();
+    let mut methods: Vec<(&Method, Option<TypeKey>)> =
+        unit.functions.iter().map(|method| (method, None)).collect();
+    while let Some(class) = open.pop() {
+        methods.extend(class.methods.iter().map(|method| (method, Some(class.key))));
+        open.extend(&class.nested);
+        let mut found: BTreeSet<TypeKey> = class.base.into_iter().collect();
+        found.extend(class.interfaces.iter().copied());
+        for field in &class.fields {
+            print::kind_types(&field.kind, &mut found);
+        }
+        note(found, Some(class.key));
+    }
+    for (method, by) in methods {
+        names_in(&method.function.body, program, &mut named);
+        let mut found = BTreeSet::new();
+        let receiver = by.is_some() && !method.is_static;
+        print::types_of(&written(&method.function), receiver, &mut found);
+        note(found, by);
+    }
+    let mut hidden = 0usize;
+    // An explicit stack: classes nest as deep as their programs state.
+    let mut work: Vec<&mut Vec<Class>> = vec![&mut unit.classes];
+    while let Some(list) = work.pop() {
+        let before = list.len();
+        list.retain(|class| !hidden_machine(class, steps, &named, &typed, program));
+        hidden = hidden.saturating_add(before - list.len());
+        for class in list {
+            work.push(&mut class.nested);
+        }
+    }
+    hidden
 }

@@ -15,7 +15,8 @@
 //! A kick-off that holds its machine in a local and runs the step function's code in line is
 //! read the same way, through the variable it keeps the machine's address in (`kick`), and a
 //! kick-off that calls its step function takes that function's body where the call stood
-//! (`joined`). How a machine ends, and what that says the method hands its caller, is in `ends`.
+//! (`joined`). How a machine ends, and what that says the method hands its caller, is in `ends`;
+//! an await of the task the statement before it makes, and how an await reads, in `place`.
 //!
 //! ⚠ Between `untangle` and `run` the blocks hold those calls and no dispatch: they run as the
 //! function did only once `run` has put the pieces back.
@@ -28,6 +29,8 @@ mod ends;
 mod frame;
 #[path = "async_await_kick.rs"]
 mod kick;
+#[path = "async_await_place.rs"]
+mod place;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -39,7 +42,8 @@ use crate::gta6::script::tree::{self, Label, Sugar};
 use crate::gta6::script::{Context, Pass, Stats};
 
 pub use self::ends::{handed_back, result, AsyncResult};
-pub use self::kick::{joined, joins, Join};
+pub use self::kick::{hide_machines, joined, joined_steps, joins, Join};
+pub use self::place::{reading, Reading, Taken};
 
 /// The names this file's rewrites are switched by.
 pub const PASSES: &[Pass] = &[Pass::Await, Pass::Iterators, Pass::Wait];
@@ -287,7 +291,7 @@ pub fn untangle(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) -> 
 /// Puts back what `untangle` took out, each await as the source construct it is.
 // ⚠ `structure` may write a short tail that leaves at each jump to it, and with it the call that
 // stands for a piece: every such call takes the piece, and only the first its resume point.
-pub fn run(f: &mut tree::Function, machine: Machine, _cx: &Context<'_>, _stats: &mut Stats) {
+pub fn run(f: &mut tree::Function, machine: Machine, cx: &Context<'_>, _stats: &mut Stats) {
     let Machine { pieces, kick } = machine;
     let mut placed = vec![false; pieces.len()];
     // The labels of copies count down from under those `take_out` gives resume points with no offset.
@@ -320,7 +324,11 @@ pub fn run(f: &mut tree::Function, machine: Machine, _cx: &Context<'_>, _stats: 
     if let Some(kick) = &kick {
         kick::settle(&mut f.body, kick);
     }
-    in_place(&mut f.body);
+    // Each moves a statement into an await that is already there: `await` switches both off.
+    if cx.options.on(Pass::Await) {
+        place::tasks(&mut f.body);
+        in_place(&mut f.body);
+    }
 }
 
 /// How often each variable of a body is assigned and read, and which have their address taken.

@@ -233,6 +233,17 @@ fn awaits(body: &[tree::Stmt]) -> usize {
     body.iter().filter(awaited).count()
 }
 
+/// What each await of a body holds as the statements that take its awaiter, as they print for a failure.
+fn takings(body: &[tree::Stmt]) -> Vec<String> {
+    let mut found = Vec::new();
+    tree::each_sugar(body, &mut |sugar| {
+        if let Sugar::Await { before, .. } = sugar {
+            found.push(format!("{before:?}"));
+        }
+    });
+    found
+}
+
 /// The `goto` statements the readable form writes: those a source construct holds are not written.
 fn written_gotos(body: &[tree::Stmt]) -> usize {
     body.iter()
@@ -354,10 +365,11 @@ fn an_await_is_one_statement_after_the_passes_before_it() {
         (
             awaits(&done.body),
             written_gotos(&done.body),
-            format!("{stated:?}"),
+            format!("{stated:?} {:?}", takings(&done.body)),
         )
     };
     // After `values` and `types` the machine is still proved, and `structure` keeps each piece.
+    // What is awaited stays in sight: before the await, or as the statement it takes its awaiter from.
     let (awaited, gotos, stated) = written(Options::baseline().with(Pass::Await));
     assert_eq!((awaited, gotos), (1, 0), "{stated}");
     assert!(stated.contains("GET"), "{stated}");
@@ -779,7 +791,10 @@ fn a_kick_off_that_runs_its_step_in_line_is_read_through_the_machine_it_holds() 
         flat.body
     );
     let shown = stated(&flat.body);
-    assert!(shown.contains("GET"), "{shown}");
+    // What is awaited is the await's own: the statement that makes the task it awaits.
+    assert!(!shown.contains("GET"), "{shown}");
+    assert_eq!(takings(&flat.body).len(), 1, "{:#?}", flat.body);
+    assert!(takings(&flat.body)[0].contains("GET"), "{:#?}", flat.body);
     // Out of sight: the builder cleared, the states stored, and the variable given the machine's
     // address, in whose place the address itself is written.
     assert!(
@@ -1148,4 +1163,177 @@ fn a_start_function_that_does_more_than_call_the_step_function_is_not_joined() {
     // Switched off by its name, nothing is joined.
     let off = Context::new(&names, Project::empty(), Options::baseline());
     assert!(joins(&program(STARTS, &kick, options), &off).is_empty());
+}
+
+// ---- an await of the task made before it ---------------------------------------------------------
+
+#[test]
+fn an_await_takes_the_statement_that_makes_its_task_and_runs_as_it_did() {
+    // The suspend path keeps the awaiter in the machine and hands it, or its address, to the
+    // runtime: those are the compiler's own uses of it.
+    for body in [in_line(), [HEAD, THROUGH, REST].concat()] {
+        let (read, flat, back) = rebuilt(&body);
+        assert!(!stated(&flat.body).contains("GET"), "{:#?}", flat.body);
+        let taken = takings(&flat.body);
+        assert_eq!(taken.len(), 1, "{taken:?}");
+        assert!(taken[0].contains("GET"), "{taken:?}");
+        assert!(same(&read.cfg, &back.cfg), "{:#?}", back.cfg);
+    }
+    // ⚠ A task the method reads again after the await is a variable of the method: it stays where it is made.
+    let end = "store_i32(p0, 0x0, (-2));";
+    let again = in_line().replace(end, "Native.DEMO.USE(local_2); store_i32(p0, 0x0, (-2));");
+    let (read, flat, back) = rebuilt(&again);
+    assert!(stated(&flat.body).contains("GET"), "{:#?}", flat.body);
+    assert_eq!(takings(&flat.body), ["[]"]);
+    assert!(same(&read.cfg, &back.cfg), "{:#?}", back.cfg);
+}
+
+// ---- a machine read into its kick-off is not written --------------------------------------------
+
+#[test]
+fn a_state_machine_whose_step_function_is_read_into_its_kick_off_is_not_written() {
+    use crate::gta6::script::class::{Class, ClassKind, Method, Role, Unit};
+    use crate::gta6::script::ir::TypeKey;
+
+    let names = Names::default();
+    let options = Options::baseline().with(Pass::Await);
+    let cx = Context::new(&names, Project::empty(), options);
+    let done = program(STARTS, HANDS, options);
+    let (functions, steps) = joined_steps(done.clone(), &cx);
+    assert_eq!(steps, BTreeSet::from([0x100]));
+    assert_eq!(functions, joined(done.clone(), &cx));
+
+    let method = |function: tree::Function, role: Role| Method {
+        function,
+        role,
+        is_static: false,
+        is_async: false,
+        slot: Some(1),
+        overrides: false,
+    };
+    // What the compiler writes beside the step function: the builder handed the machine.
+    let mut handing = done[1].clone();
+    handing.head.at = 0x610;
+    handing.body = vec![
+        tree::Stmt::Simple(Stmt::Store {
+            kind: StoreKind::U64,
+            addr: Expr::Var(Var::Param(0)),
+            offset: 0x8,
+            value: Expr::Var(Var::Param(1)),
+        }),
+        tree::Stmt::Return(None),
+    ];
+    let machine = |kind: ClassKind, other: tree::Function| Class {
+        key: TypeKey(0x0123_4567_89AB_CDEF),
+        kind,
+        base: None,
+        interfaces: Vec::new(),
+        fields: Vec::new(),
+        methods: vec![
+            method(functions[0].clone(), Role::Step),
+            method(other, Role::Method),
+        ],
+        nested: Vec::new(),
+    };
+    let unit = |classes: Vec<Class>, free: Vec<tree::Function>| {
+        let mut unit = Unit::flat(1, Vec::new(), free);
+        unit.classes = classes;
+        unit
+    };
+    let kick = || vec![functions[2].clone()];
+
+    let mut written = unit(
+        vec![machine(ClassKind::StateMachine, handing.clone())],
+        kick(),
+    );
+    assert_eq!(hide_machines(&mut written, &steps), 1);
+    assert!(written.classes.is_empty());
+    assert_eq!(written.functions.len(), 1);
+    // Nested in the class whose method it is, it goes from there.
+    let mut outer = machine(ClassKind::Class, handing.clone());
+    outer.methods.clear();
+    outer
+        .nested
+        .push(machine(ClassKind::StateMachine, handing.clone()));
+    let mut written = unit(vec![outer], kick());
+    assert_eq!(hide_machines(&mut written, &steps), 1);
+    assert_eq!(written.classes.len(), 1);
+    assert!(written.classes[0].nested.is_empty());
+
+    // Kept: where a function of the program names the step function, here the start function.
+    let mut free = kick();
+    free.push(functions[1].clone());
+    let held = unit(
+        vec![machine(ClassKind::StateMachine, handing.clone())],
+        free,
+    );
+    let mut written = held.clone();
+    assert_eq!(hide_machines(&mut written, &steps), 0);
+    assert_eq!(written, held);
+    // Where no step function was read into its kick-off.
+    let held = unit(
+        vec![machine(ClassKind::StateMachine, handing.clone())],
+        kick(),
+    );
+    let mut written = held.clone();
+    assert_eq!(hide_machines(&mut written, &BTreeSet::new()), 0);
+    assert_eq!(written, held);
+    // ⚠ Where another method holds more than the compiler writes: it would be written nowhere.
+    let mut more = handing.clone();
+    more.body
+        .insert(0, tree::Stmt::Simple(Stmt::Eval(Expr::Var(Var::Param(1)))));
+    let held = unit(vec![machine(ClassKind::StateMachine, more)], kick());
+    let mut written = held.clone();
+    assert_eq!(hide_machines(&mut written, &steps), 0);
+    assert_eq!(written, held);
+    // ⚠ Where a class is nested in the machine: a lambda's body would be written nowhere.
+    let mut holding = machine(ClassKind::StateMachine, handing.clone());
+    holding
+        .nested
+        .push(machine(ClassKind::Closure, handing.clone()));
+    let held = unit(vec![holding], kick());
+    let mut written = held.clone();
+    assert_eq!(hide_machines(&mut written, &steps), 0);
+    assert_eq!(written, held);
+    // ⚠ Where a function written outside the machine names its type: it would be declared nowhere.
+    let mut naming = kick();
+    let typed = crate::gta6::script::ir::VarInfo {
+        width: crate::gta6::script::ir::Width::Cell,
+        kind: crate::gta6::script::ir::Kind::Object(TypeKey(0x0123_4567_89AB_CDEF).to_string()),
+        name: None,
+        single: false,
+    };
+    naming[0].head.vars.insert(Var::Local(0), typed);
+    naming[0]
+        .body
+        .insert(0, tree::Stmt::Simple(Stmt::Eval(Expr::Var(Var::Local(0)))));
+    let held = unit(
+        vec![machine(ClassKind::StateMachine, handing.clone())],
+        naming,
+    );
+    let mut written = held.clone();
+    assert_eq!(hide_machines(&mut written, &steps), 0);
+    assert_eq!(written, held);
+    // Where the class is no state machine.
+    let held = unit(vec![machine(ClassKind::Struct, handing)], kick());
+    let mut written = held.clone();
+    assert_eq!(hide_machines(&mut written, &steps), 0);
+    assert_eq!(written, held);
+}
+
+#[test]
+fn without_the_await_name_no_statement_moves_into_an_await() {
+    let (_, f, machine) = untangled(&in_line());
+    let names = Names::default();
+    let options = Options::baseline().with(Pass::Iterators);
+    let cx = Context::new(&names, Project::empty(), options);
+    let mut flat = cfg::flat(f);
+    run(
+        &mut flat,
+        machine.expect("the machine is proved"),
+        &cx,
+        &mut Stats::default(),
+    );
+    assert!(stated(&flat.body).contains("GET"), "{:#?}", flat.body);
+    assert_eq!(takings(&flat.body), ["[]"]);
 }

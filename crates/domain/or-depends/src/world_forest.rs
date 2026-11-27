@@ -9,7 +9,7 @@
 //! file that declares the interior while a view stands within the instance's distance, and each
 //! then draws by its own place and distance.
 
-mod read;
+pub mod read;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 

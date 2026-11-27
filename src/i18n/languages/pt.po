@@ -17491,3 +17491,9 @@ msgstr "mínimo {min}"
 
 msgid "The byte the file stores for the cell's highest point, 0 to 255; its lowest follows where it was the same and never stays above it."
 msgstr "O byte que o arquivo guarda para o ponto mais alto da célula, de 0 a 255; o mínimo o acompanha onde era igual e nunca fica acima dele."
+
+msgid "Story"
+msgstr "História"
+
+msgid "Multiplayer"
+msgstr "Multijogador"

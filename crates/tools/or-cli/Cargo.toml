@@ -18,6 +18,8 @@ or-media.workspace = true
 or-title.workspace = true
 # The world model, for openrage-cli world on a `.ymap` or `.ytyp`.
 or-world.workspace = true
+# The titles whose world this build opens, for the world verbs any title answers.
+or-worlds.workspace = true
 # The vector type `or_world::generate` takes a drawable's bounds in.
 glam.workspace = true
 # The dependency graph over a mount, for openrage-cli depends.

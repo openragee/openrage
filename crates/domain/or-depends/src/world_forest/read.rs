@@ -12,7 +12,7 @@ use crate::world_index::{self, Archetype, Map, WorldIndex, WorldSource};
 
 /// What an entity is to a selection.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) enum What {
+pub enum What {
     /// The files that draw it.
     Model(ModelFiles),
     /// Nothing says what draws it: it stands as a box.
@@ -25,7 +25,7 @@ pub(super) enum What {
 
 /// What a node places.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) struct Placed {
+pub struct Placed {
     pub archetype: u32,
     /// From the model's own space to the world.
     pub to_world: Affine3A,
@@ -34,7 +34,7 @@ pub(super) struct Placed {
 
 /// A map as read: `nodes[i]` and `placed[i]` are entity `i` of the file.
 #[derive(Debug, Default)]
-pub(super) struct ReadMap {
+pub struct ReadMap {
     pub nodes: Vec<Node>,
     pub placed: Vec<Placed>,
     /// The entities that are an interior's instance, by their place.
@@ -56,7 +56,7 @@ impl ReadMap {
 }
 
 /// What draws the archetype named `archetype`, as the index's row of it says.
-pub(super) fn what_of(index: &WorldIndex, archetype: u32, interior: bool) -> What {
+pub fn what_of(index: &WorldIndex, archetype: u32, interior: bool) -> What {
     match index.archetype(archetype) {
         _ if archetype == 0 => What::Box(NoModel::Unnamed),
         None => What::Box(NoModel::Undeclared),
@@ -119,11 +119,7 @@ fn placement(entity: &Entity<'_>) -> Affine3A {
 }
 
 /// The entities of `map`, read from the archive that lists it.
-pub(super) fn map(
-    index: &WorldIndex,
-    source: &dyn WorldSource,
-    map: &Map,
-) -> Result<ReadMap, Unread> {
+pub fn map(index: &WorldIndex, source: &dyn WorldSource, map: &Map) -> Result<ReadMap, Unread> {
     let bytes = (source.open(map.archive, &map.logical)).ok_or(Unread::Absent)?;
     let root = world_index::parse(&bytes).ok_or(Unread::NotAMap)?;
     let data = MapData::new(&root).ok_or(Unread::NotAMap)?;
@@ -177,7 +173,7 @@ pub(super) fn map(
 ///
 /// ⚠ An entity of an interior with no parent of its own stands under the instance as one of its
 /// instances does under a list: it draws by its own place and distance, never the interior's.
-pub(super) fn interior(
+pub fn interior(
     index: &WorldIndex,
     source: &dyn WorldSource,
     archetype: u32,

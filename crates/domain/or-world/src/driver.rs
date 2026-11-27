@@ -178,16 +178,23 @@ impl<'w> Driver<'w> {
                 wanted.insert(id, (Why::Own, away));
             }
         }
-        let mut open: Vec<(MapId, f32)> = (wanted.iter())
+        let own: Vec<(MapId, f32)> = (wanted.iter())
             .map(|(id, (_, away))| (*id, *away))
             .collect();
-        // Each step takes a map not yet wanted, so parents that name each other end it.
-        while let Some((child, away)) = open.pop() {
-            let parents = self.index.map(child).map_or(&[][..], |row| &row.parents);
-            for parent in parents {
-                if !wanted.contains_key(parent) {
-                    wanted.insert(*parent, (Why::ParentOf(child), away));
-                    open.push((*parent, away));
+        // ⚠ In the index's order, the parents of one wanted map before the next map's: a parent
+        // several wanted maps name is wanted as the parent of the first of them.
+        for (map, away) in own {
+            let mut open = vec![map];
+            // Each step takes a map not yet wanted, so parents that name each other end it.
+            while let Some(child) = open.pop() {
+                let parents = self.index.map(child).map_or(&[][..], |row| &row.parents);
+                let first = open.len();
+                for parent in parents {
+                    if !wanted.contains_key(parent) {
+                        wanted.insert(*parent, (Why::ParentOf(child), away));
+                        // Before those of the same child already there, so its first parent is followed first.
+                        open.insert(first, *parent);
+                    }
                 }
             }
         }

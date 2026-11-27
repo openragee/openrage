@@ -17491,3 +17491,9 @@ msgstr "최저 {min}"
 
 msgid "The byte the file stores for the cell's highest point, 0 to 255; its lowest follows where it was the same and never stays above it."
 msgstr "파일이 셀의 최고점으로 저장하는 바이트(0~255). 최저점은 같았던 경우 따라가며 최고점보다 높게 남지 않습니다."
+
+msgid "Story"
+msgstr "스토리"
+
+msgid "Multiplayer"
+msgstr "멀티플레이"

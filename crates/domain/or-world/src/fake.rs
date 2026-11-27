@@ -16,13 +16,16 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use glam::Vec3;
 
 use crate::caps::{Capability, WorldCaps};
+use crate::collision::{GroundProbe, Hit, Part};
 use crate::contract::{
     Address, Applied, Base, EditError, EditPlace, EditSession, EditTitle, Envelope, GameId, Guard,
     MapBody, MapReader, ModelReader, Opening, OperationId, OperationKind, Worker, WorldError,
     WorldIndexer, WorldInstall, WorldLook, WorldSpec, WorldTitle, Written,
 };
 use crate::kept::{Fnv, Input, Inputs, Section, SectionReader, Stamp};
-use crate::kit::{EditFixture, Fixture, HeldBack, InteriorAt, Ladder, ListAt, Lit, Scene, Timed};
+use crate::kit::{
+    EditFixture, Fixture, Grounded, HeldBack, InteriorAt, Ladder, ListAt, Lit, Scene, Timed,
+};
 use crate::model::{
     interior_key, rows_at, signed_fade, skipped_of, Alpha, AssetKey, Drawn, Draws, Element,
     ElementFormat, Feed, FeedName, FrameFacts, Gate, Index, Instance, Instances, InteriorPlaced,
@@ -135,10 +138,12 @@ pub enum Fault {
     BaseStated,
     /// Its capabilities state a base and no edit store.
     StoreUnstated,
+    /// Its capabilities state no height of the ground, and it answers one.
+    GroundUnstated,
 }
 
 impl Fault {
-    pub const ALL: [Self; 25] = [
+    pub const ALL: [Self; 26] = [
         Self::LinkForgets,
         Self::ParentUnlinked,
         Self::ChildrenMiscounted,
@@ -164,6 +169,7 @@ impl Fault {
         Self::SessionBodyAfresh,
         Self::BaseStated,
         Self::StoreUnstated,
+        Self::GroundUnstated,
     ];
 }
 
@@ -1045,7 +1051,7 @@ impl ModelReader for Install {
 }
 
 impl WorldLook for Install {
-    fn switches(&self) -> Vec<SwitchKind> {
+    fn switches(&self, _index: &Index) -> Vec<SwitchKind> {
         let event = SwitchKind {
             id: EVENT,
             label: sentence!("Mode"),
@@ -1086,10 +1092,34 @@ impl WorldInstall for Install {
         if has(Fault::BaseStated) || has(Fault::StoreUnstated) {
             caps = caps.with(Capability::Base);
         }
+        if !has(Fault::GroundUnstated) {
+            caps = caps.with(Capability::Ground);
+        }
         match has(Fault::CapsLie) {
             true => caps,
             false => caps.with(Capability::Placements),
         }
+    }
+
+    // The fake world's ground is level, at the height of nought everywhere.
+    fn ground(
+        &self,
+        _index: &Index,
+        at: Vec3,
+        probe: &GroundProbe,
+        _worker: &mut Worker,
+    ) -> Result<Option<Hit>, WorldError> {
+        let within = -at.z <= probe.max_rise && at.z <= probe.max_drop;
+        Ok(within.then_some(Hit {
+            distance: at.z.abs(),
+            position: Vec3::new(at.x, at.y, 0.0),
+            normal: Vec3::Z,
+            material: None,
+            part: Part {
+                leaf: 0,
+                polygon: None,
+            },
+        }))
     }
 
     fn policy(&self) -> StreamPolicy {
@@ -1382,17 +1412,23 @@ pub fn fixture(title: FakeTitle) -> Fixture {
                 eye: YARD_EYE,
                 instances: INTERIOR_NODES,
             },
-            list: ListAt {
+            list: Some(ListAt {
                 eye: YARD_EYE,
                 instances: LIST_INSTANCES,
-            },
+            }),
             lit: Lit {
                 eye: YARD_EYE,
                 lights: 1,
                 occluders: 1,
             },
             placed: (YARD, 2),
+            ground: Grounded {
+                at: Vec3::new(0.0, 0.0, 5.0),
+                height: 0.0,
+            },
         },
         edit: Some(edit),
+        keeps: None,
+        executable: None,
     }
 }

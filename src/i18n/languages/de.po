@@ -17491,3 +17491,9 @@ msgstr "niedrigster {min}"
 
 msgid "The byte the file stores for the cell's highest point, 0 to 255; its lowest follows where it was the same and never stays above it."
 msgstr "Das Byte, das die Datei für den höchsten Punkt der Zelle speichert, 0 bis 255; ihr niedrigster folgt, wo er gleich war, und liegt nie darüber."
+
+msgid "Story"
+msgstr "Story"
+
+msgid "Multiplayer"
+msgstr "Mehrspieler"

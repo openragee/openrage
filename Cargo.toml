@@ -49,7 +49,9 @@ members = [
     "crates/domain/or-wardrobe",
     "crates/domain/or-weapons",
     "crates/domain/or-world",
+    "crates/domain/or-world-gta5",
     "crates/domain/or-world-gta6",
+    "crates/domain/or-worlds",
 
     # Things that run: evaluated, simulated, drawn.
     "crates/runtime/or-anim",
@@ -223,7 +225,9 @@ or-content = { path = "crates/domain/or-content" }
 or-wardrobe = { path = "crates/domain/or-wardrobe" }
 or-weapons = { path = "crates/domain/or-weapons" }
 or-world = { path = "crates/domain/or-world" }
+or-world-gta5 = { path = "crates/domain/or-world-gta5" }
 or-world-gta6 = { path = "crates/domain/or-world-gta6" }
+or-worlds = { path = "crates/domain/or-worlds" }
 or-title = { path = "crates/title/or-title" }
 or-renderer = { path = "crates/runtime/or-renderer" }
 or-cli = { path = "crates/tools/or-cli" }

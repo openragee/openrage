@@ -33,7 +33,7 @@ enum Draws {
 
 /// Each source file that begins a render pass, a compute pass or a copy between textures, with
 /// how many places of each it holds.
-const SITES: [(&str, Draws, [usize; 3]); 19] = [
+const SITES: [(&str, Draws, [usize; 3]); 21] = [
     ("game_shaders/ambient.rs", Draws::Frame, [1, 0, 0]),
     ("game_shaders/bloom.rs", Draws::Frame, [1, 0, 0]),
     ("game_shaders/deferred.rs", Draws::Frame, [2, 0, 0]),
@@ -41,9 +41,12 @@ const SITES: [(&str, Draws, [usize; 3]); 19] = [
     ("game_shaders/frame.rs", Draws::Apart, [3, 0, 0]),
     ("game_shaders/grade.rs", Draws::Frame, [1, 0, 1]),
     ("game_shaders/meshlets.rs", Draws::Model, [3, 0, 0]),
+    ("game_shaders/meshlets/forward.rs", Draws::Model, [1, 0, 0]),
     ("game_shaders/meshlets/sun_mask.rs", Draws::Model, [1, 0, 0]),
     ("game_shaders/shadow.rs", Draws::Frame, [2, 0, 0]),
     ("game_shaders/stand_in.rs", Draws::Apart, [2, 0, 0]),
+    // The sun's mask of a model written by rays, a tile at a time.
+    ("game_shaders/trace/pass.rs", Draws::Model, [0, 3, 1]),
     ("stencil/mod.rs", Draws::Apart, [1, 0, 0]),
     ("surface.rs", Draws::Apart, [1, 0, 0]),
     // The pass every step over the lit frame opens, then the three a viewport draws over a frame.

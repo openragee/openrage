@@ -3120,6 +3120,9 @@ struct Seen {
     addressed: bool,
 }
 
+/// One mention of a variable: its block, the assignment where it is one that may declare, and its position.
+type Mention = (u32, Option<*const Stmt>, u32);
+
 /// One step of the walk over a body.
 enum Visit<'b> {
     Block(&'b [tree::Stmt], u32),
@@ -3137,7 +3140,7 @@ struct Placer<'h> {
     blocks: Vec<(u32, u32)>,
     seen: BTreeMap<Var, Seen>,
     /// Every mention of each variable: its block, the assignment where it is one that may declare, and its position.
-    mentions: BTreeMap<Var, Vec<(u32, Option<*const Stmt>, u32)>>,
+    mentions: BTreeMap<Var, Vec<Mention>>,
     /// The positions of the labels, rising.
     labels: Vec<u32>,
     /// The position of what is being walked, counted in source order.
@@ -3174,7 +3177,7 @@ impl Placer<'_> {
     // from another, as the blocks are siblings and each is entered at its assignment.
     fn split(&self, var: Var, within: u32) -> Option<Vec<*const Stmt>> {
         let mentions = self.mentions.get(&var)?;
-        let mut parts: BTreeMap<u32, Vec<(u32, Option<*const Stmt>, u32)>> = BTreeMap::new();
+        let mut parts: BTreeMap<u32, Vec<Mention>> = BTreeMap::new();
         for mention in mentions {
             let part = self.below(mention.0, within)?;
             parts.entry(part).or_default().push(*mention);

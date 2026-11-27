@@ -17443,3 +17443,15 @@ msgstr "Il percorso tracciato verifica ogni nodo con la query dei raggi della sc
 
 msgid "The traced walk tests each node in software"
 msgstr "Il percorso tracciato verifica ogni nodo via software"
+
+msgid "Label natives from the labels files (guesses)"
+msgstr "Etichetta le native dai file di etichette (ipotesi)"
+
+msgid "A file of the names folder whose name holds labels gives guessed names of natives. It is read only while this is on; a native a natives list names keeps that name, and each label is written with a leading underscore"
+msgstr "Un file della cartella dei nomi il cui nome contiene labels dà nomi ipotizzati delle native. Viene letto solo mentre questa opzione è attiva; una nativa che un elenco di native nomina mantiene quel nome, e ogni etichetta è scritta con un trattino basso iniziale"
+
+msgid "Not read: {files}. A labels file holds guesses, read only while asked"
+msgstr "Non letti: {files}. Un file di etichette contiene ipotesi, lette solo su richiesta"
+
+msgid "Natives no list names are labelled from {files}: these are guesses, not names"
+msgstr "Le native che nessun elenco nomina sono etichettate da {files}: sono ipotesi, non nomi"

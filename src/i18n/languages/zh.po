@@ -17443,3 +17443,15 @@ msgstr "追踪的遍历用显卡的光线查询测试每个节点"
 
 msgid "The traced walk tests each node in software"
 msgstr "追踪的遍历用软件测试每个节点"
+
+msgid "Label natives from the labels files (guesses)"
+msgstr "用标签文件为原生函数加标签（猜测）"
+
+msgid "A file of the names folder whose name holds labels gives guessed names of natives. It is read only while this is on; a native a natives list names keeps that name, and each label is written with a leading underscore"
+msgstr "名称文件夹中名称含 labels 的文件给出原生函数的猜测名称。仅在此项开启时读取；原生函数列表已命名的原生函数保留该名称，每个标签前加下划线书写"
+
+msgid "Not read: {files}. A labels file holds guesses, read only while asked"
+msgstr "未读取：{files}。标签文件存放的是猜测，仅在要求时读取"
+
+msgid "Natives no list names are labelled from {files}: these are guesses, not names"
+msgstr "没有列表命名的原生函数按 {files} 加了标签：这些是猜测，不是名称"

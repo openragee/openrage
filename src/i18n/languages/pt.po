@@ -17443,3 +17443,15 @@ msgstr "O percurso traçado testa cada nó com a consulta de raios da placa de v
 
 msgid "The traced walk tests each node in software"
 msgstr "O percurso traçado testa cada nó por software"
+
+msgid "Label natives from the labels files (guesses)"
+msgstr "Rotular as nativas com os arquivos de rótulos (suposições)"
+
+msgid "A file of the names folder whose name holds labels gives guessed names of natives. It is read only while this is on; a native a natives list names keeps that name, and each label is written with a leading underscore"
+msgstr "Um arquivo da pasta de nomes cujo nome contém labels dá nomes supostos de nativas. Ele só é lido enquanto isto está ativado; uma nativa que uma lista de nativas nomeia mantém esse nome, e cada rótulo é escrito com um sublinhado à frente"
+
+msgid "Not read: {files}. A labels file holds guesses, read only while asked"
+msgstr "Não lidos: {files}. Um arquivo de rótulos guarda suposições, lidas só quando pedido"
+
+msgid "Natives no list names are labelled from {files}: these are guesses, not names"
+msgstr "As nativas que nenhuma lista nomeia são rotuladas a partir de {files}: são suposições, não nomes"

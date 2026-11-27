@@ -17443,3 +17443,15 @@ msgstr "추적된 순회는 각 노드를 그래픽 카드의 광선 쿼리로 �
 
 msgid "The traced walk tests each node in software"
 msgstr "추적된 순회는 각 노드를 소프트웨어로 검사합니다"
+
+msgid "Label natives from the labels files (guesses)"
+msgstr "레이블 파일로 네이티브에 레이블 붙이기(추측)"
+
+msgid "A file of the names folder whose name holds labels gives guessed names of natives. It is read only while this is on; a native a natives list names keeps that name, and each label is written with a leading underscore"
+msgstr "이름 폴더에서 이름에 labels가 들어간 파일은 네이티브의 추측된 이름을 제공합니다. 이 옵션이 켜져 있을 때만 읽으며, 네이티브 목록이 이름을 붙인 네이티브는 그 이름을 유지하고, 각 레이블은 앞에 밑줄을 붙여 씁니다"
+
+msgid "Not read: {files}. A labels file holds guesses, read only while asked"
+msgstr "읽지 않음: {files}. 레이블 파일은 추측을 담고 있어 요청할 때만 읽습니다"
+
+msgid "Natives no list names are labelled from {files}: these are guesses, not names"
+msgstr "어떤 목록도 이름을 붙이지 않은 네이티브는 {files}에서 레이블을 붙였습니다: 이름이 아니라 추측입니다"

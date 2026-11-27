@@ -17443,3 +17443,15 @@ msgstr "トレースされた走査は各ノードをグラフィックスカー
 
 msgid "The traced walk tests each node in software"
 msgstr "トレースされた走査は各ノードをソフトウェアで判定します"
+
+msgid "Label natives from the labels files (guesses)"
+msgstr "ラベルファイルからネイティブ関数にラベルを付ける（推測）"
+
+msgid "A file of the names folder whose name holds labels gives guessed names of natives. It is read only while this is on; a native a natives list names keeps that name, and each label is written with a leading underscore"
+msgstr "名前フォルダーにある、名前に labels を含むファイルは、ネイティブ関数の推測による名前を与えます。これがオンの間だけ読み込まれます。ネイティブ関数リストが名前を付けているネイティブ関数はその名前のままで、各ラベルは先頭にアンダースコアを付けて書かれます"
+
+msgid "Not read: {files}. A labels file holds guesses, read only while asked"
+msgstr "未読込：{files}。ラベルファイルは推測を含むため、求められたときだけ読み込まれます"
+
+msgid "Natives no list names are labelled from {files}: these are guesses, not names"
+msgstr "どのリストも名前を付けていないネイティブ関数には {files} からラベルが付けられています。これは名前ではなく推測です"

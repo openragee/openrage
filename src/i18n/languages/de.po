@@ -17443,3 +17443,15 @@ msgstr "Der verfolgte Durchlauf prüft jeden Knoten mit der Strahlabfrage der Gr
 
 msgid "The traced walk tests each node in software"
 msgstr "Der verfolgte Durchlauf prüft jeden Knoten in Software"
+
+msgid "Label natives from the labels files (guesses)"
+msgstr "Natives aus den Labels-Dateien beschriften (Vermutungen)"
+
+msgid "A file of the names folder whose name holds labels gives guessed names of natives. It is read only while this is on; a native a natives list names keeps that name, and each label is written with a leading underscore"
+msgstr "Eine Datei im Namensordner, deren Name labels enthält, gibt vermutete Namen von Natives an. Sie wird nur gelesen, solange dies eingeschaltet ist; eine Native, die eine Natives-Liste benennt, behält diesen Namen, und jedes Label wird mit einem führenden Unterstrich geschrieben"
+
+msgid "Not read: {files}. A labels file holds guesses, read only while asked"
+msgstr "Nicht gelesen: {files}. Eine Labels-Datei enthält Vermutungen, die nur auf Wunsch gelesen werden"
+
+msgid "Natives no list names are labelled from {files}: these are guesses, not names"
+msgstr "Natives, die keine Liste benennt, sind aus {files} beschriftet: Das sind Vermutungen, keine Namen"

@@ -17601,3 +17601,15 @@ msgstr "Трассируемый обход проверяет каждый уз
 
 msgid "The traced walk tests each node in software"
 msgstr "Трассируемый обход проверяет каждый узел программно"
+
+msgid "Label natives from the labels files (guesses)"
+msgstr "Подписывать нативные функции из файлов меток (догадки)"
+
+msgid "A file of the names folder whose name holds labels gives guessed names of natives. It is read only while this is on; a native a natives list names keeps that name, and each label is written with a leading underscore"
+msgstr "Файл в папке имён, в имени которого есть labels, даёт предполагаемые имена нативных функций. Он читается, только пока это включено; нативная функция, которую называет список нативных функций, сохраняет это имя, а каждая метка пишется с ведущим подчёркиванием"
+
+msgid "Not read: {files}. A labels file holds guesses, read only while asked"
+msgstr "Не прочитаны: {files}. Файл меток содержит догадки, которые читаются только по запросу"
+
+msgid "Natives no list names are labelled from {files}: these are guesses, not names"
+msgstr "Нативные функции, которые не называет ни один список, подписаны по {files}: это догадки, а не имена"

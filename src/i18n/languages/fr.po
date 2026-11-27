@@ -17443,3 +17443,15 @@ msgstr "Le parcours tracé teste chaque nœud par la requête de rayons de la ca
 
 msgid "The traced walk tests each node in software"
 msgstr "Le parcours tracé teste chaque nœud par logiciel"
+
+msgid "Label natives from the labels files (guesses)"
+msgstr "Étiqueter les natives à partir des fichiers d'étiquettes (suppositions)"
+
+msgid "A file of the names folder whose name holds labels gives guessed names of natives. It is read only while this is on; a native a natives list names keeps that name, and each label is written with a leading underscore"
+msgstr "Un fichier du dossier des noms dont le nom contient labels donne des noms supposés de natives. Il n'est lu que lorsque cette option est cochée ; une native qu'une liste de natives nomme garde ce nom, et chaque étiquette est écrite précédée d'un tiret bas"
+
+msgid "Not read: {files}. A labels file holds guesses, read only while asked"
+msgstr "Non lus : {files}. Un fichier d'étiquettes contient des suppositions, lues seulement sur demande"
+
+msgid "Natives no list names are labelled from {files}: these are guesses, not names"
+msgstr "Les natives qu'aucune liste ne nomme sont étiquetées d'après {files} : ce sont des suppositions, non des noms"

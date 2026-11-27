@@ -17443,3 +17443,15 @@ msgstr "El recorrido trazado prueba cada nodo con la consulta de rayos de la tar
 
 msgid "The traced walk tests each node in software"
 msgstr "El recorrido trazado prueba cada nodo por software"
+
+msgid "Label natives from the labels files (guesses)"
+msgstr "Etiquetar las nativas con los archivos de etiquetas (conjeturas)"
+
+msgid "A file of the names folder whose name holds labels gives guessed names of natives. It is read only while this is on; a native a natives list names keeps that name, and each label is written with a leading underscore"
+msgstr "Un archivo de la carpeta de nombres cuyo nombre contiene labels da nombres conjeturados de nativas. Solo se lee mientras esto está activado; una nativa que nombra una lista de nativas conserva ese nombre, y cada etiqueta se escribe con un guion bajo delante"
+
+msgid "Not read: {files}. A labels file holds guesses, read only while asked"
+msgstr "Sin leer: {files}. Un archivo de etiquetas guarda conjeturas, que solo se leen cuando se pide"
+
+msgid "Natives no list names are labelled from {files}: these are guesses, not names"
+msgstr "Las nativas que ninguna lista nombra se etiquetan a partir de {files}: son conjeturas, no nombres"

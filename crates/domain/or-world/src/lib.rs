@@ -74,6 +74,7 @@ pub mod kept;
 pub mod kit;
 pub mod model;
 pub mod policy;
+pub mod pool;
 pub mod pose;
 pub mod sentence;
 pub mod slots;

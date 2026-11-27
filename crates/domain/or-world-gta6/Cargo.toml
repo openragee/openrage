@@ -1,0 +1,32 @@
+[package]
+name = "or-world-gta6"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "GTA VI's world behind the world contract: its index with its kept file, mount binding, scan and states, its occluders, its material record and its lights' law"
+
+[dependencies]
+bytemuck.workspace = true
+glam.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+# Cancellation and progress, which a build of the index is handed.
+or-job.workspace = true
+# The readers of a map body, a model's material and an archive's bodies.
+or-io = { workspace = true, features = ["gta6", "meta"] }
+# The mount: which packs register a map, and the day's variables.
+or-title.workspace = true
+# The core: the reader pool, a view and a map's boxes.
+or-world.workspace = true
+
+[features]
+# Indexes made up by hand, which the tests of the crates above build their worlds from.
+made-up = []
+
+[dev-dependencies]
+# Scratch folders the tests remove when they end.
+tempfile.workspace = true

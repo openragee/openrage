@@ -18,6 +18,7 @@ use or_world::streaming_rules::FOCUS_JUMP_DISTANCE;
 use crate::state::jobs::{JobKind, Outcome, RunningJob, Then};
 use crate::ui::panels::log::grouped;
 
+#[path = "index_shell.rs"]
 pub(crate) mod index;
 mod interior;
 mod interior_rooms;
@@ -25,13 +26,7 @@ pub(crate) mod lights;
 mod lights_corona;
 mod lights_distant;
 pub(crate) mod lights_frame;
-pub(crate) mod lights_index;
-mod lights_law;
-mod lights_lod;
-mod lights_vars;
 mod model;
-mod occluders;
-mod pool;
 #[cfg(test)]
 #[path = "reference_tests.rs"]
 mod reference;
@@ -52,6 +47,9 @@ pub use model::{Constants, Emissive, Interior, Layer};
 pub use texture::CpuTexture;
 
 use index::{Enabled, ModelRef, WorldIndex};
+use or_io::gta6::map::lights_lod;
+use or_world::pool;
+use or_world_gta6::{lights_law, lights_vars, occluders};
 use pool::{soonest, Pool};
 use stream::{Selected, Streaming, World};
 use texture::{OpenPacks, Places};

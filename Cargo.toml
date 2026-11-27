@@ -49,6 +49,7 @@ members = [
     "crates/domain/or-wardrobe",
     "crates/domain/or-weapons",
     "crates/domain/or-world",
+    "crates/domain/or-world-gta6",
 
     # Things that run: evaluated, simulated, drawn.
     "crates/runtime/or-anim",
@@ -222,6 +223,7 @@ or-content = { path = "crates/domain/or-content" }
 or-wardrobe = { path = "crates/domain/or-wardrobe" }
 or-weapons = { path = "crates/domain/or-weapons" }
 or-world = { path = "crates/domain/or-world" }
+or-world-gta6 = { path = "crates/domain/or-world-gta6" }
 or-title = { path = "crates/title/or-title" }
 or-renderer = { path = "crates/runtime/or-renderer" }
 or-cli = { path = "crates/tools/or-cli" }
@@ -327,6 +329,7 @@ or-content.workspace = true
 or-plugin.workspace = true
 or-transport.workspace = true
 or-world.workspace = true
+or-world-gta6.workspace = true
 # Cancellation and progress-as-data, shared with `or-cli`. The app does depend
 # on `or-cli`, to host the `openrage-cli` binary; `or-job` keeps the job model
 # out of that edge.
@@ -403,6 +406,8 @@ tempfile.workspace = true
 or-test-support.workspace = true
 # The made-up tables file and coded bodies the texture pack's labels are tested on.
 or-io = { workspace = true, features = ["made-up"] }
+# Indexes made up by hand, which the tests of the World screen build their worlds from.
+or-world-gta6 = { workspace = true, features = ["made-up"] }
 # A GTA VI model's pass taken as still being built, for the tests of a frame drawn meanwhile.
 or-renderer = { workspace = true, features = ["test-support"] }
 # A project folder zipped and opened elsewhere, as a person sends one.

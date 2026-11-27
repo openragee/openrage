@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
+use or_io::container::rpf::GtaViKeys;
 use or_job::{Cancel, Progress};
 use or_title::gta6_mount::{self, HeldBack, MapFact, Mode, SCRIPT_MANAGED};
 use or_world::streaming::MapBox;
@@ -23,11 +24,11 @@ mod mount;
 mod scan;
 #[path = "index_states.rs"]
 mod states;
-#[path = "index_types.rs"]
-mod types;
+use or_io::gta6::map::index_types as types;
+use or_io::gta6::map::lights_index;
 
 pub use keep::{fresh_beside, kept_at};
-pub(crate) use mount::keys;
+pub use mount::keys;
 pub use types::ALL_HOURS;
 
 /// A map of the index.
@@ -233,7 +234,7 @@ pub struct WorldIndex {
     models: Vec<BodyRow>,
     dictionaries: Vec<BodyRow>,
     interiors: Vec<BodyRow>,
-    lights: Vec<super::lights_index::LightRow>,
+    lights: Vec<lights_index::LightRow>,
     /// The archetype word each far stand-in id names, by the id; 0 for an id no list settles.
     pub slod: Vec<u64>,
     /// Each group's word and hours at rest, by id.
@@ -307,8 +308,8 @@ impl WorldIndex {
     }
 
     /// Each table of the index by name, with how many rows it holds and their bytes.
-    #[cfg(test)]
-    pub(super) fn tables(&self) -> Vec<(&'static str, usize, &[u8])> {
+    #[cfg(any(test, feature = "made-up"))]
+    pub fn tables(&self) -> Vec<(&'static str, usize, &[u8])> {
         fn of<'a, T: Pod>(name: &'static str, rows: &'a [T]) -> (&'static str, usize, &'a [u8]) {
             (name, rows.len(), bytemuck::cast_slice(rows))
         }
@@ -329,8 +330,8 @@ impl WorldIndex {
     }
 
     /// Every archetype of the index, by its word.
-    #[cfg(test)]
-    pub(super) fn archetypes(&self) -> &[ArchetypeRow] {
+    #[cfg(any(test, feature = "made-up"))]
+    pub fn archetypes(&self) -> &[ArchetypeRow] {
         &self.archetypes
     }
 
@@ -360,8 +361,8 @@ impl WorldIndex {
     }
 
     /// The lights archetype `word` holds, in its model's space.
-    pub fn archetype_lights(&self, word: u64) -> &[super::lights_index::LightRow] {
-        super::lights_index::of_archetype(&self.lights, word)
+    pub fn archetype_lights(&self, word: u64) -> &[lights_index::LightRow] {
+        lights_index::of_archetype(&self.lights, word)
     }
 
     /// The middle of the boxes of the maps that stream at rest, where a camera starts.
@@ -386,7 +387,7 @@ impl WorldIndex {
         self.archetypes.reverse();
         self.archetypes.dedup_by_key(|a| a.word);
         self.archetypes.reverse();
-        super::lights_index::settle(&mut self.lights);
+        lights_index::settle(&mut self.lights);
         for rows in [
             &mut self.models,
             &mut self.dictionaries,
@@ -471,13 +472,13 @@ fn counted(maps: &[MapRow]) -> Report {
 pub fn build(
     root: &Path,
     fresh: Option<&Path>,
+    snapshot: Option<&GtaViKeys>,
     cancel: &Cancel,
     progress: &Progress,
 ) -> Result<Option<WorldIndex>, String> {
     let stopped = || cancel.is_set();
     let every = mount::archives_under(root);
-    let snapshot = mount::keys();
-    let Some(mounted) = mount::read(&every, snapshot.as_ref(), &stopped) else {
+    let Some(mounted) = mount::read(&every, snapshot, &stopped) else {
         return Ok(None);
     };
     let archives = mounted.archives(root, &every);
@@ -594,21 +595,6 @@ pub fn build(
     Ok(Some(index.finish()))
 }
 
-impl super::Viewer {
-    /// The height map and the water of the install shown, as the overhead map shades them: each `None` until its worker has read it.
-    pub fn land_and_water(
-        &self,
-    ) -> (
-        Option<std::sync::Arc<or_io::gta6::water::height::WaterGround>>,
-        Option<std::sync::Arc<or_io::gta6::water::WaterData>>,
-    ) {
-        let Some(root) = self.root.as_deref() else {
-            return (None, None);
-        };
-        (super::water::ground(root), super::water::water(root))
-    }
-}
-
 /// The one dictionary body that holds a drawable under every name the archetypes of a dictionary
 /// word bear, for each such word.
 fn dictionaries(archetypes: &[ArchetypeRow], keys: &HashMap<u32, Vec<BodyRow>>) -> Vec<BodyRow> {
@@ -642,8 +628,8 @@ fn dictionaries(archetypes: &[ArchetypeRow], keys: &HashMap<u32, Vec<BodyRow>>) 
 }
 
 /// Indexes made up for the tests of this folder.
-#[cfg(test)]
-pub(super) mod tests_support {
+#[cfg(any(test, feature = "made-up"))]
+pub mod tests_support {
     use super::*;
 
     /// An index of `archives` with an archetype for each word, the distance it draws to and the

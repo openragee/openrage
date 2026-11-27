@@ -1,9 +1,9 @@
 //! What the index keeps of an archetype's lights: one row a light, in the archetype's own space,
 //! by the word its entities name it by.
 
+use crate::gta6::map::light_ext::{self, Light, LightKind};
+use crate::meta::binary::rbm::schema::RbmModel;
 use bytemuck::{Pod, Zeroable};
-use or_io::gta6::map::light_ext::{self, Light, LightKind};
-use or_io::meta::binary::rbm::schema::RbmModel;
 
 /// One light an archetype holds, in its model's space.
 #[repr(C)]

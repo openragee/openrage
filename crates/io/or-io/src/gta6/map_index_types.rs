@@ -5,9 +5,9 @@
 //! ⚠ Each member is checked against the body's own class table first, as the map readers check
 //! theirs: a class that puts it elsewhere would read other bytes.
 
-use or_io::gta6::map;
-use or_io::hash::literal_string_hash as lit;
-use or_io::meta::binary::rbm::schema::{RbmDataBlock, RbmModel};
+use crate::gta6::map;
+use crate::hash::literal_string_hash as lit;
+use crate::meta::binary::rbm::schema::{RbmDataBlock, RbmModel};
 
 /// A member read here: its name's hash, its offset and its type code.
 type Member = (u32, u32, u8);
@@ -132,5 +132,5 @@ fn load_flags_in(
 }
 
 #[cfg(test)]
-#[path = "index_types_tests.rs"]
+#[path = "map_index_types_tests.rs"]
 mod tests;

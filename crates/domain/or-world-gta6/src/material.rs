@@ -310,14 +310,14 @@ const LOOKUP: [u32; 2] = [
     name_hash32(b"controlTextureTex"),
 ];
 /// The record of the palette the mesh stage reads a texel of.
-pub(super) const PALETTE: u32 = name_hash32(b"TintPaletteTex");
+pub const PALETTE: u32 = name_hash32(b"TintPaletteTex");
 const TINT: u32 = name_hash32(b"tintTexture");
 const TINT_NORMAL: u32 = name_hash32(b"tintBumpTexture");
 const DIRT: [u32; 2] = [name_hash32(b"DiffuseTex2"), name_hash32(b"dirtDiffuseTex")];
 const EMISSIVE_MAP: u32 = name_hash32(b"EmissiveTex");
 
 /// The hash of the constant a material that glows scales its glow by.
-pub(super) const GLOW: u32 = name_hash32(b"emissivemultiplier");
+pub const GLOW: u32 = name_hash32(b"emissivemultiplier");
 const NIGHT: u32 = 0x823D_5749;
 /// The two-layer interior effect's annotation of the night strength, which its drawables state instead.
 const NIGHT_INTERIOR: u32 = 0x605D_899E;
@@ -595,11 +595,7 @@ fn interior_of(r: &Records) -> Option<Interior> {
 ///
 /// ⚠ A key a pack states as linear is a data or normal map: drawn as a colour it tints the whole
 /// mesh green and blue.
-pub(super) fn material_of(
-    shader: &Shader,
-    byte: u8,
-    srgb: &dyn Fn(u64) -> Option<bool>,
-) -> CpuMaterial {
+pub fn material_of(shader: &Shader, byte: u8, srgb: &dyn Fn(u64) -> Option<bool>) -> CpuMaterial {
     let r = Records(shader);
     let (shape, layers): (Family, Vec<Layer>) = if FOUR.iter().any(|l| r.states_layer(l)) {
         (Family::FourLayer, FOUR.iter().map(|l| r.layer(l)).collect())

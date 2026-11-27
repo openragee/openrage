@@ -902,6 +902,15 @@ pub mod interior;
 #[path = "map_occluders.rs"]
 pub mod occluders;
 
+#[path = "map_index_types.rs"]
+pub mod index_types;
+
+#[path = "map_lights_lod.rs"]
+pub mod lights_lod;
+
+#[path = "map_lights_index.rs"]
+pub mod lights_index;
+
 #[cfg(test)]
 #[path = "map_tests.rs"]
 mod tests;

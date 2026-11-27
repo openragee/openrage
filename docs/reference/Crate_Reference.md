@@ -18,7 +18,7 @@ list.
 | foundation | `crates/foundation/` | or-job, or-test-support, or-transport | building blocks that know no file format |
 | io | `crates/io/` | or-io, or-io-macros, or-io-verify, or-kraken, or-media | GTA V's containers, descriptions, canonical writer and `#[record]` declarations, and the decoders for the audio and video in them |
 | title | `crates/title/` | or-title | where the bytes live: editions, archives, DLC order, the VFS |
-| domain | `crates/domain/` | or-addonped, or-content, or-depends, or-editor, or-interchange, or-maps, or-particle, or-particles, or-plugin, or-project, or-source, or-wardrobe, or-weapons, or-world | the models of what is edited |
+| domain | `crates/domain/` | or-addonped, or-content, or-depends, or-editor, or-interchange, or-maps, or-particle, or-particles, or-plugin, or-project, or-source, or-wardrobe, or-weapons, or-world, or-world-gta6 | the models of what is edited |
 | runtime | `crates/runtime/` | or-anim, or-simulation, or-renderer | what is evaluated, simulated or drawn |
 | tools | `crates/tools/` | or-cli, or-shader-front, or-shader-tool, xtask | programs over the lower layers, and the repository's own tasks |
 | app | `src/` | openrage | the desktop editor and the `openrage-cli` binary |
@@ -491,6 +491,7 @@ their fields: a name says the role a field was measured to play, and nothing the
 | `gta6::hash`, `gta6::names`, `gta6::texture_names`, `gta6::map_names` | the two data hashes; the vocabulary harvested from bodies, the name each model states of itself and the textures each model binds; the rules a texture's name follows from its drawable's, and the use label of a texture with no name; the rules a map's name follows from another map's |
 | `gta6::anim`, `gta6::anim_scene`, `gta6::move_network` | animation resources read and written; anim scenes; a MoVE network's node outline |
 | `gta6::map` and its `map_grow`, `map_links`, `map_lights`, `map_lanes` and `map_world` files | map placement and archetypes typed from a body's own class table, entities added and removed, level-of-detail and interior links, lights placed in the world, the lane graph joined, and the census, index and grid over many bodies |
+| `gta6::map::index_types`, `gta6::map::lights_lod` and `gta6::map::lights_index` | three readers of a body by member hash that the World screen's index and lights are built from, each member checked against the body's own class table: the group a script-managed map is switched with, a time archetype's hours and an archetype's load flags; a map's level-of-detail lights, distant lights and reflection probes; and one `LightRow` for each light an archetype holds. `lights_lod::tests::model`, a map body made up by hand, is built outside a test under the `made-up` feature |
 | `gta6::text`, `gta6::text_language` | a text table read and written; the language a table has by the order a change set registers its archive |
 | `gta6::audio_data`, `audio_tables`, `audio_links`, `audio_radio`, `gta6::dialogue` | audio game data and the items a table lays out, what they link to, the radio's stations joined to their streams, and dialogue lines joined to their audio and their subtitles |
 | `gta6::ui_tree` | an RBF0 document as a strict element tree |
@@ -1664,6 +1665,24 @@ is a judgement over the same set and no query: which pieces of the bounds under
 the oriented box of a placed object are the object's own, as data a person edits
 (`crates/domain/or-world/src/collision/association.rs`).
 
+**or-world-gta6.** GTA VI's adapter crate, which so far holds what left the app with no change of
+behaviour ([R71b](../direction/Roadmap.md#r71b-the-gta-vi-world-behind-the-contract), its second
+part): it states no title yet, and no registry lists it. `index` is the index of an install the
+World screen streams from (`WorldIndex`: the maps each pack registers with their boxes, each
+archetype by its word, where each model's body lies), with its kept file
+(`crates/domain/or-world-gta6/src/index_keep.rs`), the mount binding that reads the registration
+documents (`crates/domain/or-world-gta6/src/index_mount.rs`), the scan of an archive
+(`crates/domain/or-world-gta6/src/index_scan.rs`) and the world states
+(`crates/domain/or-world-gta6/src/index_states.rs`). ⚠ `index::build` is handed the key snapshot
+and `index::keys` the configuration folder: the crate takes neither from the app, and
+`src/state/gta6_worldview/index_shell.rs` is where the app gives its own. `occluders` streams
+the occluders of the maps near a view through the core's `Pool`; `material` is a model's
+material record (`CpuMaterial`, `Family`); `lights_law` is the law of a local light as the nested volumes that
+draw it, and `lights_vars` the variables of the timecycle frame the lights read. The feature `made-up` builds
+`index::tests_support`, indexes made up by hand, outside a test, for the tests of the app. It
+depends on `or-world`, `or-io`, `or-title` and `or-job`, and on no other adapter
+(`no_adapter_crate_depends_on_another_or_above_itself`).
+
 **The world core.** The modules of `or-world` listed here name no game and are what every title's
 world sits behind ([R71a](../direction/Roadmap.md#r71a-the-world-contract-the-conformance-kit-and-the-fake-title),
 [Unified_World_Plan.md](../direction/Unified_World_Plan.md#the-contract)); the rest of the crate is
@@ -1733,6 +1752,12 @@ still GTA V's model, which moves to its adapter in R71n.
   proves the core with no game, a public module no registry lists, and each `Fault` of it breaks
   one rule and no other (`each_broken_fake_breaks_the_rule_it_was_built_to_break_and_no_other`).
 - `pose` is the camera line of a script, read and written.
+- `pool` is `Pool`, the reader pool: workers that answer the nearest request first, the queue set
+  anew as the camera moves, so a request no longer wanted is never served, with a bound on what
+  the answers not taken yet may weigh. A worker keeps a state of the caller's kind between reads,
+  which is where a title's reader keeps its open files; a read that panics answers that one
+  request with the default and the worker goes on. ⚠ The World screen's readers still hand it
+  states of their own, and none hands it the contract's `Worker` yet.
 
 `crates/domain/or-world/tests/the_core_names_no_game.rs` holds the core to naming no game, no
 title's crate and no file extension of a game outside two ledgers that only shrink, to holding no
@@ -1747,7 +1772,7 @@ package it names.
 
 What [R71a](../direction/Roadmap.md#r71a-the-world-contract-the-conformance-kit-and-the-fake-title)'s row leaves to this document, as the row stated it. The driver is held by the tests of `crates/domain/or-world/src/driver_tests.rs`: a held map is read once (`a_held_map_is_read_once`), an edit session is asked before the reader, an interior stands about its instance where an edit put it (`an_interior_follows_its_instance_when_an_edit_moves_it`), a body that comes in after its map left the view stands in no forest (`a_body_given_after_its_map_left_the_view_stands_in_no_forest`), and a body says what draws its nodes in one call and never once a node (`a_body_says_what_draws_its_nodes_once_a_moment_and_never_once_a_node`). Two worlds the fake title is not stand behind the contract in `crates/domain/or-world/tests/a_world_lent_and_a_world_read_on_threads.rs`: one whose install borrows the world it reads, and one whose bodies and interiors are read on worker threads while the driver's thread reads nothing. The kept file is held by `a_changed_stamp_reads_that_archive_again_and_leaves_the_others`, `an_archive_with_no_stamp_is_read_at_every_open`, `what_else_the_index_reads_derives_across_again_when_it_changes_or_bears_no_stamp` and `two_writers_at_once_leave_a_whole_file_of_one_of_them`; the language gate by `a_sentence_a_world_adapter_names_that_no_catalog_holds_fails_the_gate`; and the architecture by `the_core_names_no_game_outside_its_ledger`, `the_core_depends_on_no_crate_of_its_own_layer_or_above` and `no_adapter_crate_depends_on_another_or_above_itself`. `with_exact_children` is gone: the forest takes `Children` from the policy.
 
-Left for the rows that follow: the world thread and reader pool around the driver ([R71b](../direction/Roadmap.md#r71b-the-gta-vi-world-behind-the-contract)), the render profile ([R71f](../direction/Roadmap.md#r71f-the-render-profile-and-the-programs-of-gta-v-legacy)), the kit's second tier over an install on disk, the architecture tests of the frame host and of the app's world modules, and the World panel's own `Pose`, which stands beside the core's until [R71c](../direction/Roadmap.md#r71c-one-world-session-one-frame-host-and-panels-by-capability). No title's index is kept by the core's file yet. A map an edit session holds is put in the forest afresh at each apply, so a far model at its root fades in again where the camera stands still, which [R71i](../direction/Roadmap.md#r71i-one-edit-stack-for-every-title) meets first. [The plan's outline](../direction/Unified_World_Plan.md#the-contract) is the contract as built, which departs from the plan of 2026-11-26: among the departures, a game is an id and no `Game`, every reader is handed the linked index, a body is laid out from its entities and its lists together and says what draws its nodes in one call, an interior is a body of its own that the map reader makes from the body that places it and that a settle waits for and does not read, and an install may be lent to its driver.
+Left for the rows that follow: the world thread around the driver and the reader pool ([R71b](../direction/Roadmap.md#r71b-the-gta-vi-world-behind-the-contract)), the render profile ([R71f](../direction/Roadmap.md#r71f-the-render-profile-and-the-programs-of-gta-v-legacy)), the kit's second tier over an install on disk, the architecture tests of the frame host and of the app's world modules, and the World panel's own `Pose`, which stands beside the core's until [R71c](../direction/Roadmap.md#r71c-one-world-session-one-frame-host-and-panels-by-capability). No title's index is kept by the core's file yet. A map an edit session holds is put in the forest afresh at each apply, so a far model at its root fades in again where the camera stands still, which [R71i](../direction/Roadmap.md#r71i-one-edit-stack-for-every-title) meets first. [The plan's outline](../direction/Unified_World_Plan.md#the-contract) is the contract as built, which departs from the plan of 2026-11-26: among the departures, a game is an id and no `Game`, every reader is handed the linked index, a body is laid out from its entities and its lists together and says what draws its nodes in one call, an interior is a body of its own that the map reader makes from the body that places it and that a settle waits for and does not read, and an install may be lent to its driver.
 
 - `create` makes a map, an entity, a type file and a base archetype from nothing,
   with no donor and no snapshot, over the typed roots: the file is a PSO, RBM is

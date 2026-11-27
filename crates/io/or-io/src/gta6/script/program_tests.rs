@@ -1097,3 +1097,18 @@ fn a_decompile_counts_the_functions_it_writes_and_stops_before_the_next_once_ask
     let written = functions_in(&program, &rows, &cx, Some(&stopped));
     assert_eq!((stopped.done(), written.stats.functions), (0, 0));
 }
+
+#[test]
+fn a_program_that_gives_no_part_may_call_anything_of_itself_and_of_what_it_imports() {
+    use crate::gta6::script::ir::FunctionKey;
+    use crate::gta6::script::project::{index, signatures};
+    let mut parts = small();
+    parts.imports = vec![(0x99, 4)];
+    let part = index::unread_part(&parts.build()).expect("the program reads");
+    let any = [PROGRAM, 0x99].map(|program| FunctionKey::new(program, signatures::ANY));
+    assert_eq!(part.unseen, any.into_iter().collect());
+    assert!(part.blind_natives);
+    assert!(part.unseen_slots.contains(&signatures::ANY));
+    assert!(part.programs.contains_key(&PROGRAM));
+    assert!(index::unread_part(&[1, 2, 3]).is_none());
+}

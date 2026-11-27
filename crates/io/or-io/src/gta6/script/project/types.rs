@@ -339,6 +339,36 @@ pub fn enumeration(project: &Project, key: TypeKey) -> Option<Enumeration<'_>> {
     })
 }
 
+/// The members a declaration of the enum `key` writes, each with the constant and the value it stands for: a name a list gives a value of a constant the type states, each name once.
+// ⚠ Two values of one name would be one member to C#: the second stays a number. Whatever writes
+// a member reads this, so no value is written as a member the declaration lacks.
+pub fn declared_members<'n>(
+    project: &Project,
+    names: &'n Names,
+    key: TypeKey,
+) -> Vec<(i64, u64, &'n str)> {
+    let Some(of) = enumeration(project, key) else {
+        return Vec::new();
+    };
+    let mut taken: BTreeSet<&str> = BTreeSet::new();
+    let mut members: Vec<(i64, u64, &str)> = Vec::new();
+    for value in of.values {
+        let Some(low) = of.value(*value as u64) else {
+            continue;
+        };
+        if members.iter().any(|(_, held, _)| *held == low) {
+            continue;
+        }
+        let Some(member) = names.enum_member(key, low, of.bytes) else {
+            continue;
+        };
+        if taken.insert(member) {
+            members.push((*value, low, member));
+        }
+    }
+    members
+}
+
 /// A value of the enum `key` as C# writes it: `Name.Member` where a list names the member, else `(Name)3`; `None` for a type that is no enum, and for a cell that holds no value of it.
 pub fn enum_constant(project: &Project, names: &Names, key: TypeKey, bits: u64) -> Option<String> {
     let of = enumeration(project, key)?;

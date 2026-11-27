@@ -204,6 +204,15 @@ pub struct Project {
     /// The rows and the truths the fields were last settled from: `layouts::refine` settles them again with more.
     #[serde(skip)]
     pub rows: layouts::Rows,
+    /// The functions code no part read may call or refer to, and a program's `signatures::ANY` where it may call any of that program's; empty in a settled project.
+    #[serde(skip)]
+    pub unseen: BTreeSet<FunctionKey>,
+    /// The slots code no part read calls through or takes a delegate of, and `signatures::ANY` where that code may call through any; empty in a settled project.
+    #[serde(skip)]
+    pub unseen_slots: BTreeSet<u32>,
+    /// Whether code no part read may call a native that no table says; false in a settled project.
+    #[serde(skip)]
+    pub blind_natives: bool,
 }
 
 static EMPTY: LazyLock<Project> = LazyLock::new(Project::default);

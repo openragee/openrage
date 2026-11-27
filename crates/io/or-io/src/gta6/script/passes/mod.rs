@@ -18,6 +18,7 @@ pub mod interproc;
 pub mod names;
 pub mod structure;
 pub mod sugar_expressions;
+pub mod sugar_runtime;
 pub mod sugar_statements;
 pub mod types;
 pub mod values;

@@ -221,8 +221,9 @@ pub fn decompile_listing(text: &str, cx: &Context<'_>) -> Result<Output, Decompi
                 done.push(function_in(read?, cx, &mut stats)?);
             }
             let imports = listing.imports.clone();
-            let done = passes::async_await::joined(done, cx);
+            let (done, steps) = passes::async_await::joined_steps(done, cx);
             let mut unit = passes::classes::unit(listing.program, imports, done, cx);
+            machines_hidden(&mut unit, &steps, cx);
             unit.front = Some(print::LISTING);
             let files = emit::unit(&unit, cx, &stats);
             return Ok(Output { files, stats });
@@ -248,11 +249,25 @@ pub fn assemble(
     cx: &Context<'_>,
     stats: Stats,
 ) -> Output {
-    let functions = passes::async_await::joined(functions, cx);
-    let unit = passes::classes::unit(program, imports, functions, cx);
+    let (functions, steps) = passes::async_await::joined_steps(functions, cx);
+    let mut unit = passes::classes::unit(program, imports, functions, cx);
+    machines_hidden(&mut unit, &steps, cx);
     Output {
         files: emit::unit(&unit, cx, &stats),
         stats,
+    }
+}
+
+/// Leaves out of what `unit` writes the state machines whose step functions `steps` names, where the project holds the program and no program of it imports it.
+// ⚠ Another program names a function of this one only through an import: where one may, the step
+// function it may call stays written.
+pub(crate) fn machines_hidden(
+    unit: &mut class::Unit,
+    steps: &std::collections::BTreeSet<u32>,
+    cx: &Context<'_>,
+) {
+    if print::unimported(unit.program, cx.project) {
+        passes::async_await::hide_machines(unit, steps);
     }
 }
 
@@ -336,6 +351,9 @@ pub fn blocks_in(f: cfg::Function, cx: &Context<'_>, stats: &mut Stats) -> tree:
     if options.on(Pass::Types) {
         passes::types::run_in(&mut blocks, cx, stats);
     }
+    if options.any(passes::aggregates::PASSES) {
+        passes::aggregates::copied_kinds(&mut blocks, cx, stats);
+    }
     let machine = match options.any(passes::async_await::PASSES) {
         true => passes::async_await::untangle(&mut blocks, cx, stats),
         false => None,
@@ -352,6 +370,9 @@ pub fn blocks_in(f: cfg::Function, cx: &Context<'_>, stats: &mut Stats) -> tree:
     }
     if options.any(passes::classes::PASSES) {
         passes::classes::run(&mut done, cx, stats);
+    }
+    if options.any(passes::sugar_runtime::PASSES) {
+        passes::sugar_runtime::run(&mut done, cx, stats);
     }
     if options.any(passes::closures::PASSES) {
         passes::closures::run(&mut done, cx, stats);

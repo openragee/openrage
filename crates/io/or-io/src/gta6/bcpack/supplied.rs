@@ -1,7 +1,7 @@
-//! The coder's fixed tables read from a file the user supplies.
+//! The coder's fixed tables read from a file: the tree's, or one the user supplies.
 //!
 //! The presets and the index tables are constants of the console's coder: no stream holds them,
-//! and OpenRage ships none but BC1's public ones. [`read`] takes a file that holds them into the
+//! and the tree holds them as one file beside BC1's public ones. [`read`] takes such a file into the
 //! shape the decoders here hold a fitted table in. A mode read through them is no estimate.
 //!
 //! What the decoders here take from a file:

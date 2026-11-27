@@ -679,12 +679,12 @@ fn a_calibration_file_is_found_again_by_a_pack_it_lists() {
     );
     let other = member_key(std::path::Path::new("zq/made_up.ttpf"), 8192);
     assert_ne!(ours, other);
-    assert!(load_cache(&cache, ours).is_none(), "no folder yet");
+    assert!(calibration(&cache, ours).is_none(), "no folder yet");
     let path = save_cache(&cache, &tables, &[ours]).expect("written");
     assert!(path.starts_with(&cache));
-    assert_eq!(load_cache(&cache, ours), Some(tables));
+    assert_eq!(calibration(&cache, ours), Some(tables));
     assert!(
-        load_cache(&cache, other).is_none(),
+        calibration(&cache, other).is_none(),
         "a pack it did not read"
     );
 }

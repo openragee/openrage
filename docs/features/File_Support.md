@@ -102,9 +102,9 @@ folder's view offers the scan and the name harvest.
   new body of the same length with a push's value changed; `--set-string` is refused, since no string
   text of the build's programs was found to replace.
 - **Textures.** A texture stored plainly or as zlib reads as it is. One stored through the pack's
-  entropy coder needs the coder's tables, which no file of the game holds. With a tables file you
-  supply to `openrage-cli ttpf tables`, every mode reads through it, and a texture is called exact
-  only on a condition. A BC6H or BC7 texture: no block of it speaks against the file, and
+  entropy coder needs the coder's tables, which no file of the game holds. Every mode reads
+  through the tables file the tree holds, or through one you supply to
+  `openrage-cli ttpf tables` in its place, and a texture is called exact only on a condition. A BC6H or BC7 texture: no block of it speaks against the file, and
   `openrage-cli ttpf tables --check` has held the file's tables of its format to your packs. A BC1
   texture: the file and BC1's built-in tables give the same value for everything it reads. A BC3,
   BC4 or BC5 texture is never called exact, since no rule of those formats can show a wrong table.
@@ -113,7 +113,7 @@ folder's view offers the scan and the name harvest.
   is ever a comparison with the pack's own blocks. A texture none of whose coded bodies was read
   says that its plain levels were read and its coded levels were not, and neither it nor one a
   coded body of which was not read is called exact.
-  Without one, BC1 decodes through its built-in tables, which were fitted and which nothing
+  Handed no tables file, which no default build does, BC1 decodes through its built-in tables, which were fitted and which nothing
   confirms value for value: a BC1 texture read through them is marked as resting on the built-in
   tables and is not called exact. BC3, BC4, BC5, BC6H and BC7 decode through tables that
   `openrage-cli ttpf calibrate`, or the app's job, fits on your machine from the packs of the

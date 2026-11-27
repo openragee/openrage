@@ -78,15 +78,18 @@ keep, then its origin.
 `crates/io/or-io/src/gta6/bcpack.rs` is OpenRage's own, and so are
 `crates/io/or-io/src/gta6/bcpack/planes.rs`, which rebuilds BC1, BC3, BC4 and BC5 blocks through
 tables, and `crates/io/or-io/src/gta6/bcpack/calibrate.rs`, which fits those tables on the user's
-machine from the user's own packs: no table of the modes other than BC1 is in the tree. The lane
+machine from the user's own packs. The lane
 widths of the modes other than BC1 are facts stated in the documentation of
 [ItsNotRexed/Leonida](https://github.com/ItsNotRexed/Leonida)
 (GPL-3.0), from which no code and no table is taken. Both MIT notices are reproduced at the end of
 this file.
 
-`crates/io/or-io/src/gta6/bcpack/supplied.rs` reads a file of the coder's tables that a user
-supplies. No such file, no value of one and nothing computed from one is in the tree, and the
-tests read made-up tables. [Marvisak/VIctory](https://github.com/Marvisak/VIctory)
+`crates/io/or-io/src/gta6/bcpack/supplied.rs` reads a file of the coder's tables: one a user
+supplies, else `crates/io/or-io/data/bcpack-tables.bin`, which the tree holds by the owner's
+ruling of 2026-11-27. That file is the one VIctory publishes, byte for byte. No licence is stated
+for the tables, whose they are is not known, and OpenRage's licence does not cover them. Nothing
+computed from the file's values is in the tree, and every test but the one that reads the tree's
+file reads made-up tables. [Marvisak/VIctory](https://github.com/Marvisak/VIctory)
 (GPL-3.0-or-later; its asset policy sets the tables themselves outside its licence) publishes
 such a file, and [ivall/xcl](https://github.com/ivall/xcl) (GPL-2.0-only) holds the same tables
 as generated source. What the reader takes from them is facts about the file's layout:

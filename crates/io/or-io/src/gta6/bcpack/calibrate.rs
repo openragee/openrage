@@ -443,15 +443,23 @@ pub fn keep_read(
     Ok(standing)
 }
 
-/// The tables the pack `member` keys reads through: those the user supplied under `dir`, as
-/// their whole checks and that pack's own reads left them standing, else the newest
-/// calibration there that read the pack.
+/// The coder's tables as the tree holds them, read where the user kept no file of their own.
+pub const BUNDLED_TABLES: &[u8] = include_bytes!("../../../data/bcpack-tables.bin");
+
+/// The tables the pack `member` keys reads through: those the user supplied under `dir`, else
+/// the tree's own, as their whole checks and that pack's own reads left them standing.
 pub fn load_cache(dir: &Path, member: u64) -> Option<Tables> {
-    let supplied = std::fs::read(supplied_path(dir)).ok();
-    if let Some(mut tables) = supplied.and_then(|bytes| super::supplied::read(&bytes).ok()) {
-        tables.standing = Record::read(dir, tables.digest).standing_for(member);
-        return Some(tables);
-    }
+    let read = |bytes: &[u8]| super::supplied::read(bytes).ok();
+    let kept = std::fs::read(supplied_path(dir)).ok();
+    let Some(mut tables) = (kept.as_deref().and_then(read)).or_else(|| read(BUNDLED_TABLES)) else {
+        return calibration(dir, member);
+    };
+    tables.standing = Record::read(dir, tables.digest).standing_for(member);
+    Some(tables)
+}
+
+/// The newest calibration under `dir` that read the pack `member` keys.
+pub(super) fn calibration(dir: &Path, member: u64) -> Option<Tables> {
     let mut found: Option<(std::time::SystemTime, Tables)> = None;
     for entry in std::fs::read_dir(dir).ok()?.flatten() {
         let path = entry.path();

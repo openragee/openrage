@@ -8,8 +8,8 @@ use std::path::Path;
 use super::super::bptc::RANKS;
 use super::super::calibrate::tests::coded_lanes;
 use super::super::calibrate::{
-    keep_check, keep_read, keep_supplied, load_cache, member_key, save_cache, supplied_path,
-    Checked, Standing,
+    calibration, keep_check, keep_read, keep_supplied, load_cache, member_key, save_cache,
+    supplied_path, Checked, Standing, BUNDLED_TABLES,
 };
 use super::super::planes::blocks;
 use super::super::tests::encode;
@@ -344,13 +344,19 @@ fn supplied_tables_are_kept_once_and_read_in_place_of_any_calibration() {
     let cache = dir.path().join("bcpack");
     let ours = member_key(Path::new("zq/made_up.ttpf"), 4096);
     save_cache(&cache, &Tables::empty(), &[ours]).expect("written");
-    assert_eq!(load_cache(&cache, ours), Some(Tables::empty()));
+    assert_eq!(calibration(&cache, ours), Some(Tables::empty()));
+    // With no file kept a pack reads through the tree's tables, every mode of them, and no calibration.
+    let bundled = read(BUNDLED_TABLES).expect("the tree's tables read");
+    assert!([1, 3, 4, 5, 6, 7]
+        .into_iter()
+        .all(|kind| bundled.supplied(kind)));
+    assert_eq!(load_cache(&cache, ours), Some(bundled.clone()));
 
     let file = made_up_file();
     assert!(keep_supplied(&cache, &file[1..]).is_err());
     assert_eq!(
         load_cache(&cache, ours),
-        Some(Tables::empty()),
+        Some(bundled),
         "a file that does not read is not kept"
     );
 

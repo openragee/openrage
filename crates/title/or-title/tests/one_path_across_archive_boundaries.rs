@@ -278,6 +278,7 @@ fn the_app_still_walks_archives_without_this_vfs() {
             "state/reference_names.rs",
             "state/retail.rs",
             "state/rpf_session.rs",
+            "state/the_panel_counts_the_apps_cpu_state.rs",
             "state/vfs_session.rs",
             "state/workbench/dressed.rs",
             "state/workbench/dressed/read.rs",

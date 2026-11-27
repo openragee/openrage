@@ -283,10 +283,10 @@ pub(super) fn list_rows(
         let pulse = pulse_state_from_ctx(ctx);
         // A row waiting to be listed: its depth, its parent's id, and whether it is shown or only closed.
         let mut waiting: Vec<(RpfNodeId, usize, egui::Id, bool)> =
-            explorer::sorted_children(session, session.root_id(), sort)
-                .into_iter()
+            explorer::sorted_children_at(session, epoch, session.root_id(), sort)
+                .iter()
                 .rev()
-                .map(|child| (child, 0, id_root, true))
+                .map(|&child| (child, 0, id_root, true))
                 .collect();
         while let Some((id, depth, parent, shown)) = waiting.pop() {
             let Some(node) = session.node(id) else {
@@ -337,7 +337,7 @@ pub(super) fn list_rows(
             if shown && needs_expand(node) {
                 expand.push(id);
             }
-            let children = explorer::sorted_children(session, id, sort);
+            let children = explorer::sorted_children_at(session, epoch, id, sort);
             if shown && children.is_empty() && state.expander.is_in_flight(doc_id, id) {
                 rows.push(ListedRow {
                     node: id,
@@ -349,9 +349,9 @@ pub(super) fn list_rows(
             }
             waiting.extend(
                 children
-                    .into_iter()
+                    .iter()
                     .rev()
-                    .map(|child| (child, depth + 1, id_here, shown)),
+                    .map(|&child| (child, depth + 1, id_here, shown)),
             );
         }
     }
@@ -433,7 +433,7 @@ pub(super) fn draw_row(
     let Some((node, unsaved, size, bound_doc_id, kind, learned, letter)) =
         state.document(doc_id).and_then(|d| match &d.payload {
             DocPayload::Rpf(rpf) => {
-                let node = rpf.session.node(node_id)?.clone();
+                let node = rpf.session.node(node_id)?.without_children();
                 let size = (!node.is_dir())
                     .then(|| rpf.session.size_for(node_id))
                     .flatten();

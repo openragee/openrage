@@ -123,6 +123,18 @@ impl RpfSessionNode {
         matches!(self.kind, RpfSessionNodeKind::Directory)
     }
 
+    /// A copy of the row with no children: what a drawn row needs, without a folder's list of tens of thousands copied each frame.
+    pub fn without_children(&self) -> Self {
+        Self {
+            id: self.id,
+            parent: self.parent,
+            name: self.name.clone(),
+            kind: self.kind,
+            children: Vec::new(),
+            backing: self.backing.clone(),
+        }
+    }
+
     /// What the row allocates besides the node: its name, its children and the paths its backing names.
     pub fn row_bytes(&self) -> usize {
         let backing = match &self.backing {

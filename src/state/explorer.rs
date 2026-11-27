@@ -113,7 +113,7 @@ pub fn compare(a: &SortRow, b: &SortRow, order: SortOrder) -> Ordering {
     let primary = match order.key {
         SortKey::Name | SortKey::Stored => natural(a.name, b.name),
         SortKey::Size => a.size.cmp(&b.size),
-        SortKey::Type => extension(a.name).cmp(&extension(b.name)),
+        SortKey::Type => fold_case(raw_extension(a.name)).cmp(fold_case(raw_extension(b.name))),
         _ => a.column.cmp(&b.column),
     };
     let primary = if order.descending {
@@ -131,7 +131,7 @@ pub fn compare(a: &SortRow, b: &SortRow, order: SortOrder) -> Ordering {
 pub fn natural(a: &str, b: &str) -> Ordering {
     // A hash's digits are hex of a fixed width, so two hash names sort as text, in hex order.
     if is_hash_name(a) && is_hash_name(b) {
-        return a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase());
+        return fold_case(a).cmp(fold_case(b));
     }
     let (mut a, mut b) = (a.as_bytes(), b.as_bytes());
     loop {
@@ -184,6 +184,53 @@ fn trim_zeros(digits: &[u8]) -> &[u8] {
 
 fn extension(name: &str) -> String {
     super::extract_job::extension_of(name)
+}
+
+/// [`extension`] before its case is folded, borrowed from `name`.
+fn raw_extension(name: &str) -> &str {
+    Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+}
+
+/// `s` lower-cased as a comparison reads it, with nothing allocated: a sort compares each row many times.
+fn fold_case(s: &str) -> impl Iterator<Item = u8> + '_ {
+    s.bytes().map(|c| c.to_ascii_lowercase())
+}
+
+/// [`sorted_children`], sorted again only when the document's payload `epoch`, the order or the folder's children change.
+///
+/// ⚠ Every open folder of the tree and the folder in the centre are listed each frame, and a
+/// GTA VI folder holds tens of thousands of rows: sorting them all each frame is what made
+/// scrolling a large archive stutter.
+pub fn sorted_children_at(
+    session: &RpfEditSession,
+    epoch: u64,
+    parent: RpfNodeId,
+    order: SortOrder,
+) -> std::sync::Arc<[RpfNodeId]> {
+    let children = session
+        .node(parent)
+        .map_or(&[][..], |n| n.children.as_slice());
+    let mut cache = session
+        .sorted
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((at, by, of, sorted)) = cache.get(&parent) {
+        if *at == epoch && *by == order && of.as_slice() == children {
+            return std::sync::Arc::clone(sorted);
+        }
+    }
+    let sorted: std::sync::Arc<[RpfNodeId]> = sorted_children(session, parent, order).into();
+    let entry = (
+        epoch,
+        order,
+        children.to_vec(),
+        std::sync::Arc::clone(&sorted),
+    );
+    cache.insert(parent, entry);
+    sorted
 }
 
 /// A folder's children in the order `order` puts them.
@@ -324,11 +371,12 @@ pub struct Group {
 /// find and not a value being sorted.
 pub fn grouped_children(
     session: &RpfEditSession,
+    epoch: u64,
     parent: RpfNodeId,
     order: SortOrder,
     group: GroupKey,
 ) -> Vec<Group> {
-    let sorted = sorted_children(session, parent, order);
+    let sorted = sorted_children_at(session, epoch, parent, order).to_vec();
     if group == GroupKey::None {
         return vec![Group {
             label: String::new(),
@@ -905,7 +953,7 @@ mod tests {
             key: SortKey::Name,
             descending: true,
         };
-        let groups = grouped_children(&session, root, descending, GroupKey::Size);
+        let groups = grouped_children(&session, 0, root, descending, GroupKey::Size);
         assert_eq!(
             labelled(&session, groups),
             vec![
@@ -930,7 +978,7 @@ mod tests {
         assert_eq!(
             labelled(
                 &session,
-                grouped_children(&session, root, order, GroupKey::Type)
+                grouped_children(&session, 0, root, order, GroupKey::Type)
             ),
             vec![
                 ("Folders".to_string(), vec!["props".to_string()]),
@@ -944,9 +992,48 @@ mod tests {
                 ),
             ]
         );
-        let flat = grouped_children(&session, root, order, GroupKey::None);
+        let flat = grouped_children(&session, 0, root, order, GroupKey::None);
         assert_eq!(flat.len(), 1);
         assert_eq!(flat[0].rows, sorted_children(&session, root, order));
+    }
+
+    #[test]
+    fn a_kept_sort_is_redone_when_the_epoch_the_order_or_the_children_change() {
+        let (mut session, root) = grouped_session();
+        let order = SortOrder::default();
+        let named = |session: &RpfEditSession, ids: &[RpfNodeId]| -> Vec<String> {
+            (ids.iter())
+                .map(|&id| session.node(id).unwrap().name.clone())
+                .collect()
+        };
+        let first = sorted_children_at(&session, 0, root, order);
+        assert_eq!(&*first, sorted_children(&session, root, order).as_slice());
+        let kept = sorted_children_at(&session, 0, root, order);
+        assert!(std::sync::Arc::ptr_eq(&first, &kept), "sorted once");
+
+        let a = first[1];
+        session.rename_node(a, "z.ytd").expect("rename");
+        let renamed = sorted_children_at(&session, 1, root, order);
+        assert_eq!(named(&session, &renamed).last().unwrap(), "z.ytd");
+
+        session.add_file_copy(root, "0.ytd", vec![1]).expect("add");
+        let added = sorted_children_at(&session, 1, root, order);
+        assert_eq!(
+            named(&session, &added)[1],
+            "0.ytd",
+            "{:?}",
+            named(&session, &added)
+        );
+
+        let descending = SortOrder {
+            descending: true,
+            ..order
+        };
+        let reversed = sorted_children_at(&session, 1, root, descending);
+        assert_eq!(
+            &*reversed,
+            sorted_children(&session, root, descending).as_slice()
+        );
     }
 
     #[test]

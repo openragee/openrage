@@ -3,6 +3,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
 
+use or_io::container::rpf::RpfNode;
 use or_io::container::{RpfArchive, RpfCryptoProvider};
 use or_title::vfs::{ArchiveDevice, ArchiveEntry, ArchiveEntryKind};
 
@@ -305,36 +306,34 @@ pub struct ListedEntry {
     pub children: Vec<ListedEntry>,
 }
 
-/// Every folder of `archive` listed through the VFS.
+/// Every folder of `archive`, listed from its table.
 ///
-/// ⚠ Each nested archive listed is opened, which reads its table of contents,
-/// so a disk-backed archive is listed off the UI thread. Nested archives are
-/// opened and not listed: the tree lists one when a user expands it.
+/// ⚠ A nested archive is listed and not opened: its table is read and decrypted when a user
+/// expands it. Opening each one here made an archive holding hundreds take seconds to show.
 pub fn list_archive(archive: Arc<RpfArchive>) -> Result<Vec<ListedEntry>, String> {
     note_archive_work();
-    let device = ArchiveDevice::new(archive);
-    let root = device
-        .entries("")
-        .ok_or_else(|| "Archive has no root entry".to_string())?;
-    Ok(list_folder(&device, "", root))
+    let root = (archive.nodes.first()).ok_or_else(|| "Archive has no root entry".to_string())?;
+    Ok(list_folder(&archive, root))
 }
 
-fn list_folder(device: &ArchiveDevice, dir: &str, entries: Vec<ArchiveEntry>) -> Vec<ListedEntry> {
-    entries
-        .into_iter()
-        .map(|entry| {
-            let children = if entry.kind == ArchiveEntryKind::Folder {
-                let path = if dir.is_empty() {
-                    entry.name.clone()
-                } else {
-                    format!("{dir}/{}", entry.name)
-                };
-                let inner = device.entries(&path).unwrap_or_default();
-                list_folder(device, &path, inner)
-            } else {
-                Vec::new()
+fn list_folder(archive: &RpfArchive, dir: &RpfNode) -> Vec<ListedEntry> {
+    (dir.children().iter())
+        .filter_map(|&at| archive.nodes.get(at as usize))
+        .map(|node| {
+            let kind = match node {
+                RpfNode::Directory { .. } => ArchiveEntryKind::Folder,
+                RpfNode::BinaryFile { .. } => ArchiveEntryKind::File,
+                RpfNode::ResourceFile { .. } => ArchiveEntryKind::Resource,
             };
-            ListedEntry { entry, children }
+            ListedEntry {
+                entry: ArchiveEntry {
+                    name: node.name().to_owned(),
+                    kind,
+                    entry_index: node.entry_index(),
+                    archive: None,
+                },
+                children: list_folder(archive, node),
+            }
         })
         .collect()
 }

@@ -123,6 +123,19 @@ pub(super) fn body_payload(
             if let Some(fragment) = fragment {
                 let skeleton = skeleton_of(virtual_section, fragment);
                 skeletons().insert(path.to_path_buf(), skeleton);
+                // Keep the stated model name so a hash-named tree row can show the drawable's
+                // or fragment's own leaf name in place of its hash.
+                let label = if fragment { "fragment" } else { "drawable" };
+                let kind = or_io::container::rpf::Rpf9Kind {
+                    label,
+                    extension: Some(if fragment { "#ft" } else { "#dr" }),
+                };
+                super::super::gta6_learned_names::learn(
+                    archive,
+                    find.offset,
+                    kind,
+                    virtual_section,
+                );
             }
             let read = or_io::gta6::headerless::read(signature, virtual_section, Some(physical));
             read.map(|read| {

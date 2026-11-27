@@ -200,6 +200,7 @@ pub(crate) mod gta6_head;
 mod gta6_install_harvest;
 pub(crate) mod gta6_install_scan;
 pub(crate) mod gta6_key_words;
+pub(crate) mod gta6_learned_names;
 pub(crate) mod gta6_map;
 mod gta6_map_edit;
 mod gta6_map_extents;

@@ -124,24 +124,128 @@ struct Leaf {
 pub struct Rpf9Kind {
     /// The kind in words, as `rpf9 list` prints it.
     pub label: &'static str,
-    /// The extension GTA V gives a file of the same format, where it has one.
+    /// The RAGE extension of a file of the same format, where it has one, in platform-independent
+    /// form: `#` stands for the build's platform letter (`y` PC, `x` Xbox, `p` PlayStation), so
+    /// `#td` reads as `.ytd` on a Windows build. See [`Rpf9Kind::extension_for`].
     pub extension: Option<&'static str>,
 }
 
-/// The GTA V extension of each kind label that names the same format.
-const EXTENSIONS: [(&str, &str); 12] = [
+impl Rpf9Kind {
+    /// This kind's extension on a build whose platform letter is `letter`, e.g. `'y'` turns the
+    /// stored `#td` stub into `"ytd"`. An extension with no `#` (`rpf`, `mrf`, `gfx`, `dat`) is
+    /// returned as it stands.
+    pub fn extension_for(&self, letter: char) -> Option<String> {
+        self.extension
+            .map(|stub| substitute_platform_letter(stub, letter))
+    }
+
+    /// This kind's extension in its Windows (`y`-prefixed) form, which [`crate::gta5::formats`]
+    /// and the editor's `DocumentKind::from_path` recognise.
+    pub fn extension_pc(&self) -> Option<String> {
+        self.extension_for('y')
+    }
+
+    /// Whether a body of this kind states a name inside its virtual section that
+    /// [`debug_name_from_virtual`] can read. Only a drawable or fragment root is known to
+    /// hold a stated name at offset 0xA8; a dictionary's own name lives in a slot this does
+    /// not read.
+    pub fn has_stated_name(&self) -> bool {
+        matches!(self.label, "drawable" | "fragment")
+    }
+}
+
+/// The embedded debug name of a drawable, fragment or drawable dictionary, read at offset 0xA8 of
+/// its root; `None` for a body of another kind or for bytes that do not carry one. The caller
+/// passes the inflated virtual section, which is what [`crate::gta6::headerless::stated_model_name`]
+/// reads.
+///
+/// ⚠ Not called during tree listing: the row's body is not in hand there, so this is a lookup for
+/// a caller that has already read the body (the preview open, the Inspector, an export job).
+pub fn debug_name_from_virtual(kind: Rpf9Kind, virtual_section: &[u8]) -> Option<String> {
+    if !kind.has_stated_name() {
+        return None;
+    }
+    #[cfg(feature = "gta6")]
+    {
+        crate::gta6::headerless::stated_model_name(virtual_section).ok()
+    }
+    #[cfg(not(feature = "gta6"))]
+    {
+        let _ = virtual_section;
+        None
+    }
+}
+
+/// `stub` with every `#` replaced by `letter`, so a stored stub like `#td` becomes `"ytd"` on PC.
+///
+/// Call it on a stored RAGE extension or on a whole path whose extension carries a `#` (RPF9
+/// resolves names in the platform-independent form the executable stores).
+pub fn substitute_platform_letter(stub: &str, letter: char) -> String {
+    if !stub.contains('#') {
+        return stub.to_owned();
+    }
+    let mut out = String::with_capacity(stub.len());
+    for ch in stub.chars() {
+        if ch == '#' {
+            out.push(letter);
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// The RAGE extension of each kind label that names the same format. Stored in platform-independent
+/// form with `#` for the platform letter; see [`Rpf9Kind::extension_for`]. Classes whose body holds
+/// a bare RAGE file take its extension here (`gfx`, `mrf`, `cut`); `rpf` and `dat` stay bare because
+/// the game writes them without a platform letter.
+///
+/// The names come from the public rage.re RAGE reference and from CodeWalker's own tables.
+/// A kind that is not RSC-shaped (plain files, PSO frames) still has an extension where RAGE wrote
+/// such a file with one (`.meta`, `.cut`, `.mrf`, `.gfx`, `.dat`).
+const EXTENSIONS: &[(&str, &str)] = &[
     ("archive", "rpf"),
-    ("drawable", "ydr"),
-    ("drawable dictionary", "ydd"),
-    ("fragment", "yft"),
-    ("texture dictionary", "ytd"),
-    ("bound", "ybn"),
-    ("clip dictionary", "ycd"),
-    ("particles", "ypt"),
-    ("map data", "ymap"),
-    ("map types", "ytyp"),
-    ("navigation mesh", "ynv"),
-    ("script program", "ysc"),
+    // 24-byte row classes
+    ("MoVE network", "mrf"),
+    ("GFX", "gfx"),
+    ("PSO", "meta"),
+    ("object trees", "dat"),
+    ("span grid", "dat"),
+    ("height map", "dat"),
+    // 20-byte row types
+    ("drawable", "#dr"),
+    ("fragment", "#ft"),
+    ("drawable dictionary", "#dd"),
+    ("texture dictionary", "#td"),
+    ("bound", "#bn"),
+    // A headerless metadata body is PSO, RBM or RBF0; RAGE wrote them as `.meta` on disk.
+    ("headerless metadata", "meta"),
+    ("acceleration structure", "#as"),
+    ("acceleration dictionary", "#ad"),
+    // GTA VI's clip/animation bodies open as a clip dictionary; RAGE's `.#cd` is the family's file.
+    ("clip dictionary", "#cd"),
+    ("animation", "#cd"),
+    // An animation dictionary in modern RAGE is `.#ad`; a clip dictionary stays `.#cd`.
+    ("animation dictionary", "#ad"),
+    ("particles", "#pt"),
+    ("map data", "#map"),
+    ("map types", "#typ"),
+    // The cache per-packfile data: `.#ch` in R*'s own listing.
+    ("cloth", "#ld"),
+    ("script program", "#sc"),
+    // `#jd` is not in the public reference; keep its place for the keyed-blob pair.
+    ("keyed-blob descriptor", "#jd"),
+    ("keyed blob", "#jd"),
+    ("dictionary", "#dd"),
+    ("navigation mesh", "#nv"),
+    ("navigation octree", "#nh"),
+    ("navigation metadata", "#nh"),
+    ("neighbour table", "#nh"),
+    // Blendshapes' modern form; the public reference lists it as `.#bs`.
+    ("morph target", "#bs"),
+    ("asset index", "#mf"),
+    // GTA VI's text tables are language-database bodies, `.#ldb` in modern RAGE, which replaced `.gxt2`.
+    ("text table", "#ldb"),
 ];
 
 /// The kind of an entry: a 24-byte row's class byte wins over a 20-byte row's type code, and a row
@@ -663,8 +767,18 @@ mod tests {
             drawable,
             Some(Rpf9Kind {
                 label: "drawable",
-                extension: Some("ydr")
+                extension: Some("#dr")
             })
+        );
+        assert_eq!(
+            drawable.and_then(|k| k.extension_pc()),
+            Some("ydr".to_owned()),
+            "the Windows letter resolves .ydr for the editor"
+        );
+        assert_eq!(
+            drawable.and_then(|k| k.extension_for('x')),
+            Some("xdr".to_owned()),
+            "the Xbox letter resolves .xdr"
         );
         assert_eq!(
             row_kind(&headerless, Some(0x58), false).map(|k| k.label),
@@ -672,7 +786,7 @@ mod tests {
         );
         assert_eq!(
             row_kind(&headerless, Some(0x58), false).and_then(|k| k.extension),
-            None
+            Some("#ld")
         );
         // The class wins over any code, as `rpf9 list` reads a row.
         let resource = row_kind(&entry(2, None, 0x0B), Some(0x02), false);
@@ -695,9 +809,48 @@ mod tests {
     fn every_extension_given_a_kind_is_one_a_table_names() {
         use super::super::gta6_kinds::{CLASSES, TYPES};
         for (label, _) in EXTENSIONS {
-            let named =
-                CLASSES.iter().any(|(_, l)| *l == label) || TYPES.iter().any(|(_, l)| *l == label);
+            let named = CLASSES.iter().any(|(_, l)| *l == *label)
+                || TYPES.iter().any(|(_, l)| *l == *label);
             assert!(named, "{label} is no kind a row names");
+        }
+    }
+
+    #[test]
+    fn a_platform_letter_substitutes_for_every_hash_in_a_stub_or_a_path() {
+        assert_eq!(substitute_platform_letter("#dr", 'y'), "ydr");
+        assert_eq!(substitute_platform_letter("#dr", 'z'), "zdr");
+        assert_eq!(substitute_platform_letter("rpf", 'y'), "rpf");
+        // A path whose extension carries the stub resolves too.
+        assert_eq!(
+            substitute_platform_letter("models/car.#dr", 'y'),
+            "models/car.ydr"
+        );
+        // Multiple `#` occurrences are all substituted.
+        assert_eq!(substitute_platform_letter("#ldb", 'z'), "zldb");
+    }
+
+    #[test]
+    fn every_known_kind_resolves_to_a_windows_extension_the_document_kind_knows() {
+        use super::super::gta6_kinds::{CLASSES, TYPES};
+        // Labels the editor opens: every one lives in CLASSES or TYPES and carries an extension,
+        // so `extension_pc` gives a `y`-prefixed form the editor's `DocumentKind::from_path`
+        // can match against.
+        for (label, stub) in EXTENSIONS {
+            let kind = Rpf9Kind {
+                label,
+                extension: Some(stub),
+            };
+            let pc = kind
+                .extension_pc()
+                .expect("every entry carries an extension");
+            assert!(!pc.is_empty(), "{label}: extension_pc was empty");
+            assert!(
+                !pc.contains('#'),
+                "{label}: `#` left after substitution → {pc}"
+            );
+            let named = CLASSES.iter().any(|(_, l)| *l == *label)
+                || TYPES.iter().any(|(_, l)| *l == *label);
+            assert!(named, "{label}: no row names this kind");
         }
     }
 

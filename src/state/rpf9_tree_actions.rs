@@ -80,8 +80,9 @@ impl AppState {
         let Some((place, row_start, kind, edited)) = gta6_body(self, doc, node) else {
             return false;
         };
-        // The row's kind stands for the extension a GTA V row's name gives its preview.
-        let shown = (kind.and_then(|kind| kind.extension))
+        // The row's kind stands for the extension a GTA V row's name gives its preview; the
+        // Windows (`y`-prefixed) form is what `DocumentKind::from_path` recognises.
+        let shown = (kind.and_then(|k| k.extension_pc()))
             .and_then(|ext| DocumentKind::from_path(Path::new(&format!("row.{ext}"))));
         if shown.is_some_and(|kind| self.active_workspace.handles_kind(kind)) {
             let path = body_path(&place.file, place.offset, View::Bytes);

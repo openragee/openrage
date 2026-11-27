@@ -87,6 +87,12 @@ impl Game {
     pub fn accepts_dlc_pack(self, pack_name: &str) -> bool {
         self.profile().dlc_policy().accepts(pack_name)
     }
+
+    /// RAGE's one-letter filename prefix for this build's platform, so a stored `#td` reads as
+    /// `ytd` on PC and `ztd` on an Xbox Series build.
+    pub fn platform_letter(self) -> char {
+        self.profile().platform().extension_letter()
+    }
 }
 
 impl Serialize for Game {

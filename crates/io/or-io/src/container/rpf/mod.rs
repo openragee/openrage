@@ -91,7 +91,10 @@ pub use gta6_patch::{
     PatchRefusal, PatchReport,
 };
 #[cfg(feature = "gta6")]
-pub use gta6_rpf::{default_names_dir, Gta6Context, Rpf9Kind, Rpf9Place, GTA6_NAMES_ENV};
+pub use gta6_rpf::{
+    debug_name_from_virtual, default_names_dir, substitute_platform_letter, Gta6Context, Rpf9Kind,
+    Rpf9Place, GTA6_NAMES_ENV,
+};
 #[cfg(feature = "gta6")]
 pub use gta6_write::{Rpf9Builder, Rpf9CipherCore};
 pub use header::{

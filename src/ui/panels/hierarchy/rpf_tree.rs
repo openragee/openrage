@@ -13,11 +13,62 @@ use or_io::container::rpf::Rpf9Kind;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-/// The name a GTA VI row's icon is chosen by: its own, with the extension GTA V gives its kind.
+/// The name a GTA VI row's icon and support check look at: its own with the Windows (`y`-prefixed)
+/// form of the kind's extension, substituted into any stored `#`-prefix the name already carries,
+/// or appended where the name has none. `DocumentKind::from_path` only recognises the Windows form,
+/// so this is always the `y` letter — the user-facing display uses the build's platform letter.
 ///
 /// ⚠ Only the icon's: the row keeps the name its table states.
 fn icon_name(name: &str, kind: Option<Rpf9Kind>) -> Option<String> {
-    kind?.extension.map(|ext| format!("{name}.{ext}"))
+    use or_io::container::rpf::substitute_platform_letter;
+    let stated = substitute_platform_letter(name, 'y');
+    let has_extension = std::path::Path::new(&stated).extension().is_some();
+    if has_extension {
+        return Some(stated);
+    }
+    let ext = kind?.extension_pc()?;
+    Some(format!("{stated}.{ext}"))
+}
+
+/// The name of a GTA VI row as it is shown, with the build's platform letter substituted for any
+/// `#` the stored name carries, and the kind's extension appended where the name has none.
+fn displayed_name(name: &str, kind: Option<Rpf9Kind>, letter: char) -> String {
+    use or_io::container::rpf::substitute_platform_letter;
+    let stated = substitute_platform_letter(name, letter);
+    if std::path::Path::new(&stated).extension().is_some() {
+        return stated;
+    }
+    match kind.and_then(|k| k.extension_for(letter)) {
+        Some(ext) => format!("{stated}.{ext}"),
+        None => stated,
+    }
+}
+
+/// The platform letter of the active install (`y` for PC, `z` for Xbox Series, …), which gives
+/// a GTA VI row its concrete extension where the file stores the `#`-stub.
+fn platform_letter(state: &AppState) -> char {
+    state
+        .prefs
+        .active_game
+        .map(|g| g.platform_letter())
+        .unwrap_or('y')
+}
+
+/// The stem a GTA VI drawable or fragment body stated for `node` on open, where `(archive, offset)`
+/// gave [`crate::state::gta6_learned_names::lookup`] one; `None` for a row of any other archive
+/// or a row whose body never opened.
+fn learned_name_for(session: &RpfEditSession, node: &RpfSessionNode) -> Option<String> {
+    let (archive_id, entry_index) = match &node.backing {
+        RpfNodeBacking::ArchiveFile {
+            archive_id,
+            entry_index,
+            ..
+        } => (*archive_id, *entry_index),
+        _ => return None,
+    };
+    let archive = &session.archive(archive_id)?.archive;
+    let place = archive.rpf9_place(entry_index)?;
+    crate::state::gta6_learned_names::lookup(&place.file, place.offset)
 }
 
 /// The dimmed words after a file row's name: its kind where its archive's table names one, then its size.
@@ -278,7 +329,7 @@ pub(super) fn draw_row(
         );
         return;
     }
-    let Some((node, unsaved, size, bound_doc_id, kind)) =
+    let Some((node, unsaved, size, bound_doc_id, kind, learned)) =
         state.document(doc_id).and_then(|d| match &d.payload {
             DocPayload::Rpf(rpf) => {
                 let node = rpf.session.node(node_id)?.clone();
@@ -286,12 +337,18 @@ pub(super) fn draw_row(
                     .then(|| rpf.session.size_for(node_id))
                     .flatten();
                 let kind = gta6_kind(&rpf.session, &node);
+                // The stem of the stated model name a drawable or fragment body states on open,
+                // where its row's name was never resolved; `None` for any other row.
+                let learned = kind
+                    .filter(|_| node.name.starts_with("hash_"))
+                    .and_then(|_| learned_name_for(&rpf.session, &node));
                 Some((
                     node,
                     rpf.session.archive_unsaved(node_id),
                     size,
                     rpf.entry_documents.get(&node_id).copied(),
                     kind,
+                    learned,
                 ))
             }
             _ => None,
@@ -418,13 +475,20 @@ pub(super) fn draw_row(
             rpf_context_menu(&resp, state, doc_id, &node, asked, false);
         }
     } else {
-        // A GTA VI row's kind picks its icon as a GTA V row's extension does.
-        let shown = icon_name(&node.name, kind).map(|name| RpfSessionNode {
+        // The name used for the icon and the label. Where a drawable body stated its model name
+        // on open, that stem stands in for the row's `hash_<hex>`.
+        let row_name = learned.clone().unwrap_or_else(|| node.name.clone());
+        // A GTA VI row's kind picks its icon as a GTA V row's extension does; the editor's
+        // DocumentKind lookup works on the Windows form, which is what `icon_name` substitutes.
+        let shown = icon_name(&row_name, kind).map(|name| RpfSessionNode {
             name,
             ..node.clone()
         });
         let shown = shown.as_ref().unwrap_or(&node);
-        let supported = rpf_path_supported(&shown.name);
+        // A GTA VI row whose table names its kind is counted as supported even where no
+        // `DocumentKind` yet claims its extension: the row is a known RAGE format, the icon
+        // should not say "blocked" and the row should not dim like a stray file.
+        let supported = rpf_path_supported(&shown.name) || kind.is_some();
         let color = if !supported {
             theme::TEXT_SECONDARY
         } else if selected {
@@ -439,7 +503,11 @@ pub(super) fn draw_row(
             r
         } else {
             let icon = icons::rpf_node_icon(shown, unsaved, in_flight, supported, false);
-            let label = icons::icon_label(&icon, &node.name, color.into());
+            // The visible row name carries the build's platform letter (`#dr` → `ydr` on PC,
+            // `zdr` on Xbox Series), or the kind's extension where the row states no name.
+            // Where the body stated its own model name on open, that stem replaces the hash.
+            let display = displayed_name(&row_name, kind, platform_letter(state));
+            let label = icons::icon_label(&icon, &display, color.into());
             let r = selectable_header(ui, selected, label);
             ui.add(detail_label(detail_text(kind, size)));
             r
@@ -480,7 +548,9 @@ mod tests {
 
     const DRAWABLE: Rpf9Kind = Rpf9Kind {
         label: "drawable",
-        extension: Some("ydr"),
+        // `Rpf9Kind::extension` stores the platform-independent RAGE stub (`#dr`); the Windows
+        // form (`ydr`) is what `extension_pc()` and `DocumentKind::from_path` see.
+        extension: Some("#dr"),
     };
     const MEDIA: Rpf9Kind = Rpf9Kind {
         label: "media",
@@ -520,6 +590,36 @@ mod tests {
             None,
             "media names no GTA V format"
         );
+    }
+
+    #[test]
+    fn a_displayed_name_substitutes_the_platform_letter_and_appends_a_kind_s_extension() {
+        // A hash-form row gets the kind's extension with the build's letter: `ydr` on PC, `zdr`
+        // on Xbox Series.
+        assert_eq!(
+            displayed_name("hash_000000000000ab00", Some(DRAWABLE), 'y'),
+            "hash_000000000000ab00.ydr"
+        );
+        assert_eq!(
+            displayed_name("hash_000000000000ab00", Some(DRAWABLE), 'z'),
+            "hash_000000000000ab00.zdr"
+        );
+        // A path that already carries the `#dr` stub resolves to the platform's letter.
+        assert_eq!(
+            displayed_name("models/car.#dr", Some(DRAWABLE), 'y'),
+            "models/car.ydr"
+        );
+        assert_eq!(
+            displayed_name("models/car.#dr", Some(DRAWABLE), 'z'),
+            "models/car.zdr"
+        );
+        // A path already in its concrete form stays as is.
+        assert_eq!(
+            displayed_name("models/car.ydr", Some(DRAWABLE), 'y'),
+            "models/car.ydr"
+        );
+        // A row with no kind keeps its name whatever letter is asked.
+        assert_eq!(displayed_name("plain_file", None, 'z'), "plain_file");
     }
 
     #[test]

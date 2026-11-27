@@ -410,7 +410,10 @@ pub fn row_matches(name: &str, kind: Option<Rpf9Kind>, needle: &str) -> bool {
         || name.contains(needle)
         || kind.is_some_and(|kind| {
             kind.label.to_ascii_lowercase().contains(needle)
+                // Match both the platform-independent stub (`.#dr`) and the common Windows form
+                // (`.ydr`), so a user typing either finds the row.
                 || (kind.extension).is_some_and(|ext| format!(".{ext}").contains(needle))
+                || (kind.extension_pc()).is_some_and(|ext| format!(".{ext}").contains(needle))
         })
 }
 

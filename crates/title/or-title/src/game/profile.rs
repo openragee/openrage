@@ -62,6 +62,35 @@ impl Platform {
             Platform::XboxSeries => "Xbox Series",
         }
     }
+
+    /// RAGE's one-letter filename prefix for this platform: a stored `#td` becomes
+    /// `ytd` on PC, `ztd` on Xbox Series, `ptd` on PS5. The letters, from the
+    /// rage.re public reference:
+    ///
+    /// | Prefix | Platform                                 |
+    /// |--------|------------------------------------------|
+    /// | `y`    | Windows 64 / Linux                       |
+    /// | `w`    | Windows 32 / x86                         |
+    /// | `x`    | Xbox 360 (Xenon)                         |
+    /// | `d`    | Xbox One (Durango)                       |
+    /// | `z`    | Xbox Series (Scarlett)                   |
+    /// | `c`    | PlayStation 3 / PSN                      |
+    /// | `o`    | PlayStation 4 (Orbis)                    |
+    /// | `p`    | PlayStation 5 (Prospero)                 |
+    /// | `a`    | Android                                  |
+    /// | `s`    | iOS                                      |
+    /// | `n`    | Switch (NX64)                            |
+    /// | `v`    | Vita (PSP2)                              |
+    /// | `i`    | independent (North-specific)             |
+    pub fn extension_letter(self) -> char {
+        match self {
+            Platform::Pc => 'y',
+            Platform::XboxOne => 'd',
+            Platform::XboxSeries => 'z',
+            Platform::Ps4 => 'o',
+            Platform::Ps5 => 'p',
+        }
+    }
 }
 
 /// Where a PlayStation package states its title id: an SFO on a PlayStation 4, JSON on a PlayStation 5.

@@ -1700,15 +1700,29 @@ fn a_value_of_several_cells_an_instruction_names_the_type_of_is_a_value_of_that_
         at,
         name: format!("func_{at:06X}"),
     };
+    let made_in_place = Callee::Builtin {
+        path: "Demo.Pair.Ctor".to_owned(),
+        ty: 3,
+        method: 0,
+    };
+    let not_made = Callee::Builtin {
+        path: "Demo.Pair.Reset".to_owned(),
+        ty: 3,
+        method: 1,
+    };
     let stmts = vec![
         set(6, boxing(0, boxed)),
         set(6, call(local_call(0x40), vec![address(2), int(1)])),
         // Two types named of one variable name neither.
         set(6, boxing(4, boxed)),
         set(6, call(local_call(0x40), vec![address(4)])),
+        // A builtin's constructor handed the variable's address.
+        set(6, call(made_in_place, vec![address(8), int(2)])),
+        // A builtin's method of another name says nothing of its type.
+        set(6, call(not_made, vec![address(10)])),
     ];
     let mut f = function(stmts);
-    for n in [0, 2, 4] {
+    for n in [0, 2, 4, 8, 10] {
         let mut info = VarInfo::new(Width::Cells);
         info.kind = Kind::Aggregate(3);
         f.head.vars.insert(Var::Local(n), info);
@@ -1738,6 +1752,8 @@ fn a_value_of_several_cells_an_instruction_names_the_type_of_is_a_value_of_that_
     assert_eq!(kind_of(&f, Var::Local(0)), of(boxed));
     assert_eq!(kind_of(&f, Var::Local(2)), of(&method.to_string()));
     assert_eq!(kind_of(&f, Var::Local(4)), Kind::Aggregate(3));
+    assert_eq!(kind_of(&f, Var::Local(8)), of("Demo.Pair"));
+    assert_eq!(kind_of(&f, Var::Local(10)), Kind::Aggregate(3));
 }
 
 #[test]

@@ -71,7 +71,8 @@ was.
   assignment of which makes an array is an array of that element type. A value of two cells that
   the code only takes from natives, compares and hands back to them is declared `Handle`, a word
   the header explains. A value of several cells that a `box<T>` of it, or a method of the value
-  type `T` called on its address, names is of type `T`, and bytes taken out of a whole variable
+  type `T` called on its address, or a builtin's constructor handed its address, names is of type
+  `T`, and bytes taken out of a whole variable
   are its field, read as the unsigned number they make up. A parameter every call of which, from
   functions that every call names, passes an `int` widened by its sign is read as an `int`. A
   constant of no proved kind whose bits are those of a round float keeps its bits and has the

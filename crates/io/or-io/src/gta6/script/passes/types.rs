@@ -2420,7 +2420,7 @@ impl Typing<'_> {
     }
 }
 
-/// The value type each variable of several cells is an instance of, by what names its type: a `box<T>` of the whole variable, or a call of a method of a value type `T` handed the variable's address as its receiver; none where two types are named.
+/// The value type each variable of several cells is an instance of, by what names its type: a `box<T>` of the whole variable, a call of a method of a value type `T` handed the variable's address as its receiver, or a builtin's constructor so handed it; none where two types are named.
 fn values(
     cfg: &cfg::Cfg,
     program: u32,
@@ -2457,6 +2457,14 @@ fn values(
                             .strip_prefix("box<")
                             .and_then(|ty| ty.strip_suffix('>'));
                         if let Some(ty) = ty {
+                            name(*var, ty.to_owned());
+                        }
+                    }
+                    // A builtin value made in place: its constructor is handed its address.
+                    (Callee::Builtin { path, .. }, [Expr::AddrOf { var, cell: 0 }, ..])
+                        if wide.contains(var) =>
+                    {
+                        if let Some(ty) = path.strip_suffix(".Ctor") {
                             name(*var, ty.to_owned());
                         }
                     }

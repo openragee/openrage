@@ -8,7 +8,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
 
 /// The soonest each key of `asks` is needed by, where a key is asked for more than once.
-pub(super) fn soonest<K: Eq + Hash>(asks: impl Iterator<Item = (K, f32)>) -> HashMap<K, f32> {
+pub fn soonest<K: Eq + Hash>(asks: impl Iterator<Item = (K, f32)>) -> HashMap<K, f32> {
     let mut out = HashMap::new();
     for (key, soon) in asks {
         let at = out.entry(key).or_insert(soon);
@@ -35,7 +35,7 @@ struct Shared<Q> {
 }
 
 /// A pool of workers, each answering one request at a time.
-pub(super) struct Pool<Q, A> {
+pub struct Pool<Q, A> {
     shared: Arc<Shared<Q>>,
     answers: Receiver<(Q, A, u64, Instant)>,
     /// Answers drawn from the workers that [`Pool::take_soonest`] has not taken yet, each with its weight and when it was answered.
@@ -47,12 +47,9 @@ pub(super) struct Pool<Q, A> {
 /// What `work` gives, or `failed` where it panics: a worker whose read panics answers that one
 /// item as one that did not read, and goes on.
 // ⚠ Only a build that unwinds gets here: the dev and test profiles abort on a panic on Windows.
-pub(super) fn or_on_panic<T>(what: &str, work: impl FnOnce() -> T, failed: T) -> T {
+pub fn or_on_panic<T>(what: &str, work: impl FnOnce() -> T, failed: T) -> T {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).unwrap_or_else(|_| {
-        tracing::error!(
-            what,
-            "a worker of the GTA VI world stopped on an internal error"
-        );
+        tracing::error!(what, "a worker of the world stopped on an internal error");
         failed
     })
 }
@@ -60,7 +57,7 @@ pub(super) fn or_on_panic<T>(what: &str, work: impl FnOnce() -> T, failed: T) ->
 impl<Q: Copy + Eq + Hash + Send + 'static, A: Default + Send + 'static> Pool<Q, A> {
     /// `workers` threads, each with a state of its own made by `state`, answering with `answer`:
     /// an answer that panics is answered `A::default()`.
-    pub(super) fn new<S>(
+    pub fn new<S>(
         workers: usize,
         state: impl Fn() -> S + Send + Sync + 'static,
         answer: impl Fn(&mut S, Q) -> A + Send + Sync + 'static,
@@ -69,7 +66,7 @@ impl<Q: Copy + Eq + Hash + Send + 'static, A: Default + Send + 'static> Pool<Q, 
     }
 
     /// As [`Self::new`], but no worker starts another request while the answers the owner has not taken weigh `most` or more, each weighed by `weigh`: what is read waits on the device's uploads rather than piling up in memory.
-    pub(super) fn bounded<S>(
+    pub fn bounded<S>(
         workers: usize,
         (most, weigh): (u64, fn(&A) -> u64),
         state: impl Fn() -> S + Send + Sync + 'static,
@@ -138,7 +135,7 @@ impl<Q: Copy + Eq + Hash + Send + 'static, A: Default + Send + 'static> Pool<Q, 
 
     /// The answer that arrived whose request `soon` says is needed first, the least soonest.
     // ponytail: every answer waiting is looked at on each take; a heap if a backlog of thousands shows in the frame.
-    pub(super) fn take_soonest(&self, soon: impl Fn(&Q) -> f32) -> Option<(Q, A)> {
+    pub fn take_soonest(&self, soon: impl Fn(&Q) -> f32) -> Option<(Q, A)> {
         let mut arrived = self.arrived.lock().unwrap_or_else(|p| p.into_inner());
         arrived.extend(self.answers.try_iter());
         let first = (arrived.iter().enumerate())
@@ -163,11 +160,7 @@ impl<Q: Copy + Eq + Hash + Send + 'static, A: Default + Send + 'static> Pool<Q, 
     }
 
     /// [`Self::want`], less each ask for what `alike` finds held already under another request: what is being read, or was and is not taken.
-    pub(super) fn want_unheld<K: Eq + Hash>(
-        &self,
-        mut wanted: Vec<(f32, Q)>,
-        alike: impl Fn(&Q) -> K,
-    ) {
+    pub fn want_unheld<K: Eq + Hash>(&self, mut wanted: Vec<(f32, Q)>, alike: impl Fn(&Q) -> K) {
         let mut queue = self.shared.queue.lock().unwrap_or_else(|p| p.into_inner());
         let held: HashSet<K> = queue.held.iter().map(&alike).collect();
         wanted.retain(|(_, q)| queue.held.contains(q) || !held.contains(&alike(q)));
@@ -177,7 +170,7 @@ impl<Q: Copy + Eq + Hash + Send + 'static, A: Default + Send + 'static> Pool<Q, 
     }
 
     /// Ask for nothing, and let go of every answer that arrived and is not taken; what those weighed.
-    pub(super) fn forget(&self) -> u64 {
+    pub fn forget(&self) -> u64 {
         let mut arrived = self.arrived.lock().unwrap_or_else(|p| p.into_inner());
         arrived.extend(self.answers.try_iter());
         let gone: Vec<(Q, A, u64, Instant)> = arrived.drain(..).collect();
@@ -196,7 +189,7 @@ impl<Q: Copy + Eq + Hash + Send + 'static, A: Default + Send + 'static> Pool<Q, 
     }
 
     /// Look at each answer that arrived and is not taken yet.
-    pub(super) fn each_arrived(&self, mut look: impl FnMut(&Q, &A)) {
+    pub fn each_arrived(&self, mut look: impl FnMut(&Q, &A)) {
         let mut arrived = self.arrived.lock().unwrap_or_else(|p| p.into_inner());
         arrived.extend(self.answers.try_iter());
         for (request, answer, ..) in arrived.iter() {
@@ -205,12 +198,12 @@ impl<Q: Copy + Eq + Hash + Send + 'static, A: Default + Send + 'static> Pool<Q, 
     }
 
     /// The answers taken soonest first, the seconds they waited from answered to taken in all, and the most.
-    pub(super) fn waited(&self) -> (usize, f64, f32) {
+    pub fn waited(&self) -> (usize, f64, f32) {
         *self.waited.lock().unwrap_or_else(|p| p.into_inner())
     }
 
     /// Ask for `wanted`, each with its distance, in place of what was asked before.
-    pub(super) fn want(&self, wanted: Vec<(f32, Q)>) {
+    pub fn want(&self, wanted: Vec<(f32, Q)>) {
         let mut queue = self.shared.queue.lock().unwrap_or_else(|p| p.into_inner());
         queue.wanted = wanted;
         drop(queue);
@@ -218,7 +211,7 @@ impl<Q: Copy + Eq + Hash + Send + 'static, A: Default + Send + 'static> Pool<Q, 
     }
 
     /// The answers that arrived, while `more` says to take another.
-    pub(super) fn take(&self, mut more: impl FnMut() -> bool) -> Vec<(Q, A)> {
+    pub fn take(&self, mut more: impl FnMut() -> bool) -> Vec<(Q, A)> {
         let mut taken = Vec::new();
         while more() {
             match self.answers.try_recv() {

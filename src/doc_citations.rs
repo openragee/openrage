@@ -20,6 +20,30 @@ const ELSEWHERE: &[(&str, &str)] = &[
     ),
     ("crates/format/or-meta/", "same"),
     (
+        "src/state/gta6_worldview/index.rs",
+        "where the plans of the world say the GTA VI index stood before R71b moved it to `crates/domain/or-world-gta6`",
+    ),
+    (
+        "src/state/gta6_worldview/index_keep.rs",
+        "same",
+    ),
+    (
+        "src/state/gta6_worldview/index_states.rs",
+        "same",
+    ),
+    (
+        "src/state/gta6_worldview/index_types.rs",
+        "where the plans say a reader stood before R71b moved it to `or_io::gta6::map`",
+    ),
+    (
+        "src/state/gta6_worldview/lights_index.rs",
+        "same",
+    ),
+    (
+        "src/state/gta6_worldview/lights_lod.rs",
+        "same",
+    ),
+    (
         "crates/or-io/src/rage_types/frag.rs",
         "one of the 20 files in `archive/ydd-clothing-preview`; `or-io` is the \
          pre-split facade crate, and the path not resolving is the roadmap's \

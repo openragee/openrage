@@ -3078,6 +3078,7 @@ dependencies = [
  "or-wardrobe",
  "or-weapons",
  "or-world",
+ "or-world-gta6",
  "pelite",
  "pollster",
  "rayon",
@@ -3232,6 +3233,7 @@ dependencies = [
  "aes",
  "bcdec_rs",
  "bincode",
+ "bytemuck",
  "byteorder",
  "flate2",
  "image",
@@ -3566,6 +3568,22 @@ dependencies = [
  "serde",
  "tempfile",
  "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
+name = "or-world-gta6"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "glam",
+ "or-io",
+ "or-job",
+ "or-title",
+ "or-world",
+ "serde",
+ "serde_json",
+ "tempfile",
  "tracing",
 ]
 

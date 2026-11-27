@@ -158,7 +158,7 @@ Dependencies run one way, foundation → io → title → domain → runtime →
 |---|---|---|
 | app | the editor and the `openrage-cli` entry point | [src](src) |
 | [runtime](crates/runtime) | what is evaluated, simulated or drawn | or-anim, or-renderer, or-simulation |
-| [domain](crates/domain) | the models of what is edited, and the kinds of content a project builds | or-project, or-source, or-content, or-wardrobe, or-addonped, or-weapons, or-maps, or-particles, or-particle, or-world, or-depends, or-interchange, or-editor, or-plugin |
+| [domain](crates/domain) | the models of what is edited, and the kinds of content a project builds | or-project, or-source, or-content, or-wardrobe, or-addonped, or-weapons, or-maps, or-particles, or-particle, or-world, or-world-gta6, or-depends, or-interchange, or-editor, or-plugin |
 | [title](crates/title) | a game install: editions, archives, DLC order | or-title |
 | [io](crates/io) | file formats, archives and media decoders | or-io, or-io-macros, or-io-verify, or-kraken, or-media |
 | [foundation](crates/foundation) | building blocks that know no format | or-job, or-transport, or-test-support |

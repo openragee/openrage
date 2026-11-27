@@ -22,9 +22,9 @@ pub(super) struct Mount {
     pub(super) tables: Vec<(usize, Table)>,
 }
 
-/// The key snapshot of this run, where one is found and reads.
-pub(crate) fn keys() -> Option<GtaViKeys> {
-    GtaViKeys::for_install(crate::state::prefs::config_root().as_deref())
+/// The key snapshot of this run, where one is found under the configuration folder `config` and reads.
+pub fn keys(config: Option<&Path>) -> Option<GtaViKeys> {
+    GtaViKeys::for_install(config)
         .inspect_err(|error| tracing::warn!(%error, "the GTA VI key snapshot is not read"))
         .ok()
         .flatten()

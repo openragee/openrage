@@ -31,7 +31,7 @@ pub(super) struct Shard {
     pub(super) maps: Vec<(MapRow, Vec<u32>, bool)>,
     pub(super) archetypes: Vec<ArchetypeRow>,
     /// The lights the archetypes of each map-types body hold.
-    pub(super) lights: Vec<super::super::lights_index::LightRow>,
+    pub(super) lights: Vec<super::lights_index::LightRow>,
     /// The group a script-managed map states, with the 64-bit word the same name hashes to.
     pub(super) words: Vec<(u32, u64)>,
     /// Where each map-types body that read lies.
@@ -137,8 +137,7 @@ impl Shard {
         // ⚠ A body whose load flags do not read keeps its archetypes, of no kind.
         let loads = types::load_flags_of(&model).filter(|l| l.len() == body.archetypes.len());
         self.types.push(offset);
-        self.lights
-            .extend(super::super::lights_index::rows_of(&model));
+        self.lights.extend(super::lights_index::rows_of(&model));
         (self.interiors).extend(
             (body.archetypes.iter())
                 .filter(|a| a.class == map::ArchetypeClass::Interior)

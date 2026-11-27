@@ -4,12 +4,10 @@
 //! ⚠ A map of level-of-detail lights states how far each light reaches and no place: the lights
 //! stand, one for one, at the positions of the distant lights of the map its `parent` names. No
 //! list states the hours a light is lit in.
-// ponytail: this reads bytes and belongs beside the map reader in or-io; it is here because the
-// track that wrote it owned no file there.
 
-use or_io::gta6::map::C_MAP_DATA;
-use or_io::hash::literal_string_hash as lit;
-use or_io::meta::binary::rbm::schema::RbmModel;
+use crate::gta6::map::C_MAP_DATA;
+use crate::hash::literal_string_hash as lit;
+use crate::meta::binary::rbm::schema::RbmModel;
 
 const LOD_LIGHT: u32 = lit(b"CLODLight");
 const DISTANT_LIGHT: u32 = lit(b"CDistantLODLight");
@@ -284,10 +282,10 @@ pub fn read(model: &RbmModel) -> Result<MapLod, LodError> {
     })
 }
 
-#[cfg(test)]
-pub(super) mod tests {
+#[cfg(any(test, feature = "made-up"))]
+pub mod tests {
     use super::*;
-    use or_io::meta::binary::rbm::schema::RbmDataBlock;
+    use crate::meta::binary::rbm::schema::RbmDataBlock;
 
     fn header(root: &mut [u8], at: usize, block: u64, count: u16) {
         root[at..at + 8].copy_from_slice(&block.to_le_bytes());
@@ -303,7 +301,7 @@ pub(super) mod tests {
     /// of distant lights (position, RGB word, intensity) of type 2 and category 1.
     // ⚠ The model declares no class: an entry of a class table cannot be made outside or-io, so
     // the refusal of a body that declares a list elsewhere is not tested here.
-    pub(in super::super) fn model(falloff: &[f32], distant: &[([f32; 3], u32, f32)]) -> RbmModel {
+    pub fn model(falloff: &[f32], distant: &[([f32; 3], u32, f32)]) -> RbmModel {
         let mut root = vec![0u8; MAP_DATA_SIZE];
         let n = falloff.len();
         let lod = [(0x00, 2), (0x10, 3), (0x20, 4), (0x40, 5), (0x50, 6)];

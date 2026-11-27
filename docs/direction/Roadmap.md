@@ -10762,21 +10762,26 @@ function that selects a frame split into the mechanics every title shares and GT
 the model, texture and look readers, whose outputs are rewritten on the core's
 ([brief](Unified_World_Plan.md#the-gta-vi-world-behind-the-contract-r71b)).
 
-**Where it stands.** The first part is built, and nothing of the viewer has moved. Which files can
-leave the app in which part, and which of the viewer's tests read an archive, are in the brief and
-in [the plan's reading](Unified_World_Plan.md#gta-vi). The reference is three checks
+**Where it stands.** Parts 1 and 2 are built. The reference is three checks
 ([how a part makes and compares one](../guides/Development_Workflow.md#the-reference-of-the-gta-vi-world-screen)):
-`scripts/shots/gta6_world_reference.shots` draws twelve stops,
-`scripts/shots/gta6_world_reference_compare.shots` holds a run to an earlier one, where a missing
-reference fails (`a_shot_over_its_tolerance_fails_and_so_does_one_with_no_reference`), and the
-install-gated suite `the_world_reads_as_its_reference_says` writes or is held to digests of the
-index, models, textures, selections, lights, occluders and the day. Two runs of the unchanged tree
-agreed in every digest and compared dump field and differed in their shots' far band, so the
-digests and the dumps are the exact check. The contract as built changes the later parts: the
-world thread is rewritten around the core's driver, which already holds the mechanics every title
-shares, so GTA VI's rules go to its rows' gates, its body and its policy; and the kit opens a world
-through the title's own `open` and asks that the models it draws with read whole, so it passes
-only with the last part.
+`scripts/shots/gta6_world_reference.shots`, its comparison
+`scripts/shots/gta6_world_reference_compare.shots`, where a missing reference fails, and the
+install-gated digests of `the_world_reads_as_its_reference_says`; the digests and the dumps are
+the exact check. The closed move changed no behaviour: the reader pool is
+`crates/domain/or-world/src/pool.rs`; the three readers by member hash are `index_types`,
+`lights_lod` and `lights_index` of `or_io::gta6::map`; and the adapter crate
+`crates/domain/or-world-gta6/src/lib.rs` holds the index with its kept file, mount binding, scan
+and states, the occluders, the material and the lights' law and variables. The app keeps
+`src/state/gta6_worldview/index_shell.rs`: the configuration folder and key snapshot it opens
+with, and `land_and_water`. The tests of the moved files run in their new crates, changed in
+imports alone, and the digests written before the move held after it (961 of 961,
+`the_world_reads_as_its_reference_says`, 2026-11-27); the shots were not run. Left: parts 3 to
+5; the adapter's title and registry line, which wait for a registry crate and for readers a
+title opens with; and the pool's workers keep their open files in each caller's own state, not
+yet in the contract's `Worker`. The contract as built changes the later parts: the world thread
+is rewritten around the core's driver, so GTA VI's rules go to its rows' gates, its body and
+its policy, and the kit, which opens a world through the title's own `open`, passes only with
+the last part.
 
 **Depends on.** [R71a](#r71a-the-world-contract-the-conformance-kit-and-the-fake-title); from its second part
 [R71d](#r71d-the-gta-v-world-behind-the-contract-and-one-kept-file), which lands first on the files the two share. Until the first part of

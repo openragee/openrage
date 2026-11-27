@@ -11,7 +11,7 @@ use or_io::gta6::map::occluders::{self, MapOccluders};
 use or_world::streaming::View;
 
 use super::index::{Enabled, MapRow, WorldIndex};
-use super::pool::Pool;
+use or_world::pool::Pool;
 
 /// The content flag of a map that holds occluders.
 const OCCLUDERS: u32 = 1 << 5;
@@ -56,7 +56,7 @@ fn read(index: &WorldIndex, files: &mut HashMap<u32, File>, name: u32) -> Option
 }
 
 /// The occluder maps around the camera.
-pub(super) struct Occluders {
+pub struct Occluders {
     index: Arc<WorldIndex>,
     /// The maps of the index that hold occluders, by their place in it.
     maps: Vec<usize>,
@@ -70,7 +70,7 @@ pub(super) struct Occluders {
 }
 
 impl Occluders {
-    pub(super) fn new(index: Arc<WorldIndex>) -> Self {
+    pub fn new(index: Arc<WorldIndex>) -> Self {
         let maps = (index.maps.iter().enumerate())
             .filter(|(_, row)| row.content_flags & OCCLUDERS != 0)
             .map(|(at, _)| at)
@@ -94,7 +94,7 @@ impl Occluders {
 
     /// Take the occluders that arrived and, where `moved`, work out again which maps the camera of
     /// `view` wants with what `enabled` switches on; whether what is held changed.
-    pub(super) fn stream(&mut self, view: &View, enabled: &Enabled, moved: bool) -> bool {
+    pub fn stream(&mut self, view: &View, enabled: &Enabled, moved: bool) -> bool {
         let mut changed = false;
         for (name, read) in self.readers.take(|| true) {
             match read {
@@ -137,15 +137,15 @@ impl Occluders {
     }
 
     /// How many occluder maps are wanted and neither read nor found not to read.
-    #[cfg(test)]
-    pub(super) fn waiting(&self) -> usize {
+    #[cfg(any(test, feature = "made-up"))]
+    pub fn waiting(&self) -> usize {
         (self.wanted.keys())
             .filter(|name| !self.loaded.contains_key(name) && !self.failed.contains(name))
             .count()
     }
 
     /// The occluders of every map loaded; the same list until one comes or goes.
-    pub(super) fn held(&self) -> Arc<[Arc<MapOccluders>]> {
+    pub fn held(&self) -> Arc<[Arc<MapOccluders>]> {
         Arc::clone(&self.held)
     }
 }

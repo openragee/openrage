@@ -134,7 +134,7 @@ publication (R66g, R66h).
 | `crates/foundation/` | or-job, or-test-support, or-transport |
 | `crates/io/` | or-io, or-io-macros, or-io-verify, or-kraken, or-media |
 | `crates/title/` | or-title |
-| `crates/domain/` | or-addonped, or-content, or-depends, or-editor, or-interchange, or-maps, or-particle, or-particles, or-plugin, or-project, or-source, or-wardrobe, or-weapons, or-world |
+| `crates/domain/` | or-addonped, or-content, or-depends, or-editor, or-interchange, or-maps, or-particle, or-particles, or-plugin, or-project, or-source, or-wardrobe, or-weapons, or-world, or-world-gta6 |
 | `crates/runtime/` | or-anim, or-renderer, or-simulation |
 | `crates/tools/` | or-cli (`openrage-cli`), or-shader-front, or-shader-tool, xtask |
 | `src/` | the `openrage` app, which also builds the `openrage-cli` binary |

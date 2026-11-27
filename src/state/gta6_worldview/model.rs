@@ -13,12 +13,11 @@ use or_renderer::MeshVertex;
 use super::index::{ModelRef, WorldIndex};
 use super::texture::Places;
 
-#[path = "material.rs"]
-mod material;
 use material::{material_of, GLOW, PALETTE};
 #[cfg(test)]
 pub use material::{Constants, Emissive, Interior, Layer};
 pub use material::{CpuMaterial, Family, RegionTint};
+use or_world_gta6::material;
 
 /// The bytes a model's body is read to.
 const BODY_LIMIT: u64 = 512 << 20;

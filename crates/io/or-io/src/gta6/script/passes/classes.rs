@@ -9,12 +9,13 @@
 //! is the first to hold it; every mention of it in the install runs it on an object of one type
 //! just made, before anything else uses the object; every mention binds it as the delegate of
 //! a closure object of one compiler-made type; or every mention hands it, first, the receiver a
-//! member was given, and of the receivers' type and its bases one alone is of the function's
-//! program and holds every byte it reaches through that parameter. An object of a type passed
-//! first proves no member: a static function takes one the same way.
+//! member was given or an object of a script type its settled signature states every such call
+//! hands, and of the receivers' type and its bases one alone is of the function's program, is
+//! made from each class whose slot it calls on that parameter, and holds every byte it reaches
+//! through it.
 //!
 //! ⚠ The fourth proof cannot tell a method from a static function that is only ever handed
-//! `this` and works on that type's own fields: the two are one function in the code.
+//! objects of one type and works on that type's own fields: the two are one function in the code.
 //!
 //! ⚠ Every way into a function counts against these proofs: a call or reference of a function
 //! that does not lift, read off its instructions; a function the engine calls by name or by the
@@ -41,6 +42,9 @@ use super::sugar_expressions::Reached;
 
 #[path = "classes_properties.rs"]
 mod properties;
+
+#[path = "classes_typed.rs"]
+mod typed;
 
 use properties::{accessed, standing, Stands};
 pub use properties::{accessor, Accessor};
@@ -230,6 +234,8 @@ enum Said {
     Note(Member),
     /// The function is handed, first, the receiver the function that mentions it was given.
     Receiver,
+    /// The function is handed, first, a value of one cell the function that mentions it holds of its own: what that is, its signature says of every such call.
+    Typed,
 }
 
 /// Whether `object` is an object of the builtin type `ty` that the function itself makes: in place, or into a variable that holds nothing else.
@@ -352,10 +358,10 @@ fn site<'a>(
     }
 }
 
-/// Notes what `top` says of every script function it calls or refers to, but for the mention at `proof`: handed the receiver first, or mentioned like any function.
+/// Notes what `top` says of every script function it calls or refers to, but for the mention at `proof`: handed the receiver first, handed a value of the caller's own first, or mentioned like any function.
 fn others(
     top: &Expr,
-    program: u32,
+    head: &Head,
     receiver: Option<Var>,
     proof: Option<&Expr>,
     found: &mut Vec<(FunctionKey, Said)>,
@@ -364,16 +370,13 @@ fn others(
         if proof.is_some_and(|proof| std::ptr::eq(proof, e)) {
             return;
         }
-        let Some(function) = referred(program, e) else {
+        let Some(function) = referred(head.program, e) else {
             return;
         };
-        let handed = match e {
-            Expr::Call { args, .. } => hands(args, receiver),
-            _ => false,
-        };
-        let said = match handed {
-            true => Said::Receiver,
-            false => Said::Note(disputed()),
+        let said = match e {
+            Expr::Call { args, .. } if hands(args, receiver) => Said::Receiver,
+            Expr::Call { args, .. } if typed::handed_value(args, head) => Said::Typed,
+            _ => Said::Note(disputed()),
         };
         found.push((function, said));
     });
@@ -393,6 +396,13 @@ fn carry(into: &mut Carried, from: Carried) {
         into.unread.entry(function).or_default().extend(named);
     }
     into.blind.extend(from.blind);
+    for (function, by) in from.typed {
+        into.typed.entry(function).or_default().extend(by);
+    }
+    for (function, types) in from.needs {
+        into.needs.entry(function).or_default().extend(types);
+    }
+    into.self_typed.extend(from.self_typed);
 }
 
 /// The script functions the instructions of `row` call or take a reference to; `None` where a word of it is no instruction, or names an import the program does not hold.
@@ -522,16 +532,20 @@ pub fn of_function(project: &mut Project, f: &cfg::Function) {
     let receiver = (f.head.params > 0 && !written).then_some(Var::Param(0));
     let mut found: Vec<(FunctionKey, Said)> = Vec::new();
     let mut end = 0u32;
+    let mut needs: BTreeSet<TypeKey> = BTreeSet::new();
     for block in &f.cfg.blocks {
         let mut fresh: Option<(Var, &VmType)> = None;
         for stmt in &block.stmts {
             let proved = site(program, &assigned, fresh, receiver, stmt);
             let proof = proved.as_ref().map(|(_, _, proof)| *proof);
             found.extend(proved.map(|(function, said, _)| (function, said)));
-            stmt.each_expr(&mut |top| others(top, program, receiver, proof, &mut found));
+            stmt.each_expr(&mut |top| others(top, &f.head, receiver, proof, &mut found));
             if let Some(receiver) = receiver {
                 end = end.max(stored(stmt, receiver));
-                stmt.each_expr(&mut |top| end = end.max(loaded(top, receiver)));
+                stmt.each_expr(&mut |top| {
+                    end = end.max(loaded(top, receiver));
+                    typed::needed(top, receiver, &mut needs);
+                });
             }
             fresh = match stmt {
                 ir::Stmt::Assign {
@@ -542,9 +556,10 @@ pub fn of_function(project: &mut Project, f: &cfg::Function) {
             };
         }
         if let Some(top) = block.term.expr() {
-            others(top, program, receiver, None, &mut found);
+            others(top, &f.head, receiver, None, &mut found);
             if let Some(receiver) = receiver {
                 end = end.max(loaded(top, receiver));
+                typed::needed(top, receiver, &mut needs);
             }
         }
     }
@@ -563,10 +578,19 @@ pub fn of_function(project: &mut Project, f: &cfg::Function) {
             Said::Receiver => {
                 carried.handed.entry(function).or_default().insert(own);
             }
+            Said::Typed => {
+                carried.typed.entry(function).or_default().insert(own);
+            }
         }
     }
     if end > 0 {
         carried.reach.insert(own, end);
+    }
+    if !needs.is_empty() {
+        carried.needs.insert(own, needs);
+    }
+    if typed::self_typed(&f.head) {
+        carried.self_typed.insert(own);
     }
     if carried == Carried::default() {
         return;
@@ -749,18 +773,20 @@ fn chained(
     }
 }
 
-/// The one type that declares a function handed receivers of the type `arrived`: `arrived` or a base of it, of the program that holds the function, and holding every byte the function reaches through its receiver; `None` where no type, or more than one, may.
+/// The one type that declares a function handed receivers of the type `arrived`: `arrived` or a base of it, of the program that holds the function, made from each class of `needs`, and holding every byte the function reaches through its receiver; `None` where no type, or more than one, may.
 // ⚠ The receivers say the type that declares the function is `arrived` or a base of it, and a
 // type of another program holds none of this program's functions. A generic type's functions
 // may be made in any program that uses it, and a base no program states may be anything: either
 // in the line leaves the function free. A value type's method takes a pointer to the value,
 // which no call is written with as a receiver, so none is taken. A builtin type holds no function
-// of a script, and nor does a type above it.
+// of a script, and nor does a type above it. A class whose slot the function calls on its
+// receiver is one the receiver is made from: a type above it is no `this` that call is made on.
 fn declarer(
     project: &Project,
     arrived: TypeKey,
     function: FunctionKey,
     reach: Option<u32>,
+    needs: &[TypeKey],
 ) -> Option<TypeKey> {
     let end = reach.unwrap_or(0);
     let mut found = None;
@@ -774,7 +800,8 @@ fn declarer(
             return None;
         }
         // Sizes are not taken to fall up the line: a base too small holds nothing, and the walk goes on.
-        let holds = end <= HEADER.saturating_add(facts.byte_size);
+        let holds = end <= HEADER.saturating_add(facts.byte_size)
+            && needs.iter().all(|need| derives(project, ty, *need));
         let own = facts.home == function.program();
         let generic = facts.generic.is_some() || facts.parameters > 0;
         if holds && (generic || (own && (found.is_some() || facts.base.is_none()))) {
@@ -791,7 +818,7 @@ fn declarer(
     None
 }
 
-/// Settles the functions every mention of which hands them a receiver: each is a method of the one type `declarer` names for the nearest type all those receivers are of.
+/// Settles the functions every mention of which hands them a receiver or a value of the caller's own: each is a method of the one type `declarer` names for the nearest type all those receivers and objects are of.
 fn received(
     project: &Project,
     carried: &Carried,
@@ -806,7 +833,8 @@ fn received(
         }
     }
     // ⚠ The first parameter of a function that is no member, and that is not itself only ever
-    // handed a receiver, is anything: what it hands that parameter to is refused, and so on down.
+    // handed a receiver or objects its signature states, is anything: what it hands that
+    // parameter to is refused, and so on down.
     let mut refused: Vec<FunctionKey> = Vec::new();
     for function in open.keys() {
         let mut by = carried.handed.get(function).into_iter().flatten();
@@ -814,7 +842,10 @@ fn received(
             Some(member) => !member.is_static,
             None => open.contains_key(by),
         });
-        if !receivers {
+        // A value a caller holds of its own is what the signature says of every such call, or anything.
+        let valued = carried.typed.contains_key(function);
+        let objects = !valued || typed::handed_object(project, carried, *function).is_some();
+        if !receivers || !objects {
             refused.push(*function);
         }
     }
@@ -834,6 +865,10 @@ fn received(
             if let Some(member) = members.get(by) {
                 held = held.with(Arrives::One(member.owner), project);
             }
+        }
+        let valued = carried.typed.contains_key(function);
+        if let Some(ty) = valued.then(|| typed::handed_object(project, carried, *function)) {
+            held = held.with(ty.map_or(Arrives::Unrelated, Arrives::One), project);
         }
         if held != Arrives::Nothing {
             work.push(*function);
@@ -872,7 +907,9 @@ fn received(
             Role::Lambda => (claim.seed == Some(arrived)).then_some((arrived, Role::Lambda)),
             _ => {
                 let reach = carried.reach.get(function).copied();
-                let owner = declarer(project, arrived, *function, reach);
+                let handed = hands.get(function).map(Vec::as_slice);
+                let needs = typed::needs(project, carried, members, handed, *function);
+                let owner = declarer(project, arrived, *function, reach, &needs);
                 owner.map(|owner| (owner, Role::Method))
             }
         };
@@ -894,6 +931,7 @@ fn unseen(project: &Project, carried: &Carried, gathered: &mut BTreeMap<Function
         blind.extend(imports.iter().map(|import| import.program));
     }
     let known = gathered.keys().chain(carried.handed.keys());
+    let known = known.chain(carried.typed.keys());
     let known = known.filter(|function| blind.contains(&function.program()));
     let known: Vec<FunctionKey> = known.copied().collect();
     for function in known {
@@ -909,6 +947,16 @@ pub fn settle(project: &mut Project) {
         carry(&mut carried, std::mem::take(&mut info.carried));
     }
     unseen(project, &carried, &mut gathered);
+    // ⚠ A function handed a value its caller holds of its own is called like any function: it is
+    // no constructor and no lambda, whatever another mention says.
+    for function in carried.typed.keys() {
+        if gathered
+            .get(function)
+            .is_some_and(|said| said.owner != NO_OWNER)
+        {
+            gathered.insert(*function, disputed());
+        }
+    }
     // The types whose table holds each function, each with the lowest slot it holds it in.
     let mut holders: BTreeMap<FunctionKey, BTreeMap<TypeKey, u32>> = BTreeMap::new();
     for (ty, facts) in &project.types {
@@ -935,7 +983,7 @@ pub fn settle(project: &mut Project) {
     }
     // What is left to prove of each function handed a receiver; a table's function is spoken for by its table.
     let mut open: BTreeMap<FunctionKey, Claim> = BTreeMap::new();
-    for function in carried.handed.keys() {
+    for function in carried.handed.keys().chain(carried.typed.keys()) {
         if holders.contains_key(function) {
             continue;
         }

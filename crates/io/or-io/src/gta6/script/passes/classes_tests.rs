@@ -1122,7 +1122,8 @@ fn the_one_type_of_the_receivers_line_in_the_functions_program_declares_it() {
         project
     };
     let project = line(elsewhere.clone());
-    let of = |arrived: TypeKey, reach: Option<u32>| declarer(&project, arrived, key(0x200), reach);
+    let of =
+        |arrived: TypeKey, reach: Option<u32>| declarer(&project, arrived, key(0x200), reach, &[]);
 
     // No field reached, a field of the base of the other program, the last byte of T2.
     assert_eq!(of(T2, None), Some(T2));
@@ -1134,8 +1135,8 @@ fn the_one_type_of_the_receivers_line_in_the_functions_program_declares_it() {
     assert_eq!(of(T3, Some(HEADER + 41)), Some(T3));
     // A function of the other program is the base's, where the base holds what it reaches.
     let theirs = FunctionKey::new(PROGRAM + 1, 0x200);
-    assert_eq!(declarer(&project, T2, theirs, Some(12)), Some(T1));
-    assert_eq!(declarer(&project, T2, theirs, Some(HEADER + 30)), None);
+    assert_eq!(declarer(&project, T2, theirs, Some(12), &[]), Some(T1));
+    assert_eq!(declarer(&project, T2, theirs, Some(HEADER + 30), &[]), None);
 
     // A generic base may hold a function of any program, where it holds what is reached.
     let generic = TypeFacts {
@@ -1143,9 +1144,9 @@ fn the_one_type_of_the_receivers_line_in_the_functions_program_declares_it() {
         ..elsewhere.clone()
     };
     let project = line(generic);
-    assert_eq!(declarer(&project, T2, key(0x200), Some(12)), None);
+    assert_eq!(declarer(&project, T2, key(0x200), Some(12), &[]), None);
     assert_eq!(
-        declarer(&project, T2, key(0x200), Some(HEADER + 30)),
+        declarer(&project, T2, key(0x200), Some(HEADER + 30), &[]),
         Some(T2)
     );
 
@@ -1166,7 +1167,7 @@ fn the_one_type_of_the_receivers_line_in_the_functions_program_declares_it() {
     };
     project.types.insert(rootless, no_base);
     for arrived in [T5, T4, rootless] {
-        assert_eq!(declarer(&project, arrived, key(0x200), None), None);
+        assert_eq!(declarer(&project, arrived, key(0x200), None, &[]), None);
     }
 }
 #[test]

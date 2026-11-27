@@ -2,8 +2,9 @@
 //! is what the output is written from.
 //!
 //! ⚠ A function belongs to a type only by proof: a virtual slot the type fills, a constructor
-//! run on an object just made, a closure a delegate binds. Every other function stays free, and
-//! prints as a function of its program.
+//! run on an object just made, a closure a delegate binds, every call handing it first a
+//! member's receiver or an object of one type. Every other function stays free, and prints as a
+//! function of its program.
 
 use serde::{Deserialize, Serialize};
 
@@ -139,4 +140,16 @@ pub struct Carried {
     >,
     /// The programs some function of which holds a word that is no instruction, so that what it calls is not known.
     pub blind: std::collections::BTreeSet<u32>,
+    /// For a function mentioned: the functions that call it with, first, a value of one cell of their own that is none of their parameters.
+    pub typed: std::collections::BTreeMap<
+        super::ir::FunctionKey,
+        std::collections::BTreeSet<super::ir::FunctionKey>,
+    >,
+    /// For a function that leaves its first parameter as given: the types of the slots it calls on it.
+    pub needs: std::collections::BTreeMap<
+        super::ir::FunctionKey,
+        std::collections::BTreeSet<super::ir::TypeKey>,
+    >,
+    /// The functions whose own code types their first parameter as an object or an array.
+    pub self_typed: std::collections::BTreeSet<super::ir::FunctionKey>,
 }

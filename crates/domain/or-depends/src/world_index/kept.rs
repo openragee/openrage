@@ -138,6 +138,16 @@ impl Kept {
         })
     }
 
+    /// The index of the archives `parts` hold, in their order, with no archive read; `patches` names the folder that patches an archive, by the archive's place.
+    // ⚠ Each part's rows stand as kept, whatever its archive's stamp: the caller says they stand.
+    pub fn joined(parts: Vec<Self>, patches: &[(usize, String)]) -> WorldIndex {
+        let identity = parts
+            .first()
+            .map_or_else(String::new, |part| part.identity.clone());
+        let archives = parts.into_iter().flat_map(|part| part.archives).collect();
+        WorldIndex::of_rows(identity, archives, patches)
+    }
+
     /// The index kept at `file`; `None` where there is no such file.
     pub fn open(file: &Path) -> Result<Option<Self>, KeptError> {
         match std::fs::read(file) {

@@ -1,0 +1,16 @@
+[package]
+name = "or-worlds"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "The titles whose world this build opens, listed once: each with the games it answers for, and a registered game mapped onto the world core's id of it"
+
+[dependencies]
+# The contract a listed title answers.
+or-world.workspace = true
+or-world-gta5.workspace = true
+# The registered game a folder is detected as, which the world core has no edge to.
+or-title.workspace = true

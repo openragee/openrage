@@ -7,7 +7,7 @@
 //! read once, a body laid out once a selection) is held by the driver's own tests over the fake
 //! title, which counts.
 //!
-//! ⚠ Every rule opens the world afresh with no key, its index kept under a scratch folder the
+//! ⚠ Every rule opens the world afresh, with no key unless the fixture names an executable, its index kept under a scratch folder the
 //! caller makes and removes: the macro makes one a test with `tempfile`, which a crate that calls
 //! it lists among its dev-dependencies.
 
@@ -89,6 +89,15 @@ pub struct Lit {
     pub occluders: usize,
 }
 
+/// A place with ground under it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Grounded {
+    /// A point above the ground, within ten metres of it.
+    pub at: Vec3,
+    /// The height of the ground under it.
+    pub height: f32,
+}
+
 /// What a fixture's world holds, in the terms every title shares.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Scene {
@@ -100,8 +109,11 @@ pub struct Scene {
     pub timed: Timed,
     pub held: HeldBack,
     pub interior: InteriorAt,
-    pub list: ListAt,
+    /// `None` where no body of the title holds a list.
+    pub list: Option<ListAt>,
     pub lit: Lit,
+    /// Read only where the world states a height of the ground or a collision query.
+    pub ground: Grounded,
     /// A map and how many placement rows it gives, where the world has the capability.
     pub placed: (u64, usize),
 }
@@ -132,6 +144,10 @@ pub struct Fixture {
     pub scene: Scene,
     /// `None` where the title has no edit store.
     pub edit: Option<EditFixture>,
+    /// What lives as long as the fixture, such as the scratch folder a hand-built install is written to.
+    pub keeps: Option<Box<dyn std::any::Any>>,
+    /// The executable whose keys open the world; `None` for a hand-built install, which opens with no key.
+    pub executable: Option<PathBuf>,
 }
 
 /// One rule of the kit.
@@ -234,7 +250,10 @@ fn open_in(
     let (cancel, progress) = (Cancel::new(), Progress::new());
     let opening = Opening {
         config: scratch,
-        keys: Keys::None,
+        keys: match &fixture.executable {
+            Some(executable) => Keys::Executable(executable),
+            None => Keys::None,
+        },
         cancel: &cancel,
         progress: &progress,
     };
@@ -505,7 +524,10 @@ fn interior(fixture: &Fixture, scratch: &Path) -> Held {
 
 fn list(fixture: &Fixture, scratch: &Path) -> Held {
     let opened = open(fixture, scratch)?;
-    let (scene, list) = (&fixture.scene, &fixture.scene.list);
+    let scene = &fixture.scene;
+    let Some(list) = &scene.list else {
+        return Ok(());
+    };
     let (streamed, selected) = glance(&opened, list.eye, scene.weather);
     unread(&streamed)?;
     let lists: BTreeSet<NodeId> = selected.selection.lists.iter().map(|l| l.node).collect();
@@ -522,14 +544,34 @@ fn list(fixture: &Fixture, scratch: &Path) -> Held {
 }
 
 /// The places a fixture states something draws from.
-fn eyes(scene: &Scene) -> [Vec3; 5] {
-    [
+fn eyes(scene: &Scene) -> Vec<Vec3> {
+    let fixed = [
         scene.ladder.far,
         scene.ladder.near,
         scene.interior.eye,
-        scene.list.eye,
         scene.lit.eye,
-    ]
+    ];
+    let list = scene.list.map(|list| list.eye);
+    fixed.into_iter().chain(list).collect()
+}
+
+/// An error where the world's answer about the ground of the scene is not what its capability `stated` says: the height where it is stated, a refusal where it is not.
+fn grounded(
+    what: &str,
+    stated: bool,
+    height: f32,
+    answered: Result<Option<crate::collision::Hit>, crate::contract::WorldError>,
+) -> Held {
+    match (stated, answered) {
+        (true, Ok(Some(hit))) if (hit.position.z - height).abs() <= 1e-2 => Ok(()),
+        (true, Ok(found)) => Err(format!(
+            "{what} is stated, and asking under the fixture's place gave {:?}, where the ground stands at {height}",
+            found.map(|hit| hit.position.z)
+        )),
+        (true, Err(e)) => Err(format!("{what} is stated, and asking gave: {e}")),
+        (false, Err(_)) => Ok(()),
+        (false, Ok(_)) => Err(format!("no {what} is stated, and asking gave an answer")),
+    }
 }
 
 fn columns(fixture: &Fixture, scratch: &Path) -> Held {
@@ -660,6 +702,26 @@ fn caps(fixture: &Fixture, scratch: &Path) -> Held {
         (false, Err(_)) => {}
         (false, Ok(())) => return Err("no placement rows are stated, and asking gave rows".into()),
     }
+    let (ground, mut worker) = (&fixture.scene.ground, Worker::new());
+    let probe = crate::collision::GroundProbe {
+        max_rise: 0.0,
+        max_drop: 20.0,
+        max_slope: std::f32::consts::FRAC_PI_4,
+    };
+    let under = (opened.install).ground(&opened.index, ground.at, &probe, &mut worker);
+    grounded(
+        "a height of the ground",
+        caps.has(Capability::Ground),
+        ground.height,
+        under,
+    )?;
+    let down = (opened.install).ray(&opened.index, ground.at, Vec3::NEG_Z, 20.0, &mut worker);
+    grounded(
+        "a collision query",
+        caps.has(Capability::Collision),
+        ground.height,
+        down,
+    )?;
     if let Some((edit, session)) = session(fixture, &opened)? {
         let op = (edit.op)(&*session);
         let based = op.at.iter().all(|(at, _)| session.base(at).is_some());
@@ -783,7 +845,7 @@ fn slots(fixture: &Fixture, scratch: &Path) -> Held {
     let opened = open(fixture, scratch)?;
     let options = fixture.title.options();
     once("the option", options.iter().map(|o| u64::from(o.id.0)))?;
-    let switches = opened.install.look().switches();
+    let switches = opened.install.look().switches(&opened.index);
     once("the switch", switches.iter().map(|s| u64::from(s.id.0)))?;
     if !switches.iter().any(|s| s.id == fixture.scene.held.switch) {
         return Err("the switch the fixture's held map waits for is none the look lists".into());

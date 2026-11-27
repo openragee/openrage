@@ -17428,3 +17428,9 @@ msgstr "トレースされた走査は各ノードをグラフィックスカー
 
 msgid "The traced walk tests each node in software"
 msgstr "トレースされた走査は各ノードをソフトウェアで判定します"
+
+msgid "Story"
+msgstr "ストーリー"
+
+msgid "Multiplayer"
+msgstr "マルチプレイヤー"

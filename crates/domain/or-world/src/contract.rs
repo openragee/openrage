@@ -9,9 +9,11 @@ use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use glam::Vec3;
 use or_job::{Cancel, Progress};
 
 use crate::caps::WorldCaps;
+use crate::collision::{BoxOverlap, GroundProbe, Hit, OrientedBox};
 use crate::kept::{Inputs, Section, SectionError};
 use crate::model::{
     AssetKey, Drawn, Draws, Feed, FrameFacts, Index, IndexFault, Instances, InteriorPlaced, Light,
@@ -149,6 +151,36 @@ pub trait WorldInstall: Send + Sync {
     fn maps(&self) -> &dyn MapReader;
     fn models(&self) -> &dyn ModelReader;
     fn look(&self) -> &dyn WorldLook;
+    /// The ground under `at` as `probe` looks for it, `None` where there is none; an error where the world states no height of the ground.
+    fn ground(
+        &self,
+        _index: &Index,
+        _at: Vec3,
+        _probe: &GroundProbe,
+        _worker: &mut Worker,
+    ) -> Result<Option<Hit>, WorldError> {
+        Err(WorldError::Lacks("height of the ground"))
+    }
+    /// What a ray from `origin` along the unit vector `direction` first meets within `reach` metres; an error where the world states no collision query.
+    fn ray(
+        &self,
+        _index: &Index,
+        _origin: Vec3,
+        _direction: Vec3,
+        _reach: f32,
+        _worker: &mut Worker,
+    ) -> Result<Option<Hit>, WorldError> {
+        Err(WorldError::Lacks("collision query"))
+    }
+    /// The pieces of each bound the box `region` holds or crosses, each bound by the title's name of it; an error where the world states no collision query.
+    fn overlap(
+        &self,
+        _index: &Index,
+        _region: &OrientedBox,
+        _worker: &mut Worker,
+    ) -> Result<Vec<(u64, BoxOverlap)>, WorldError> {
+        Err(WorldError::Lacks("collision query"))
+    }
 }
 
 /// What reads an install's rows and links them.
@@ -252,8 +284,8 @@ pub trait ModelReader: Sync {
 
 /// What a title's day is to the shared frame.
 pub trait WorldLook: Sync {
-    /// What is switched while the world is open.
-    fn switches(&self) -> Vec<SwitchKind>;
+    /// What is switched while the world of `index` is open: a title whose switches its files state reads them from its link.
+    fn switches(&self, index: &Index) -> Vec<SwitchKind>;
     /// What the moment alone decides, the rest of the title's day handed to `out` by name.
     fn frame(&self, at: &Moment, out: &mut dyn Feed) -> FrameFacts;
 }

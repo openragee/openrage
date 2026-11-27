@@ -17428,3 +17428,9 @@ msgstr "追踪的遍历用显卡的光线查询测试每个节点"
 
 msgid "The traced walk tests each node in software"
 msgstr "追踪的遍历用软件测试每个节点"
+
+msgid "Story"
+msgstr "故事"
+
+msgid "Multiplayer"
+msgstr "多人游戏"

@@ -35,6 +35,9 @@ pub fn run(args: &[String]) -> ExitCode {
         "to-xml" => cmd_to_xml(rest),
         "from-xml" => cmd_from_xml(rest),
         "archetypes" => super::world_archetypes::run(rest),
+        "index" | "at" | "ground" | "find" | "select" if rest.iter().any(|a| a == "--neutral") => {
+            super::world_neutral::cmd(sub, rest)
+        }
         "index" => super::world_index::cmd_index(rest),
         "at" => super::world_index::cmd_at(rest),
         "ground" => super::world_ground::cmd_ground(rest),
@@ -1272,6 +1275,11 @@ fn print_usage() {
     eprintln!("                           Prefab catalogues, one directory per title.");
     eprintln!("  index, at, ground, find, select, models and vehicles name the install as their");
     eprintln!("                           first argument or with --game <dir>.");
+    eprintln!("                           With --neutral, index, at, ground, find and select");
+    eprintln!("                           answer through the world contract of the title the");
+    eprintln!("                           install is detected as, by what its world states;");
+    eprintln!("                           --option <id>=<value> sets an option of the title,");
+    eprintln!("                           which index lists, and --weather takes its number.");
     eprintln!("  index <install>          Build the world index of an install, or refresh the");
     eprintln!("                           kept one: every map, type file, archetype and bound,");
     eprintln!("                           and which archives were read again. --kept <file>");

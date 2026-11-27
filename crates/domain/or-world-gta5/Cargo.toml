@@ -1,0 +1,33 @@
+[package]
+name = "or-world-gta5"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "GTA V's world behind the world contract: its title, its opened install, its index, its map bodies and its models, for the Legacy and the Enhanced game"
+
+[dependencies]
+glam.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+# The contract, the kept file and the driver this crate answers.
+or-world.workspace = true
+# ⚠ The world index, the forest's reader and the collision of a mount as they stand: this edge
+# turns round when their files move here.
+or-depends.workspace = true
+# The keys of an install, and a drawable as an owned value.
+or-io.workspace = true
+# The mount an opened world reads through.
+or-title.workspace = true
+# Cancellation and progress, which an opening is handed.
+or-job.workspace = true
+
+[dev-dependencies]
+or-test-support.workspace = true
+# The fixtures of `or-depends`' own suites write maps, type files, manifests and bounds as the
+# bytes the game ships them in.
+or-io = { workspace = true, features = ["meta"] }
+# Scratch folders the tests remove when they end, a failed test's too; the kit's macro names it.
+tempfile.workspace = true

@@ -512,6 +512,7 @@ not (
   | binary_id(=or-wardrobe::the_size_map_of_a_build_totals_the_files_it_writes)
   | binary_id(=or-wardrobe::the_texture_optimiser_copies_a_source_and_the_garments_in_scope_name_the_copy)
   | binary_id(=or-wardrobe::two_packs_of_one_collection_are_refused_and_a_tampered_build_fails_its_check)
+  | binary_id(=or-world-gta5::gta5_over_a_real_install)
   | binary_id(=or-world::a_shape_edit_of_an_install_saves_the_same_with_and_without_a_snapshot)
   | binary_id(=or-world::naming_every_scenario_point)
   | binary_id(=or-world::what_a_map_holds_besides_entities)
@@ -617,6 +618,13 @@ priority = 100
 # index twenty-three on each install, so every test of the binary is held to forty-five.
 [[profile.all.overrides]]
 filter = 'binary_id(=or-depends::the_world_index_of_a_real_install)'
+slow-timeout = { period = "60s", terminate-after = 45 }
+
+# The install suite of the GTA V world behind the contract reads every map, type file and bound of an install twice, once through
+# the adapter and once as `or_depends` does, where the build's scratch folder keeps no index of it, and a third time for a level of
+# DLC, so every test of the binary is held to forty-five minutes, as the suites of the index are.
+[[profile.all.overrides]]
+filter = 'binary_id(=or-world-gta5::gta5_over_a_real_install)'
 slow-timeout = { period = "60s", terminate-after = 45 }
 
 # The install suite of the model catalogue reads the world index of an install once: the first of its tests to run keeps it in

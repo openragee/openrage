@@ -17428,3 +17428,9 @@ msgstr "El recorrido trazado prueba cada nodo con la consulta de rayos de la tar
 
 msgid "The traced walk tests each node in software"
 msgstr "El recorrido trazado prueba cada nodo por software"
+
+msgid "Story"
+msgstr "Historia"
+
+msgid "Multiplayer"
+msgstr "Multijugador"

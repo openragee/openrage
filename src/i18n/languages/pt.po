@@ -17428,3 +17428,9 @@ msgstr "O percurso traçado testa cada nó com a consulta de raios da placa de v
 
 msgid "The traced walk tests each node in software"
 msgstr "O percurso traçado testa cada nó por software"
+
+msgid "Story"
+msgstr "História"
+
+msgid "Multiplayer"
+msgstr "Multijogador"

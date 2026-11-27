@@ -17589,3 +17589,9 @@ msgstr "Трассируемый обход проверяет каждый уз
 
 msgid "The traced walk tests each node in software"
 msgstr "Трассируемый обход проверяет каждый узел программно"
+
+msgid "Story"
+msgstr "Сюжет"
+
+msgid "Multiplayer"
+msgstr "Сетевая игра"

@@ -52,6 +52,7 @@ const ALWAYS_SLOW: &[&str] = &[
     "or-maps::what_the_interior_rules_say_of_the_install",
     "or-depends::the_models_of_a_real_install",
     "or-io-verify::rdr2_world_census",
+    "or-world-gta5::gta5_over_a_real_install",
 ];
 
 /// Modules of the app that are slow whatever a run timed them at, for the same reason.

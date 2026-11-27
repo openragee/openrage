@@ -17428,3 +17428,9 @@ msgstr "Der verfolgte Durchlauf prüft jeden Knoten mit der Strahlabfrage der Gr
 
 msgid "The traced walk tests each node in software"
 msgstr "Der verfolgte Durchlauf prüft jeden Knoten in Software"
+
+msgid "Story"
+msgstr "Story"
+
+msgid "Multiplayer"
+msgstr "Mehrspieler"

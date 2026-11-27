@@ -276,7 +276,7 @@ impl<W: Deref<Target = Their> + Send + Sync> ModelReader for World<W> {
 }
 
 impl<W: Deref<Target = Their> + Send + Sync> WorldLook for World<W> {
-    fn switches(&self) -> Vec<SwitchKind> {
+    fn switches(&self, _index: &Index) -> Vec<SwitchKind> {
         Vec::new()
     }
 

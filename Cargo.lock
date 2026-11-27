@@ -3166,6 +3166,7 @@ dependencies = [
  "or-wardrobe",
  "or-weapons",
  "or-world",
+ "or-worlds",
  "serde",
  "serde_json",
  "sha1",
@@ -3572,6 +3573,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "or-world-gta5"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "or-depends",
+ "or-io",
+ "or-job",
+ "or-test-support",
+ "or-title",
+ "or-world",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
 name = "or-world-gta6"
 version = "0.1.0"
 dependencies = [
@@ -3585,6 +3602,15 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tracing",
+]
+
+[[package]]
+name = "or-worlds"
+version = "0.1.0"
+dependencies = [
+ "or-title",
+ "or-world",
+ "or-world-gta5",
 ]
 
 [[package]]

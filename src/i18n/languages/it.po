@@ -17428,3 +17428,9 @@ msgstr "Il percorso tracciato verifica ogni nodo con la query dei raggi della sc
 
 msgid "The traced walk tests each node in software"
 msgstr "Il percorso tracciato verifica ogni nodo via software"
+
+msgid "Story"
+msgstr "Storia"
+
+msgid "Multiplayer"
+msgstr "Multigiocatore"

@@ -17428,3 +17428,9 @@ msgstr "Le parcours tracé teste chaque nœud par la requête de rayons de la ca
 
 msgid "The traced walk tests each node in software"
 msgstr "Le parcours tracé teste chaque nœud par logiciel"
+
+msgid "Story"
+msgstr "Histoire"
+
+msgid "Multiplayer"
+msgstr "Multijoueur"

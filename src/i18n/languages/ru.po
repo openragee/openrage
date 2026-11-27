@@ -17386,8 +17386,35 @@ msgstr[2] "{count} импортированных программ"
 msgid "Natives are named from {list}"
 msgstr "Нативные функции названы по списку {list}"
 
-msgid "Names are read from {lists}"
-msgstr "Имена прочитаны из {lists}"
+msgid "Names are read from {lists}, each with how many hashes, cells, indices, functions or words it named that no list before it did"
+msgstr "Имена прочитаны из {lists}; у каждого списка указано, сколько хешей, ячеек, индексов, функций или слов он назвал из тех, что не назвал ни один список до него"
+
+msgid "Passed over in the names folder, as a file whose name holds candidate holds guesses and not names: {files}"
+msgstr "Пропущены в папке имён, так как файл, в имени которого есть candidate, содержит догадки, а не имена: {files}"
+
+msgid "Build project from this archive"
+msgstr "Собрать проект из этого архива"
+
+msgid "Reads every program of this archive on a thread of its own, writes what they state of each other as project.json in the names folder, in place of the one there, and decompiles this script again with it. An archive of many programs takes minutes"
+msgstr "Читает каждую программу этого архива в отдельном потоке, записывает то, что они сообщают друг о друге, как project.json в папку имён вместо имеющегося там файла и снова декомпилирует этот скрипт с ним. Для архива со многими программами это занимает минуты"
+
+msgid "Building the project, {seconds} s so far: {found} programs found, {read} of {all} reads of them done"
+msgstr "Сборка проекта, пока {seconds} с: найдено программ: {found}, выполнено чтений: {read} из {all}"
+
+msgid "Stop building the project"
+msgstr "Остановить сборку проекта"
+
+msgid "The build stops after the program it is reading; no project is written, and the script keeps the source it has"
+msgstr "Сборка останавливается после программы, которую читает; проект не записывается, а скрипт сохраняет имеющийся исходный код"
+
+msgid "the project was not built: {e}"
+msgstr "проект не собран: {e}"
+
+msgid "the build was stopped"
+msgstr "сборка проекта остановлена"
+
+msgid "no entry of this archive is a GTA VI program"
+msgstr "ни одна запись этого архива не является программой GTA VI"
 
 msgid "No names list was supplied, so a type, a field or a method is shown by its hash or its offset"
 msgstr "Список имён не предоставлен, поэтому тип, поле или метод показаны по хешу или по смещению"

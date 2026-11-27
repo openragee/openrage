@@ -17230,8 +17230,35 @@ msgstr[1] "{count} 个导入的程序"
 msgid "Natives are named from {list}"
 msgstr "原生函数按 {list} 命名"
 
-msgid "Names are read from {lists}"
-msgstr "名称读取自 {lists}"
+msgid "Names are read from {lists}, each with how many hashes, cells, indices, functions or words it named that no list before it did"
+msgstr "名称读取自 {lists}，每个列表附有它命名的、此前没有列表命名过的哈希、单元、索引、函数或词的数目"
+
+msgid "Passed over in the names folder, as a file whose name holds candidate holds guesses and not names: {files}"
+msgstr "在名称文件夹中跳过（名称含 candidate 的文件存放的是猜测而非名称）：{files}"
+
+msgid "Build project from this archive"
+msgstr "从此归档构建项目"
+
+msgid "Reads every program of this archive on a thread of its own, writes what they state of each other as project.json in the names folder, in place of the one there, and decompiles this script again with it. An archive of many programs takes minutes"
+msgstr "在单独的线程上读取此归档的每个程序，把它们彼此声明的内容作为 project.json 写入名称文件夹，替换那里原有的文件，然后用它重新反编译此脚本。含有许多程序的归档需要数分钟"
+
+msgid "Building the project, {seconds} s so far: {found} programs found, {read} of {all} reads of them done"
+msgstr "正在构建项目，已用 {seconds} 秒：找到 {found} 个程序，已完成 {all} 次读取中的 {read} 次"
+
+msgid "Stop building the project"
+msgstr "停止构建项目"
+
+msgid "The build stops after the program it is reading; no project is written, and the script keeps the source it has"
+msgstr "构建会在正在读取的程序之后停止；不会写入项目，脚本保留现有的源代码"
+
+msgid "the project was not built: {e}"
+msgstr "项目未构建：{e}"
+
+msgid "the build was stopped"
+msgstr "项目构建已停止"
+
+msgid "no entry of this archive is a GTA VI program"
+msgstr "此归档中没有任何条目是 GTA VI 程序"
 
 msgid "No names list was supplied, so a type, a field or a method is shown by its hash or its offset"
 msgstr "未提供名称列表，因此类型、字段或方法按其哈希或偏移显示"

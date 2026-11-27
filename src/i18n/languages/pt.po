@@ -17230,8 +17230,35 @@ msgstr[1] "{count} programas importados"
 msgid "Natives are named from {list}"
 msgstr "As nativas são nomeadas a partir de {list}"
 
-msgid "Names are read from {lists}"
-msgstr "Os nomes são lidos de {lists}"
+msgid "Names are read from {lists}, each with how many hashes, cells, indices, functions or words it named that no list before it did"
+msgstr "Os nomes são lidos de {lists}, cada uma com quantos hashes, células, índices, funções ou palavras nomeou que nenhuma lista anterior tinha nomeado"
+
+msgid "Passed over in the names folder, as a file whose name holds candidate holds guesses and not names: {files}"
+msgstr "Ignorados na pasta de nomes, pois um arquivo cujo nome contém candidate guarda suposições e não nomes: {files}"
+
+msgid "Build project from this archive"
+msgstr "Construir o projeto a partir deste arquivo"
+
+msgid "Reads every program of this archive on a thread of its own, writes what they state of each other as project.json in the names folder, in place of the one there, and decompiles this script again with it. An archive of many programs takes minutes"
+msgstr "Lê cada programa deste arquivo em uma thread própria, escreve o que declaram uns dos outros como project.json na pasta de nomes, no lugar do que estiver lá, e descompila este script de novo com ele. Um arquivo com muitos programas leva minutos"
+
+msgid "Building the project, {seconds} s so far: {found} programs found, {read} of {all} reads of them done"
+msgstr "Construindo o projeto, {seconds} s até agora: {found} programas encontrados, {read} de {all} leituras feitas"
+
+msgid "Stop building the project"
+msgstr "Parar a construção do projeto"
+
+msgid "The build stops after the program it is reading; no project is written, and the script keeps the source it has"
+msgstr "A construção para após o programa que está lendo; nenhum projeto é escrito, e o script mantém o código que tem"
+
+msgid "the project was not built: {e}"
+msgstr "o projeto não foi construído: {e}"
+
+msgid "the build was stopped"
+msgstr "a construção foi parada"
+
+msgid "no entry of this archive is a GTA VI program"
+msgstr "nenhuma entrada deste arquivo é um programa de GTA VI"
 
 msgid "No names list was supplied, so a type, a field or a method is shown by its hash or its offset"
 msgstr "Nenhuma lista de nomes foi fornecida, então um tipo, um campo ou um método é exibido pelo hash ou pelo offset dele"

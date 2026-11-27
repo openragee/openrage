@@ -204,6 +204,11 @@ pub(super) fn open_row(state: &mut AppState, listing: &Listing, node: RpfNodeId)
 /// What a row is drawn with: its node, its columns, and whether a reader names it.
 struct Row {
     node: RpfSessionNode,
+    /// The node the icon is chosen by: a GTA VI row carries the kind's Windows-form extension so
+    /// the glyph and the support check see a recognised file, as the Files tree draws it.
+    icon_node: RpfSessionNode,
+    /// The name shown to the user, with the archive's platform letter and any stated model name.
+    display_name: String,
     facts: RowFacts,
     supported: bool,
     in_flight: bool,
@@ -211,16 +216,39 @@ struct Row {
 }
 
 fn row_of(state: &AppState, doc: DocumentId, id: RpfNodeId) -> Option<Row> {
+    use super::rpf_tree::{displayed_name, icon_name, learned_name_for, platform_letter_for};
     let DocPayload::Rpf(rpf) = &state.document(doc)?.payload else {
         return None;
     };
     let node = rpf.session.node(id)?.clone();
     let facts = row_facts(&rpf.session, id)?;
+    // A GTA VI row's kind picks its icon and extension, as it does in the Files tree.
+    let kind = crate::state::explorer::gta6_kind(&rpf.session, &node);
+    // A drawable/fragment body's stated model name stands in for a hash-only name.
+    let learned = kind
+        .filter(|_| node.name.starts_with("hash_"))
+        .and_then(|_| learned_name_for(&rpf.session, &node));
+    let row_name = learned.unwrap_or_else(|| node.name.clone());
+    let letter = platform_letter_for(state, &rpf.session, &node);
+    let icon_node = icon_name(&row_name, kind).map_or_else(
+        || node.clone(),
+        |name| RpfSessionNode {
+            name,
+            ..node.clone()
+        },
+    );
+    let display_name = if node.is_dir() {
+        node.name.clone()
+    } else {
+        displayed_name(&row_name, kind, letter)
+    };
     Some(Row {
-        supported: node.is_dir() || rpf_path_supported(&node.name),
+        supported: node.is_dir() || rpf_path_supported(&icon_node.name) || kind.is_some(),
         in_flight: state.expander.is_in_flight(doc, id),
         unsaved: rpf.session.archive_unsaved(id),
         node,
+        icon_node,
+        display_name,
         facts,
     })
 }
@@ -384,7 +412,7 @@ fn details_table(
                 let (_, name_cell) = table_row.col(|ui| {
                     if !rename_editor(ui, state, doc, &row) {
                         let icon = icons::rpf_node_icon(
-                            &row.node,
+                            &row.icon_node,
                             row.unsaved,
                             row.in_flight,
                             row.supported,
@@ -392,14 +420,14 @@ fn details_table(
                         );
                         let colour = name_colour(&row);
                         ui.add(
-                            egui::Label::new(icons::icon_label(&icon, &row.node.name, colour))
+                            egui::Label::new(icons::icon_label(&icon, &row.display_name, colour))
                                 .selectable(false)
                                 .truncate(),
                         );
                     }
                 });
                 crate::ui::accessible_name::named_with(name_cell, || {
-                    tr!("Name: {name}", name = row.node.name)
+                    tr!("Name: {name}", name = row.display_name)
                 });
                 for ((title, _, _), cell) in COLUMNS[1..].iter().zip(detail_cells(&row.facts)) {
                     let (_, response) = table_row.col(|ui| {
@@ -600,8 +628,13 @@ fn tile(
             );
         }
         shown => {
-            let icon =
-                icons::rpf_node_icon(&row.node, row.unsaved, row.in_flight, row.supported, false);
+            let icon = icons::rpf_node_icon(
+                &row.icon_node,
+                row.unsaved,
+                row.in_flight,
+                row.supported,
+                false,
+            );
             let colour = if shown == Shown::Waiting {
                 icon.color.gamma_multiply(0.5)
             } else {
@@ -628,7 +661,7 @@ fn tile(
         .inner;
     if !edited {
         let galley = ui.painter().layout_job(tile_name(
-            &row.node.name,
+            &row.display_name,
             name_rect.width(),
             name_colour(&row),
         ));

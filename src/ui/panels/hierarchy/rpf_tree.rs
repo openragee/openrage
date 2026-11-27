@@ -19,7 +19,7 @@ use std::sync::Arc;
 /// so this is always the `y` letter — the user-facing display uses the build's platform letter.
 ///
 /// ⚠ Only the icon's: the row keeps the name its table states.
-fn icon_name(name: &str, kind: Option<Rpf9Kind>) -> Option<String> {
+pub(super) fn icon_name(name: &str, kind: Option<Rpf9Kind>) -> Option<String> {
     use or_io::container::rpf::substitute_platform_letter;
     let stated = substitute_platform_letter(name, 'y');
     let has_extension = std::path::Path::new(&stated).extension().is_some();
@@ -33,7 +33,7 @@ fn icon_name(name: &str, kind: Option<Rpf9Kind>) -> Option<String> {
 /// The name of a row as it is shown, with the build's platform letter substituted for any `#` the
 /// stored name carries, for any concrete RAGE platform extension already baked in (`n01.ybn` →
 /// `n01.zbn` on an Xbox Series build), and the kind's extension appended where the name has none.
-fn displayed_name(name: &str, kind: Option<Rpf9Kind>, letter: char) -> String {
+pub(super) fn displayed_name(name: &str, kind: Option<Rpf9Kind>, letter: char) -> String {
     use or_io::container::rpf::substitute_platform_letter;
     let stated = substitute_platform_letter(name, letter);
     let rewritten = rewrite_platform_extension(&stated, letter);
@@ -91,7 +91,11 @@ fn rewrite_platform_extension(path: &str, letter: char) -> String {
 ///
 /// Steps 1–2 read the platform out of the archive itself; only 3–4 lean on context, and only for a
 /// format that neither records the platform nor keeps readable names (a hash-named RPF7).
-fn platform_letter_for(state: &AppState, session: &RpfEditSession, node: &RpfSessionNode) -> char {
+pub(super) fn platform_letter_for(
+    state: &AppState,
+    session: &RpfEditSession,
+    node: &RpfSessionNode,
+) -> char {
     let archive = archive_of(session, node);
     // 1. The archive's header, where the format records a platform (RPF8, RPF9).
     if let Some(letter) = archive.and_then(|a| a.platform_letter()) {
@@ -154,7 +158,7 @@ fn canonical_game_for_container(family: or_title::ContainerFamily) -> or_title::
 /// The stem a GTA VI drawable or fragment body stated for `node` on open, where `(archive, offset)`
 /// gave [`crate::state::gta6_learned_names::lookup`] one; `None` for a row of any other archive
 /// or a row whose body never opened.
-fn learned_name_for(session: &RpfEditSession, node: &RpfSessionNode) -> Option<String> {
+pub(super) fn learned_name_for(session: &RpfEditSession, node: &RpfSessionNode) -> Option<String> {
     let (archive_id, entry_index) = match &node.backing {
         RpfNodeBacking::ArchiveFile {
             archive_id,

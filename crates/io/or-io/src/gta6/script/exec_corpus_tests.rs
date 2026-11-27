@@ -520,9 +520,16 @@ impl Found {
     fn read_back(&mut self, at: &str, read: Option<Option<Result<(), ReparseError>>>) {
         match read {
             Some(Some(Ok(()))) => self.count("functions that read back", 1),
-            Some(Some(Err(ReparseError::Differs { text, held, .. }))) => {
-                let why = format!("the text says `{text}`, the function holds `{held}`");
+            Some(Some(Err(ReparseError::Differs {
+                text, held, form, ..
+            }))) => {
+                // By the form first, so that what a cut list of differences leaves out stays counted by what it is.
+                let why = format!("{form}: the text says `{text}`, the function holds `{held}`");
                 self.wrong("functions that read back as another", at, &why);
+                *self
+                    .causes
+                    .entry(format!("read back as another: {form}"))
+                    .or_default() += 1;
             }
             // ⚠ Counted and compared by nothing: the bound is what one function may take of memory.
             Some(Some(Err(ReparseError::TooLarge { .. }))) => {
@@ -910,10 +917,10 @@ fn every_function_written_reads_back_as_the_function() {
     own.keep(SHOWN);
     first.report("REREAD, the four first passes");
     every.report("REREAD, every pass, each construct as what it holds");
-    // ⚠ Reported and not held: the reader does not yet hold every form the source level writes,
-    // and a form it does not read is counted by name, not compared.
+    // ⚠ A form the reader does not hold yet is counted by its name under "parts at", and compared
+    // no further than it: the count says how much of the text is held, and is no failure.
     own.report("REREAD, every pass, the source level's own text");
-    assert!(first.wrong.is_empty() && every.wrong.is_empty());
+    assert!(first.wrong.is_empty() && every.wrong.is_empty() && own.wrong.is_empty());
 }
 
 #[test]

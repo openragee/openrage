@@ -14,7 +14,8 @@ use super::ir::{
     BinOp, Callee, Const, Expr, ExprSugar, Head, Kind, Scalar, Stmt, StoreKind, UnOp, Var,
 };
 use super::names::Names;
-use super::print::{callee_name, cells_of};
+use super::passes::async_await;
+use super::print::{callee_name, cells_of, reads_through};
 use super::tree;
 use super::{Level, Options, Pass};
 
@@ -39,6 +40,8 @@ pub enum ReparseError {
         line: u32,
         text: String,
         held: String,
+        /// The innermost two forms where the text and the function part, by their marks alone: what a count of differences is kept by.
+        form: String,
     },
     #[error("more than {limit} statements and operands: not read back")]
     TooLarge { limit: usize },
@@ -65,11 +68,6 @@ pub fn agrees_within(f: &tree::Function, text: &str, limit: usize) -> Result<(),
             read_back = Some(body);
         }
     })?;
-    let missing = |text: &str, held: &str| ReparseError::Differs {
-        line: 0,
-        text: text.to_owned(),
-        held: held.to_owned(),
-    };
     match (read_back, &f.head.incomplete) {
         (None, Some(_)) => Ok(()),
         (None, None) => Err(missing("no such function", &f.head.name)),
@@ -81,6 +79,7 @@ pub fn agrees_within(f: &tree::Function, text: &str, limit: usize) -> Result<(),
                 left: Cell::new(limit),
                 limit,
                 sharp: None,
+                this: None,
             };
             compare(&held.nodes(&f.body, 0)?, &body)
         }
@@ -111,6 +110,7 @@ pub fn agrees_source_within(
         left: Cell::new(limit),
         limit,
         sharp: Some(options),
+        this: receiver.then_some(Var::Param(0)),
     };
     let this = receiver.then(|| held.var(Var::Param(0)));
     let mut read_back = None;
@@ -119,11 +119,6 @@ pub fn agrees_source_within(
             read_back = Some(body);
         }
     })?;
-    let missing = |text: &str, held: &str| ReparseError::Differs {
-        line: 0,
-        text: text.to_owned(),
-        held: held.to_owned(),
-    };
     match (read_back, &f.head.incomplete) {
         (None, Some(_)) => Ok(()),
         (None, None) => Err(missing("no such function", &f.head.name)),
@@ -166,7 +161,32 @@ enum Form {
     Method(String),
     /// `l mark r` over the two operands. `not` says a `!` was taken in: the form by name is then under a `!`, and `mark` is the opposite comparison.
     Sign { mark: &'static str, not: bool },
+    /// `value.f_at` for bytes taken out of the value the first operand is, or out of its item `item` where it is a group; with `whole`, the value alone.
+    Field {
+        item: Option<usize>,
+        at: u64,
+        whole: bool,
+    },
+    /// `new T(rest)` for a constructor run on an object the call makes, the first operand.
+    Made(String),
 }
+
+/// A test that a cell is above zero as an unsigned number, which true C# writes `x != null` of a reference: the text may say either.
+const ABOVE_ZERO: &str = "above zero";
+
+/// The negation of [`ABOVE_ZERO`]: `x <= 0`, or `x == null` of a reference.
+const AT_MOST_ZERO: &str = "at most zero";
+
+/// `new T(a) { f_8 = b }`: the type, the constructor's arguments or none, then each field given its value.
+const INIT: &str = "new {}";
+
+/// The arguments of the constructor an object initialiser runs.
+const CTOR: &str = "new ()";
+
+/// What stands at the address of an element, which true C# writes `a[i]` where the access is as wide as an element and `(&a[i])->f_0` where it is not: the text may say either.
+// ⚠ Held so only where no variable's kind the function states gives an element's width; where
+// one does, the one form that width says is held.
+const AT_ELEMENT: &str = "at an element";
 
 impl fmt::Display for Sk {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -317,7 +337,16 @@ fn made(ty: String, args: Vec<Sk>) -> Sk {
 /// `base.name`: one dotted name where the base is a name itself.
 fn member(base: Sk, name: &str) -> Sk {
     match base {
-        Sk::Name(path) => Sk::Name(format!("{path}.{name}")),
+        // The infinities the printer spells by name are the bits of a constant.
+        Sk::Name(path) => match (path.as_str(), name) {
+            ("float", "PositiveInfinity") => Sk::Num(u64::from(f32::INFINITY.to_bits()), Lit::F32),
+            ("float", "NegativeInfinity") => {
+                Sk::Num(u64::from(f32::NEG_INFINITY.to_bits()), Lit::F32)
+            }
+            ("double", "PositiveInfinity") => Sk::Num(f64::INFINITY.to_bits(), Lit::F64),
+            ("double", "NegativeInfinity") => Sk::Num(f64::NEG_INFINITY.to_bits(), Lit::F64),
+            _ => Sk::Name(format!("{path}.{name}")),
+        },
         other => Sk::Op(".", vec![other, Sk::Name(name.to_owned())]),
     }
 }
@@ -387,6 +416,8 @@ fn not(e: Sk) -> Sk {
             }
         },
         Sk::Op("!", mut inner) if inner.len() == 1 => inner.remove(0),
+        Sk::Op(ABOVE_ZERO, items) => Sk::Op(AT_MOST_ZERO, items),
+        Sk::Op(AT_MOST_ZERO, items) => Sk::Op(ABOVE_ZERO, items),
         Sk::Op(mark, items) => match flipped(mark) {
             Some(other) => Sk::Op(other, items),
             None => Sk::Op("!", vec![Sk::Op(mark, items)]),
@@ -502,12 +533,82 @@ fn same_call(name: &str, form: &Form, args: &[Sk], text: &Sk) -> bool {
             under || (found == mark && all(args, items))
         }
         (Form::Sign { .. }, _) => false,
+        (Form::Field { item, at, whole }, text) => {
+            let of = match (item, args.first()) {
+                (None, of) => of,
+                (Some(n), Some(Sk::Op("{}", items))) => items.get(*n),
+                (Some(_), _) => None,
+            };
+            let named = matches!(text, Sk::Op("()", items)
+                if matches!(items.first(), Some(Sk::Name(callee)) if callee == name));
+            match (named, of, text) {
+                (true, ..) => by_name(text),
+                (false, Some(of), Sk::Op(".f", pair)) => match pair.as_slice() {
+                    [base, Sk::Num(offset, _)] => offset == at && same(of, base),
+                    _ => false,
+                },
+                (false, Some(of), text) => *whole && same(of, text),
+                (false, None, _) => false,
+            }
+        }
+        (Form::Made(ty), Sk::Op("new", items)) => match (items.split_first(), args.split_first()) {
+            (Some((Sk::Name(made), given)), Some((_, passed))) => made == ty && all(passed, given),
+            _ => false,
+        },
+        (Form::Made(_), _) => by_name(text),
     }
 }
 
 fn same(held: &Sk, text: &Sk) -> bool {
     match (held, text) {
         (Sk::Call { name, form, args }, text) => same_call(name, form, args, text),
+        (Sk::Op(ABOVE_ZERO, held), text) => {
+            let [value] = held.as_slice() else {
+                return false;
+            };
+            let compared = match text {
+                Sk::Op(">", pair) => match pair.as_slice() {
+                    [l, Sk::Num(0, _)] => Some(l),
+                    _ => None,
+                },
+                _ => None,
+            };
+            match compared {
+                Some(l) => same(value, l),
+                None => same(value, text),
+            }
+        }
+        // ⚠ The negation is made of the operand at each comparison and dropped: holding it beside
+        // the operand would double what a chain of such tests one in another comes to.
+        (Sk::Op(AT_MOST_ZERO, held), text) => {
+            let [value] = held.as_slice() else {
+                return false;
+            };
+            match text {
+                Sk::Op("<=", pair) => match pair.as_slice() {
+                    [l, Sk::Num(0, _)] => same(value, l),
+                    _ => false,
+                },
+                text => same(&not(value.clone()), text),
+            }
+        }
+        (Sk::Op(AT_ELEMENT, held), text) => {
+            let element = |pair: &[Sk]| match (held.as_slice(), pair) {
+                ([a, i], [x, y]) => same(a, x) && same(i, y),
+                _ => false,
+            };
+            match text {
+                Sk::Op("[]", pair) => element(pair),
+                Sk::Op("->", through) => match through.as_slice() {
+                    [Sk::Op("&", inner), Sk::Num(0, _)] => match inner.as_slice() {
+                        [Sk::Op("[]", pair)] => element(pair),
+                        _ => false,
+                    },
+                    _ => false,
+                },
+                _ => false,
+            }
+        }
         (Sk::Num(a, _), Sk::Num(b, _)) => same_bits(*a, *b),
         (Sk::Name(a), Sk::Name(b)) => a == b,
         (Sk::Op(a, xs), Sk::Op(b, ys)) => {
@@ -517,12 +618,89 @@ fn same(held: &Sk, text: &Sk) -> bool {
     }
 }
 
+/// A function the text and the tree do not both hold, as the difference it is.
+fn missing(text: &str, held: &str) -> ReparseError {
+    ReparseError::Differs {
+        line: 0,
+        text: text.to_owned(),
+        held: held.to_owned(),
+        form: "a function".to_owned(),
+    }
+}
+
 fn differs(line: u32, text: Option<&Node>, held: Option<&Node>) -> ReparseError {
     let shown = |node: Option<&Node>| node.map_or("nothing".to_owned(), Node::to_string);
     ReparseError::Differs {
         line,
         text: shown(text),
         held: shown(held),
+        form: parted(text, held),
+    }
+}
+
+/// The pairs of operands followed into, at most, to find where two statements part.
+const PARTING: u32 = 64;
+
+/// A form by its mark alone: an operator's, a helper's name, or what kind of operand it is.
+// ⚠ A name of the program is no mark: the counts would part by every variable and callee.
+fn mark(sk: &Sk) -> String {
+    let helper = |name: &str| {
+        let plain = name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+        plain && !name.starts_with("func_") && !name.starts_with('_')
+    };
+    match sk {
+        Sk::Num(..) => "a number".to_owned(),
+        Sk::Name(_) => "a name".to_owned(),
+        Sk::Op("()", items) => match items.first() {
+            Some(Sk::Name(name)) if helper(name.as_str()) => format!("`{name}`"),
+            _ => "a call".to_owned(),
+        },
+        Sk::Op(mark, _) => format!("`{mark}`"),
+        Sk::Call { name, .. } if helper(name.as_str()) => format!("`{name}`"),
+        Sk::Call { .. } => "a call".to_owned(),
+    }
+}
+
+/// The innermost operands where `held` and `text` part, followed while both are the same operator over as many operands.
+fn parting<'s>(held: &'s Sk, text: &'s Sk) -> (&'s Sk, &'s Sk) {
+    let (mut h, mut t) = (held, text);
+    for _ in 0..PARTING {
+        let (Sk::Op(a, xs), Sk::Op(b, ys)) = (h, t) else {
+            break;
+        };
+        if a != b || xs.len() != ys.len() {
+            break;
+        }
+        match xs.iter().zip(ys).find(|(x, y)| !same(x, y)) {
+            Some((x, y)) => (h, t) = (x, y),
+            None => break,
+        }
+    }
+    (h, t)
+}
+
+/// What two statements that differ part at: their words, or the innermost forms of their heads.
+fn parted(text: Option<&Node>, held: Option<&Node>) -> String {
+    let word = |node: Option<&Node>| match node.map(|node| node.word) {
+        None => "nothing".to_owned(),
+        Some("") => "a statement".to_owned(),
+        Some(word) => format!("`{word}`"),
+    };
+    let (Some(t), Some(h)) = (text, held) else {
+        return format!("{} against {}", word(text), word(held));
+    };
+    if t.word != h.word || t.head.len() != h.head.len() {
+        return format!("{} against {}", word(text), word(held));
+    }
+    let pair = h.head.iter().zip(&t.head).find(|(h, t)| !same(h, t));
+    match pair {
+        Some((h, t)) => {
+            let (h, t) = parting(h, t);
+            format!("{} against {}", mark(t), mark(h))
+        }
+        None => format!("the blocks of {}", word(text)),
     }
 }
 
@@ -1263,13 +1441,10 @@ impl<'a> Parser<'a> {
                 self.bump()?;
                 // `goto case 3;` and `goto default;`: the case a switch's case runs on into.
                 if self.word("case") || self.word("default") {
-                    while !self.is(";") && self.tok != Tok::End {
-                        self.bump()?;
-                    }
+                    let head = vec![self.goto_case()?];
                     self.expect(";")?;
-                    let head = vec![unread("goto case")];
                     out.push(Node {
-                        word: "",
+                        word: "goto case",
                         head,
                         blocks: Vec::new(),
                         line,
@@ -1427,6 +1602,74 @@ impl<'a> Parser<'a> {
         Ok(cases)
     }
 
+    /// The fields an object initialiser stores, `{ f_8 = b, f_10 = c }`, each as the field by its offset given its value; one it does not hold is a form not read back.
+    // Read ahead, so that a form it does not hold is set aside whole: each initialiser inside one
+    // is read once whether or not the one round it reads.
+    fn initialiser(&mut self, depth: u32) -> Result<Vec<Sk>, ReparseError> {
+        let mut ahead = self.clone();
+        match ahead.fields(depth) {
+            Ok(fields) => {
+                *self = ahead;
+                Ok(fields)
+            }
+            Err(ReparseError::TooLarge { limit }) => Err(ReparseError::TooLarge { limit }),
+            Err(_) => {
+                self.skip_braces()?;
+                Ok(vec![unread("an object written with its fields")])
+            }
+        }
+    }
+
+    /// `{ name = value, .. }`.
+    fn fields(&mut self, depth: u32) -> Result<Vec<Sk>, ReparseError> {
+        let d = deeper(depth, self.line)?;
+        self.expect("{")?;
+        let mut fields = Vec::new();
+        while !self.is("}") {
+            self.spend()?;
+            let name = self.ident()?;
+            let place = match field(name) {
+                Some(offset) => Sk::Num(offset, Lit::Int),
+                None => Sk::Name(name.to_owned()),
+            };
+            self.expect("=")?;
+            fields.push(assign(place, self.expr(d)?));
+            if !self.eat(",")? {
+                break;
+            }
+        }
+        self.expect("}")?;
+        Ok(fields)
+    }
+
+    /// The label a `goto` names after `case` or as `default`: a number, or a label the reader does not hold.
+    fn goto_case(&mut self) -> Result<Sk, ReparseError> {
+        if self.word("default") {
+            self.bump()?;
+            return Ok(Sk::Name("default".to_owned()));
+        }
+        self.expect_word("case")?;
+        let negative = self.eat("-")?;
+        let number = match &self.tok {
+            Tok::Num(bits, Lit::Int) => Some(*bits),
+            _ => None,
+        };
+        match number {
+            Some(bits) => {
+                self.bump()?;
+                let bits = if negative { bits.wrapping_neg() } else { bits };
+                Ok(Sk::Num(bits, Lit::Int))
+            }
+            // `goto case Hash("..")`: a label by the text a list gives for it.
+            None => {
+                while !self.is(";") && self.tok != Tok::End {
+                    self.bump()?;
+                }
+                Ok(unread("goto case"))
+            }
+        }
+    }
+
     /// A simple statement without its semicolon; `None` for a declaration that assigns nothing.
     fn simple(&mut self, depth: u32) -> Result<Option<Sk>, ReparseError> {
         if self.declaration_ahead() {
@@ -1449,9 +1692,11 @@ impl<'a> Parser<'a> {
             let value = self.expr(depth)?;
             return Ok(Some(assign(target.clone(), binary(mark, target, value))));
         }
-        Ok(Some(match self.eat("=")? {
-            true => assign(target, self.expr(depth)?),
-            false => target,
+        Ok(Some(match (self.eat("=")?, target) {
+            // `_ = x`: a value given to the discard is the value evaluated for its effect.
+            (true, Sk::Name(discard)) if discard == "_" => self.expr(depth)?,
+            (true, target) => assign(target, self.expr(depth)?),
+            (false, target) => target,
         }))
     }
 
@@ -1652,19 +1897,22 @@ impl<'a> Parser<'a> {
                     self.expect("]")?;
                     Sk::Op("new[]", vec![Sk::Name(ty), len])
                 } else {
-                    let args = match self.is("{") {
-                        true => Vec::new(),
+                    let ctor = match self.is("{") {
+                        true => None,
                         false => {
                             self.expect("(")?;
-                            self.list(")", depth)?
+                            Some(self.list(")", depth)?)
                         }
                     };
-                    // `new T(a) { f_8 = b }`: the fields stored after the constructor.
+                    // `new T(a) { f_8 = b }`: the fields stored after the constructor, which
+                    // `new T { f_8 = b }` stores with no constructor run.
                     if self.is("{") {
-                        self.skip_braces()?;
-                        return Ok(unread("an object written with its fields"));
+                        let ctor = ctor.map_or_else(none, |args| Sk::Op(CTOR, args));
+                        let mut items = vec![Sk::Name(ty), ctor];
+                        items.extend(self.initialiser(depth)?);
+                        return Ok(Sk::Op(INIT, items));
                     }
-                    made(ty, args)
+                    made(ty, ctor.unwrap_or_default())
                 }
             }
             // `this.f_10` is a field of the object the receiver refers to, and `base.f_10` one a base type declares.
@@ -1701,6 +1949,18 @@ fn under_wide(e: &Expr) -> &Expr {
     }
     e
 }
+
+/// `e` under the source readings around it.
+fn bare(e: &Expr) -> &Expr {
+    let mut e = e;
+    while let Expr::Sugar { e: inner, .. } = e {
+        e = &**inner;
+    }
+    e
+}
+
+/// The objects an initialiser holds inside one another at most, as the printer writes them.
+const NESTS: usize = 4;
 
 /// `e` without the casts around it.
 fn under_casts(e: &Expr) -> &Expr {
@@ -1826,6 +2086,80 @@ fn type_token(callee: &Callee, args: &[Expr]) -> bool {
     )
 }
 
+/// The C# keyword of a .NET primitive type, by the name a program states for it, as the source level writes it.
+// A table of the language's own words; it must say what the printer's says.
+fn keyword(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "System.Boolean" => "bool",
+        "System.Byte" => "byte",
+        "System.SByte" => "sbyte",
+        "System.Int16" => "short",
+        "System.UInt16" => "ushort",
+        "System.Int32" => "int",
+        "System.UInt32" => "uint",
+        "System.Int64" => "long",
+        "System.UInt64" => "ulong",
+        "System.Single" => "float",
+        "System.Double" => "double",
+        "System.Char" => "char",
+        "System.String" => "string",
+        "System.Object" => "object",
+        _ => return None,
+    })
+}
+
+/// Whether the statements of a case can run off their end: the last one neither leaves nor is an `if` both of whose arms leave.
+// An explicit stack: an `if` in an arm nests as deep as the listing does.
+fn falls(body: &[tree::Stmt]) -> bool {
+    let mut open = vec![body];
+    while let Some(list) = open.pop() {
+        match list.last() {
+            Some(
+                tree::Stmt::Return(_)
+                | tree::Stmt::Break
+                | tree::Stmt::Continue
+                | tree::Stmt::Goto(_)
+                | tree::Stmt::Unreachable,
+            ) => {}
+            Some(tree::Stmt::Sugar(sugar)) if matches!(**sugar, tree::Sugar::Throw(_)) => {}
+            Some(tree::Stmt::If { then, els, .. }) if !then.is_empty() && !els.is_empty() => {
+                open.push(then);
+                open.push(els);
+            }
+            _ => return true,
+        }
+    }
+    false
+}
+
+/// The bytes a value of `kind` takes, where the kind states them.
+fn kind_bytes(kind: &Kind) -> Option<u32> {
+    match kind {
+        Kind::Bool | Kind::I8 | Kind::U8 => Some(1),
+        Kind::I16 | Kind::U16 => Some(2),
+        Kind::I32 | Kind::U32 | Kind::F32 | Kind::Hash => Some(4),
+        Kind::I64
+        | Kind::U64
+        | Kind::F64
+        | Kind::Pointer
+        | Kind::Object(_)
+        | Kind::String
+        | Kind::Array(_) => Some(8),
+        Kind::Unknown | Kind::Vector | Kind::Handle | Kind::Aggregate(_) | Kind::Value { .. } => {
+            None
+        }
+    }
+}
+
+/// The bytes an element of an array of `kind` takes in the array, where the kind states them.
+fn element_bytes(kind: &Kind) -> Option<u32> {
+    match kind {
+        Kind::Vector | Kind::Handle => Some(16),
+        Kind::Aggregate(cells) | Kind::Value { cells, .. } => cells.checked_mul(8),
+        scalar => kind_bytes(scalar),
+    }
+}
+
 /// The operator a type declares under a method of this name, as true C# writes the call.
 fn operator(name: &str) -> Option<BinOp> {
     Some(match name {
@@ -1844,29 +2178,6 @@ fn operator(name: &str) -> Option<BinOp> {
     })
 }
 
-/// Whether `taken` gives the variable `asked` is, and no other, what a call on a receiver yields.
-fn takes(taken: &Stmt, asked: Option<&Expr>) -> bool {
-    let own = matches!(
-        (taken, asked),
-        (Stmt::Assign { target, .. }, Some(Expr::Var(var))) if target == var
-    );
-    own && assigned_receiver(taken).is_some()
-}
-
-/// Whether `e` is a call of one argument, and that argument `of`.
-fn asked_of(e: &Expr, of: &Expr) -> bool {
-    let mut e = e;
-    while let Expr::Sugar { e: inner, .. }
-    | Expr::Cast {
-        to: Scalar::I64 | Scalar::U64,
-        e: inner,
-    } = e
-    {
-        e = &**inner;
-    }
-    matches!(e, Expr::Call { args, .. } if args.len() == 1 && args[0] == *of)
-}
-
 /// Whether evaluating `e` calls or makes anything, which one statement would do once and two do twice.
 fn calls(e: &Expr) -> bool {
     let mut found = false;
@@ -1882,12 +2193,14 @@ fn calls(e: &Expr) -> bool {
 /// The name of the source form a group the printer writes as one statement of its own makes, where the reader does not hold that form yet.
 fn group_form(kind: tree::Group) -> Option<&'static str> {
     Some(match kind {
-        tree::Group::Construct => "an object constructed",
         tree::Group::Collection => "an array written with its elements",
         tree::Group::Delegate => "a delegate made",
         tree::Group::Out => "an out argument",
         tree::Group::Deconstruct => "a deconstruction",
-        tree::Group::Compound | tree::Group::Field { .. } | tree::Group::Concat => return None,
+        tree::Group::Construct
+        | tree::Group::Compound
+        | tree::Group::Field { .. }
+        | tree::Group::Concat => return None,
     })
 }
 
@@ -1902,6 +2215,8 @@ struct Held<'a> {
     limit: usize,
     /// The passes on where the text is the source level's own: its constructs are held as it writes them; `None` for the readable form of old.
     sharp: Option<Options>,
+    /// The parameter `this` stands for, where the text is a method's.
+    this: Option<Var>,
 }
 
 impl Held<'_> {
@@ -1925,6 +2240,450 @@ impl Held<'_> {
     fn is_int(&self, var: Var) -> bool {
         let kind = self.head.vars.get(&var).map(|info| &info.kind);
         matches!(kind, Some(Kind::I32 | Kind::U32))
+    }
+
+    /// Whether the text is the source level's own.
+    fn sharp(&self) -> bool {
+        self.sharp.is_some()
+    }
+
+    /// The cells a variable holds, as the printer counts them.
+    fn cells(&self, var: Var) -> Option<u32> {
+        cells_of(&Expr::Var(var), self.head)
+    }
+
+    /// Whether a variable is declared of a kind that refers to something: an object, a string, an array or a pointer.
+    fn refers(&self, var: Var) -> bool {
+        let kind = self.head.vars.get(&var).map(|info| &info.kind);
+        matches!(
+            kind,
+            Some(Kind::Object(_) | Kind::String | Kind::Array(_) | Kind::Pointer)
+        )
+    }
+
+    /// Whether evaluating `e` reads one cell of the frame and does nothing more: a variable of one cell, or one cell of a variable.
+    fn one_cell(&self, e: &Expr) -> bool {
+        match e {
+            Expr::Var(var) => self.cells(*var) == Some(1),
+            Expr::Cell { base, .. } => matches!(&**base, Expr::Var(_)),
+            _ => false,
+        }
+    }
+
+    /// A type's name as the source level writes it: a .NET primitive by its keyword.
+    // ⚠ A generic type's instance the project names is written with its arguments, which no
+    // function shows: such a name is held as it is listed, and the two then differ.
+    fn type_name(&self, listed: &str) -> String {
+        match self.sharp().then(|| keyword(listed)).flatten() {
+            Some(keyword) => keyword.to_owned(),
+            None => listed.to_owned(),
+        }
+    }
+
+    /// The name a call is written under, in the readable form of old or at the source level.
+    fn callee_name(&self, callee: &Callee) -> String {
+        let listed = callee_name(callee, &self.names);
+        if !self.sharp() {
+            return listed;
+        }
+        match callee {
+            // The type the slot is of, never the listing's wrapper class.
+            Callee::Virtual { ty, method, .. } => format!("{}.{method}", self.type_name(ty)),
+            Callee::Builtin { path, .. } => match path.rsplit_once('.') {
+                Some((owner, member)) => format!("{}.{member}", self.type_name(owner)),
+                None => listed,
+            },
+            Callee::Intrinsic { .. } => {
+                let open = listed
+                    .strip_suffix('>')
+                    .and_then(|open| open.split_once('<'));
+                let typed = open.map(|(head, ty)| format!("{head}<{}>", self.type_name(ty)));
+                typed.unwrap_or(listed)
+            }
+            Callee::Local { .. } | Callee::Import { .. } | Callee::Native { .. } => listed,
+        }
+    }
+
+    /// The form `extract_bytes(value, offset, bytes)` takes besides its name where the source level writes it as the field of a value it is: `None` where it writes it by name alone.
+    // ⚠ Of a call the reader cannot tell whether it yields a reference, whose bytes the printer
+    // writes by name: there the field form is held too.
+    fn taken(&self, value: &Expr, offset: u32, bytes: u32) -> Option<Form> {
+        if !self.sharp() || bytes == 0 {
+            return None;
+        }
+        let (mut value, mut at, mut item) = (under_wide(value), offset, None);
+        if let Expr::Cells(items) = value {
+            match items.as_slice() {
+                [one] => value = under_wide(one),
+                _ => {
+                    let cell = offset / 8;
+                    let last = offset.checked_add(bytes - 1)? / 8;
+                    let plain = items.iter().all(|item| self.one_cell(under_wide(item)));
+                    if cell != last || !plain {
+                        return None;
+                    }
+                    value = under_wide(items.get(usize::try_from(cell).ok()?)?);
+                    item = usize::try_from(cell).ok();
+                    at = offset % 8;
+                }
+            }
+        }
+        let whole = bytes == 8 && at == 0 && self.one_cell(value);
+        // ⚠ A variable of one cell has no field the printer writes: its bytes are a shift.
+        let own = match value {
+            Expr::Var(var) => {
+                self.this != Some(*var) && !self.refers(*var) && (whole || !self.single(*var))
+            }
+            Expr::Call { .. } => true,
+            Expr::Sugar { kind, e } => {
+                !matches!(kind, ExprSugar::Field { .. }) && matches!(&**e, Expr::Call { .. })
+            }
+            _ => false,
+        };
+        own.then_some(Form::Field {
+            item,
+            at: u64::from(at),
+            whole,
+        })
+    }
+
+    /// Whether a dot after `var` goes through what it holds, as the printer writes it with `fields` on: a variable of one cell.
+    fn single(&self, var: Var) -> bool {
+        self.sharp() && self.on(Pass::Fields) && reads_through(self.head, var)
+    }
+
+    /// `extract_bytes(value, offset, bytes)` of a variable of one cell as the printer writes it, the variable shifted down to the bytes, or by name past the bytes its kind holds; `None` where the value is no such variable.
+    fn shifted(&self, value: &Expr, offset: u32, bytes: u32) -> Option<Sk> {
+        if !self.sharp() || bytes == 0 {
+            return None;
+        }
+        let (mut value, mut at) = (under_wide(value), offset);
+        if let Expr::Cells(items) = value {
+            match items.as_slice() {
+                [one] => value = under_wide(one),
+                _ => {
+                    let cell = offset / 8;
+                    let last = offset.checked_add(bytes - 1)? / 8;
+                    let plain = items.iter().all(|item| self.one_cell(under_wide(item)));
+                    if cell != last || !plain {
+                        return None;
+                    }
+                    value = under_wide(items.get(usize::try_from(cell).ok()?)?);
+                    at = offset % 8;
+                }
+            }
+        }
+        let Expr::Var(var) = value else {
+            return None;
+        };
+        if self.this == Some(*var) || self.refers(*var) || !self.single(*var) {
+            return None;
+        }
+        // The whole of a cell is the cell, as the printer writes it before any shift.
+        if bytes == 8 && at == 0 && self.one_cell(value) {
+            return None;
+        }
+        let kind = self
+            .head
+            .vars
+            .get(var)
+            .map_or(Kind::Unknown, |info| info.kind.clone());
+        let held: u64 = match kind {
+            Kind::I8 | Kind::U8 => 1,
+            Kind::I16 | Kind::U16 => 2,
+            Kind::I32 | Kind::U32 => 4,
+            Kind::I64 | Kind::U64 | Kind::Unknown => 8,
+            _ => return None,
+        };
+        let name = Sk::Name(self.var(*var));
+        Some(match (u64::from(at) + u64::from(bytes) > held, at) {
+            (true, _) => return None,
+            (false, 0) => name,
+            (false, at) => Sk::Op(">>", vec![name, num(at * 8)]),
+        })
+    }
+
+    /// The two variables `bytes_equal_N(&a, &b)` compares whole, which the source level writes `a == b`.
+    fn whole_equality(&self, name: &str, args: &[Expr]) -> Option<(Var, Var)> {
+        let bytes: u32 = name.strip_prefix("bytes_equal_")?.parse().ok()?;
+        let [Expr::AddrOf { var: l, cell: 0 }, Expr::AddrOf { var: r, cell: 0 }] = args else {
+            return None;
+        };
+        // Three floats fill twelve bytes of their two cells.
+        let whole = |var: &Var| {
+            let vector = (self.head.vars.get(var)).is_some_and(|info| info.kind == Kind::Vector);
+            let cells = self.cells(*var).filter(|cells| *cells >= 2);
+            let held = cells.map(|cells| if vector { 12 } else { cells.saturating_mul(8) });
+            held == Some(bytes)
+        };
+        (self.on(Pass::Operators) && whole(l) && whole(r)).then_some((*l, *r))
+    }
+
+    /// The variable a clear of `bytes` bytes at `addr` empties whole, which the source level writes `x = default`.
+    fn whole_clear(&self, addr: &Expr, bytes: u32) -> Option<Var> {
+        let Expr::AddrOf { var, cell: 0 } = addr else {
+            return None;
+        };
+        let cells = self.cells(*var)?;
+        let whole = u64::from(bytes) == u64::from(cells) * 8;
+        (self.sharp() && whole).then_some(*var)
+    }
+
+    /// `x = new T(a) { f_8 = b }`: the statement a construct group reads as at the source level, and how many of its parts it holds; `None` where it is written as its parts.
+    fn construction(&self, parts: &[Stmt], d: u32) -> Result<Option<(Sk, usize)>, ReparseError> {
+        let Some(Stmt::Assign { target, .. }) = parts.first() else {
+            return Ok(None);
+        };
+        let Some((value, held)) = self.filled_object(parts, 0, d)? else {
+            return Ok(None);
+        };
+        Ok(Some((assign(Sk::Name(self.var(*target)), value), held)))
+    }
+
+    /// `new T(a) { F = b, G = new U { H = c } }` of the parts that make an object and fill it, with how many parts it holds.
+    fn filled_object(
+        &self,
+        parts: &[Stmt],
+        depth: usize,
+        d: u32,
+    ) -> Result<Option<(Sk, usize)>, ReparseError> {
+        let Some((Stmt::Assign { target, value }, rest)) = parts.split_first() else {
+            return Ok(None);
+        };
+        let Expr::NewObject(ty) = bare(value) else {
+            return Ok(None);
+        };
+        // The constructor is the call that stands second, with the object first among its arguments.
+        let passed = match rest.first() {
+            Some(Stmt::Eval(call)) => {
+                let Expr::Call { args, .. } = bare(call) else {
+                    return Ok(None);
+                };
+                match args.first() {
+                    Some(object) if *bare(under_wide(object)) == Expr::Var(*target) => Some(args),
+                    _ => return Ok(None),
+                }
+            }
+            _ => None,
+        };
+        if passed.is_some() && !self.on(Pass::Constructors) {
+            return Ok(None);
+        }
+        let stores = rest
+            .get(usize::from(passed.is_some())..)
+            .unwrap_or_default();
+        let mut fields = Vec::new();
+        let mut taken = 0;
+        if self.on(Pass::Initialisers) {
+            while taken < stores.len() {
+                let held = match self.nested(stores, taken, *target, depth, d)? {
+                    Some(found) => Some(found),
+                    None => (self.initialised(&stores[taken], *target, d)?).map(|field| (field, 1)),
+                };
+                match held {
+                    Some((field, held)) => {
+                        fields.push(field);
+                        taken += held;
+                    }
+                    // One store that is no plain field of the object leaves them all statements.
+                    None => {
+                        fields.clear();
+                        taken = 0;
+                        break;
+                    }
+                }
+            }
+        }
+        let ty = self.type_name(&ty.name);
+        let value = match (passed, fields.is_empty()) {
+            (None, true) => return Ok(None),
+            (Some(args), true) => made(ty, self.list(args.get(1..).unwrap_or_default(), d)?),
+            (passed, false) => {
+                let ctor = match passed {
+                    Some(args) => Sk::Op(CTOR, self.list(args.get(1..).unwrap_or_default(), d)?),
+                    None => none(),
+                };
+                let mut items = vec![Sk::Name(ty), ctor];
+                items.extend(fields);
+                Sk::Op(INIT, items)
+            }
+        };
+        Ok(Some((value, 1 + usize::from(passed.is_some()) + taken)))
+    }
+
+    /// `F = new U { .. }` for an object made at `stores[at]`, filled by the parts after it and stored whole into a field of the object `object` holds; with how many parts that is.
+    // ⚠ An array made so is a form not read back: the parts it holds are then not counted.
+    fn nested(
+        &self,
+        stores: &[Stmt],
+        at: usize,
+        object: Var,
+        depth: usize,
+        d: u32,
+    ) -> Result<Option<(Sk, usize)>, ReparseError> {
+        if depth >= NESTS {
+            return Ok(None);
+        }
+        let Some(Stmt::Assign {
+            target: inner,
+            value,
+        }) = stores.get(at)
+        else {
+            return Ok(None);
+        };
+        if !matches!(bare(value), Expr::NewObject(_) | Expr::NewArray { .. }) {
+            return Ok(None);
+        }
+        // The store of the inner object into a field of the outer one closes its parts.
+        let closes = |stmt: &Stmt| match stmt {
+            Stmt::Store { addr, value, .. } => {
+                *bare(under_wide(addr)) == Expr::Var(object)
+                    && *bare(under_wide(value)) == Expr::Var(*inner)
+            }
+            _ => false,
+        };
+        let Some(end) = stores
+            .get(at..)
+            .and_then(|rest| rest.iter().position(closes))
+        else {
+            return Ok(None);
+        };
+        let end = at + end;
+        let Some(Stmt::Store { offset, .. }) = stores.get(end) else {
+            return Ok(None);
+        };
+        if *offset == 0 {
+            return Ok(None);
+        }
+        let parts = &stores[at..end];
+        let value = match bare(value) {
+            Expr::NewObject(_) if parts.len() == 1 => self.sk(value, d)?,
+            Expr::NewObject(_) => match self.filled_object(parts, depth + 1, d)? {
+                Some((value, held)) if held == parts.len() => value,
+                _ => return Ok(None),
+            },
+            _ => unread("an array written with its elements"),
+        };
+        Ok(Some((assign(num(*offset), value), end + 1 - at)))
+    }
+
+    /// `F = value` for a store to a field of the object `object` holds, as an initialiser writes it; `None` for one the printer writes no field of.
+    fn initialised(&self, store: &Stmt, object: Var, d: u32) -> Result<Option<Sk>, ReparseError> {
+        let (addr, offset) = match store {
+            Stmt::Store { addr, offset, .. } => (addr, offset),
+            // Bytes of fewer cells than the value stored are written as a call, no field.
+            Stmt::StoreBytes {
+                addr,
+                offset,
+                bytes,
+                value,
+            } if bytes.is_multiple_of(8) && cells_of(value, self.head) == Some(bytes / 8) => {
+                (addr, offset)
+            }
+            _ => return Ok(None),
+        };
+        if *bare(under_wide(addr)) != Expr::Var(object) || *offset == 0 {
+            return Ok(None);
+        }
+        // What follows the place is what the field takes.
+        let value = match self.simple(store, d)? {
+            Sk::Op("=", mut pair) if pair.len() == 2 => pair.remove(1),
+            _ => return Ok(None),
+        };
+        Ok(Some(assign(num(*offset), value)))
+    }
+
+    /// Whether the source level writes nothing for `arm`: it is empty, or holds only what the compiler added.
+    fn unwritten(&self, arm: &[tree::Stmt]) -> bool {
+        let source = self
+            .sharp
+            .is_some_and(|options| options.level == Level::Source);
+        let hidden = |stmt: &tree::Stmt| match stmt {
+            tree::Stmt::Sugar(sugar) => source && matches!(**sugar, tree::Sugar::Hidden(_)),
+            _ => false,
+        };
+        self.sharp() && arm.iter().all(hidden)
+    }
+
+    /// The statement the source level ends `case` with where it would run off its end, which C# refuses: `break` from the last case, `goto case` the next one's first label from any other that holds a statement.
+    fn closer(&self, case: &tree::Case, next: Option<&tree::Case>) -> Option<Node> {
+        if !self.sharp() || !falls(&case.body) {
+            return None;
+        }
+        let Some(next) = next else {
+            return Some(Node::held("break", Vec::new(), Vec::new()));
+        };
+        if case.body.is_empty() {
+            return None;
+        }
+        let label = match next.labels.first()? {
+            Some(value) => Sk::Num(*value as u64, Lit::Int),
+            None => Sk::Name("default".to_owned()),
+        };
+        Some(Node::held("goto case", vec![label], Vec::new()))
+    }
+
+    /// Whether the source level may write this call as `l == r` of two boxed values or as a cast of one, which the project decides by the type boxed.
+    fn boxed_call(&self, callee: &Callee, args: &[Expr]) -> bool {
+        let boxed = |e: &Expr| {
+            matches!(
+                under_wide(e),
+                Expr::Call { callee: Callee::Intrinsic { name, .. }, args, .. }
+                    if args.len() == 1 && name.starts_with("box<") && name.ends_with('>')
+            )
+        };
+        let Callee::Builtin { path, .. } = callee else {
+            return false;
+        };
+        let read = match args {
+            [l, r] => path == "System.Object.Equals" && boxed(l) && boxed(r),
+            [one] => path == "System.Convert.ToInt32" && boxed(one),
+            _ => false,
+        };
+        read && self.on(Pass::Boxing)
+    }
+
+    /// Whether `e` is `l > 0` over unsigned cells, which the source level writes `l != null` where `l` refers to something.
+    fn unsigned_above_zero(&self, e: &Expr) -> bool {
+        matches!(
+            e,
+            Expr::Binary { op: BinOp::Gt, at: Kind::U64, r, .. } if self.sharp() && is_zero(r)
+        )
+    }
+
+    /// `l > 0` over unsigned cells as the source level writes it: as the truth of `l` where `l` refers to something, as the comparison where it cannot, and as either where the reader cannot tell.
+    fn above_zero(&self, l: &Expr, d: u32) -> Result<Sk, ReparseError> {
+        let value = self.sk(l, d)?;
+        let mut inner = under_wide(l);
+        while let Expr::Sugar { e, .. } = inner {
+            inner = &**e;
+        }
+        let cast = matches!(
+            inner,
+            Expr::Call { callee: Callee::Intrinsic { name, .. }, .. }
+                if name.starts_with("try_cast<") || name.starts_with("cast<")
+        );
+        let refers = match under_wide(l) {
+            // What a global holds is the project's to say.
+            Expr::Var(Var::Global { .. }) => None,
+            Expr::Var(var) => Some(self.refers(*var)),
+            Expr::Binary { at, .. } => Some(matches!(
+                at,
+                Kind::Object(_) | Kind::String | Kind::Array(_) | Kind::Pointer
+            )),
+            Expr::Load { .. }
+            | Expr::LoadBytes { .. }
+            | Expr::ExtractBytes { .. }
+            | Expr::Unary { .. }
+            | Expr::Truth(_)
+            | Expr::Cast { .. } => Some(false),
+            _ => None,
+        };
+        Ok(match (cast, refers) {
+            (true, _) | (false, Some(true)) => truth(value),
+            (false, Some(false)) => binary(">", value, num(0)),
+            (false, None) => Sk::Op(ABOVE_ZERO, vec![value]),
+        })
     }
 
     fn var(&self, var: Var) -> String {
@@ -1979,6 +2738,8 @@ impl Held<'_> {
             Expr::Var(var) => Sk::Name(self.var(*var)),
             Expr::GuidEmpty => Sk::Name("Guid.Empty".to_owned()),
             Expr::Cell { base, index } => index_of(self.sk(base, d)?, num(*index)),
+            // True C# writes one cell gathered alone as that cell.
+            Expr::Cells(items) if self.sharp() && items.len() == 1 => self.sk(&items[0], d)?,
             Expr::Cells(items) => Sk::Op("{}", self.list(items, d)?),
             // A constant under a cast is written as the constant the cast reads.
             Expr::Cast { to, e: inner } => match (under_casts(inner), self.sk(inner, d)?) {
@@ -2003,12 +2764,15 @@ impl Held<'_> {
                 op: op @ (BinOp::LogicalAnd | BinOp::LogicalOr),
                 ..
             } => self.chain(*op, e, d)?,
+            Expr::Binary { l, .. } if self.unsigned_above_zero(e) => self.above_zero(l, d)?,
             Expr::Binary { .. } => {
                 // A long sum is a chain down its left side: walked, not recursed into.
                 let mut spine = Vec::new();
                 let mut left = e;
                 while let Expr::Binary { op, l, r, .. } = left {
-                    if matches!(op, BinOp::LogicalAnd | BinOp::LogicalOr) {
+                    let logical = matches!(op, BinOp::LogicalAnd | BinOp::LogicalOr);
+                    // The first is none: the arm before takes it.
+                    if logical || self.unsigned_above_zero(left) {
                         break;
                     }
                     spine.push((*op, &**r));
@@ -2029,12 +2793,14 @@ impl Held<'_> {
                 ],
             ),
             Expr::Call { callee, args, .. } => self.call(callee, args, d)?,
-            Expr::Load { addr, offset, .. } => self.place(addr, *offset, false, d)?,
+            Expr::Load { ty, addr, offset } => {
+                self.place_of(addr, *offset, false, Some(ty.bytes()), d)?
+            }
             Expr::LoadBytes {
                 addr,
                 offset,
                 bytes,
-            } if bytes.is_multiple_of(8) => self.place(addr, *offset, false, d)?,
+            } if bytes.is_multiple_of(8) => self.place_of(addr, *offset, false, Some(*bytes), d)?,
             Expr::LoadBytes {
                 addr,
                 offset,
@@ -2047,10 +2813,20 @@ impl Held<'_> {
                 value,
                 offset,
                 bytes,
-            } => call(
-                "extract_bytes",
-                vec![self.sk(value, d)?, num(*offset), num(*bytes)],
-            ),
+            } => {
+                if let Some(shifted) = self.shifted(value, *offset, *bytes) {
+                    return Ok(shifted);
+                }
+                let args = vec![self.sk(value, d)?, num(*offset), num(*bytes)];
+                match self.taken(value, *offset, *bytes) {
+                    Some(form) => Sk::Call {
+                        name: "extract_bytes".to_owned(),
+                        form,
+                        args,
+                    },
+                    None => call("extract_bytes", args),
+                }
+            }
             Expr::ByteOffset { addr, offset } => match &**offset {
                 Expr::Const(c) if c.bits == 0 => self.sk(addr, d)?,
                 Expr::Const(c) if c.bits <= u64::from(u32::MAX) => {
@@ -2064,10 +2840,11 @@ impl Held<'_> {
             }
             Expr::ZeroSlots(_) => Sk::Op("default", Vec::new()),
             Expr::Vector3(parts) => made("Vector3".to_owned(), self.list(&parts[..], d)?),
-            Expr::NewObject(ty) => made(ty.name.clone(), Vec::new()),
-            Expr::NewArray { ty, len, .. } => {
-                Sk::Op("new[]", vec![Sk::Name(ty.name.clone()), self.sk(len, d)?])
-            }
+            Expr::NewObject(ty) => made(self.type_name(&ty.name), Vec::new()),
+            Expr::NewArray { ty, len, .. } => Sk::Op(
+                "new[]",
+                vec![Sk::Name(self.type_name(&ty.name)), self.sk(len, d)?],
+            ),
             Expr::FunctionRef { program, at } => {
                 Sk::Op("&", vec![Sk::Name(self.function(*program, *at))])
             }
@@ -2149,6 +2926,20 @@ impl Held<'_> {
         })
     }
 
+    /// A field read through `addr` as the source level writes it: a variable's own bytes as the place they are, `(&x)->f_N` where `x` holds one cell and `x.f_N` where it holds several.
+    fn field_sk(&self, addr: &Expr, offset: u32, d: u32) -> Result<Sk, ReparseError> {
+        Ok(match addr {
+            Expr::AddrOf { var, cell: 0 } => {
+                let name = Sk::Name(self.var(*var));
+                match self.single(*var) {
+                    true => Sk::Op("->", vec![Sk::Op("&", vec![name]), num(offset)]),
+                    false => Sk::Op(".f", vec![name, num(offset)]),
+                }
+            }
+            _ => Sk::Op(".f", vec![self.sk(addr, d)?, num(offset)]),
+        })
+    }
+
     /// `e` as the source level reads it as the construct `kind`: as the readable form of old does where the two write alike, and as what it holds where the construct's pass is off.
     fn sharp_sugared(&self, kind: ExprSugar, e: &Expr, d: u32) -> Result<Sk, ReparseError> {
         let pass = match kind {
@@ -2168,7 +2959,7 @@ impl Held<'_> {
         }
         Ok(match (kind, e) {
             (ExprSugar::Field { .. }, Expr::LoadBytes { addr, offset, .. }) => {
-                Sk::Op(".f", vec![self.sk(addr, d)?, num(*offset)])
+                self.field_sk(addr, *offset, d)?
             }
             (
                 ExprSugar::Operator,
@@ -2226,6 +3017,22 @@ impl Held<'_> {
                 member(self.sk(&args[0], d)?, last_name(callee)),
                 self.list(&args[1..], d)?,
             ),
+            // A static property of the runtime's own types, by the type that declares it.
+            (
+                ExprSugar::Property,
+                Expr::Call {
+                    callee: callee @ Callee::Builtin { path, .. },
+                    args,
+                    ..
+                },
+            ) if args.is_empty() => match path.rsplit_once('.') {
+                Some((owner, _)) => Sk::Name(format!(
+                    "{}.{}",
+                    self.type_name(owner),
+                    property_name(callee)
+                )),
+                None => self.sk(e, d)?,
+            },
             // The source level names a property by the accessor rule its declaration takes.
             (ExprSugar::Property, Expr::Call { callee, args, .. }) if args.len() == 1 => {
                 member(self.sk(&args[0], d)?, property_name(callee))
@@ -2235,7 +3042,7 @@ impl Held<'_> {
                 self.sk(&args[1], d)?,
             ),
             (ExprSugar::Field { .. }, Expr::Load { addr, offset, .. }) => {
-                Sk::Op(".f", vec![self.sk(addr, d)?, num(*offset)])
+                self.field_sk(addr, *offset, d)?
             }
             (ExprSugar::Lambda, Expr::FunctionRef { program, at }) => {
                 Sk::Name(self.function(*program, *at))
@@ -2291,9 +3098,19 @@ impl Held<'_> {
                 return Ok(spelled);
             }
         }
-        let name = unquoted(callee_name(callee, &self.names));
+        if self.boxed_call(callee, args) {
+            return Ok(unread("a boxed value compared or converted"));
+        }
+        let name = unquoted(self.callee_name(callee));
         let passed = self.list(args, d)?;
         let form = match (callee, args) {
+            // ⚠ The project says which function is a type's constructor, which no function shows:
+            // a script function run on an object made in the call reads either way.
+            (Callee::Local { .. } | Callee::Import { .. }, [Expr::NewObject(ty), ..])
+                if self.on(Pass::Constructors) =>
+            {
+                Some(Form::Made(self.type_name(&ty.name)))
+            }
             // A receiver whose own type is the class is written in front of the method.
             (Callee::Virtual { method, .. }, [_, ..]) => Some(Form::Method(method.clone())),
             // A type's own equality over two values of several cells is written with its sign.
@@ -2330,16 +3147,22 @@ impl Held<'_> {
             name == "array_get_value"
                 || (name.strip_prefix("array_get_")).is_some_and(|t| Scalar::from_name(t).is_some())
         };
+        if let Some((l, r)) = self.whole_equality(name, args) {
+            let (l, r) = (Sk::Name(self.var(l)), Sk::Name(self.var(r)));
+            return Ok(Some(binary("==", l, r)));
+        }
         Ok(Some(match args {
             [target, passed @ ..] if name == "invoke_delegate" => {
                 called(self.sk(target, d)?, self.list(passed, d)?)
             }
             [array] if name == "array_length" => member(self.sk(array, d)?, "Length"),
+            // A cast that must hold, `(T)value`: what it states of the value is no operand.
+            [value] if name.starts_with("cast<") && name.ends_with('>') => self.sk(value, d)?,
             [value] => match name
                 .strip_prefix("try_cast<")
                 .and_then(|t| t.strip_suffix('>'))
             {
-                Some(ty) => Sk::Op("as", vec![self.sk(value, d)?, Sk::Name(ty.to_owned())]),
+                Some(ty) => Sk::Op("as", vec![self.sk(value, d)?, Sk::Name(self.type_name(ty))]),
                 None => return Ok(None),
             },
             [array, index] if name == "array_element_address" => {
@@ -2386,6 +3209,21 @@ impl Held<'_> {
 
     /// The memory at byte `offset` from `addr`, as the printer's fields of what `addr` points at.
     fn place(&self, addr: &Expr, offset: u32, partial: bool, d: u32) -> Result<Sk, ReparseError> {
+        self.place_of(addr, offset, partial, None, d)
+    }
+
+    /// [`Held::place`] for an access of `bytes` bytes, where the access states them.
+    // ⚠ At the source level fewer bytes than a variable of several cells holds are a part of it,
+    // `x.f_0`, as a narrow store is of a cell; and what stands at an element's address is the
+    // element where the access is as wide as one.
+    fn place_of(
+        &self,
+        addr: &Expr,
+        offset: u32,
+        partial: bool,
+        bytes: Option<u32>,
+        d: u32,
+    ) -> Result<Sk, ReparseError> {
         let mut fields = vec![u64::from(offset)];
         let mut base = addr;
         while let Expr::ByteOffset { addr, offset } = base {
@@ -2396,20 +3234,48 @@ impl Held<'_> {
             base = &**addr;
         }
         let embedded = fields.len() > 1;
+        // ⚠ With `fields` on, a dot after a variable of one cell goes through what it holds, as
+        // the printer writes it, and the bytes of the variable itself are `(&x)->f_N`.
+        let held = matches!(under_wide(base), Expr::Var(var) if self.this != Some(*var) && self.single(*var));
+        let mut boxed = matches!(base, Expr::AddrOf { var, cell: 0 } if self.single(*var));
         let (mut place, variable) = match base {
             Expr::AddrOf { var, cell: 0 } => (Sk::Name(self.var(*var)), true),
             Expr::AddrOf { var, cell } => (index_of(Sk::Name(self.var(*var)), num(*cell)), true),
+            Expr::Call {
+                callee: Callee::Intrinsic { name, .. },
+                args,
+                ..
+            } if self.on(Pass::Fields)
+                && !embedded
+                && offset == 0
+                && name == "array_element_address"
+                && args.len() == 2 =>
+            {
+                return self.at_element(&args[0], &args[1], bytes, d);
+            }
             pointer if !embedded && offset == 0 => {
                 return Ok(Sk::Op("*", vec![self.sk(pointer, d)?]));
             }
             pointer => (self.sk(pointer, d)?, false),
         };
+        let part = self.sharp()
+            && match (base, bytes) {
+                (Expr::AddrOf { var, cell: 0 }, Some(bytes)) => match self.cells(*var) {
+                    Some(cells) => cells >= 2 && u64::from(bytes) < u64::from(cells) * 8,
+                    None => true,
+                },
+                _ => false,
+            };
         // `->` goes through a pointer and `.` stays in place.
         let mut through = !variable;
         for (n, field) in fields.iter().enumerate().rev() {
-            let unsaid = *field == 0 && n == 0 && (embedded || (variable && !partial));
+            let unsaid = *field == 0 && n == 0 && (embedded || (variable && !partial && !part));
             if !unsaid {
-                let mark = if std::mem::take(&mut through) {
+                if std::mem::take(&mut boxed) {
+                    place = Sk::Op("&", vec![place]);
+                    through = true;
+                }
+                let mark = if std::mem::take(&mut through) && !held {
                     "->"
                 } else {
                     ".f"
@@ -2418,6 +3284,36 @@ impl Held<'_> {
             }
         }
         Ok(place)
+    }
+
+    /// What stands at the address of element `index` of `array`, read `bytes` wide, as the source level writes it: the element where the access is as wide as one, else the bytes at its address.
+    fn at_element(
+        &self,
+        array: &Expr,
+        index: &Expr,
+        bytes: Option<u32>,
+        d: u32,
+    ) -> Result<Sk, ReparseError> {
+        let pair = vec![self.sk(array, d)?, self.sk(index, d)?];
+        let wide = match array {
+            Expr::Var(Var::Global { .. }) => None,
+            Expr::Var(var) => match self.head.vars.get(var).map(|info| &info.kind) {
+                Some(Kind::Array(of)) => Some(element_bytes(of)),
+                _ => Some(None),
+            },
+            _ => None,
+        };
+        let element = |pair: Vec<Sk>| Sk::Op("[]", pair);
+        let at = |pair: Vec<Sk>| {
+            let address = Sk::Op("&", vec![element(pair)]);
+            Sk::Op("->", vec![address, num(0)])
+        };
+        Ok(match (bytes, wide) {
+            (None, _) => at(pair),
+            (Some(bytes), Some(wide)) if wide == Some(bytes) => element(pair),
+            (Some(_), Some(_)) => at(pair),
+            (Some(_), None) => Sk::Op(AT_ELEMENT, pair),
+        })
     }
 
     /// A simple statement as the printer writes it.
@@ -2445,7 +3341,8 @@ impl Held<'_> {
                     StoreKind::I32 => Some(Scalar::I32),
                     StoreKind::U64 | StoreKind::Ref => None,
                 };
-                let place = self.place(addr, *offset, narrow.is_some(), d)?;
+                let wide = Some(kind.bytes());
+                let place = self.place_of(addr, *offset, narrow.is_some(), wide, d)?;
                 let value = match narrow {
                     Some(to) => self.stored(to, value, d)?,
                     None => self.sk(value, d)?,
@@ -2459,7 +3356,8 @@ impl Held<'_> {
                 bytes,
                 value,
             } if bytes.is_multiple_of(8) && cells_of(value, self.head) == Some(bytes / 8) => {
-                assign(self.place(addr, *offset, true, d)?, self.sk(value, d)?)
+                let place = self.place_of(addr, *offset, true, Some(*bytes), d)?;
+                assign(place, self.sk(value, d)?)
             }
             Stmt::StoreBytes {
                 addr,
@@ -2483,12 +3381,14 @@ impl Held<'_> {
                 "store_f32_slots",
                 vec![self.sk(addr, d)?, num(*offset), self.sk(value, d)?],
             ),
-            Stmt::ZeroBytes { addr, bytes } => {
-                call("zero_bytes", vec![self.sk(addr, d)?, num(*bytes)])
-            }
+            // True C# writes a clear of every byte of a variable as the variable made its default.
+            Stmt::ZeroBytes { addr, bytes } => match self.whole_clear(addr, *bytes) {
+                Some(var) => assign(Sk::Name(self.var(var)), Sk::Op("default", Vec::new())),
+                None => call("zero_bytes", vec![self.sk(addr, d)?, num(*bytes)]),
+            },
             Stmt::StepI32 { addr, offset, down } => {
                 let mark = if *down { "--" } else { "++" };
-                Sk::Op(mark, vec![self.place(addr, *offset, true, d)?])
+                Sk::Op(mark, vec![self.place_of(addr, *offset, true, Some(4), d)?])
             }
             Stmt::Eval(e) => match self.assignment(e, d)? {
                 Some(assigned) => assigned,
@@ -2550,7 +3450,12 @@ impl Held<'_> {
         let mut n = 0;
         while let Some(stmt) = stmts.get(n) {
             n += 1;
-            if let Some(pair) = self.constructed(stmt, stmts.get(n), d)? {
+            // Only the form of old pairs the two itself: the source level writes what a pass made one.
+            let pair = match self.sharp() {
+                true => None,
+                false => self.constructed(stmt, stmts.get(n), d)?,
+            };
+            if let Some(pair) = pair {
                 out.push(Node::held("", vec![pair], Vec::new()));
                 n += 1;
                 continue;
@@ -2566,18 +3471,32 @@ impl Held<'_> {
         let node = match stmt {
             tree::Stmt::Simple(s) => Node::held("", vec![self.simple(s, d)?], Vec::new()),
             tree::Stmt::If { cond, then, els } => {
-                let test = vec![truth(self.sk(cond, d)?)];
-                out.push(Node::held("if", test, vec![self.nodes(then, d)?]));
                 // An `else` that is one `if` is written `else if`, however long the chain.
-                let mut rest = els;
+                let (mut word, mut cond, mut then, mut els) = ("if", cond, then, els);
                 loop {
-                    match rest.as_slice() {
-                        [] => return Ok(()),
-                        [tree::Stmt::If { cond, then, els }] => {
-                            let test = vec![truth(self.sk(cond, d)?)];
-                            out.push(Node::held("else if", test, vec![self.nodes(then, d)?]));
-                            rest = els;
+                    let test = truth(self.sk(cond, d)?);
+                    // At the source level an arm nothing is written for is no `else`, and where
+                    // it is the first the other stands under the test turned round.
+                    match (self.unwritten(then), self.unwritten(els)) {
+                        (true, false) => {
+                            out.push(Node::held(word, vec![not(test)], vec![self.nodes(els, d)?]));
+                            return Ok(());
                         }
+                        (_, true) => {
+                            out.push(Node::held(word, vec![test], vec![self.nodes(then, d)?]));
+                            return Ok(());
+                        }
+                        (false, false) => {
+                            out.push(Node::held(word, vec![test], vec![self.nodes(then, d)?]));
+                        }
+                    }
+                    match els.as_slice() {
+                        [] => return Ok(()),
+                        [tree::Stmt::If {
+                            cond: c,
+                            then: t,
+                            els: e,
+                        }] => (word, cond, then, els) = ("else if", c, t, e),
                         other => break Node::held("else", Vec::new(), vec![self.nodes(other, d)?]),
                     }
                 }
@@ -2611,13 +3530,14 @@ impl Held<'_> {
             }
             tree::Stmt::Switch { value, cases } => {
                 let mut all: Vec<Node> = Vec::new();
-                for case in cases {
+                for (n, case) in cases.iter().enumerate() {
                     let labels = case.labels.iter().map(|label| match label {
                         Some(value) => Sk::Num(*value as u64, Lit::Int),
                         None => Sk::Name("default".to_owned()),
                     });
                     let labels: Vec<Sk> = labels.collect();
-                    let body = self.nodes(&case.body, d)?;
+                    let mut body = self.nodes(&case.body, d)?;
+                    body.extend(self.closer(case, cases.get(n + 1)));
                     // A case that writes no statement runs into the next: one case in the text.
                     let joins = all.last().is_some_and(runs_on);
                     match all.last_mut() {
@@ -2683,32 +3603,24 @@ impl Held<'_> {
             tree::Sugar::Hidden(_) if options.level == Level::Source => {}
             tree::Sugar::Hidden(stmts) => out.extend(self.nodes(stmts, d)?),
             tree::Sugar::Group { kind, parts } => self.group(*kind, parts, out, d)?,
-            tree::Sugar::Await {
-                before,
-                ready,
-                after,
-                ..
-            } if on(Pass::Await) => {
-                // What is awaited is what the awaiter is taken from, else the awaiter the test asks.
-                let awaiter = receiver(ready);
-                let (shown, awaited) = match before.split_last() {
-                    Some((taken, rest)) if takes(taken, awaiter) => {
-                        (rest, assigned_receiver(taken))
-                    }
-                    _ => (before.as_slice(), awaiter),
+            tree::Sugar::Await { after, .. } if on(Pass::Await) => {
+                let Some(read) = async_await::reading(sugar) else {
+                    out.push(unread_node("await"));
+                    return Ok(());
                 };
-                self.simples(shown, out, d)?;
-                let awaited = self.sk(awaited.unwrap_or(ready), d)?;
-                match (after.as_slice(), awaiter) {
+                self.simples(read.shown, out, d)?;
+                let awaited = self.sk(read.awaited, d)?;
+                match read.taken {
                     // The one statement that asks the awaiter for its result takes what the `await` yields.
-                    ([Stmt::Assign { target, value }], Some(awaiter))
-                        if asked_of(value, awaiter) =>
-                    {
+                    async_await::Taken::Assigned(target) => {
                         let waited = Sk::Op("await", vec![awaited]);
-                        let stated = assign(Sk::Name(self.var(*target)), waited);
+                        let stated = assign(Sk::Name(self.var(target)), waited);
                         out.push(Node::held("", vec![stated], Vec::new()));
                     }
-                    _ => {
+                    async_await::Taken::Dropped => {
+                        out.push(Node::held("await", vec![awaited], Vec::new()));
+                    }
+                    async_await::Taken::Stored(_) | async_await::Taken::Nothing => {
                         out.push(Node::held("await", vec![awaited], Vec::new()));
                         self.simples(after, out, d)?;
                     }
@@ -2756,6 +3668,16 @@ impl Held<'_> {
         out: &mut Vec<Node>,
         d: u32,
     ) -> Result<(), ReparseError> {
+        if let tree::Group::Construct = kind {
+            match self.construction(parts, d)? {
+                Some((stated, held)) => {
+                    out.push(Node::held("", vec![stated], Vec::new()));
+                    self.simples(parts.get(held..).unwrap_or_default(), out, d)?;
+                }
+                None => self.simples(parts, out, d)?,
+            }
+            return Ok(());
+        }
         if let Some(form) = group_form(kind) {
             out.push(unread_node(form));
             return Ok(());
@@ -2818,7 +3740,7 @@ impl Held<'_> {
                     // A place no type declares says no width: only a whole cell reads as one.
                     (false, 8) => {
                         typed = false;
-                        self.place(addr, *offset, false, d)?
+                        self.place_of(addr, *offset, false, Some(8), d)?
                     }
                     (false, _) => return Ok(None),
                 }

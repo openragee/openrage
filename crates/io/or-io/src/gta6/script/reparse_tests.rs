@@ -924,8 +924,8 @@ fn a_compound_assignment_reads_as_the_place_it_writes_worked_on() {
             value: op(BinOp::Or, load.clone(), int(4)),
         })]
     };
-    assert_eq!(source_says(flagged(), "    p0->f_10 |= 4;\n"), Ok(true));
-    assert_eq!(source_says(flagged(), "    p0->f_18 |= 4;\n"), Ok(false));
+    assert_eq!(source_says(flagged(), "    p0.f_10 |= 4;\n"), Ok(true));
+    assert_eq!(source_says(flagged(), "    p0.f_18 |= 4;\n"), Ok(false));
     // The form of old writes the same group as the statement it holds.
     assert!(says(flagged(), "    p0->f_10 = p0->f_10 | 4;\n"));
 }
@@ -943,15 +943,15 @@ fn an_await_reads_as_what_its_awaiter_is_taken_from_and_what_it_yields() {
         })]
     };
     assert_eq!(
-        source_says(awaited(), "    local_2 = await p0;\n"),
+        source_says(awaited(), "    local_2 = await DEMO.GET(p0);\n"),
         Ok(true)
     );
     assert_eq!(
-        source_says(awaited(), "    local_2 = await p1;\n"),
+        source_says(awaited(), "    local_2 = await DEMO.GET(p1);\n"),
         Ok(false)
     );
     assert_eq!(
-        source_says(awaited(), "    local_3 = await p0;\n"),
+        source_says(awaited(), "    local_3 = await DEMO.GET(p0);\n"),
         Ok(false)
     );
     // The form of old writes the awaiter taken and what is asked of it after.
@@ -1112,7 +1112,8 @@ fn a_form_not_read_back_yet_is_counted_by_name_and_not_compared() {
         unread_of(one(), block).as_deref(),
         Some("a lambda written where it is bound")
     );
-    let made = "    local_0 = new type_0123456789ABCDEF { f_8 = 1, f_C = 0.2f };\n";
+    // An initialiser of no fields by name, as a collection's is.
+    let made = "    local_0 = new type_0123456789ABCDEF { 1, 0.2f };\n";
     assert_eq!(
         unread_of(one(), made).as_deref(),
         Some("an object written with its fields")
@@ -1121,8 +1122,10 @@ fn a_form_not_read_back_yet_is_counted_by_name_and_not_compared() {
     assert_eq!(unread_of(one(), cached).as_deref(), Some("??="));
     let tested = "    local_0 = p0 is type_0123456789ABCDEF;\n";
     assert_eq!(unread_of(one(), tested).as_deref(), Some("is"));
-    let ran_on = "    goto case 3;\n";
-    assert_eq!(unread_of(one(), ran_on).as_deref(), Some("goto case"));
+    // A label of a case by its text is not held; one by its number is, and is no assignment.
+    let by_text = "    goto case Hash(\"x\");\n";
+    assert_eq!(unread_of(one(), by_text).as_deref(), Some("goto case"));
+    assert_eq!(source_says(one(), "    goto case 3;\n"), Ok(false));
     // What the function holds of a form not held yet stops the comparison just as well.
     let foreach = || {
         vec![construct(Sugar::Foreach {
@@ -1171,3 +1174,6 @@ fn what_the_source_level_writes_of_a_compound_and_an_await_reads_back() {
         panic!("{why}\nin:\n{text}");
     }
 }
+
+#[path = "reparse_source_tests.rs"]
+mod source;

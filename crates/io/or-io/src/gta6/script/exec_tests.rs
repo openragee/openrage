@@ -2781,6 +2781,62 @@ fn two_forms_that_differ_do_not_agree() {
     assert!(agree(&was, &is, Limits::DEFAULT, none).is_err());
 }
 
+#[test]
+fn a_field_of_an_object_read_as_a_local_differs_where_the_field_outlives_the_call_or_the_step() {
+    // A state machine's field the next step reads: the store to it is no local's assignment.
+    assert!(differ(
+        "store_u64(p0, 0x18, 5UL); return 0;",
+        "local_3 = 5; return 0;",
+    ));
+    // A callee handed the object may write the field: a read after the call is no read before it.
+    assert!(differ(
+        "local_3 = load_u64(p0, 0x18); Native.DEMO.USE(p0); v_000010_0 = load_u64(p0, 0x18); return v_000010_0;",
+        "local_3 = load_u64(p0, 0x18); Native.DEMO.USE(p0); return local_3;",
+    ));
+    // Within one step and with no call between, the field stored is the field read.
+    assert!(!differ(
+        "store_u64(p0, 0x18, 5UL); v_000010_0 = load_u64(p0, 0x18); return v_000010_0;",
+        "store_u64(p0, 0x18, 5UL); return 5;",
+    ));
+}
+
+#[test]
+fn a_capture_a_closure_reads_when_it_runs_keeps_every_store_in_its_place() {
+    // The closure object is handed on with its field: a later store is what a later call sees.
+    assert!(differ(
+        "store_u64(p1, 0x10, 1UL); Native.DEMO.USE(p1); store_u64(p1, 0x10, 2UL); Native.DEMO.USE(p1); return 0;",
+        "store_u64(p1, 0x10, 1UL); Native.DEMO.USE(p1); Native.DEMO.USE(p1); return 0;",
+    ));
+    // Nor is the last store the value the object had when it was bound.
+    assert!(differ(
+        "store_u64(p1, 0x10, 1UL); Native.DEMO.USE(p1); store_u64(p1, 0x10, 2UL); return 0;",
+        "store_u64(p1, 0x10, 2UL); Native.DEMO.USE(p1); return 0;",
+    ));
+}
+
+#[test]
+fn a_slot_split_by_live_range_differs_only_where_its_address_was_handed_out() {
+    // Two values one slot holds in turn are two variables where nothing but the code reaches it.
+    assert!(!differ(
+        "local_1 = p0; Native.DEMO.USE(local_1); local_1 = 7; Native.DEMO.USE(p1); return local_1;",
+        "local_1 = p0; Native.DEMO.USE(local_1); local_0 = 7; Native.DEMO.USE(p1); return local_0;",
+    ));
+    // A callee given the slot's address may reach it at a later call: the later value is the slot's.
+    assert!(differ(
+        "Native.DEMO.USE(Vm.Address(locals, 1)); local_1 = 7; Native.DEMO.USE(p1); return local_1;",
+        "Native.DEMO.USE(Vm.Address(locals, 1)); local_0 = 7; Native.DEMO.USE(p1); return local_0;",
+    ));
+}
+
+#[test]
+fn a_call_of_the_runtime_written_on_its_receiver_keeps_its_operands_in_order() {
+    // `a.M(b)` is `M(a, b)`: a spelling that took `b` for the receiver calls it otherwise.
+    assert!(differ(
+        "v_000010_0 = Builtins.System.Guid.op_Equality(p0, p1, p1, p0); return v_000010_0;",
+        "v_000010_0 = Builtins.System.Guid.op_Equality(p1, p0, p0, p1); return v_000010_0;",
+    ));
+}
+
 /// The blocks as a body of labels and jumps, one label a block, for reading them.
 fn flat(f: &cfg::Function) -> tree::Function {
     let label = |b: cfg::BlockId| tree::Label::Block(b as u32);

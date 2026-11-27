@@ -91,7 +91,8 @@ was.
   whole variables compared byte by byte are compared with `==`.
 - **Compiler expansions**: `await` reads a kick-off and the step function it calls as one
   method, `async Task<T>` where its state machine gives the task a value and `async void`
-  otherwise; `lambdas`, `delegates`, `events`, `foreach`, `using`, `lock`,
+  otherwise, and writes what is awaited in place, `await f(a)`, where the variable it was kept in
+  is used nowhere else; `lambdas`, `delegates`, `events`, `foreach`, `using`, `lock`,
   `compound`, `initialisers`, `null-ops`, `concat`, `ref-out`. A lambda whose body is one value or
   a few statements, bound once and outside every loop, is written as `=>` where it is bound; any
   other is written by its function's name. `events`, `concat`, `using` and `lock` read a call

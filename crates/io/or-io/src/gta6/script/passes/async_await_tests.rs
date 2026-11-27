@@ -920,3 +920,50 @@ fn a_function_that_is_no_kick_off_is_not_joined_to_what_it_calls() {
     let read = two(&CALLS.replace("func_000100(local_7);", "func_000500(local_7);"));
     assert_eq!(joined(read.clone(), &cx), read);
 }
+
+#[test]
+fn what_an_await_takes_its_awaiter_from_is_written_in_place_where_nothing_else_uses_it() {
+    let call = |name: &str, args: Vec<Expr>| Expr::Call {
+        callee: Callee::Intrinsic {
+            name: name.to_owned(),
+            ty: None,
+            wrapper: None,
+        },
+        args,
+        returns: Some(1),
+    };
+    let task = || call("demo_task", vec![Expr::Var(Var::Param(0))]);
+    let awaited = |from: Expr| {
+        let taking = Stmt::Assign {
+            target: Var::Local(4),
+            value: call("demo_awaiter", vec![from]),
+        };
+        tree::Stmt::Sugar(Box::new(Sugar::Await {
+            before: vec![taking],
+            ready: call("demo_ready", vec![Expr::Var(Var::Local(4))]),
+            suspend: Vec::new(),
+            resumed: Label::Block(0),
+            resume: Vec::new(),
+            after: Vec::new(),
+        }))
+    };
+    let kept = tree::Stmt::Simple(Stmt::Assign {
+        target: Var::Local(3),
+        value: task(),
+    });
+    let mut body = vec![kept.clone(), awaited(Expr::Var(Var::Local(3)))];
+    in_place(&mut body);
+    assert_eq!(body, vec![awaited(task())]);
+    // A variable read again keeps what it was given.
+    let again = tree::Stmt::Simple(Stmt::Eval(call("demo_use", vec![Expr::Var(Var::Local(3))])));
+    let mut body = vec![kept.clone(), awaited(Expr::Var(Var::Local(3))), again];
+    let held = body.clone();
+    in_place(&mut body);
+    assert_eq!(body, held);
+    // So does one whose assignment does not stand just before the await.
+    let between = tree::Stmt::Simple(Stmt::Eval(call("demo_use", vec![Expr::Var(Var::Param(1))])));
+    let mut body = vec![kept, between, awaited(Expr::Var(Var::Local(3)))];
+    let held = body.clone();
+    in_place(&mut body);
+    assert_eq!(body, held);
+}

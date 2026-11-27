@@ -320,6 +320,133 @@ pub fn run(f: &mut tree::Function, machine: Machine, _cx: &Context<'_>, _stats: 
     if let Some(kick) = &kick {
         kick::settle(&mut f.body, kick);
     }
+    in_place(&mut f.body);
+}
+
+/// How often each variable of a body is assigned and read, and which have their address taken.
+#[derive(Default)]
+struct Uses {
+    writes: BTreeMap<Var, u32>,
+    reads: BTreeMap<Var, u32>,
+    addressed: BTreeSet<Var>,
+}
+
+impl Uses {
+    fn of(body: &[tree::Stmt]) -> Uses {
+        let mut uses = Uses::default();
+        tree::each_simple(body, &mut |stmt| {
+            for target in stmt.targets() {
+                *uses.writes.entry(*target).or_default() += 1;
+            }
+        });
+        tree::each_expr(body, &mut |top| {
+            top.walk(&mut |e| match e {
+                Expr::Var(var) => *uses.reads.entry(*var).or_default() += 1,
+                Expr::AddrOf { var, .. } => {
+                    uses.addressed.insert(*var);
+                }
+                _ => {}
+            });
+        });
+        uses
+    }
+
+    /// Whether `var` is assigned once, read once and its address never taken.
+    fn once(&self, var: Var) -> bool {
+        let count = |held: &BTreeMap<Var, u32>| held.get(&var).copied().unwrap_or_default();
+        let framed = matches!(var, Var::Local(_) | Var::Value { .. } | Var::Stack { .. });
+        framed
+            && count(&self.writes) == 1
+            && count(&self.reads) == 1
+            && !self.addressed.contains(&var)
+    }
+}
+
+/// The variable an await takes its awaiter from, where the one statement before the await takes it as the first thing the call it makes evaluates.
+fn taken_from(before: &[Stmt]) -> Option<Var> {
+    let [Stmt::Assign { value, .. }] = before else {
+        return None;
+    };
+    let Expr::Call { args, .. } = unwide(value) else {
+        return None;
+    };
+    match unwide(args.first()?) {
+        Expr::Var(var) => Some(*var),
+        _ => None,
+    }
+}
+
+/// Puts in the place of the variable an await takes its awaiter from the value assigned to it in the statement just before, where nothing else reads or assigns the variable or takes its address: `await f(a)`.
+// ⚠ Nothing is worked out between the assignment and the taking, which evaluates the variable
+// first: the value is worked out where it was.
+fn in_place(body: &mut Vec<tree::Stmt>) {
+    let uses = Uses::of(body);
+    // An explicit stack: a body nests as deep as its listing does.
+    let mut work: Vec<&mut Vec<tree::Stmt>> = vec![body];
+    while let Some(list) = work.pop() {
+        let mut at = 1;
+        while at < list.len() {
+            let folds = match (&list[at - 1], &list[at]) {
+                (tree::Stmt::Simple(Stmt::Assign { target, .. }), tree::Stmt::Sugar(sugar)) => {
+                    match &**sugar {
+                        Sugar::Await { before, .. } => {
+                            taken_from(before).is_some_and(|var| var == *target && uses.once(var))
+                        }
+                        _ => false,
+                    }
+                }
+                _ => false,
+            };
+            if folds {
+                let tree::Stmt::Simple(Stmt::Assign { value, .. }) = list.remove(at - 1) else {
+                    continue;
+                };
+                if let tree::Stmt::Sugar(sugar) = &mut list[at - 1] {
+                    if let Sugar::Await { before, .. } = &mut **sugar {
+                        put_first(&mut before[0], value);
+                    }
+                }
+                continue;
+            }
+            at += 1;
+        }
+        for stmt in list.iter_mut() {
+            work.extend(tree::nested_mut(stmt));
+        }
+    }
+}
+
+/// Puts `value` in the place of the first argument of the call `taking` assigns, under the readings around it.
+fn put_first(taking: &mut Stmt, value: Expr) {
+    let Stmt::Assign { value: call, .. } = taking else {
+        return;
+    };
+    let mut call = call;
+    loop {
+        match call {
+            Expr::Sugar { e, .. }
+            | Expr::Cast {
+                to: Scalar::I64 | Scalar::U64,
+                e,
+            } => call = &mut **e,
+            Expr::Call { args, .. } => {
+                if let Some(first) = args.first_mut() {
+                    let mut place = first;
+                    while let Expr::Sugar { e, .. }
+                    | Expr::Cast {
+                        to: Scalar::I64 | Scalar::U64,
+                        e,
+                    } = place
+                    {
+                        place = &mut **e;
+                    }
+                    *place = value;
+                }
+                return;
+            }
+            _ => return,
+        }
+    }
 }
 
 /// A piece as it stands a second time: an await's resume point stays with the first, from which control runs on as it does from this one.

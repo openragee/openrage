@@ -52,7 +52,7 @@ const FIELDS: u32 = 0x18;
 const RUNNING: i32 = -1;
 const FINISHED: i32 = -2;
 /// The intrinsic whose call stands in the blocks for a piece taken out.
-const PIECE: &str = "state_machine_piece";
+pub(super) const PIECE: &str = "state_machine_piece";
 /// The intrinsic that copies a value into a new object, which a first suspension does to its machine.
 const BOX: &str = "box_at";
 /// The sweeps given to finding the copies of the machine's address; a chain of copies longer than this leaves the function as it is.

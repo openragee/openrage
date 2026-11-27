@@ -967,3 +967,185 @@ fn what_an_await_takes_its_awaiter_from_is_written_in_place_where_nothing_else_u
     in_place(&mut body);
     assert_eq!(body, held);
 }
+
+// ---- a kick-off as the passes leave it ------------------------------------------------------
+
+/// One program of three functions: the step function of `FRAME`, a function of two parameters, and a kick-off.
+const PROGRAM: &str = r#"[VmProgram(0x00000001U)]
+public static class Program_00000001
+{
+    [VmFunction(0x000100)]
+    public static void func_000100(VmValue arg0) // 0x000100
+    {
+        VmValue[] parameters = new VmValue[] { arg0 };
+        VmValue[] locals = new VmValue[8];
+        STEP
+        throw new global::System.InvalidOperationException("Unexpected bytecode fallthrough.");
+    }
+
+    [VmFunction(0x000600)]
+    public static void func_000600(VmValue arg0, VmValue arg1) // 0x000600
+    {
+        VmValue[] parameters = new VmValue[] { arg0, arg1 };
+        VmValue[] locals = new VmValue[0];
+        START
+        throw new global::System.InvalidOperationException("Unexpected bytecode fallthrough.");
+    }
+
+    [VmFunction(0x000700)]
+    public static VmValue func_000700(VmValue arg0, VmValue arg1) // 0x000700
+    {
+        VmValue[] parameters = new VmValue[] { arg0, arg1 };
+        VmValue[] locals = new VmValue[16];
+        KICK
+        throw new global::System.InvalidOperationException("Unexpected bytecode fallthrough.");
+    }
+
+    public static class Builtins
+    {
+        public static class Demo
+        {
+            public static class Task
+            {
+                public static VmValue Done(VmValue p0) => Vm.Builtin(7, 1, 1, p0)[0];
+                public static VmValue Finished() => Vm.Builtin(7, 2, 1)[0];
+                public static void Finish(VmValue p0) => Vm.Builtin(7, 3, 0, p0);
+                public static void Wait(VmValue p0, VmValue p1, VmValue p2, VmValue p3, VmValue p4) => Vm.Builtin(7, 4, 0, p0, p1, p2, p3, p4);
+            }
+        }
+    }
+    public static class Native
+    {
+        public static class DEMO
+        {
+            public static VmValue GET(VmValue p0) => Vm.Native(0x0000000000000001UL, 0x00000001U, 1, p0)[0];
+            public static void USE(VmValue p0) => Vm.Native(0x0000000000000003UL, 0x00000003U, 0, p0);
+        }
+    }
+}
+"#;
+
+/// A kick-off that hands its step function the address of its machine in place, as the passes leave it where no variable is left to hold it.
+const HANDS: &str = "
+        zero_bytes(byte_offset(Vm.Address(locals, 0), 0x8), 16);
+        store_ref(Vm.Address(locals, 0), 0x18, p1);
+        store_i32(Vm.Address(locals, 0), 0x0, (-1));
+        func_000100(Vm.Address(locals, 0));
+        return load_u64(byte_offset(Vm.Address(locals, 0), 0x8), 0x8);";
+
+/// A start function: it calls the step function with the machine's address, its second parameter, and does nothing else.
+const STARTS: &str = "
+        func_000100(p1);
+        return;";
+
+/// The call of the start function a kick-off makes in the place of its call of the step function: the builder's address, then the machine's.
+const START_CALL: &str =
+    "func_000600(byte_offset(Vm.Address(locals, 0), 0x8), Vm.Address(locals, 0));";
+
+/// The functions of `PROGRAM` with `start` and `kick` for bodies, each through the passes `options` asks.
+fn program(start: &str, kick: &str, options: Options) -> Vec<tree::Function> {
+    let text = PROGRAM
+        .replace("STEP", &in_line())
+        .replace("START", start)
+        .replace("KICK", kick);
+    let listing = Listing::open(&text).expect("the listing opens");
+    let names = Names::default();
+    let cx = Context::new(&names, Project::empty(), options);
+    let mut done = Vec::new();
+    for read in listing.functions() {
+        let read = read.expect("the function reads");
+        let finished = crate::gta6::script::function_in(read, &cx, &mut Stats::default());
+        done.push(finished.expect("the passes run"));
+    }
+    done
+}
+
+/// Writes a store as the fields pass writes one through a reference of known type: a group of the one store.
+fn grouped(stmt: &mut tree::Stmt) {
+    if !matches!(stmt, tree::Stmt::Simple(Stmt::Store { .. })) {
+        return;
+    }
+    let taken = std::mem::replace(stmt, tree::Stmt::Break);
+    if let tree::Stmt::Simple(store) = taken {
+        let owner = crate::gta6::script::ir::TypeKey(0x0123_4567_89AB_CDEF);
+        let kind = tree::Group::Field { owner };
+        let parts = vec![store];
+        *stmt = tree::Stmt::Sugar(Box::new(Sugar::Group { kind, parts }));
+    }
+}
+
+#[test]
+fn a_kick_off_that_hands_its_machine_in_place_is_joined_after_the_passes() {
+    let names = Names::default();
+    let options = Options::baseline().with(Pass::Await);
+    let cx = Context::new(&names, Project::empty(), options);
+    let through = HANDS.replace("func_000100(Vm.Address(locals, 0));", START_CALL);
+    for (kick, called) in [(HANDS.to_owned(), "func_000100"), (through, "func_000600")] {
+        let done = program(STARTS, &kick, options);
+        assert_eq!(awaits(&done[0].body), 1, "{:#?}", done[0].body);
+        let made = joins(&done, &cx);
+        assert_eq!(made.len(), 1, "not joined:\n{kick}");
+        assert_eq!((made[0].kick, made[0].step), (2, 0));
+        let shown = format!("{:?}", made[0].whole.body);
+        assert!(shown.contains("Await") && shown.contains("GET"), "{shown}");
+        assert!(!shown.contains(called), "{shown}");
+        assert!(handed_back(&made[0].whole.body).is_some(), "{shown}");
+        // Given back, the two are the functions as the passes left them, which the corpus check holds them to.
+        let (front, step) = made[0].parts().expect("the method goes back");
+        assert_eq!(step, done[0]);
+        assert_eq!(front, done[2]);
+        assert_eq!(joined(done.clone(), &cx)[2], made[0].whole);
+    }
+}
+
+#[test]
+fn a_store_made_one_of_a_type_is_read_as_the_store_it_holds() {
+    let names = Names::default();
+    let options = Options::baseline().with(Pass::Await);
+    let cx = Context::new(&names, Project::empty(), options);
+    let mut done = program(STARTS, HANDS, options);
+    // The kick-off's stores, and the step function's store of the running state where its await resumes.
+    done[2].body.iter_mut().for_each(grouped);
+    for stmt in &mut done[0].body {
+        if let tree::Stmt::Sugar(sugar) = stmt {
+            if let Sugar::Await { resume, .. } = &mut **sugar {
+                resume.iter_mut().for_each(grouped);
+            }
+        }
+    }
+    let grouped_in = |body: &[tree::Stmt]| format!("{body:?}").contains("Field");
+    assert!(grouped_in(&done[0].body) && grouped_in(&done[2].body));
+    let made = joins(&done, &cx);
+    assert_eq!(made.len(), 1, "{:#?}", done[2].body);
+    let (front, step) = made[0].parts().expect("the method goes back");
+    assert_eq!(front, done[2]);
+    assert_eq!(step, done[0]);
+}
+
+#[test]
+fn a_start_function_that_does_more_than_call_the_step_function_is_not_joined() {
+    let names = Names::default();
+    let options = Options::baseline().with(Pass::Await);
+    let cx = Context::new(&names, Project::empty(), options);
+    let kick = HANDS.replace("func_000100(Vm.Address(locals, 0));", START_CALL);
+    assert_eq!(joins(&program(STARTS, &kick, options), &cx).len(), 1);
+    // ⚠ What it does besides would go out of sight with the call.
+    let more = "Native.DEMO.USE(p0); func_000100(p1); return;";
+    assert!(joins(&program(more, &kick, options), &cx).is_empty());
+    // It hands the step function its first parameter, the builder's address, and not the machine's.
+    let first = "func_000100(p0); return;";
+    assert!(joins(&program(first, &kick, options), &cx).is_empty());
+    // Given first anything but the builder's address, it is no start function of the machine.
+    let other = kick.replace(START_CALL, "func_000600(p1, Vm.Address(locals, 0));");
+    assert!(joins(&program(STARTS, &other, options), &cx).is_empty());
+    // ⚠ The machine's local read as a value is not reached through its address alone.
+    let read = HANDS.replace(
+        "store_ref(Vm.Address(locals, 0), 0x18, p1);",
+        "store_ref(Vm.Address(locals, 0), 0x18, p1);
+        store_ref(Vm.Address(locals, 0), 0x20, local_0);",
+    );
+    assert!(joins(&program(STARTS, &read, options), &cx).is_empty());
+    // Switched off by its name, nothing is joined.
+    let off = Context::new(&names, Project::empty(), Options::baseline());
+    assert!(joins(&program(STARTS, &kick, options), &off).is_empty());
+}

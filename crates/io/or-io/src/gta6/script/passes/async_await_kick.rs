@@ -3,9 +3,9 @@
 //!
 //! Two forms. One runs the step function's code in line on a machine it holds in a local: `found`
 //! proves its start, and `untangle` then reads the rest as it reads a step function, through the
-//! variable that holds the machine's address. The other calls its step function: `joined` puts
-//! that function's body where the call stood. Either way the method reads as one body, with what
-//! makes the machine out of sight.
+//! variable that holds the machine's address. The other calls its step function, itself or
+//! through a start function that only calls it: `joined` puts that function's body where the call
+//! stood. Either way the method reads as one body, with what makes the machine out of sight.
 //!
 //! ⚠ A statement that copies a parameter into the machine stays in sight: the body reads the
 //! machine's field, and nothing here proves the field never changes after it.
@@ -18,14 +18,16 @@ use crate::gta6::script::tree::{self, Sugar};
 use crate::gta6::script::{Context, Pass};
 
 use super::{
-    constant, entry_read, field_read, framed, is_step, place, rooted, state_read, unwide, Base,
-    Held, Reach, BUILDER, FIELDS, RUNNING, TASK,
+    constant, entry_read, field_read, framed, is_step, place, quiet, rooted, state_read, unwide,
+    Base, Held, Reach, BUILDER, FIELDS, RUNNING, TASK,
 };
 
 /// The assignments of an entry looked at for the one that keeps the machine's address.
 const CANDIDATES: usize = 16;
 /// The statements a kick-off that calls its step function may hold; a longer body is none.
 const STUB: usize = 64;
+/// A parameter no function has: what a kick-off that hands its machine's address in place keeps that address in.
+const UNHELD: Var = Var::Param(u32::MAX);
 
 /// A kick-off that runs its step function's code in line, as `found` proved its start.
 pub(super) struct Kick {
@@ -402,15 +404,56 @@ pub(super) fn settle(body: &mut Vec<tree::Stmt>, kick: &Settle) {
 
 /// A kick-off that calls its step function, as `stub` read it.
 struct Stub {
-    /// The offset of the step function it calls.
-    step: u32,
+    /// The offset of the function it calls: the step function, or a start function where `start` says so.
+    called: u32,
+    start: bool,
     storage: Var,
     /// One flag for each statement before the call: whether the compiler alone wrote it.
     hide: Vec<bool>,
     leave: Option<Expr>,
 }
 
+/// The simple statement `stmt` is: itself, or the one statement a group of one holds, which is what the group lowers to.
+fn simple_of(stmt: &tree::Stmt) -> Option<&Stmt> {
+    match stmt {
+        tree::Stmt::Simple(simple) => Some(simple),
+        tree::Stmt::Sugar(sugar) => match &**sugar {
+            Sugar::Group { parts, .. } => match parts.as_slice() {
+                [only] => Some(only),
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// What the variables assigned by `stmts` hold of the machine where the last of them has run.
+fn held_after<'a>(stmts: impl Iterator<Item = &'a Stmt>, reach: Reach) -> Held {
+    let mut held = Held::of(reach);
+    for stmt in stmts {
+        if let Stmt::Assign { target, value } = stmt {
+            match rooted(value, &held) {
+                Some(root) => {
+                    held.vars.insert(*target, root);
+                }
+                None => {
+                    held.vars.remove(target);
+                }
+            }
+        } else {
+            for target in stmt.targets() {
+                held.vars.remove(target);
+            }
+        }
+    }
+    held
+}
+
 /// The kick-off a finished function is: statements that make a machine in a local, one call that is handed its address, and the builder's task returned.
+// The call is of the step function, given the address alone, or of a start function, given the
+// builder's address and then the machine's. The address is a variable given it once, or, where
+// the passes put it in place, the address of the local itself.
 fn stub(f: &tree::Function) -> Option<Stub> {
     if f.head.incomplete.is_some() {
         return None;
@@ -424,44 +467,49 @@ fn stub(f: &tree::Function) -> Option<Stub> {
     }
     let mut simples: Vec<&Stmt> = Vec::with_capacity(rest.len());
     for stmt in rest {
-        match stmt {
-            tree::Stmt::Simple(simple) => simples.push(simple),
-            _ => return None,
-        }
+        simples.push(simple_of(stmt)?);
     }
     let (call, before) = simples.split_last()?;
     let Stmt::Eval(called) = call else {
         return None;
     };
     let Expr::Call {
-        callee: Callee::Local { at: step, .. },
+        callee: Callee::Local { at, .. },
         args,
         ..
     } = unwide(called)
     else {
         return None;
     };
-    let [handed] = args.as_slice() else {
-        return None;
+    let (builder, handed) = match args.as_slice() {
+        [handed] => (None, handed),
+        [builder, handed] => (Some(builder), handed),
+        _ => return None,
     };
-    let Expr::Var(pointer @ Var::Local(_)) = unwide(handed) else {
-        return None;
+    let (pointer, storage, made) = match unwide(handed) {
+        Expr::Var(pointer @ Var::Local(_)) => {
+            let keeps = |stmt: &&Stmt| match stmt {
+                Stmt::Assign {
+                    target,
+                    value:
+                        Expr::AddrOf {
+                            var: storage @ Var::Local(_),
+                            cell: 0,
+                        },
+                } if target == pointer && storage != pointer => Some(*storage),
+                _ => None,
+            };
+            let made = before.iter().position(|stmt| keeps(stmt).is_some())?;
+            (*pointer, keeps(&before[made])?, made)
+        }
+        Expr::AddrOf {
+            var: storage @ Var::Local(_),
+            cell: 0,
+        } => (UNHELD, *storage, before.len()),
+        _ => return None,
     };
-    let keeps = |stmt: &&Stmt| match stmt {
-        Stmt::Assign {
-            target,
-            value:
-                Expr::AddrOf {
-                    var: storage @ Var::Local(_),
-                    cell: 0,
-                },
-        } if target == pointer && storage != pointer => Some(*storage),
-        _ => None,
-    };
-    let made = before.iter().position(|stmt| keeps(stmt).is_some())?;
-    let storage = keeps(&before[made])?;
     let reach = Reach {
-        pointer: *pointer,
+        pointer,
         storage: Some(storage),
         state: None,
     };
@@ -471,24 +519,64 @@ fn stub(f: &tree::Function) -> Option<Stub> {
         (Some(task), Returns::Cell) if field_read(task, &none) == Some(TASK) => {}
         _ => return None,
     }
-    let early = before[..made].iter().any(|stmt| reads(stmt, *pointer));
-    if early || !kept(before.iter().copied(), std::iter::empty(), reach) {
+    // ⚠ A start function is joined only where it is given the builder's address: whatever it
+    // does with that, the call of it is then one of the machine's own.
+    if let Some(builder) = builder {
+        let held = held_after(before.iter().copied(), reach);
+        let given = quiet(builder) && rooted(builder, &held) == Some((Base::Machine, BUILDER));
+        if !given {
+            return None;
+        }
+    }
+    let early = before[..made].iter().any(|stmt| reads(stmt, pointer));
+    // An address handed in place is kept in no variable: the reads `prelude` allows are then the
+    // only ones of the machine's local, and each is through its address.
+    let alone = pointer == UNHELD || kept(before.iter().copied(), std::iter::empty(), reach);
+    if early || !alone {
         return None;
     }
     let hide = prelude(before.iter().copied(), reach)?;
     Some(Stub {
-        step: *step,
+        called: *at,
+        start: builder.is_some(),
         storage,
         hide,
         leave,
     })
 }
 
+/// The step function a start function calls: one of two parameters and no result whose body only calls a function of its program with the second, the machine's address.
+fn started(f: &tree::Function) -> Option<u32> {
+    let head = &f.head;
+    if head.params != 2 || head.returns != Returns::Void || head.incomplete.is_some() {
+        return None;
+    }
+    let only = match f.body.as_slice() {
+        [only] | [only, tree::Stmt::Return(None)] => only,
+        _ => return None,
+    };
+    let Stmt::Eval(called) = simple_of(only)? else {
+        return None;
+    };
+    let Expr::Call {
+        callee: Callee::Local { at, .. },
+        args,
+        ..
+    } = unwide(called)
+    else {
+        return None;
+    };
+    let [handed] = args.as_slice() else {
+        return None;
+    };
+    (*unwide(handed) == Expr::Var(Var::Param(1))).then_some(*at)
+}
+
 /// Whether a body is a step function's as `untangle` proved it on its one parameter: an await of it sets the state to running through that parameter.
 fn steps(body: &[tree::Stmt]) -> bool {
     let none = Held::of(Reach::STEP);
-    let runs = |stmt: &tree::Stmt| match stmt {
-        tree::Stmt::Simple(Stmt::Store {
+    let runs = |stmt: &tree::Stmt| match simple_of(stmt) {
+        Some(Stmt::Store {
             kind: StoreKind::I32,
             addr,
             offset,
@@ -828,7 +916,15 @@ pub fn joins(functions: &[tree::Function], cx: &Context<'_>) -> Vec<Join> {
         let Some(stub) = stub(f) else {
             continue;
         };
-        let step = by_place.get(&(f.head.program, stub.step)).copied();
+        let program = f.head.program;
+        let called = by_place.get(&(program, stub.called)).copied();
+        let step = match stub.start {
+            false => called,
+            true => called
+                .filter(|start| *start != index)
+                .and_then(|start| started(&functions[start]))
+                .and_then(|at| by_place.get(&(program, at)).copied()),
+        };
         if let Some(step) = step.filter(|step| *step != index) {
             *callers.entry(step).or_default() += 1;
             read.push((index, step, stub));

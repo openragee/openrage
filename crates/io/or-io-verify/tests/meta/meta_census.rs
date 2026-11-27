@@ -266,3 +266,43 @@ fn every_staged_tree_holds_only_members_its_own_type_table_states() {
     );
     eprintln!("{judged} staged documents judged, none holds a member its own table lacks");
 }
+
+/// What `world_types::first_member_missing` rests on: a world root whose save fails while a record under it lacks such
+/// a member is saved again off the layout it arrived with, as one that holds a copy, so a tree as it was read must
+/// never lack one.
+#[test]
+fn every_staged_tree_lacks_no_member_its_own_type_table_states() {
+    let corpus = Corpus::load();
+    require_corpus!(corpus);
+    let lib = support::schema();
+    let (mut judged, mut lacked) = (0usize, Vec::new());
+    for fixture in corpus.iter() {
+        let mut diags = Diagnostics::lenient();
+        let Ok((root, layout)) =
+            or_io::meta::binary::parse_meta_binary_full(lib, &fixture.bytes, &mut diags)
+        else {
+            continue;
+        };
+        judged += 1;
+        let found = or_io::meta::typed::world_types::first_member_missing(&layout, &root);
+        if let Some((class, member)) = found {
+            lacked.push(format!("{}: `{class}` lacks {member:#010X}", fixture.name));
+        }
+    }
+    assert!(
+        judged > 0,
+        "no staged document was read, so nothing was judged"
+    );
+    assert!(
+        lacked.is_empty(),
+        "{} of {judged} staged documents lack a member their own table states:\n  {}",
+        lacked.len(),
+        lacked
+            .iter()
+            .take(15)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n  ")
+    );
+    eprintln!("{judged} staged documents judged, none lacks a member its own table states");
+}

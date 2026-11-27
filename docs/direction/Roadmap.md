@@ -10091,8 +10091,8 @@ rules of `or_maps::interior` stand beside `interior-broken`
 is the outside in 541 of 541 interiors of Legacy and 556 of 556 of Enhanced; no rule that warns
 fires; and 45 of the 48 type files sampled on each took a room with a portal and were put back, the
 other 3 holding no portal. With the staged schema snapshot installed, the 48
-of the Enhanced sample were each refused unchanged, which `or-io` has mended, on interiors built
-by hand ([R70h](#r70h-one-vocabulary-of-world-edits)). Left: every screen,
+of the Enhanced sample were each refused unchanged, which `or-io` has mended
+([R70h](#r70h-one-vocabulary-of-world-edits)). Left: every screen,
 with the builder, which waits for ruling 2; the entity set switches and their script lines; the
 first edit of an interior of the game; the sound passages; and the rules of the brief not built.
 

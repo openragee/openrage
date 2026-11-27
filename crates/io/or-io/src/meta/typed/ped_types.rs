@@ -17,7 +17,7 @@ use std::sync::OnceLock;
 
 use crate::meta::binary::rbm::schema::{RbmClass, RbmEnum, RbmModel};
 use crate::meta::binary::synth::name_hash;
-use crate::meta::schema::{parse_psc, SchemaItem, SchemaLibrary};
+use crate::meta::schema::{parse_psc, Field, FieldType, SchemaItem, SchemaLibrary, StructDef};
 
 pub const PED_TYPES: &str = r#"<ParserSchema>
   <enumdef type="eAnchorPoints">
@@ -264,6 +264,47 @@ pub fn library(base: &'static SchemaLibrary) -> Cow<'static, SchemaLibrary> {
         Some(_) => Cow::Borrowed(INSTALLED.get_or_init(merged)),
         None => Cow::Owned(merged()),
     }
+}
+
+/// Why a document whose own type table is `tables` is not saved off the layout it arrived with: the first class of the
+/// families the table states with a member its declaration lacks, or without one it has; `None` where there is none.
+pub(super) fn parts_from_its_declaration(tables: &SchemaLibrary) -> Option<String> {
+    // ⚠ By the hash of its name, never by the name: a table gives a class the name the index of names has for its hash,
+    // which with no snapshot installed is `hash_XXXXXXXX` for every class of a variation but its root.
+    static DECLARED: OnceLock<HashMap<u32, &'static str>> = OnceLock::new();
+    let declared = DECLARED.get_or_init(|| {
+        let named = |name: &'static String| (name_hash(name), name.as_str());
+        family().structs.keys().map(named).collect()
+    });
+    let holds = |members: &[&Field], member: &Field| {
+        let key = name_hash(&member.name);
+        members.iter().any(|held| name_hash(&held.name) == key)
+    };
+    // ⚠ In the order of the hashes: a map of classes is walked in no order, and the sentence is the same every time.
+    let mut stated: Vec<(u32, &StructDef)> = (tables.structs.values())
+        .map(|class| (name_hash(&class.name), class))
+        .collect();
+    stated.sort_by_key(|(key, _)| *key);
+    stated.into_iter().find_map(|(key, stated)| {
+        let class = *declared.get(&key)?;
+        // The bytes of a class no member names are no member a table states.
+        let named = |field: &&Field| !matches!(field.ty, FieldType::Pad(_));
+        let declared: Vec<&Field> = (family().resolve(class)?.fields.into_iter())
+            .filter(named)
+            .collect();
+        let own: Vec<&Field> = stated.fields.iter().collect();
+        let laid_out = "an edit that changes the file's shape is laid out by the declaration";
+        if let Some(member) = own.iter().find(|member| !holds(&declared, member)) {
+            let member = &member.name;
+            return Some(format!(
+                "this file's own type table states `{class}` with `{member}`, a member the `{class}` declared here lacks: {laid_out}, and the save would drop `{member}` from every `{class}`; only an edit that keeps the shape the file arrived with saves here"
+            ));
+        }
+        let member = &declared.iter().find(|member| !holds(&own, member))?.name;
+        Some(format!(
+            "this file's own type table states `{class}` without `{member}`, a member the `{class}` declared here has: {laid_out}, and no `{class}` of this file holds a `{member}` to write; only an edit that keeps the shape the file arrived with saves here"
+        ))
+    })
 }
 
 /// A model that holds only the signature of every class and enum the family has, and of `arrival`'s own.

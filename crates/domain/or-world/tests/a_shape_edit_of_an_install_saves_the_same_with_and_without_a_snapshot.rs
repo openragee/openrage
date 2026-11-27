@@ -1,6 +1,8 @@
-//! One type file in fifty of an install takes an archetype added by copy and removed again, and one map in fifty an
-//! entity removed and put back, each saved, read back and saved again, in a process that installed the staged schema
-//! snapshot as the app installs it and in one that installed none, and the two processes write the same bytes.
+//! One type file in fifty of an install takes an archetype added by copy and removed again, one map in fifty an
+//! entity removed and put back, the first interior of one type file in ten a room, a portal and an attachment added
+//! by copy and removed again, and one `.ymt` in twenty, where it is a ped variation, a drawable added by copy, one
+//! built there, and both removed again, each saved, read back and saved again, in a process that installed the staged
+//! schema snapshot as the app installs it and in one that installed none, and the two processes write the same bytes.
 //!
 //! The install is `OPENRAGE_GAME_ROOT` (`;`-separated roots), opened read only. The process with no snapshot is this
 //! binary run again as a child: an installed snapshot is state of the whole process and is never removed.
@@ -25,7 +27,11 @@ use or_io::container::RpfCryptoProvider;
 use or_io::decl::File;
 use or_io::meta::binary::synth::name_hash;
 use or_io::meta::binary::type_tables;
-use or_io::meta::{CMapData, CMapTypes, MetaDocument, SchemaLibrary};
+use or_io::meta::typed::{ped_types, world_types};
+use or_io::meta::{
+    CBaseArchetypeDefAny, CMapData, CMapTypes, CPVDrawblData, CPVTextureData, CPedVariationInfo,
+    FieldType, MetaDocument, SchemaLibrary,
+};
 use or_test_support::{game_roots, skip_install, GAME_ROOT_ENV, SCHEMA_ENV};
 use or_title::game::Game;
 
@@ -34,8 +40,12 @@ const CHILD_ENV: &str = "OPENRAGE_SHAPE_EDITS_CHILD";
 const BEGIN: &str = "\u{1e}measure begins\u{1e}";
 const END: &str = "\u{1e}measure ends\u{1e}";
 
-/// One file in this many of each kind is edited.
+/// One file in this many of its kind takes an archetype or loses an entity.
 const ONE_IN: usize = 50;
+/// One type file in this many is looked into for an interior to edit: about one type file in five holds one.
+const ONE_IN_FOR_AN_INTERIOR: usize = 10;
+/// One `.ymt` in this many is looked into for a ped variation to edit.
+const ONE_IN_FOR_A_PED: usize = 20;
 
 fn crypto_for(root: &Path) -> Option<Arc<dyn RpfCryptoProvider>> {
     let exe = Game::detect_from_root(root).find_executable(root)?;
@@ -65,8 +75,15 @@ enum Edited {
 /// An edit, or the step that failed with its sentence.
 type Outcome = Result<Edited, String>;
 
-/// An edit of a file's bytes: its name, the class of the record it copies or takes, and what makes it.
-type Edit = (&'static str, &'static str, fn(&[u8]) -> Outcome);
+/// An edit of a file's bytes: its name, the class of the record it copies or takes, which kind of file takes it (a
+/// type file is 0, a map 1 and a `.ymt` 2), one file in how many is sampled, and what makes it.
+type Edit = (
+    &'static str,
+    &'static str,
+    usize,
+    usize,
+    fn(&[u8]) -> Outcome,
+);
 
 /// What a record whose class the file does not state was refused for, where `refused` is such a refusal.
 fn for_a_class_the_file_lacks(refused: &or_io::Error) -> Option<&'static str> {
@@ -169,6 +186,182 @@ fn remove_and_put_back_an_entity(bytes: &[u8]) -> Outcome {
     Ok(Edited::Saved(vec![written(&without), written(&with)]))
 }
 
+/// The first interior of `types` that holds a room, and where it is.
+fn first_interior(types: &CMapTypes) -> Option<usize> {
+    types.archetypes.iter().position(
+        |a| matches!(a, CBaseArchetypeDefAny::CMloArchetypeDef(mlo) if !mlo.rooms.is_empty()),
+    )
+}
+
+/// The first interior that holds a room takes a copy of its first room, of its first portal where it holds one, and
+/// an attachment of its first entity to the copied room where it holds one; then each is taken out again.
+fn add_and_remove_a_room_a_portal_and_an_attachment(bytes: &[u8]) -> Outcome {
+    let types = step("opens", CMapTypes::from_bytes(bytes))?;
+    let Some(at) = first_interior(&types) else {
+        return Ok(Edited::Nothing);
+    };
+    let untouched = step("the file as read saves", types.to_bytes())?;
+    let mut added = types.clone();
+    let CBaseArchetypeDefAny::CMloArchetypeDef(mlo) = &mut added.archetypes[at] else {
+        return Err("the interior found is no interior".into());
+    };
+    let (rooms, portals) = (mlo.rooms.len(), mlo.portals.len());
+    let mut room = mlo.rooms[0].clone();
+    // ⚠ An attachment names an entity by its place in the interior, so one is added only where an entity stands there.
+    if !mlo.entities.is_empty() && !room.attached_objects.contains(&0) {
+        room.attached_objects.push(0);
+    }
+    mlo.rooms.push(room);
+    if let Some(portal) = mlo.portals.first().cloned() {
+        mlo.portals.push(portal);
+    }
+    let with = step("the copies save", added.to_bytes())?;
+    let back = step("the copies read back", CMapTypes::from_bytes(&with))?;
+    if back != added {
+        return Err("the copies read back as another value".into());
+    }
+    if step("the copies save again", back.to_bytes())? != with {
+        return Err("the copies are not at their fixed point".into());
+    }
+    // Each copy taken out before the file is read again, as an undo does, the save is the one of the file as read.
+    let take_out = |edited: &mut CMapTypes| {
+        if let CBaseArchetypeDefAny::CMloArchetypeDef(mlo) = &mut edited.archetypes[at] {
+            mlo.rooms.truncate(rooms);
+            mlo.portals.truncate(portals);
+        }
+    };
+    take_out(&mut added);
+    if step("the copies taken back save", added.to_bytes())? != untouched {
+        return Err("the copies taken back do not save the bytes of the file as read".into());
+    }
+    let mut removed = back;
+    take_out(&mut removed);
+    let without = step("the removal saves", removed.to_bytes())?;
+    let back = step("the removal reads back", CMapTypes::from_bytes(&without))?;
+    if back != types {
+        return Err("the removal reads back as another value than the file read".into());
+    }
+    if step("the removal saves again", back.to_bytes())? != without {
+        return Err("the removal is not at its fixed point".into());
+    }
+    Ok(Edited::Saved(vec![written(&with), written(&without)]))
+}
+
+/// The drawables of the component slot `slot` of a ped variation.
+fn drawables(info: &mut CPedVariationInfo, slot: usize) -> &mut Vec<CPVDrawblData> {
+    &mut info.a_component_data3[slot].a_drawbl_data3
+}
+
+/// The first component slot of a ped variation that holds a drawable takes a copy of its first drawable, then a
+/// drawable built here; then both are taken out again.
+fn add_and_remove_a_drawable(bytes: &[u8]) -> Outcome {
+    // ⚠ A `.ymt` is a ped variation only where its root says so: a scenario region or a creature's tags is no file to edit.
+    let root = MetaDocument::parse(&SchemaLibrary::default(), bytes.to_vec())
+        .map(|doc| name_hash(&doc.instance.type_name));
+    if root.ok() != Some(name_hash("CPedVariationInfo")) {
+        return Ok(Edited::Nothing);
+    }
+    let info = step("opens", CPedVariationInfo::from_bytes(bytes))?;
+    let holds = |c: &or_io::meta::CPVComponentData| !c.a_drawbl_data3.is_empty();
+    let Some(slot) = info.a_component_data3.iter().position(holds) else {
+        return Ok(Edited::Nothing);
+    };
+    let held = info.a_component_data3[slot].a_drawbl_data3.len();
+    let untouched = step("the file as read saves", info.to_bytes())?;
+    let mut added = info.clone();
+    let copy = drawables(&mut added, slot)[0].clone();
+    drawables(&mut added, slot).push(copy.clone());
+    added.restate_counts();
+    let with = step("the copy saves", added.to_bytes())?;
+    // The copy taken out before the file is read again, as an undo does, the save is the one of the file as read.
+    drawables(&mut added, slot).pop();
+    added.restate_counts();
+    if step("the copy taken back saves", added.to_bytes())? != untouched {
+        return Err("the copy taken back does not save the bytes of the file as read".into());
+    }
+    drawables(&mut added, slot).push(copy);
+    added.restate_counts();
+    let back = step("the copy reads back", CPedVariationInfo::from_bytes(&with))?;
+    if back != added {
+        return Err("the copy reads back as another value".into());
+    }
+    if step("the copy saves again", back.to_bytes())? != with {
+        return Err("the copy is not at its fixed point".into());
+    }
+    // ⚠ A record built here holds no tree: it is conformed to a class, and the root leaves its layout for a synthesised one.
+    let mut built = back;
+    let mut texture = CPVTextureData::default();
+    texture.distribution = 255;
+    let mut drawable = CPVDrawblData::default();
+    drawable.a_tex_data.push(texture);
+    drawables(&mut built, slot).push(drawable);
+    built.restate_counts();
+    let with_built = step("the drawable built here saves", built.to_bytes())?;
+    let back = step(
+        "the drawable built here reads back",
+        CPedVariationInfo::from_bytes(&with_built),
+    )?;
+    if back != built {
+        return Err("the drawable built here reads back as another value".into());
+    }
+    if step("the drawable built here saves again", back.to_bytes())? != with_built {
+        return Err("the drawable built here is not at its fixed point".into());
+    }
+    let mut removed = back;
+    drawables(&mut removed, slot).truncate(held);
+    removed.restate_counts();
+    let without = step("the removal saves", removed.to_bytes())?;
+    let back = step(
+        "the removal reads back",
+        CPedVariationInfo::from_bytes(&without),
+    )?;
+    if back != info {
+        return Err("the removal reads back as another value than the file read".into());
+    }
+    if step("the removal saves again", back.to_bytes())? != without {
+        return Err("the removal is not at its fixed point".into());
+    }
+    Ok(Edited::Saved(vec![
+        written(&with),
+        written(&with_built),
+        written(&without),
+    ]))
+}
+
+/// Whether the type table of `bytes` states a class the ped family declares in code with another set of members than
+/// the declaration, which is what a save that leaves its layout lays the class out by; `None` where it states none.
+fn states_a_ped_class_otherwise_than_declared(bytes: &[u8]) -> Option<bool> {
+    let members = |class: &or_io::meta::StructDef| {
+        // The bytes of a class no member names are no member.
+        let named = (class.fields.iter()).filter(|f| !matches!(f.ty, FieldType::Pad(_)));
+        let mut members: Vec<u32> = named.map(|f| name_hash(&f.name)).collect();
+        members.sort_unstable();
+        members
+    };
+    let doc = MetaDocument::parse(&SchemaLibrary::default(), bytes.to_vec()).ok()?;
+    let tables = type_tables::of_layout(doc.layout.as_ref()?);
+    let declared = ped_types::declared();
+    let mut apart = None;
+    for (name, stated) in &tables.structs {
+        let key = name_hash(name);
+        let found = (declared.structs.iter()).find(|(declared, _)| name_hash(declared) == key);
+        if let Some((_, declared)) = found {
+            apart = Some(apart.unwrap_or(false) || members(stated) != members(declared));
+        }
+    }
+    apart
+}
+
+/// What `world_types::first_member_missing` rests on, said of a file of the install: a tree as it was read lacks no
+/// member its own table states, so a save that fails is made again as one of a copy only where a copy is held.
+fn lacks_a_member_as_read(bytes: &[u8]) -> Option<String> {
+    let doc = MetaDocument::parse(&SchemaLibrary::default(), bytes.to_vec()).ok()?;
+    let (class, member) = world_types::first_member_missing(doc.layout.as_ref()?, &doc.instance)?;
+    Some(format!(
+        "the file as read lacks {member:#010X}, a member its own table states for `{class}`"
+    ))
+}
+
 /// Whether the type table of `bytes` states `class` with another set of members than the installed snapshot declares
 /// for it; `None` where the table states no such class or the snapshot declares none.
 fn states_other_members_than_the_snapshot(bytes: &[u8], class: &str) -> Option<bool> {
@@ -190,9 +383,22 @@ fn states_other_members_than_the_snapshot(bytes: &[u8], class: &str) -> Option<b
     Some(members(&stated) != members(&declared))
 }
 
-/// How many sampled files of an install state the class an edit copies or takes, and how many of those state it with
-/// another set of members than the installed snapshot declares, by install and edit.
-type Differing = BTreeMap<(String, String), (usize, usize)>;
+/// What the type table of a sampled file is held against: which files are counted, and what a counted file that
+/// differs does.
+type Against = (&'static str, &'static str);
+
+const THE_SNAPSHOT: Against = (
+    "states the class of the record",
+    "state it with another set of members than the staged snapshot declares",
+);
+const THE_DECLARATION: Against = (
+    "states a class the ped family declares in code",
+    "state one with another set of members than its declaration",
+);
+
+/// How many sampled files of an install are counted against a source of classes, and how many of those differ from
+/// it, by install, edit and source.
+type Differing = BTreeMap<(String, String, Against), (usize, usize)>;
 
 /// One line for each sampled file of each install: the install, the edit, the file and what the edit came to.
 fn measure() -> Option<(Vec<String>, Differing)> {
@@ -211,37 +417,66 @@ fn measure() -> Option<(Vec<String>, Differing)> {
             continue;
         };
         mounted += 1;
-        let mut files: [BTreeMap<String, String>; 2] = Default::default();
+        let mut files: [BTreeMap<String, String>; 3] = Default::default();
         game.for_each_file(|logical, _container, leaf| {
             let leaf = leaf.to_ascii_lowercase();
-            let kind = match (leaf.ends_with(".ytyp"), leaf.ends_with(".ymap")) {
-                (true, _) => 0,
-                (_, true) => 1,
-                _ => return,
+            let kinds = [".ytyp", ".ymap", ".ymt"];
+            let Some(kind) = kinds.iter().position(|ext| leaf.ends_with(ext)) else {
+                return;
             };
             files[kind].insert(logical.to_ascii_lowercase(), logical.to_string());
         });
-        let edits: [Edit; 2] = [
+        let edits: [Edit; 4] = [
             (
                 "archetype",
                 "CBaseArchetypeDef",
+                0,
+                ONE_IN,
                 add_and_remove_an_archetype,
             ),
-            ("entity", "CEntityDef", remove_and_put_back_an_entity),
+            (
+                "entity",
+                "CEntityDef",
+                1,
+                ONE_IN,
+                remove_and_put_back_an_entity,
+            ),
+            (
+                "interior",
+                "CMloRoomDef",
+                0,
+                ONE_IN_FOR_AN_INTERIOR,
+                add_and_remove_a_room_a_portal_and_an_attachment,
+            ),
+            (
+                "drawable",
+                "CPVDrawblData",
+                2,
+                ONE_IN_FOR_A_PED,
+                add_and_remove_a_drawable,
+            ),
         ];
-        for (of_kind, (edit, class, apply)) in files.iter().zip(edits) {
-            for path in of_kind.values().step_by(ONE_IN) {
+        for (edit, class, kind, one_in, apply) in edits {
+            for path in files[kind].values().step_by(one_in) {
                 let bytes = game.vfs.open(path);
                 let other = (bytes.as_deref())
                     .and_then(|bytes| states_other_members_than_the_snapshot(bytes, class));
-                if let Some(other) = other {
-                    let key = (root.display().to_string(), edit.to_string());
-                    let (stating, differ) = differing.entry(key).or_default();
-                    *stating += 1;
-                    *differ += usize::from(other);
+                let apart = (bytes.as_deref())
+                    .filter(|_| edit == "drawable")
+                    .and_then(states_a_ped_class_otherwise_than_declared);
+                for (other, against) in [(other, THE_SNAPSHOT), (apart, THE_DECLARATION)] {
+                    if let Some(other) = other {
+                        let key = (root.display().to_string(), edit.to_string(), against);
+                        let (stating, differ) = differing.entry(key).or_default();
+                        *stating += 1;
+                        *differ += usize::from(other);
+                    }
                 }
                 let outcome = match bytes {
-                    Some(bytes) => apply(&bytes),
+                    Some(bytes) => match lacks_a_member_as_read(&bytes) {
+                        Some(lacks) => Err(lacks),
+                        None => apply(&bytes),
+                    },
                     None => Err("does not open".into()),
                 };
                 let outcome = match outcome {
@@ -353,16 +588,14 @@ fn report(how: &str, lines: &[String]) -> Vec<String> {
         for (reason, files) in reasons {
             eprintln!("    {files} files: {reason}");
         }
-        // A sample that edited nothing would pass with no edit made.
-        assert!(
-            edited >= 10,
-            "{how}: {install}: {edit}: {edited} files edited"
-        );
-        assert!(
-            of.saved >= 10,
-            "{how}: {install}: {edit}: {} saved",
-            of.saved
-        );
+        // A sample that edited nothing would pass with no edit made. ⚠ Said with the failures at the end, and never by
+        // an assertion here: the tallies of the edits after this one are what tells one cause from another.
+        if edited < 10 || of.saved < 10 {
+            failed.push(format!(
+                "{how}: {install}: {edit}: {edited} files edited and {} saved, where a sample edits and saves ten at least",
+                of.saved
+            ));
+        }
         failed.extend(of.failed);
     }
     failed
@@ -370,10 +603,9 @@ fn report(how: &str, lines: &[String]) -> Vec<String> {
 
 /// ⚠ The install is opened read only and nothing here writes into one.
 #[test]
-fn a_sample_of_an_installs_type_files_and_maps_takes_a_shape_edit_with_and_without_the_staged_snapshot(
-) {
+fn a_sample_of_an_installs_typed_files_takes_a_shape_edit_with_and_without_the_staged_snapshot() {
     const WHAT: &str =
-        "a_sample_of_an_installs_type_files_and_maps_takes_a_shape_edit_with_and_without_the_staged_snapshot";
+        "a_sample_of_an_installs_typed_files_takes_a_shape_edit_with_and_without_the_staged_snapshot";
     if std::env::var_os(CHILD_ENV).is_some() {
         return;
     }
@@ -399,9 +631,9 @@ fn a_sample_of_an_installs_type_files_and_maps_takes_a_shape_edit_with_and_witho
         failed.extend(report("with the staged snapshot", &with));
         // What the run with the snapshot proves of an install: nothing more than the run with none, where no sampled
         // file states a class otherwise than the snapshot declares it.
-        for ((install, edit), (stating, differ)) in &differing {
+        for ((install, edit, (counted, differs)), (stating, differ)) in &differing {
             eprintln!(
-                "{install}: {edit}: of {stating} sampled files whose type table states the class of the record, {differ} state it with another set of members than the staged snapshot declares"
+                "{install}: {edit}: of {stating} sampled files whose type table {counted}, {differ} {differs}"
             );
         }
         assert_eq!(with.len(), without.len(), "the same sample both times");

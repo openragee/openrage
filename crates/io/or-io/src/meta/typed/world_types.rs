@@ -201,6 +201,15 @@ fn first_in<'a, T>(
     judge(root).or_else(|| root.fields.iter().find_map(|(_, v)| in_value(v, judge)))
 }
 
+/// Whether the classes of `layout` are judged here: a GTA V type table, never an RBF's tags or a GTA VI document's tables.
+pub(super) fn judges(layout: &MetaLayout) -> bool {
+    match &layout.container {
+        ContainerLayout::Pso(pso) => !pso.is_gta6(),
+        ContainerLayout::Rbm(_) => true,
+        ContainerLayout::Rbf(_) => false,
+    }
+}
+
 /// The first class `root` holds that the type table `layout` was read with does not state.
 pub fn first_class_unstated<'a>(layout: &MetaLayout, root: &'a MetaInstance) -> Option<&'a str> {
     // ⚠ A tree as it was read names none: a reader builds each record from an entry of that table. A GTA VI document is

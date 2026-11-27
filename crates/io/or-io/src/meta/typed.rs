@@ -1347,8 +1347,8 @@ fn types_of(tables: &SchemaLibrary) -> SchemaLibrary {
 
 /// Encodes a root with the layout it arrived with, or a synthesised one when
 /// it outgrew that layout, holds a `reshaped` record, or was built with none:
-/// from `types` where a caller conformed its records to them, from
-/// [`types_of`] its own type table where it only outgrew its layout.
+/// from `types` where a caller conformed its records to them, else from
+/// [`types_of`] the type table it arrived with.
 ///
 /// ⚠ Synthesis is the fallback, never the default: it reproduces no shipped
 /// document byte for byte, where the arrival layout reproduces them all. The
@@ -1392,13 +1392,21 @@ fn encode(
         }
     }
     let own = layout.map(type_tables::of_layout);
+    // ⚠ A class the families declare in code is laid out as declared, whatever the document's own table states of it:
+    // the declaration alone carries the bytes of a class no member names. Where the two part on a member, a writer
+    // drops the one only the table states and says nothing, so the save is refused by that member's name.
+    let judged = own
+        .as_ref()
+        .filter(|_| layout.is_some_and(world_types::judges));
+    if let Some(why) = judged.and_then(ped_types::parts_from_its_declaration) {
+        return Err(save(why));
+    }
     let family = ped_types::library(crate::meta::default_library());
     let library = match (types, &own) {
         // The records built here were conformed to these, so the layout is made of the same.
         (Some(types), _) => Cow::Borrowed(types),
-        // ⚠ Only a root of the ped families reaches this arm: a record built in one was conformed to the families'
-        // classes and the installed schema's, and laid out by another class the writer drops its members and says nothing.
-        (None, Some(tables)) if reshaped => type_tables::extend(&family, tables),
+        // ⚠ A record built in a root of the ped families was conformed to a class declared in code, as every class
+        // such a root reaches is, so neither the table nor the installed schema lays a class of one out.
         (None, Some(tables)) => Cow::Owned(types_of(tables)),
         (None, None) => Cow::Borrowed(&*family),
     };
@@ -1493,6 +1501,10 @@ fn save_world_root(
         // layout this file arrived with may not state, and that layout then has no place for it.
         let copied = match (&root, &arrival.layout) {
             (Ok(root), Some(layout)) => world_types::first_class_unstated(layout, root).is_some(),
+            // ⚠ A member set on a copy whose own file's class lacks it has no place in the tree the copy carries, and
+            // the class may have the member here: the write is made again with each copy conformed, which refuses in
+            // the same words a member the class lacks here too.
+            (Err(_), Some(layout)) => world_types::judges(layout),
             _ => false,
         };
         // Nothing was built or copied here, so nothing is conformed and the arrival's own layout stands.

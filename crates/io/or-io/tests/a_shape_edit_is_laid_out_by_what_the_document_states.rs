@@ -1,5 +1,7 @@
 //! A world document edited in shape is laid out by the classes its own type table states, in a process that installed
 //! a schema snapshot whose classes state other members, and the saves are the bytes a process with no snapshot writes.
+//! A ped variation is laid out by the classes declared in code, which the same snapshot states otherwise too, and one
+//! whose own table states such a class otherwise is refused the edit by the member's name.
 //!
 //! ⚠ **Every test of this binary runs with the snapshot below installed.** An installed snapshot is state of the whole
 //! process, set once and never removed, and a gate runs the tests of one binary as threads of one process: a test that
@@ -15,11 +17,13 @@ use or_io::meta::binary::synth::name_hash;
 use or_io::meta::binary::type_tables;
 use or_io::meta::binary::ContainerLayout;
 use or_io::meta::instance::value::HashedString;
+use or_io::meta::typed::ped_types::PED_TYPES;
 use or_io::meta::typed::world_types::WORLD_TYPES;
 use or_io::meta::{
     build_library, canonical, detect_binary_format, write_meta_binary, ArrayKind, BinaryFormat,
     CBaseArchetypeDefAny, CCarGen, CEntityDef, CEntityDefAny, CMapData, CMapTypes,
-    CMloArchetypeDef, CMloRoomDef, CScenarioChain, CScenarioPoint, CScenarioPointRegion, FieldType,
+    CMloArchetypeDef, CMloRoomDef, CPVComponentData, CPVDrawblData, CPVTextureData,
+    CPedVariationInfo, CScenarioChain, CScenarioPoint, CScenarioPointRegion, FieldType,
     MetaDocument, MetaInstance, SchemaLibrary, StringKind, Value,
 };
 
@@ -190,7 +194,9 @@ fn snapshot_psc() -> String {
         r#"<u32 name="lodLevel"/><u32 name="priorityLevel"/>"#,
     );
     let region = region_psc(LATER, CHAIN).replace("<ParserSchema>", "");
-    with_car_gens(&psc, LATER).replace("</ParserSchema>", &region)
+    let psc = with_car_gens(&psc, LATER).replace("</ParserSchema>", &region);
+    let ped = with_member(PED_TYPES, ALTERNATIVES, LATER).replace("<ParserSchema>", "");
+    psc.replace("</ParserSchema>", &ped)
 }
 
 fn library(psc: &str) -> SchemaLibrary {
@@ -218,6 +224,7 @@ fn snapshot() -> bool {
         assert!(declares("CMloRoomDef", "aMemberOfALaterBuild"));
         assert!(declares("CScenarioPoint", "aMemberOfALaterBuild"));
         assert!(declares("CScenarioChain", "EdgeIds"));
+        assert!(declares("CPVDrawblData", "aMemberOfALaterBuild"));
         true
     })
 }
@@ -828,6 +835,296 @@ fn a_parked_vehicle_copied_into_a_file_that_states_more(format: BinaryFormat) ->
     vec![donor_file, file, with]
 }
 
+/// A member set on a copy whose own file's class lacks it is held where the file the copy enters states it: a parked
+/// vehicle put beside the one the file held and in place of it, with `livery` set and as it was read. What each save
+/// wrote is returned.
+fn a_member_set_on_a_parked_vehicle_that_lacked_it(format: BinaryFormat) -> Vec<Vec<u8>> {
+    let donor_file = car_gen_file(CarGenOf::WithoutLivery, format, "a_donor_model");
+    let donor = CMapData::from_bytes(&donor_file).expect("the donor opens");
+    let file = car_gen_file(CarGenOf::WithOwn, format, "a_model");
+    let class = stated(elements(&tree(&file), "carGenerators")[0]);
+    let map = CMapData::from_bytes(&file).expect("the map opens");
+    let mut saves = Vec::new();
+    for (in_place, livery) in [(false, 5), (true, 5), (true, -1)] {
+        let what = format!("{format:?}: a copy of livery {livery}, in place {in_place}");
+        let mut copy = donor.car_generators[0].clone();
+        copy.livery = livery;
+        let mut edited = map.clone();
+        match in_place {
+            true => edited.car_generators[0] = copy,
+            false => edited.car_generators.push(copy),
+        }
+        let with = edited
+            .to_bytes()
+            .unwrap_or_else(|e| panic!("{what} saves: {e}"));
+        assert_eq!(detect_binary_format(&with), Some(format));
+        let root = tree(&with);
+        let parked = elements(&root, "carGenerators");
+        assert_eq!(parked.len(), edited.car_generators.len(), "{what}");
+        for vehicle in &parked {
+            assert_eq!(
+                stated(vehicle),
+                class,
+                "{what}: a parked vehicle states what the file's own class states"
+            );
+        }
+        let back = CMapData::from_bytes(&with).expect("the copy reads back");
+        let copy = back.car_generators.last().expect("the copy");
+        assert!(copy.car_model == "a_donor_model", "{what}");
+        assert_eq!(
+            (copy.livery, copy.flags, copy.body_color_remap1),
+            (livery, 0x0400_0680, 12),
+            "{what}: the member the copy's own file lacked holds what was set on the copy"
+        );
+        assert_eq!(
+            back.to_bytes().expect("saves again"),
+            with,
+            "{what}: at its fixed point"
+        );
+        saves.push(with);
+    }
+    saves
+}
+
+/// An entity copied from a file whose class lacks `tintValue` into a PSO map that states no entity class holds the tint
+/// set on it, as the class declared in code has the member. What the save wrote is returned.
+fn a_tint_set_on_an_entity_copied_into_a_map_that_holds_none() -> Vec<u8> {
+    let library = library(&without_member(WORLD_TYPES, TINT));
+    let root = map_tree(&library, Differs::Fewer);
+    let donor_file = encoded(&library, &root, BinaryFormat::Pso);
+    let lacks = held(elements(&tree(&donor_file), "entities")[0], "tintValue").is_none();
+    assert!(lacks, "the donor's class lacks the member");
+    let donor = CMapData::from_bytes(&donor_file).expect("the donor opens");
+    let mut map = CMapData::from_bytes(&map_of_no_entity(BinaryFormat::Pso)).expect("opens");
+    let mut copy = donor.entities[0].clone();
+    copy.tint_value = 3;
+    map.entities.push(copy);
+    let with = map
+        .to_bytes()
+        .unwrap_or_else(|e| panic!("the copy with its tint set saves: {e}"));
+    let back = CMapData::from_bytes(&with).expect("the copy reads back");
+    assert_eq!(back.entities.len(), 1);
+    assert_eq!((back.entities[0].guid, back.entities[0].tint_value), (1, 3));
+    assert_eq!(back.to_bytes().expect("saves again"), with);
+    with
+}
+
+const ALTERNATIVES: &str = r#"<u8 name="numAlternatives"/>"#;
+
+/// What a ped variation's own table states of a drawable, beside the class declared in code.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum DrawableOf {
+    /// The members the declaration has, which is one fewer than the snapshot declares.
+    AsDeclared,
+    /// Those without `numAlternatives`.
+    Fewer,
+    /// Those and one the declaration lacks.
+    More,
+}
+
+/// `inst` and every record under it, with `member` taken out of each record of `class`, or set to `value` in each.
+fn restated(inst: &mut MetaInstance, class: &str, member: &str, value: Option<&Value>) {
+    fn in_value(held: &mut Value, class: &str, member: &str, value: Option<&Value>) {
+        match held {
+            Value::Struct(inner) | Value::Pointer(Some(inner)) => {
+                restated(inner, class, member, value)
+            }
+            Value::Array(items) => {
+                (items.iter_mut()).for_each(|held| in_value(held, class, member, value))
+            }
+            _ => {}
+        }
+    }
+    for (_, held) in &mut inst.fields {
+        in_value(held, class, member, value);
+    }
+    // ⚠ By the hash: with no snapshot installed a tree names the class `hash_XXXXXXXX`.
+    if name_hash(&inst.type_name) == name_hash(class) {
+        let key = name_hash(member);
+        inst.fields.retain(|(n, _)| name_hash(n) != key);
+        if let Some(value) = value {
+            inst.fields.push((spelt(member), value.clone()));
+        }
+    }
+}
+
+/// A drawable of one texture, built here.
+fn drawable_built_here(mask: u8) -> CPVDrawblData {
+    let mut texture = CPVTextureData::default();
+    texture.distribution = 255;
+    let mut drawable = CPVDrawblData::default();
+    drawable.prop_mask = mask;
+    drawable.a_tex_data.push(texture);
+    drawable
+}
+
+/// A ped variation of one component slot that holds two drawables of one texture each, whose table states a drawable
+/// as `of` says.
+fn ped_file(of: DrawableOf, format: BinaryFormat) -> Vec<u8> {
+    let mut built = CPedVariationInfo::default();
+    built.avail_comp[3] = 0;
+    built.b_has_drawbl_variations = true;
+    let mut component = CPVComponentData::default();
+    component.a_drawbl_data3 = vec![drawable_built_here(1), drawable_built_here(3)];
+    built.a_component_data3.push(component);
+    built.restate_counts();
+    let mut root = tree(&built.to_bytes().expect("a variation built here saves"));
+    let psc = match of {
+        DrawableOf::AsDeclared => PED_TYPES.to_string(),
+        DrawableOf::Fewer => {
+            restated(&mut root, "CPVDrawblData", "numAlternatives", None);
+            without_member(PED_TYPES, ALTERNATIVES)
+        }
+        DrawableOf::More => {
+            let own = Value::UInt(9);
+            restated(
+                &mut root,
+                "CPVDrawblData",
+                "aMemberOnlyTheFileStates",
+                Some(&own),
+            );
+            with_member(PED_TYPES, ALTERNATIVES, OWN)
+        }
+    };
+    encoded(&library(&psc), &root, format)
+}
+
+/// The drawables the first component slot of a ped variation's tree states.
+fn drawables(root: &MetaInstance) -> Vec<&MetaInstance> {
+    match elements(root, "aComponentData3").first() {
+        Some(component) => elements(component, "aDrawblData3"),
+        None => Vec::new(),
+    }
+}
+
+fn drawables_mut(info: &mut CPedVariationInfo) -> &mut Vec<CPVDrawblData> {
+    &mut info.a_component_data3[0].a_drawbl_data3
+}
+
+/// A ped variation takes a drawable as a copy and one built here, then loses both; every drawable of each save states
+/// what the class declared in code has, whatever the snapshot declares of it. What each save wrote is returned.
+fn a_ped_variation_takes_a_drawable_copied_and_one_built(format: BinaryFormat) -> Vec<Vec<u8>> {
+    let what = format!("{format:?}");
+    let file = ped_file(DrawableOf::AsDeclared, format);
+    let class = stated(drawables(&tree(&file))[0]);
+    assert!(
+        !class.contains(&name_hash("aMemberOfALaterBuild")),
+        "{what}"
+    );
+    let info = CPedVariationInfo::from_bytes(&file).expect("the variation opens");
+    assert_eq!(info.a_component_data3[0].a_drawbl_data3.len(), 2);
+
+    let mut saves = vec![file.clone()];
+    let mut keep = |edited: &CPedVariationInfo, step: &str, held: usize| {
+        let bytes = saved(edited, &format!("{what}: {step}"));
+        assert_eq!(detect_binary_format(&bytes), Some(format));
+        let root = tree(&bytes);
+        let drawables = drawables(&root);
+        assert_eq!(drawables.len(), held, "{what}: {step}");
+        for drawable in &drawables {
+            assert_eq!(
+                stated(drawable),
+                class,
+                "{what}: {step}: a drawable states what the class declared in code has"
+            );
+        }
+        saves.push(bytes);
+    };
+
+    let mut edited = info.clone();
+    let copy = drawables_mut(&mut edited)[1].clone();
+    drawables_mut(&mut edited).push(copy);
+    edited.restate_counts();
+    keep(&edited, "a drawable added as a copy", 3);
+
+    // ⚠ A record built here holds no tree, so it is conformed to a class: the one declared in code, whatever the
+    // snapshot declares.
+    drawables_mut(&mut edited).push(drawable_built_here(7));
+    edited.restate_counts();
+    keep(&edited, "a drawable built here", 4);
+
+    drawables_mut(&mut edited).truncate(2);
+    edited.restate_counts();
+    keep(&edited, "each taken out again", 2);
+    let back =
+        CPedVariationInfo::from_bytes(saves.last().expect("the last save")).expect("reopens");
+    assert_eq!(back, info, "{what}: the file reads as it was first read");
+    saves
+}
+
+/// A ped variation whose own table states a drawable otherwise than the class declared in code saves an edit that
+/// keeps its shape, every member it states with it, and is refused a drawable copied or built by the name of the member
+/// the two part on. The save and each sentence are returned.
+fn a_ped_variation_that_states_a_drawable_otherwise(
+    of: DrawableOf,
+    format: BinaryFormat,
+) -> (Vec<u8>, Vec<String>) {
+    let what = format!("{of:?} {format:?}");
+    let file = ped_file(of, format);
+    let class = stated(drawables(&tree(&file))[0]);
+    let own = |bytes: &[u8]| -> Vec<Option<Value>> {
+        let root = tree(bytes);
+        let of_one = |d: &&MetaInstance| held(d, "aMemberOnlyTheFileStates").cloned();
+        drawables(&root).iter().map(of_one).collect()
+    };
+    let held_own = match of {
+        DrawableOf::More => vec![Some(Value::UInt(9)); 2],
+        _ => vec![None; 2],
+    };
+    assert_eq!(own(&file), held_own, "{what}");
+    let info = CPedVariationInfo::from_bytes(&file).expect("the variation opens");
+
+    let mut masked = info.clone();
+    drawables_mut(&mut masked)[0].prop_mask = 5;
+    let kept = saved(&masked, &format!("{what}: a member set"));
+    for drawable in drawables(&tree(&kept)) {
+        assert_eq!(
+            stated(drawable),
+            class,
+            "{what}: a drawable states its own class"
+        );
+    }
+    assert_eq!(
+        own(&kept),
+        held_own,
+        "{what}: the member only the file states is carried"
+    );
+
+    let (member, parts) = match of {
+        DrawableOf::More => (spelt("aMemberOnlyTheFileStates"), "with"),
+        _ => ("numAlternatives".to_string(), "without"),
+    };
+    let refused = |edited: &CPedVariationInfo, step: &str| {
+        let why = refusal(edited, &format!("{what}: {step}"));
+        assert!(
+            why.contains(&format!("states `CPVDrawblData` {parts} `{member}`")),
+            "{what}: {step}: {why}"
+        );
+        why
+    };
+    let mut copied = info.clone();
+    let copy = drawables_mut(&mut copied)[0].clone();
+    drawables_mut(&mut copied).push(copy);
+    copied.restate_counts();
+    let mut built = info.clone();
+    drawables_mut(&mut built).push(drawable_built_here(7));
+    built.restate_counts();
+    let sentences = vec![
+        refused(&copied, "a drawable added as a copy"),
+        refused(&built, "a drawable built here"),
+    ];
+
+    // The copy taken out, the file is the one it was read as.
+    drawables_mut(&mut copied).pop();
+    copied.restate_counts();
+    assert_eq!(
+        saved(&copied, &format!("{what}: the copy taken out")),
+        saved(&info, &format!("{what}: the file as read")),
+        "{what}"
+    );
+    (kept, sentences)
+}
+
 /// The one interior of a type file.
 fn interior(types: &CMapTypes) -> &CMloArchetypeDef {
     match &types.archetypes[0] {
@@ -1173,6 +1470,10 @@ fn every_save() -> Vec<(String, Vec<u8>)> {
             a_parked_vehicle_copied_into_a_file_that_states_more(format),
         );
         keep(
+            format!("member set on a copy {format:?}"),
+            a_member_set_on_a_parked_vehicle_that_lacked_it(format),
+        );
+        keep(
             format!("built point refused {format:?}"),
             said(vec![
                 a_built_point_that_sets_a_member_the_regions_class_lacks(format),
@@ -1185,6 +1486,18 @@ fn every_save() -> Vec<(String, Vec<u8>)> {
         let (without, refused) = a_map_that_only_names_a_parked_vehicles_class(format);
         keep(format!("map that names a class {format:?}"), vec![without]);
         keep(format!("parked vehicle refused {format:?}"), said(refused));
+        keep(
+            format!("ped drawable {format:?}"),
+            a_ped_variation_takes_a_drawable_copied_and_one_built(format),
+        );
+        for of in [DrawableOf::Fewer, DrawableOf::More] {
+            let (kept, refused) = a_ped_variation_that_states_a_drawable_otherwise(of, format);
+            keep(format!("ped member set {of:?} {format:?}"), vec![kept]);
+            keep(
+                format!("ped drawable refused {of:?} {format:?}"),
+                said(refused),
+            );
+        }
     }
     // ⚠ A PSO map that holds no entity takes one as the class declared in code, with a snapshot and with none.
     for differs in DIFFERENCES {
@@ -1194,6 +1507,10 @@ fn every_save() -> Vec<(String, Vec<u8>)> {
             said(vec![came_to]),
         );
     }
+    keep(
+        "tint set on an entity into no entity Pso".to_string(),
+        vec![a_tint_set_on_an_entity_copied_into_a_map_that_holds_none()],
+    );
     saves
 }
 
@@ -1268,6 +1585,46 @@ fn a_parked_vehicle_copied_between_files_takes_the_members_the_file_it_enters_st
     assert!(snapshot(), "this binary's tests run with a snapshot");
     for format in FORMATS {
         a_parked_vehicle_copied_into_a_file_that_states_more(format);
+    }
+}
+
+#[test]
+fn a_member_set_on_a_copy_is_held_where_the_file_it_enters_has_the_member_its_own_file_lacked() {
+    assert!(snapshot(), "this binary's tests run with a snapshot");
+    for format in FORMATS {
+        a_member_set_on_a_parked_vehicle_that_lacked_it(format);
+
+        // ⚠ In the file whose own class lacks the member, the same set is still refused, and in the same words.
+        let file = car_gen_file(CarGenOf::WithoutLivery, format, "a_model");
+        let mut lacking = CMapData::from_bytes(&file).expect("the map opens");
+        lacking.car_generators[0].livery = 5;
+        let why = refusal(&lacking, "a member set where the file's own class lacks it");
+        assert!(
+            why.contains("`CCarGen::livery` was set")
+                && why.contains("the document's own `CCarGen` has no such member to hold it"),
+            "{format:?}: {why}"
+        );
+    }
+    a_tint_set_on_an_entity_copied_into_a_map_that_holds_none();
+}
+
+#[test]
+fn a_ped_variation_takes_a_drawable_copied_and_one_built_whatever_the_snapshot_declares_of_its_class(
+) {
+    assert!(snapshot(), "this binary's tests run with a snapshot");
+    for format in FORMATS {
+        a_ped_variation_takes_a_drawable_copied_and_one_built(format);
+    }
+}
+
+#[test]
+fn a_ped_variation_that_states_a_class_otherwise_than_declared_is_refused_by_the_member_and_drops_none(
+) {
+    assert!(snapshot(), "this binary's tests run with a snapshot");
+    for format in FORMATS {
+        for of in [DrawableOf::Fewer, DrawableOf::More] {
+            a_ped_variation_that_states_a_drawable_otherwise(of, format);
+        }
     }
 }
 
@@ -1347,10 +1704,15 @@ fn every_shape_edit_saves_the_bytes_a_process_with_no_snapshot_saves() {
     let without = printed_by_a_child_with_no_snapshot(SAME);
 
     // Three saves of an archetype, an entity and a point and six of an interior, a point built, for each difference;
-    // three of a parked vehicle, a map that names a class, and five sentences, for each format; three for a PSO map.
+    // three of a parked vehicle, three of a member set on a copy, a map that names a class, five sentences, four saves
+    // of a ped variation, and a save and two sentences of each of the two that state a drawable otherwise, for each
+    // format; three and one more for a PSO map.
     let of_a_difference = 3 + 3 + 6 + 3 + 1;
-    let of_a_format = DIFFERENCES.len() * of_a_difference + 3 + 1 + 5;
-    assert_eq!(with.len(), FORMATS.len() * of_a_format + DIFFERENCES.len());
+    let of_a_format = DIFFERENCES.len() * of_a_difference + 3 + 3 + 1 + 5 + 4 + 2 * 3;
+    assert_eq!(
+        with.len(),
+        FORMATS.len() * of_a_format + DIFFERENCES.len() + 1
+    );
     assert_eq!(with.len(), without.len(), "the same saves both times");
     for (with, without) in with.iter().zip(&without) {
         let what = with.split('\t').next().unwrap_or_default();

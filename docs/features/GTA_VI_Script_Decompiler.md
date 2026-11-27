@@ -72,7 +72,8 @@ was.
   compared with `null`. A variable every
   assignment of which makes an array is an array of that element type. A value of two cells that
   the code only takes from natives, compares and hands back to them is declared `Handle`, a word
-  the header explains. A value of several cells that an instruction storing, making or unboxing
+  the header explains, and so is one copied whole from or into a `Handle`, or compared with one, or
+  compared as the runtime compares a `System.Guid`. A value of several cells that an instruction storing, making or unboxing
   the whole value names, a `box<T>` of it, or a method of the value
   type `T` called on its address, or a builtin's constructor handed its address, names is of type
   `T`, and bytes taken out of a whole variable
@@ -99,14 +100,28 @@ was.
   accesses through such variables and through a member's receiver add to the layouts too. Two
   whole variables compared byte by byte are compared with `==`. `properties` writes a call of a
   runtime type's accessor `get_X` or `set_X` on its receiver as `x.X` and `x.X = v`; a script's
-  own function of such a name stays the method it is, declared and called as one.
+  own function of such a name stays the method it is, declared and called as one. With
+  `fields` on, a field is written `p.f_10` after a variable of one cell, through what it points
+  at, and after a variable of several cells, of its own bytes; the bytes of a variable of one
+  cell are `(&p)->f_10`, or the variable shifted down, `(byte)(p >> 32)`, and `->` stays after a
+  global and after an expression. `runtime` writes a call of the runtime's own library that a
+  user's list names, and that a table of the library's public members holds, as C# writes it: a
+  method on its receiver (`d.Clear()`), a static property (`Task.CompletedTask`), a construction
+  as `new T(a)`; any other stays a call. Before its first function a source declares each global
+  and static its code names, of the kind the program or the project states of it, else `Cell`.
+  An enum declares a member for each value of it a list names, one value a name, and a value of
+  it stored to a field or switched on is written `E.Member` only where that member is declared.
 - **Compiler expansions**: `await` reads a kick-off and the step function it calls as one
   method, `async Task<T>` where its state machine gives the task a value, `async Task` where the
   kick-off hands back its builder's task and `async void` otherwise, and writes what is awaited in place, `await f(a)`, where the variable it was kept in
-  is used nowhere else; `lambdas`, `delegates`, `events`, `foreach`, `using`, `lock`,
+  is used nowhere else; a state machine whose step function is read into its kick-off is left
+  out where the project holds the program, no program of it imports this one and nothing else
+  written names the machine; `lambdas`, `delegates`, `events`, `foreach`, `using`, `lock`,
   `compound`, `initialisers`, `null-ops`, `concat`, `ref-out`. A lambda bound once and outside
   every loop, whose body jumps nowhere back, is written as `=>` where it is bound, whatever its
-  length; any other is written by its function's name. `events`, `concat`, `using` and `lock`
+  length; any other is written by its function's name. A closure class every lambda of which is
+  written in place, and whose captured fields are each given a variable that keeps its value, is
+  left out, its fields read as those variables; `--no lambdas` writes it. `events`, `concat`, `using` and `lock`
   read a call only by the name a user's list gives it, so without such a list they rebuild
   nothing. An
   address handed to a call is written `ref x` where the callee is proved to reach `x` alone and
@@ -134,9 +149,16 @@ programs, and with `-o <folder>` writes:
 
 `script decompile <src> --project <file>` decompiles one program with a project an export wrote,
 and a `project.json` beside a program file is read without being named unless `--alone` is given.
-Without one a program is decompiled alone, and a function that needs what another program states
-is written as a comment saying so; the first lines of the source say which it was. Output is the
-same bytes from run to run.
+`--project auto` builds the project in memory first, as an export builds it, of every program of
+the folder the program file lies in, or of the archive an `--entry` is read from and the archives
+nested in it; stderr says how far each of its two passes is, it reads at most 4 GiB, and it writes
+no file. Without a project a program is decompiled alone, and a function that needs what another
+program states is written as a comment saying so; the first lines of the source say which it was.
+Output is the same bytes from run to run.
+
+An export works on `--threads` threads (8 by default), a program at a time on each, and starts the
+largest programs first in each pass, so that none is left to run alone once the rest are done;
+the functions of one program are written by one thread.
 
 ## Names
 
@@ -151,6 +173,8 @@ lists named things; `disasm` and the facts of a program consult no list.
 | Handler table (`--names`) | a table whose first columns are `hash` and `rva` | the hash of the native at each handler address, which is how a natives list reaches a compiled program |
 | Function rows (`--names`) | one `program:offset Name` a line; the program as a hash of up to eight digits, as `program_` and its eight digits, or by its name; the offset in hex after `0x` or `func_` | a function, on trust |
 | Enum members (`--names`) | a table under the columns `enum_type_hash64`, `member` and `value` | a value of an enum, under either reading of its sign |
+| Enum texts (`--names`) | a table of texts with an `enum_type_hash64` column | a value of an enum by the text its hash is of, where the text is a name and no member row names the value |
+| Labels (`--labels`) | one `0xHASH _LABEL` a line (`NS::_LABEL` allowed), or a table whose columns name `hash` and `label` | guesses: a native no natives list names, written by its label, which opens with an underscore, with no parameter or result |
 
 A row whose hash is the hash of its name proves itself and names whatever that hash function
 names; any other row is the user's own label. A type's record hashes its full runtime name, so a
@@ -164,17 +188,29 @@ otherwise, any other file a names list where it reads as one and a natives list 
 file that reads as neither is said on stderr and passed over. A file whose name starts with a dot
 and `project.json` are no lists. A file whose name holds `candidate` holds guesses, whose rows a
 loader cannot tell from proved ones, so the folder passes it over and says so; `--names` reads it.
+A file whose name holds `labels` holds native labels, which are guesses too: the folder passes it
+over and says so, and only `--labels` reads one. A label must open with `_` and be one name, or
+the file is refused, and of several labels files a later one's label stands in place of an
+earlier one's. A source's first lines say how many natives each labels file labelled, and its
+natives line counts the calls written by a label apart from those a list names. A label names no
+variable, and a native written by one never counts as named.
 A list every row of which proves itself by its hash is read before every other list of the
 folder, so that where a label given on trust and a proof name one hash differently, the label's
 list is the one refused. The first lines of a source name each list read with how many hashes,
-cells, indices, functions or words it named that no list before it did. The app reads the same folder by the same rules,
-except that it also tries a file that holds JSON as a natives list first, and it takes a
-`project.json` from that folder where none lies beside the script.
+cells, indices, functions or words it named that no list before it did. A builtin's name a later
+list gives stands in place of the one an earlier list gave, and the source's names line says how
+many each list replaced; one list that names a builtin twice is refused. The app reads the same folder by the same rules,
+except that it also tries a file that holds JSON as a natives list first, it takes a
+`project.json` from that folder where none lies beside the script, and it reads the folder's
+labels files only while **Label natives from the labels files (guesses)** is on in the inspector,
+which is off at every start.
 
 ## What cannot be recovered
 
 - The names of locals, parameters, and of every type, member and native no list holds. They print
-  by offset, slot or hash: `local_3`, `p0->f_10`, `Method_4`, `func_000100`.
+  by offset, slot or hash: `local_3`, `p0.f_10`, `Method_4`, `func_000100`.
+  A label `--labels` gives a native is a guess, not a recovered name, and is written as one, opening
+  with an underscore.
 - Comments, formatting, and the choice between source forms that compile to the same code.
 - The initial values of globals and statics: the container holds none.
 - A construct whose expansion a pass does not prove. A state machine whose entry does more than
@@ -221,10 +257,10 @@ with the key snapshot `rpf9` takes).
 |---|---|
 | `script <src> [--functions\|--natives\|--strings] [--json] [--offset <n> --limit <n>]` | the facts of one program; `--functions` by pages |
 | `script disasm <src> [--function <f>]` | an instruction listing with targets resolved |
-| `script decompile <src> [--function <f>] [--level <l>] [--no <pass>] [--project <file>\|--alone] [--with-classes]` | source; with `--function`, the types that hold no code of it are left out unless `--with-classes` |
+| `script decompile <src> [--function <f>] [--level <l>] [--no <pass>] [--project <file>\|auto\|--alone] [--labels <file>] [--with-classes]` | source; with `--function`, the types that hold no code of it are left out unless `--with-classes` |
 | `script check <file-or-folder>` | decodes each program and fails on one that does not |
 | `script list <archive.rpf>` | the programs an archive holds |
-| `script export <build\|archive\|folder> [-o <folder>]` | every program, with its project |
+| `script export <build\|archive\|folder> [-o <folder>] [--threads <n>] [--labels <file>]` | every program, with its project |
 | `script passes` | the passes and their levels |
 | `script names-search <program\|folder>... [--words <file>]... [-o <file>]` | a names list of the type, field and program names a word search proves, each by two hashes of the name |
 | `script natives --unnamed <program\|folder>... [--project <file>]` | each native no list names, with its calls and the kinds of their arguments, so that a list can be written where it names most |

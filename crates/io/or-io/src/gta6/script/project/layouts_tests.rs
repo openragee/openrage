@@ -523,3 +523,34 @@ fn a_variable_typed_by_the_project_and_a_members_receiver_add_their_accesses_onc
     assert_eq!(kind(0x10), Some((4, Kind::F32)));
     assert_eq!(kind(0x18), Some((1, Kind::Bool)));
 }
+
+#[test]
+fn a_field_every_object_stored_in_which_is_of_one_line_is_of_the_most_derived_of_them() {
+    let body = vec![
+        set(Var::Local(0), made()),
+        set(Var::Local(1), made()),
+        // An object made in place, and one a variable holds.
+        store(StoreKind::Ref, local(0), 8, made()),
+        store(StoreKind::Ref, local(0), 0x10, local(1)),
+        // An object stored beside a reference of no known type.
+        store(StoreKind::Ref, local(0), 0x18, local(1)),
+        store(StoreKind::Ref, local(0), 0x18, param(1)),
+        // Objects of two types neither of which is the other's.
+        store(StoreKind::Ref, local(0), 0x20, local(1)),
+        called(APART, load(Scalar::U64, local(0), 0x20)),
+    ];
+    let mut project = Project::default();
+    project.types.insert(APART, TypeFacts::default());
+    let mut part = Project::default();
+    of_function(&mut part, &function(0x40, body));
+    absorb(&mut project, &mut part);
+    settle(&mut project);
+    let of = |key: TypeKey| Kind::Object(key.to_string());
+    let fields = vec![
+        field(8, 8, of(MADE)),
+        field(0x10, 8, of(MADE)),
+        field(0x18, 8, of(MADE)),
+        field(0x20, 8, Kind::Pointer),
+    ];
+    assert_eq!(project.fields.get(&MADE), Some(&fields));
+}

@@ -81,7 +81,9 @@ was.
 - **Classes**: `fields`, `classes`, `receivers`, `constructors`, `operators`. An access through a
   variable the kinds pass proves holds an object of a script type is a field of that type, where
   the bytes lie in the type and no field the layouts state overlaps them; such a field is
-  declared in its class with the width every access of it takes and no proved kind. `script
+  declared in its class with the width every access of it takes and no proved kind. A
+  reference field is of the script type of the objects stored in it, where they all lie on one
+  line of types. `script
   export` reads every program's code a second time once the project is settled, so that the
   accesses through such variables and through a member's receiver add to the layouts too. Two
   whole variables compared byte by byte are compared with `==`.

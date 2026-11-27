@@ -461,6 +461,19 @@ impl Seen<'_> {
         self.row(addr, *offset, 4, sign);
     }
 
+    /// What a reference stored is: an object of the script type it is made of or that the variable it comes from holds, else a reference and no more.
+    // ⚠ The object's own type, which may lie below the type the field is declared as: [`settle`]
+    // keeps the most derived of the types seen, and none where two lie on no one line.
+    fn stored(&self, value: &Expr) -> Kind {
+        let script = match value {
+            Expr::NewObject(ty) => TypeKey::of(ty),
+            Expr::Var(var) => self.bases.get(var).copied(),
+            _ => None,
+        };
+        let script = script.filter(|key| key.builtin().is_none() && !waits(*key));
+        script.map_or(Kind::Pointer, |key| Kind::Object(key.to_string()))
+    }
+
     /// Whether a value stored in four bytes is a float by its own form.
     fn is_float(&self, e: &Expr) -> bool {
         match e {
@@ -485,7 +498,7 @@ impl Seen<'_> {
                     self.truth(addr, *offset, self.is_truth(value));
                 }
                 let held = match kind {
-                    StoreKind::Ref => Kind::Pointer,
+                    StoreKind::Ref => self.stored(value),
                     // Eight zero bytes clear a reference as well as a number.
                     StoreKind::U64 if !zero => Kind::U64,
                     StoreKind::I32 if self.is_float(value) => Kind::F32,

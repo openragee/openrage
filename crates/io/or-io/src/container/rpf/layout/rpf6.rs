@@ -73,6 +73,7 @@ pub(super) fn read(input: &Input) -> Result<Toc> {
             name_shift: 0,
             xcompress: false,
             encryption,
+            platform: None,
         },
         entries,
         names,

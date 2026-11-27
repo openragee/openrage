@@ -329,6 +329,7 @@ fn the_declarations_describe_themselves_at_the_offsets_they_are_read_at() {
         name_shift: 0,
         xcompress: false,
         encryption: RpfEncryption::None,
+        platform: None,
     }
     .write(&mut written)
     .unwrap();

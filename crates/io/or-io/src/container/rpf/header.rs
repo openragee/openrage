@@ -107,6 +107,11 @@ pub struct RpfHeader {
     pub name_shift: u8,
     pub xcompress: bool,
     pub encryption: RpfEncryption,
+    /// The build-platform letter the archive records in its own header, where its format stores
+    /// one — RPF8 keeps it at header offset `0x0A` (`y` PC, `z` Xbox Series, `x` Xbox 360, …).
+    /// `None` for every format that does not record it (RPF7 and earlier, RPF9, IMG), for which
+    /// the platform has to come from the install the archive was mounted under.
+    pub platform: Option<u8>,
 }
 
 impl RpfHeader {
@@ -145,6 +150,8 @@ impl RpfHeader {
             name_shift,
             xcompress,
             encryption: RpfEncryption::from_raw(raw.encrypted),
+            // RPF7 does not record a platform; its reader leaves this `None`.
+            platform: None,
         })
     }
 
@@ -191,6 +198,7 @@ mod tests {
             name_shift: 0,
             xcompress: false,
             encryption: RpfEncryption::Open,
+            platform: None,
         };
         let mut buf = Vec::new();
         h.write(&mut buf).unwrap();
@@ -209,6 +217,7 @@ mod tests {
             name_shift: 2,
             xcompress: true,
             encryption: RpfEncryption::None,
+            platform: None,
         };
         let mut buf = Vec::new();
         h.write(&mut buf).unwrap();

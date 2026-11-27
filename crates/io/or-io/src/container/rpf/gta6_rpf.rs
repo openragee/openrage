@@ -296,6 +296,8 @@ pub(super) fn read(input: &Input) -> Result<(Toc, Rpf9State)> {
         xcompress: false,
         // The table's cipher is this module's own; no provider is asked for it.
         encryption: RpfEncryption::None,
+        // RPF9's header is not decoded for a platform byte; the install settles its letter.
+        platform: None,
     };
     let toc = Toc {
         header,

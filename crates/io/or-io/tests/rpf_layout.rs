@@ -30,6 +30,7 @@ fn header_open_archive_roundtrip() {
         name_shift: 0,
         xcompress: false,
         encryption: RpfEncryption::Open,
+        platform: None,
     };
     assert_eq!(header_roundtrip(h), h);
 }
@@ -42,6 +43,7 @@ fn header_with_max_name_shift_and_xcompress() {
         name_shift: 3,
         xcompress: true,
         encryption: RpfEncryption::None,
+        platform: None,
     };
     assert_eq!(header_roundtrip(h), h);
 }
@@ -54,6 +56,7 @@ fn header_preserves_unknown_encryption_key() {
         name_shift: 0,
         xcompress: false,
         encryption: RpfEncryption::Other(0xCAFE_BABE),
+        platform: None,
     };
     assert_eq!(header_roundtrip(h), h);
 }

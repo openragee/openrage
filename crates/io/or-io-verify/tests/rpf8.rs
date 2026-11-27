@@ -67,6 +67,15 @@ fn an_archive_with_a_plain_table_opens_and_every_other_is_refused_by_name() {
                 assert_eq!(tag, 0xFF, "{} opened with tag {tag:#x}", path.display());
                 assert_eq!(archive.version, RpfVersion::Rpf8);
                 assert_eq!(archive.header.encryption, RpfEncryption::None);
+                // RPF8 records its build platform in the header; a retail PC install reads `y`.
+                let letter = archive
+                    .platform_letter()
+                    .unwrap_or_else(|| panic!("{} states no platform", path.display()));
+                assert!(
+                    "ywxdzcopasnv".contains(letter),
+                    "{} states a non-RAGE platform letter {letter:?}",
+                    path.display()
+                );
                 plain += 1;
             }
             Err(IoError::RpfEncryptionUnsupported { key_id }) => {

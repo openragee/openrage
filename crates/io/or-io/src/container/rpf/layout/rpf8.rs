@@ -129,6 +129,9 @@ pub(super) fn read(input: &Input) -> Result<Toc> {
             name_shift: 0,
             xcompress: false,
             encryption,
+            // The platform letter the header records at `0x0A`, which also decodes the rows'
+            // extension ids above.
+            platform: Some(platform),
         },
         entries,
         names: spelled,

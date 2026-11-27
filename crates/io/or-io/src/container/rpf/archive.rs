@@ -114,6 +114,13 @@ impl fmt::Debug for RpfArchive {
 }
 
 impl RpfArchive {
+    /// The build-platform letter the archive records in its own header, where its format keeps one
+    /// (RPF8); `None` for a format that does not record it (RPF7 and earlier, RPF9, IMG), whose
+    /// platform has to come from the install the archive was mounted under.
+    pub fn platform_letter(&self) -> Option<char> {
+        self.header.platform.map(char::from)
+    }
+
     /// The archive at `path`, which needs no keys. An IMG1 is named by its `.img` or its `.dir`.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         Self::open_with(path, Arc::new(NoOpCryptoProvider::new()))

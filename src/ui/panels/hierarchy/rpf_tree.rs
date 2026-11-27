@@ -84,52 +84,54 @@ fn rewrite_platform_extension(path: &str, letter: char) -> String {
     out
 }
 
-/// The platform letter a row of this archive reads under.
+/// The platform letter a row of this archive reads under, resolved from the most authoritative
+/// source down to a default:
 ///
-/// The archive's [`RpfVersion`](or_io::container::rpf::version::RpfVersion) names only a container
-/// family (RPF9, RPF8, every RPF7-and-before), not a platform: RPF7 archives ship on PC, every
-/// PlayStation, every Xbox, so one version maps to many letters. RPF9 archives are only known on
-/// Xbox Series for now, but Rockstar ships RAGE games across many platforms and nothing stops a
-/// PC GTA VI build adding `y`-prefixed archives next to the Xbox Series `z`-prefixed ones.
+/// 1. **The archive's own header**, where its format records the platform. RPF8 keeps the letter
+///    at header offset `0x0A`, so an RDR2 console archive reports `o`/`p`/`d`/… straight from
+///    the file — no guessing.
+/// 2. **The active install**, when the archive records no platform (RPF7 and earlier, RPF9, IMG)
+///    and the install's profile ships that same container family. The user is browsing their own
+///    install, so its platform is the archive's.
+/// 3. **The canonical title** for the archive's container family (GTA VI for RPF9, RDR2 for RPF8,
+///    GTA V for every RPF7-and-before) when no active install matches.
+/// 4. `y` where even that is unknown.
 ///
-/// So the archive version picks the container family, and the active install picks the platform:
-/// when the active game's profile ships that same container family, its platform letter wins
-/// (the user is browsing their own install). Only where no active install matches does the tree
-/// fall back to the canonical title for that version — GTA VI for RPF9, RDR2 for RPF8, GTA V for
-/// every RPF7-and-before — and use its own platform letter, `y` where even that is unknown.
-///
-/// ⚠ Still a shortcut: a user running two RAGE installs on different platforms (a GTA V PC build
-/// and a GTA V PS4 build) can only have one at a time as active, so the inactive install's rows
-/// will render under the active one's letter. Full per-install platform resolution means tying
-/// each mounted archive to the install root it was found under — out of this patch's scope.
+/// ⚠ Steps 2–4 are the shortcut: a format that stores no platform and an install that is not the
+/// active one render under the active install's letter. Only the RPF8 header is self-describing;
+/// a fully self-describing answer for RPF7/RPF9 would need the platform baked into those formats,
+/// which Rockstar did not do, or each mounted archive tied to the install root it came from.
 fn platform_letter_for(state: &AppState, session: &RpfEditSession, node: &RpfSessionNode) -> char {
-    let archive_family = archive_container_family(session, node);
+    let archive = archive_of(session, node);
+    // 1. The archive's own header, where the format records a platform (RPF8).
+    if let Some(letter) = archive.and_then(|a| a.platform_letter()) {
+        return letter;
+    }
+    let archive_family = archive.map(|a| container_family_for_version(a.version));
     let active = state.prefs.active_game;
-    // The active install's letter wins, but only when its container family matches what this
-    // archive actually holds; a GTA V install does not tell us the letter of an RPF9 archive.
+    // 2. The active install, when it ships the same container family as the archive.
     if let (Some(family), Some(game)) = (archive_family, active) {
         if game.profile().container() == family {
             return game.platform_letter();
         }
     }
-    // No install context, or its family doesn't match: fall back to the canonical title.
+    // 3. The canonical title for the family; 4. `y` where none is known.
     match archive_family {
         Some(family) => canonical_game_for_container(family).platform_letter(),
         None => active.map(|g| g.platform_letter()).unwrap_or('y'),
     }
 }
 
-/// The container family of the archive the row sits in, `None` for a row outside one.
-fn archive_container_family(
-    session: &RpfEditSession,
+/// The archive the row sits in, `None` for a row outside one (a disk folder, the install root).
+fn archive_of<'a>(
+    session: &'a RpfEditSession,
     node: &RpfSessionNode,
-) -> Option<or_title::ContainerFamily> {
+) -> Option<&'a or_io::container::RpfArchive> {
     let archive_id = match &node.backing {
         RpfNodeBacking::ArchiveFile { archive_id, .. } => *archive_id,
         _ => return None,
     };
-    let version = session.archive(archive_id)?.archive.version;
-    Some(container_family_for_version(version))
+    Some(session.archive(archive_id)?.archive.as_ref())
 }
 
 /// The container family (`RpfVersion` has more variants than the profile tracks).

@@ -85,6 +85,7 @@ pub(super) fn read(version: RpfVersion, input: &Input) -> Result<Toc> {
             name_shift: 0,
             xcompress: false,
             encryption,
+            platform: None,
         },
         entries,
         names,

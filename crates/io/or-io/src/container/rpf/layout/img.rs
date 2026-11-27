@@ -43,6 +43,7 @@ fn toc(entries: Vec<RpfEntry>, names: Vec<String>, heap: usize) -> Toc {
             name_shift: 0,
             xcompress: false,
             encryption: RpfEncryption::None,
+            platform: None,
         },
         entries,
         names,

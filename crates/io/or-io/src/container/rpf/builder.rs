@@ -489,6 +489,7 @@ impl RpfBuilder {
             name_shift: self.name_shift,
             xcompress: false,
             encryption,
+            platform: None,
         };
         header_placeholder.write(writer)?;
         for e in &entries {
@@ -696,6 +697,7 @@ impl RpfBuilder {
             name_shift: self.name_shift,
             xcompress: false,
             encryption,
+            platform: None,
         };
         final_header.write(writer)?;
         writer.write_all(&entry_bytes)?;

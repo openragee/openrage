@@ -47,7 +47,7 @@ pub(crate) struct Meshlets {
     /// view draws, and why the first is not: they draw as Material in the same frame.
     pub rest: Vec<usize>,
     pub why: Option<String>,
-    /// Whether a worker still decodes a map of its: the surfaces are not yet those to draw.
+    /// Whether a worker still decodes a map of its: the surfaces bind the blank texel there.
     pub decoding: bool,
 }
 
@@ -56,7 +56,7 @@ fn bytes_of(words: &[u32]) -> Vec<u8> {
 }
 
 /// `bytes` after the header a buffer read by address states, where the binding has one.
-fn headed(header: Option<u32>, bytes: &[u8]) -> Vec<u8> {
+pub(super) fn headed(header: Option<u32>, bytes: &[u8]) -> Vec<u8> {
     let mut out = match header {
         Some(stride) => bytes_of(&[stride, DWORDS, 0, 0]),
         None => Vec::new(),
@@ -106,7 +106,7 @@ fn heap(
     for (number, hash) in numbered() {
         let entry = &mut images[*number as usize + 1];
         if entry.is_none() {
-            *entry = texture(*hash).or_else(|| neutral(*hash).map(Arc::new));
+            *entry = texture(*hash).or_else(|| neutral(*hash));
         }
     }
     images
@@ -123,9 +123,9 @@ type Decoding = Arc<std::sync::Mutex<Option<Option<Arc<Image>>>>>;
 /// nothing. `Err` while the worker decodes it; `stored` gives the level as its pack stores it.
 // ponytail: past the cap every map is let go at once; let go the least lately used when a
 // session that opens many models shows the decode again.
-fn decoded(
+pub(super) fn decoded(
     key: u64,
-    stored: impl FnOnce() -> Option<super::gta6_shaded::StoredLevel>,
+    stored: impl FnOnce() -> Option<super::gta6_maps::Stored>,
 ) -> Result<Option<Arc<Image>>, ()> {
     use std::collections::HashMap;
     static DECODED: std::sync::Mutex<Option<HashMap<u64, Decoding>>> = std::sync::Mutex::new(None);
@@ -151,28 +151,39 @@ fn decoded(
     }
     let slot = Decoding::default();
     kept.insert(key, Arc::clone(&slot));
-    std::thread::spawn(move || {
+    super::gta6_maps::decode(move || {
         let image = stored.decode().map(Arc::new);
         *slot.lock().unwrap_or_else(|p| p.into_inner()) = Some(image);
     });
     Err(())
 }
 
+/// Whether no worker still decodes the map of any of `keys`; none is started.
+pub(crate) fn all_in(keys: &[u64]) -> bool {
+    keys.iter().all(|key| decoded(*key, || None).is_ok())
+}
+
 /// The texel a map no pack holds is read as, where a white one is not neutral: a normal map
 /// bends no normal (a program takes the square root of what its two channels leave of one), and
 /// a specular map states no metal (a program keeps one less its red of the diffuse colour).
-fn neutral(hash: u32) -> Option<Image> {
-    let rgba = match hash {
-        h if h == string_hash_str("BumpTex") => vec![128, 128, 255, 255],
-        h if h == string_hash_str("SpecularTex") => vec![0, 0, 0, 255],
-        _ => return None,
+// One image of each a session: a scene reads a texture by the image it is, and binds this one once.
+fn neutral(hash: u32) -> Option<Arc<Image>> {
+    static NEUTRAL: std::sync::OnceLock<[Arc<Image>; 2]> = std::sync::OnceLock::new();
+    let texel = |rgba: Vec<u8>| {
+        Arc::new(Image {
+            width: 1,
+            height: 1,
+            rgba,
+            srgb: false,
+        })
     };
-    Some(Image {
-        width: 1,
-        height: 1,
-        rgba,
-        srgb: false,
-    })
+    let [bump, specular] =
+        NEUTRAL.get_or_init(|| [texel(vec![128, 128, 255, 255]), texel(vec![0, 0, 0, 255])]);
+    match hash {
+        h if h == string_hash_str("BumpTex") => Some(Arc::clone(bump)),
+        h if h == string_hash_str("SpecularTex") => Some(Arc::clone(specular)),
+        _ => None,
+    }
 }
 
 /// The type field of a two-dimensional image's descriptor.
@@ -282,6 +293,10 @@ fn feeds(
                 let bytes: Vec<u8> = floats.iter().flat_map(|f| f.to_le_bytes()).collect();
                 Feed::Bytes(headed(*header, &bytes))
             }
+            Filled::InstanceRecords => Feed::Bytes(headed(
+                *header,
+                &super::gta6_instances::records(super::gta6_instances::IN_PLACE[0]),
+            )),
             Filled::Numbers => {
                 let last = stage.textures.iter().map(|(number, _)| *number).max();
                 let mut words = vec![0u32; last.map_or(0, |last| last as usize + 1)];
@@ -305,7 +320,8 @@ fn feeds(
                 Feed::Bytes(headed(*header, &bytes_of(&words)))
             }
             Filled::Heap { .. } => Feed::Textures(heap.to_vec()),
-            Filled::Blank => Feed::Textures(vec![None]),
+            Filled::Blank | Filled::White => Feed::Textures(vec![None]),
+            Filled::Stated(bytes) => Feed::Bytes(headed(*header, bytes)),
             Filled::HeapWords => Feed::Bytes(heap_words(heap, rows)),
             Filled::Texture(number) => {
                 Feed::Textures(vec![heap.get(*number as usize + 1).cloned().flatten()])
@@ -322,6 +338,12 @@ fn feeds(
             }
             Filled::HeapBuffers => Feed::Bytes(bytes_of(&empty_table())),
             Filled::Sampler => continue,
+            Filled::Terrain(part) => match super::gta6_terrain::feed(*part, *header) {
+                Some(feed) => feed,
+                None => continue,
+            },
+            // A ped's component: `super::gta6_ped::fill` feeds them from the drawable's join.
+            Filled::PedComponent | Filled::PedTexture(_) => continue,
         };
         out.insert((*group, *binding), filled);
     }
@@ -386,6 +408,8 @@ fn surface(
     let meshlets = u32::from_le_bytes(*head) & 0xFFFF;
     let mut filled = BTreeMap::new();
     let mut heap = heap(pass, texture);
+    // Before a record's textures are pushed: the terrain's defaults are at entries of their own.
+    super::gta6_terrain::extend_heap(pass, &mut heap);
     let record = worn.map(|worn| record_of(worn, &mut heap, tile));
     let record = record.as_deref();
     let rows = rows_of(pass);
@@ -413,6 +437,7 @@ fn surface(
         meshlets,
         // Data cut short of a record is drawn as a group has threads: nothing of it is lost.
         primitives: largest_meshlet(&geometry.index_data, meshlets).unwrap_or(VERTICES / 3),
+        forward: (pass.forward.as_ref()).map(|blend| forward::forward_of(blend, geometry)),
     };
     (meshlets > 0).then_some((surface, zeroed))
 }
@@ -432,14 +457,12 @@ pub(crate) fn start_decoding(state: &AppState) {
     };
     let keys = (drawable.shaders.iter()).flat_map(|shader| shader.texture_keys.iter().flatten());
     for key in keys {
-        let _ = decoded(*key, || {
-            super::gta6_shaded::stored_level(state, selection, *key)
-        });
+        let _ = decoded(*key, || super::gta6_maps::stored(state, selection, *key));
     }
 }
 
 /// The active GTA VI drawable, and the models of its level the view draws.
-fn drawn_level(state: &AppState) -> Option<(&Drawable, &[Model])> {
+pub(crate) fn drawn_level(state: &AppState) -> Option<(&Drawable, &[Model])> {
     let doc = state.active_document()?;
     let DocPayload::Gta6Drawable(resource) = &doc.payload else {
         return None;
@@ -456,7 +479,7 @@ fn drawn_level(state: &AppState) -> Option<(&Drawable, &[Model])> {
 
 /// Each geometry the model view draws of `models`, in the order it uploads their meshes: those
 /// whose positions read.
-fn drawn(models: &[Model]) -> impl Iterator<Item = &Geometry> {
+pub(crate) fn drawn(models: &[Model]) -> impl Iterator<Item = &Geometry> {
     (models.iter())
         .flat_map(|model| model.geometries.iter().flatten())
         .filter(|geometry| geometry.positions.is_ok())
@@ -484,13 +507,14 @@ pub(crate) fn worn_by(drawable: &Drawable, models: &[Model]) -> Vec<gta6_shaders
 pub(crate) fn meshlets(state: &AppState) -> Option<Result<Meshlets, String>> {
     let (drawable, models) = drawn_level(state)?;
     let selection = state.selection.selected(state.active_document()?.id);
-    let stored = |key: u64| super::gta6_shaded::stored_level(state, selection, key);
+    let stored = |key: u64| super::gta6_maps::stored(state, selection, key);
     let lost = UNDER.lock().unwrap_or_else(|p| p.into_inner()).1.clone();
     let sources = Sources {
         shading: &gta6_shaders::shading,
         map: &|key| decoded(key, || stored(key)),
         layered: &|| gta6_layer_index::worn(state, true),
         lost: &lost,
+        ped: &|| crate::state::gta6_shaders::ped_assets::worn(state),
     };
     let (mut out, effects) = meshlets_of(drawable, models, &sources)?;
     UNDER.lock().unwrap_or_else(|p| p.into_inner()).0 = effects;
@@ -515,6 +539,8 @@ pub(crate) struct Sources<'s> {
     pub layered: &'s dyn Fn() -> Option<(Arc<Index>, Material)>,
     /// The effects a device was lost under.
     pub lost: &'s BTreeSet<u32>,
+    /// What the drawable joins to as a ped's part, asked for by the first pass fed of a component.
+    pub ped: &'s dyn Fn() -> Option<crate::state::gta6_shaders::ped_assets::Worn>,
 }
 
 /// The geometries of `models` the view draws of `drawable` as surfaces of their own passes, with
@@ -538,6 +564,7 @@ pub(crate) fn meshlets_of(
     let decoding = std::cell::Cell::new(false);
     // The layered material the drawable wears, asked for by the first pass that reads a record.
     let mut worn: Option<Option<(Arc<Index>, Material)>> = None;
+    let mut ped = None;
     let map = |key: u64| {
         (from.map)(key).unwrap_or_else(|()| {
             decoding.set(true);
@@ -580,10 +607,23 @@ pub(crate) fn meshlets_of(
             true => worn.get_or_insert_with(|| (from.layered)()).as_ref(),
             false => None,
         };
-        let drawn = surface(pass, geometry, shader, &mut texture, worn, &mut tile);
+        let mut drawn = surface(pass, geometry, shader, &mut texture, worn, &mut tile);
+        if let Some((surface, _)) = drawn.as_mut() {
+            let joined = super::gta6_ped::joined_for(pass, &mut ped, from.ped, &decoding);
+            let mut ped_map = map;
+            let fed = super::gta6_ped::fill(pass, joined, &mut ped_map, &mut surface.feeds);
+            if let Err(why) = fed {
+                out.rest.push(mesh);
+                out.why.get_or_insert(format!("{effect}: {why}"));
+                continue;
+            }
+        }
         if let Some((surface, zeroed)) = drawn {
-            out.surfaces.push(surface);
-            out.of.push((mesh, effect));
+            let instances = super::gta6_instances::IN_PLACE;
+            for surface in super::gta6_instances::placed(pass, surface, &instances) {
+                out.surfaces.push(surface);
+                out.of.push((mesh, effect.clone()));
+            }
             out.zeroed += zeroed;
             effects.push(shader.name_hash);
         }
@@ -591,6 +631,9 @@ pub(crate) fn meshlets_of(
     out.decoding = decoding.get();
     Some((out, effects))
 }
+
+#[path = "gta6_forward.rs"]
+mod forward;
 
 #[cfg(test)]
 mod tests {
@@ -670,6 +713,7 @@ mod tests {
             mesh: stage(streams),
             pixel: stage(&[]),
             linked: Default::default(),
+            forward: None,
         })
     }
 
@@ -858,5 +902,57 @@ mod tests {
         assert_eq!(size(0), (1, 1), "an entry with no image is one white texel");
         assert_eq!(size(1), (1024, 6));
         assert_eq!(word(8 + 3) >> 28, IMAGE_2D);
+    }
+
+    #[test]
+    fn a_terrain_stage_is_given_the_default_record_its_texel_and_no_feedback() {
+        use or_cli::gta6_terrain::{DefaultTexture, Terrain, TileRecord};
+        let fed = |binding: u32, part: Terrain, header: Option<u32>| Fed {
+            group: 1,
+            binding,
+            feed: Filled::Terrain(part),
+            header,
+        };
+        let stage = Stage {
+            feeds: vec![
+                fed(0, Terrain::Record, Some(372)),
+                fed(1, Terrain::Texture(DefaultTexture::Flat), None),
+                fed(2, Terrain::Feedback, None),
+            ],
+            ..pass(&[]).mesh.clone()
+        };
+        let geometry = Geometry {
+            shader: 0,
+            vertex_count: 0,
+            channels: Vec::new(),
+            triangles: Vec::new(),
+            positions: Ok(Vec::new()),
+            vertices: Default::default(),
+            vertex_data: Vec::new(),
+            index_data: Vec::new(),
+        };
+        let shader = Shader {
+            name_hash: 1,
+            texture_keys: Vec::new(),
+            parameters: Vec::new(),
+        };
+        let mut out = BTreeMap::new();
+        assert_eq!(
+            feeds(&stage, &geometry, &shader, &[], &[], None, &mut out),
+            0
+        );
+        let Some(Feed::Bytes(record)) = out.get(&(1, 0)) else {
+            panic!("the record is not bound");
+        };
+        assert_eq!(record.len(), 16 + std::mem::size_of::<TileRecord>());
+        let at = 16 + std::mem::offset_of!(TileRecord, weights);
+        let weights = u32::from_le_bytes(record[at..at + 4].try_into().unwrap());
+        assert_eq!(weights, DefaultTexture::Clear.entry());
+        let Some(Feed::Textures(texel)) = out.get(&(1, 1)) else {
+            panic!("the texture is not bound");
+        };
+        let rgba = texel[0].as_ref().map(|image| image.rgba.clone());
+        assert_eq!(rgba, Some(DefaultTexture::Flat.texel().to_vec()));
+        assert!(!out.contains_key(&(1, 2)), "the feedback binds nothing");
     }
 }

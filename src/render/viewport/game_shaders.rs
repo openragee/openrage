@@ -35,6 +35,13 @@ pub struct ModelCost {
     pub casts: bool,
     /// The pixels of the viewport.
     pub size: (u32, u32),
+    /// What its scene made on the device, and what came of its maps since Shaded was asked.
+    pub made: or_renderer::game_shaders::meshlets::Uploads,
+    pub maps: super::gta6_late_maps::LateMaps,
+    /// The rays the traced writer of the sun's mask cast in the frame: nought where it casts none.
+    pub rays: u64,
+    /// Its rays the watchdog left unfinished, each a miss, since its pass was built.
+    pub capped: u64,
 }
 
 /// No pass of GTA VI's own programs built yet: what the device's driver compiles of them is kept
@@ -88,6 +95,10 @@ impl RenderBridge {
             passes: self.gta6_pipelines.len(),
             casts: !scene.casts_no_shadow(),
             size: self.renderer.size(),
+            made: scene.uploads(),
+            maps: self.gta6_maps,
+            rays: scene.traced_rays(),
+            capped: scene.traced_capped(),
         })
     }
 
@@ -185,6 +196,7 @@ impl RenderBridge {
         self.gta6_own = None;
         self.gta6_building = None;
         self.gta6_decoding = false;
+        self.gta6_fallback.clear();
         self.renderer.set_game_scene(None);
         self.renderer.set_gta6_scene(None);
         self.renderer.clear_deferred();
@@ -361,17 +373,29 @@ impl RenderBridge {
         };
         gta6_shaders::request(&crate::render::gta6_meshlets::worn(state), install);
         if self.gta6_since.is_none_or(|(of, ..)| of != doc) {
+            tracing::info!(doc, "Shaded was asked for a GTA VI drawable");
             self.gta6_since = Some((doc, std::time::Instant::now(), false, false));
+            self.gta6_maps = Default::default();
             crate::render::gta6_meshlets::start_decoding(state);
         }
         let running = gta6_shaders::running();
         let pack = gta6_shaders::pack();
         let key = MeshCacheKey::of(state, doc, pack.as_ref().map_or(0, |(number, _)| *number));
+        // A map learnt or decoded since the scene was bound is bound where it is read
+        self.take_on_gta6_maps(state, key);
+        // The pack's passes drew without maps a worker decoded: prepared again once all are in
+        let fallen = &mut self.gta6_fallback;
+        if !fallen.is_empty() && crate::render::gta6_meshlets::all_in(fallen) {
+            fallen.clear();
+            self.game_scene_key = None;
+        }
         let fresh = self.game_scene_key != Some(key);
         let report = self.game_scene_report.as_ref();
         let was = report.and_then(|r| r.gta6.as_ref()).map(|(was, _)| *was);
-        let building = self.gta6_building.is_some() || self.gta6_decoding;
-        if !fresh && was == Some(running) && !building {
+        let building = self.gta6_building.is_some();
+        let devices = (&*self.device, &*self.queue);
+        let traced = crate::render::gta6_trace::refresh(devices, self.renderer.gta6_scene(), state);
+        if !fresh && was == Some(running) && !building && !traced {
             return;
         }
         let kept = report
@@ -390,14 +414,24 @@ impl RenderBridge {
                 self.held.game_key = None;
                 self.renderer.clear_deferred();
                 self.gta6_own = self.prepare_gta6_meshlets(state);
-                let surfaces = match self.gta6_own {
-                    // Drawn by its own programs, it needs no pass of the pack
-                    Some(Ok(_)) => None,
-                    _ => crate::render::gta6_shaded::shaded_surfaces(state),
+                self.gta6_fallback.clear();
+                let fallback = match (&self.gta6_own, &pack) {
+                    // Drawn by its own programs, it needs no pass of the pack; with no pack yet,
+                    // there is none to prepare for
+                    (Some(Ok(_)), _) | (_, None) => None,
+                    (_, Some((_, pack))) => {
+                        let draws =
+                            |effect: &str| crate::render::gta6_shaded::pack_draws(pack, effect);
+                        crate::render::gta6_shaded::shaded_surfaces(state, &draws)
+                    }
                 };
-                match (&pack, surfaces) {
-                    (Some((_, pack)), Some(surfaces)) => {
-                        self.prepare_gta6_surfaces(pack, &surfaces)
+                match (&pack, fallback) {
+                    (Some((_, pack)), Some(fallback)) => {
+                        self.gta6_fallback = fallback.decoding;
+                        let (drawn, mut left_out) =
+                            self.prepare_gta6_surfaces(pack, &fallback.surfaces);
+                        left_out.extend(fallback.left_out);
+                        (drawn, left_out)
                     }
                     _ => {
                         self.renderer.set_game_scene(None);
@@ -424,6 +458,7 @@ impl RenderBridge {
         let by_cycles = crate::state::gta6_shaders::timecycle::timecycle(state)
             .is_some_and(|tables| super::gta6_day::lights(&tables, state.drivers.weather.state));
         let said = crate::render::gta6_shaded::said_of_own(said, self.gta6_own.as_ref(), by_cycles);
+        let said = crate::render::gta6_trace::said(said);
         self.game_scene_report = Some(GameSceneReport {
             drawn,
             left_out,
@@ -466,7 +501,7 @@ impl RenderBridge {
     }
 
     /// [`Self::prepare_gta6_meshlets`] of the drawable `read` gives where no worker builds for one.
-    fn prepare_gta6_meshlets_of(
+    pub(super) fn prepare_gta6_meshlets_of(
         &mut self,
         read: impl FnOnce() -> Option<Result<crate::render::gta6_meshlets::Meshlets, String>>,
     ) -> Option<Result<crate::render::gta6_shaded::Own, String>> {
@@ -476,19 +511,17 @@ impl RenderBridge {
             Some(meshlets) => meshlets,
             None => {
                 self.renderer.set_gta6_scene(None);
+                // A map decoded from here on is bound by a later frame
+                self.gta6_maps.seen = crate::render::gta6_maps::arrived();
                 match read()? {
                     Ok(meshlets) => meshlets,
                     Err(why) => return Some(Err(why)),
                 }
             }
         };
-        // Its passes are built while its maps are decoded: neither waits for the other
-        if meshlets.decoding {
-            (self.gta6_pipelines).start(&self.device, &meshlets.surfaces);
-            self.gta6_decoding = true;
-            return Some(Err(tr!("a worker is still decoding its maps").to_string()));
-        }
-        self.gta6_decoding = false;
+        // A surface draws by its pass once it is built, a map still decoded as its blank
+        // texel; the map is bound into the scene as it comes in
+        self.gta6_decoding = meshlets.decoding;
         // What some of its passes draw takes on the surfaces a worker has built the pass of
         // since, each alone: a prepare makes every buffer and texture of every surface anew, on
         // this thread
@@ -504,6 +537,7 @@ impl RenderBridge {
         let built = self.gta6_pipelines.len();
         let (device, queue, pipelines) = (&self.device, &self.queue, &mut self.gta6_pipelines);
         let mut more = true;
+        let anew = live.is_none();
         let scene = match live {
             Some(mut scene) => {
                 (scene.build_on(device, queue, pipelines, &meshlets.surfaces)).map(|fewer| {
@@ -522,10 +556,12 @@ impl RenderBridge {
         };
         let refused = pollster::block_on(validation.pop());
         let refused = refused.or(pollster::block_on(internal.pop()));
+        self.gta6_maps.prepares += u32::from(anew && matches!(scene, Ok(Some(_))));
         if more && !matches!(scene, Ok(None)) {
             tracing::info!(
                 elapsed = ?started.elapsed(),
                 surfaces = meshlets.surfaces.len(),
+                decoding = meshlets.decoding,
                 drawn = scene.as_ref().map_or(0, |scene| scene.as_ref().map_or(0, MeshletScene::drawn)),
                 passes = self.gta6_pipelines.len(),
                 "a GTA VI drawable's own passes were prepared"
@@ -558,11 +594,13 @@ impl RenderBridge {
                 }
                 let own = crate::render::gta6_shaded::Own {
                     drawn: scene.drawn(),
+                    forward: scene.drawn_forward(),
                     zeroed: meshlets.zeroed,
                     rest: rest.len(),
                     why,
                     unshadowed: scene.casts_no_shadow(),
                 };
+                self.said_all_in(meshlets.decoding);
                 // The drawable is asked about again until every pass of its surfaces is built
                 if !scene.waiting.is_empty() {
                     self.gta6_building = Some(meshlets);

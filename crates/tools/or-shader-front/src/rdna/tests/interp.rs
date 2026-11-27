@@ -234,8 +234,23 @@ fn zero(module: &naga::Module, ty: Handle<naga::Type>) -> Value {
             base,
             size: naga::ArraySize::Constant(count),
         } => Value::List(vec![zero(module, base); count.get() as usize]),
+        // The candidates yet to be handed over, and the one in hand.
+        TypeInner::RayQuery { .. } => Value::List(vec![Value::List(Vec::new()), Value::U(0)]),
         ref other => panic!("no zero of {other:?}"),
     }
+}
+
+/// What a query asks a device of, on this thread: the candidates of a ray, as naga's
+/// `RayIntersection`s, for the ray's descriptor.
+type Device = Box<dyn Fn(&Value) -> Vec<Value>>;
+
+thread_local! {
+    static DEVICE: std::cell::RefCell<Option<Device>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Has `device` hand over the candidates of every ray query run on this thread from now on.
+pub fn answer_queries_with(device: impl Fn(&Value) -> Vec<Value> + 'static) {
+    DEVICE.with(|held| *held.borrow_mut() = Some(Box::new(device)));
 }
 
 impl<'a> Machine<'a> {
@@ -520,6 +535,17 @@ impl<'a> Machine<'a> {
                 }
                 other => panic!("{other:?} is not run"),
             },
+            // A ray query holds what is yet to be handed over and the candidate in hand.
+            E::RayQueryGetIntersection {
+                query,
+                committed: false,
+            } => match self.got(frame, query) {
+                Got::Place(place) => match self.read(frame, &place) {
+                    Value::List(mut held) if held.len() == 2 => held.swap_remove(1),
+                    other => panic!("{other:?} is no ray query"),
+                },
+                Got::Value(value) => panic!("a ray query read from {value:?}"),
+            },
             ref other => panic!("{other:?} is not run"),
         };
         Got::Value(value)
@@ -641,7 +667,14 @@ impl<'a> Machine<'a> {
                 } => {
                     use naga::AtomicFunction as Af;
                     let value = self.value(frame, value).word();
+                    // A compare-and-swap stores where the dword held the compared value.
+                    let compare = match fun {
+                        Af::Exchange { compare: Some(at) } => Some(self.value(frame, at).word()),
+                        _ => None,
+                    };
                     let updated = |old: u32| match fun {
+                        Af::Exchange { compare: Some(_) } if compare == Some(old) => value,
+                        Af::Exchange { compare: Some(_) } => old,
                         Af::Add => old.wrapping_add(value),
                         Af::Subtract => old.wrapping_sub(value),
                         Af::And => old & value,
@@ -650,7 +683,6 @@ impl<'a> Machine<'a> {
                         Af::Min => old.min(value),
                         Af::Max => old.max(value),
                         Af::Exchange { compare: None } => value,
-                        other => panic!("{other:?} is not run"),
                     };
                     let old = match self.got(frame, pointer) {
                         // The group's memory is updated in one step, whatever the other threads do.
@@ -667,8 +699,15 @@ impl<'a> Machine<'a> {
                         }
                         _ => panic!("an update in one step of what is no memory"),
                     };
+                    // The result of a compare-and-swap is the old dword and whether it was stored.
+                    let given = match compare {
+                        Some(compared) => {
+                            Value::List(vec![Value::U(old), Value::B(compared == old)])
+                        }
+                        None => Value::U(old),
+                    };
                     if let Some(at) = result {
-                        frame.values.insert(at, Got::Value(Value::U(old)));
+                        frame.values.insert(at, Got::Value(given));
                     }
                 }
                 S::Call {
@@ -697,6 +736,38 @@ impl<'a> Machine<'a> {
                     }
                     self.value(frame, value).words(&mut stored[2]);
                     self.out.stores.push(stored);
+                }
+                S::RayQuery { query, ref fun } => {
+                    let Got::Place(place) = self.got(frame, query) else {
+                        panic!("a ray query that is no variable");
+                    };
+                    match *fun {
+                        naga::RayQueryFunction::Initialize { descriptor, .. } => {
+                            let ray = self.value(frame, descriptor);
+                            let mut handed = DEVICE.with(|device| {
+                                let device = device.borrow();
+                                (device.as_ref().expect("no device answers a ray query"))(&ray)
+                            });
+                            // The last is handed over first.
+                            handed.reverse();
+                            let held = Value::List(vec![Value::List(handed), Value::U(0)]);
+                            self.write(frame, &place, held);
+                        }
+                        naga::RayQueryFunction::Proceed { result } => {
+                            let Value::List(mut held) = self.read(frame, &place) else {
+                                panic!("a ray query that holds no candidates");
+                            };
+                            let Value::List(waiting) = &mut held[0] else {
+                                panic!("a ray query that holds no candidates");
+                            };
+                            let next = waiting.pop();
+                            let more = next.is_some();
+                            held[1] = next.unwrap_or(Value::U(0));
+                            self.write(frame, &place, Value::List(held));
+                            frame.values.insert(result, Got::Value(Value::B(more)));
+                        }
+                        ref other => panic!("{other:?} is not run"),
+                    }
                 }
                 ref other => panic!("{other:?} is not run"),
             }
@@ -874,17 +945,29 @@ impl<'a> Calls<'a> {
 
     /// What the function named `name` returns for `arguments`.
     pub fn call(&self, name: &str, arguments: Vec<Value>) -> Value {
+        self.call_kept(&mut HashMap::new(), name, arguments)
+    }
+
+    /// [`Calls::call`] with the module's privates in `kept`, which the call leaves as it ends:
+    /// one invocation's calls, one after another.
+    pub fn call_kept(
+        &self,
+        kept: &mut HashMap<Handle<GlobalVariable>, Value>,
+        name: &str,
+        arguments: Vec<Value>,
+    ) -> Value {
         let (_, function) = (self.module.functions.iter())
             .find(|(_, function)| function.name.as_deref() == Some(name))
             .unwrap_or_else(|| panic!("no function {name}"));
         let mut machine = Machine {
             module: self.module,
             group: &self.group,
-            private: HashMap::new(),
+            private: std::mem::take(kept),
             out: Thread::default(),
             turn: (0, 0),
         };
         let returned = machine.call(function, arguments);
+        *kept = machine.private;
         returned.unwrap_or_else(|| panic!("{name} returned nothing"))
     }
 }

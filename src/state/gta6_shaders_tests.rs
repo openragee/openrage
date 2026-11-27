@@ -383,11 +383,26 @@ struct Told {
 
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
+/// The blend the stand-in gives a forward pass, a pixel program's container `F`.
+const LAID: or_cli::Gta6Blend = or_cli::Gta6Blend {
+    colour: [
+        or_cli::Gta6Factor::One,
+        or_cli::Gta6Factor::OneMinusSourceAlpha,
+    ],
+    alpha: [or_cli::Gta6Factor::Zero, or_cli::Gta6Factor::One],
+    writes: 0b0111,
+};
+
 impl Translate for Told {
-    type Pixel = ();
+    /// Whether the pixel stage is a forward one.
+    type Pixel = bool;
 
     fn shades(&self, mesh: &[u8], pixel: &[u8]) -> bool {
         mesh[0] == b'M' && matches!(pixel[0], b'P' | b'X')
+    }
+
+    fn forward(&self, mesh: &[u8], pixel: &[u8]) -> bool {
+        mesh[0] == b'M' && pixel[0] == b'F'
     }
 
     fn streams(&self, mesh: &[u8], _: &Sgd5Table, _: &Sgd5Table) -> Result<BTreeSet<u32>, String> {
@@ -402,11 +417,11 @@ impl Translate for Told {
         Ok(alone.map(|slot| u32::from(*slot)).collect())
     }
 
-    fn pixel(&self, pixel: &[u8], _: &Sgd5Table, _: &Sgd5Table) -> Result<(), String> {
+    fn pixel(&self, pixel: &[u8], _: &Sgd5Table, _: &Sgd5Table) -> Result<bool, String> {
         self.pixels.fetch_add(1, SeqCst);
         match pixel[0] {
             b'X' => Err("pixel program: refused".to_owned()),
-            _ => Ok(()),
+            other => Ok(other == b'F'),
         }
     }
 
@@ -415,7 +430,7 @@ impl Translate for Told {
         mesh: &[u8],
         _: &Sgd5Table,
         _: &Sgd5Table,
-        (): &(),
+        forward: &bool,
     ) -> Result<Gta6ShadingPass, String> {
         self.passes.fetch_add(1, SeqCst);
         use wgpu::naga;
@@ -440,6 +455,7 @@ impl Translate for Told {
             mesh: stage(streams.map(|slot| u32::from(*slot)).collect()),
             pixel: stage(BTreeSet::new()),
             linked: Default::default(),
+            forward: forward.then_some(LAID),
         })
     }
 }
@@ -571,6 +587,7 @@ fn two_geometries_that_wear_one_effect_with_other_streams_are_each_drawn_by_the_
         map: &|_| Ok(None),
         layered: &|| None,
         lost: &lost,
+        ped: &|| None,
     };
     let (meshlets, effects) = meshlets_of(&drawable, models, &sources).expect("its shader");
     assert_eq!((meshlets.rest.as_slice(), &meshlets.why), (&[][..], &None));
@@ -723,6 +740,7 @@ fn two_effects_whose_passes_come_to_the_same_two_stages_draw_by_one_pass_of_the_
             feeds: Default::default(),
             meshlets: 1,
             primitives: 1,
+            forward: None,
         };
         built.hold(&surface, true);
         passes.push(pass);
@@ -765,4 +783,26 @@ fn the_effects_of_a_job_are_read_side_by_side_on_no_more_workers_than_the_machin
         "{most} at once on a machine that spares {spared}"
     );
     assert!(most >= spared.min(2), "{most} at once: one after the other");
+}
+
+#[test]
+fn a_forward_pass_draws_only_an_effect_that_has_no_pass_which_shades_a_model() {
+    let dir = tempfile::tempdir().unwrap();
+    let alone: Listed = &[(b"M\x01", b"F")];
+    let both: Listed = &[(b"M\x01", b"F"), (b"M\x01\x02", b"P")];
+    let mut s = Shaders::default();
+    let source = shaded(dir.path(), &[("forward_t", alone), ("both_t", both)]);
+    keep(&mut s, vec![Arc::new(source)]);
+    let (forward, mixed) = (name_hash32(b"forward_t"), name_hash32(b"both_t"));
+    let held = holding(&[1, 2]);
+    looked_for(&mut s, &Told::default(), &[(forward, held), (mixed, held)]);
+    let pass = |hash: u32| picked(&s, hash, held).unwrap().unwrap();
+    // Alone, its forward pass draws it, laid on by its blend.
+    assert_eq!(translated(&s, forward), [true]);
+    assert_eq!(pass(forward).forward, Some(LAID));
+    // Beside a pass that shades a model it is no candidate: that one draws.
+    assert_eq!(translated(&s, mixed), [true]);
+    assert_eq!(pass(mixed).forward, None);
+    let streams: Vec<u32> = pass(mixed).mesh.streams.iter().copied().collect();
+    assert_eq!(streams, [1, 2]);
 }

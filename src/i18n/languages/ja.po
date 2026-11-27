@@ -14708,9 +14708,6 @@ msgstr "シェーディング — GTA VIのプログラムから変換した、�
 msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the install's weather cycle at the hour and the weather set, under the sky its air gives, with the game's metering and tone curve. {zeroed} bindings only the game fills read as noughts"
 msgstr "シェーディング — GTA VIのプログラムから変換した、このドローアブル自身のメッシュプログラムとピクセルプログラム：{drawn} 個のサーフェスを描画し、設定した時刻と天候でインストールの天候サイクルによって照らし、空はその大気が与えるもので、測光とトーンカーブはゲームのものです。ゲームだけが埋める {zeroed} 個のバインディングはゼロとして読み取られます"
 
-msgid "a worker is still decoding its maps"
-msgstr "ワーカーがまだマップをデコード中です"
-
 msgid "a worker is still building its passes for this device"
 msgstr "ワーカーがまだこのデバイス用のパスを構築中です"
 
@@ -17398,3 +17395,27 @@ msgstr "GTA VIのアーカイブ内"
 
 msgid "This key changes the length of its clip's data, so its archive will be saved rebuilt, which the game refuses because only its maker can sign the table."
 msgstr "このキーはクリップのデータの長さを変えるため、そのアーカイブは再構築して保存されます。テーブルに署名できるのは作成者だけなので、ゲームはそれを拒否します。"
+
+msgid "its part's state {state} has a wrinkle map, and the number the game then sets to have its pixel program sample the map is not read"
+msgstr "そのパーツの状態 {state} にはしわマップがあり、ピクセルプログラムにそのマップをサンプルさせるためにゲームが設定する数値はまだ読まれていません"
+
+msgid "Drawn by their forward passes, laid over the lit frame before it is toned: {count} of those surfaces"
+msgstr "フォワードパスで描画し、トーンカーブを適用する前のライティング済みフレームに重ねたもの：そのうち {count} 個のサーフェス"
+
+msgid "The sun's shadow: the shadow map, since the traced pass does not run: {why}"
+msgstr "太陽の影：シャドウマップ。トレースパスが実行されないため：{why}"
+
+msgid "The sun's shadow: the shadow map, while the traced pass is built"
+msgstr "太陽の影：トレースパスの構築中はシャドウマップ"
+
+msgid "The traced shadow is of the model at rest: a posed model's triangles are not computed on the CPU"
+msgstr "トレースされた影は静止状態のモデルのものです：ポーズを取ったモデルの三角形は CPU で計算されません"
+
+msgid "The sun's shadow: traced by GTA VI's own walk, translated, under the editor's rays in a compute pass; its cutout surfaces are traced solid"
+msgstr "太陽の影：GTA VI 自身の走査（翻訳済み）により、エディターのレイでコンピュートパス内でトレース。切り抜きサーフェスはソリッドとしてトレースされます"
+
+msgid "The traced walk tests each node by the device's ray query"
+msgstr "トレースされた走査は各ノードをグラフィックスカードのレイクエリで判定します"
+
+msgid "The traced walk tests each node in software"
+msgstr "トレースされた走査は各ノードをソフトウェアで判定します"

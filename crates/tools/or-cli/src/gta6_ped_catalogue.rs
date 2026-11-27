@@ -90,7 +90,7 @@ fn lines(body: &PedCatalogue, vocabulary: &Vocabulary, rows: usize) -> Vec<Strin
                 said64(vocabulary, &ruled, state.albedo),
                 said64(vocabulary, &ruled, state.normal),
                 said64(vocabulary, &ruled, state.material),
-                state.more_assets
+                state.more.len()
             ));
         }
     }
@@ -132,14 +132,14 @@ mod tests {
             albedo: 0x55,
             normal: 0,
             material: 0,
-            more_assets: 2,
+            more: vec![(1, 0), (2, 0)],
         };
         let body = PedCatalogue {
             asset_lists: vec![vec![AssetKit {
                 id: 0xA1,
                 template_name: 0,
                 category: 0xA3,
-                states: vec![state],
+                states: vec![state.clone()],
             }]],
             set_lists: vec![vec![SetKit {
                 id: 0xC1,

@@ -7,8 +7,9 @@ use naga::{
     Statement, TypeInner, VectorSize,
 };
 use or_io::gta6::accel::layout::{
-    BOX_BOUNDS, BOX_BOUNDS_STRIDE, BOX_CHILDREN, CORNERS, INVALID, TRIANGLE_ID,
-    TRIANGLE_VERTEX_STRIDE, TYPE_BOX32, UNIT,
+    BOX_BOUNDS, BOX_BOUNDS_STRIDE, BOX_CHILDREN, BOX_INSTANCES, CORNERS, HEADER_PARENTS,
+    HEADER_ROOT, INSTANCE_BOTTOM, INVALID, QUERY_TOP, TRIANGLE_ID, TRIANGLE_VERTEX_STRIDE,
+    TYPE_BOX32, UNIT,
 };
 use or_io::gta6::accel::MISS;
 
@@ -22,6 +23,8 @@ use super::{
 use crate::rdna::cfg::{self, Cfg, Terminator};
 use crate::rdna::decode::Inst;
 use crate::rdna::sym::Sym;
+
+mod query;
 
 /// The words an intersection's descriptor states after the structure's address: the children
 /// of a box sorted nearest first, the whole address range, and a triangle answered as a
@@ -74,6 +77,11 @@ pub fn arena_layout() -> Vec<u32> {
         TRIANGLE_VERTEX_STRIDE,
         TYPE_BOX32,
         UNIT,
+        BOX_INSTANCES,
+        HEADER_PARENTS,
+        HEADER_ROOT,
+        INSTANCE_BOTTOM,
+        QUERY_TOP,
     ];
     numbers.extend(CORNERS.iter().flatten());
     numbers.extend(MISS);
@@ -100,9 +108,13 @@ pub struct Intersection {
 pub(super) struct Trace {
     /// Whether the program's structure is the arena ([`super::Options::arena`]).
     pub(super) on: bool,
+    /// Whether the test of a node is answered from the device's query ([`super::Options::query`]).
+    query: bool,
     /// Whether the program tests a ray against a node anywhere.
     rays: bool,
     arena: Option<Handle<naga::GlobalVariable>>,
+    /// The device's structure a query walks.
+    structures: Option<Handle<naga::GlobalVariable>>,
     function: Option<Handle<naga::Function>>,
     /// Each intersection lowered: its block's number, its word, and whether it is the 64-bit form.
     sites: Vec<(u32, u32, bool)>,
@@ -238,9 +250,10 @@ pub(super) fn cut<'a>(whole: &'a Cfg, region: &Region) -> Result<Cut<'a>, NotTra
 }
 
 impl Trace {
-    pub(super) fn of(on: bool, cfg: &Cfg, walk: Option<&Cut>) -> Self {
+    pub(super) fn of((on, query): (bool, bool), cfg: &Cfg, walk: Option<&Cut>) -> Self {
         Self {
             on,
+            query: on && query,
             walk: walk.map(|walk| Walk {
                 exit: walk.exit,
                 left: walk.left.clone(),
@@ -544,12 +557,18 @@ impl Cx<'_> {
             arguments.push(self.b.emit(E::Compose { ty, components }));
         }
         let function = self.node_test();
-        let result = self.b.result(E::CallResult(function));
-        self.b.push(Statement::Call {
-            function,
-            arguments,
-            result: Some(result),
-        });
+        let result = match self.trace.query {
+            true => self.asked(function, arguments),
+            false => {
+                let result = self.b.result(E::CallResult(function));
+                self.b.push(Statement::Call {
+                    function,
+                    arguments,
+                    result: Some(result),
+                });
+                result
+            }
+        };
         for k in 0..4 {
             let value = self.b.index(result, k);
             self.vput(data.wrapping_add(k as u8), value);
@@ -578,7 +597,10 @@ impl Cx<'_> {
         let three = vector(&mut self.module, VectorSize::Tri, Scalar::F32);
         let four = vector(&mut self.module, VectorSize::Quad, Scalar::U32);
         let outer = std::mem::replace(&mut self.b, Builder::new());
-        self.node_body(four);
+        match self.trace.query {
+            true => self.query_body(four),
+            false => self.node_body(four),
+        }
         let mut function = std::mem::replace(&mut self.b, outer).finish();
         function.name = Some("bvh_intersect".to_owned());
         function.arguments = [

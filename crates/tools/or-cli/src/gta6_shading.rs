@@ -6,11 +6,13 @@ use std::collections::BTreeSet;
 use or_io::gta5::shaders::sgd5::Sgd5Table;
 use or_shader_front::dxil::ShaderKind;
 use or_shader_front::rdna::link::{self, Linked};
+use or_shader_front::rdna_bind::forward::forward_of;
 use or_shader_front::rdna_bind::picks::{deferred_targets, picks};
 use or_shader_front::rdna_bind::shading::{
     feed, parameter_of, parameter_slots, sources, Source, STREAM_SLOTS,
 };
 
+pub use or_shader_front::rdna_bind::forward::{Blend, Factor};
 pub use or_shader_front::rdna_bind::kept as gta6_kept;
 pub use or_shader_front::rdna_bind::shading::{Fed, Feed, Stage};
 use or_shader_front::rdna_bind::{self, Native};
@@ -23,6 +25,8 @@ pub struct Gta6ShadingPass {
     pub pixel: Stage,
     /// What crosses between the two, and where.
     pub linked: Linked,
+    /// How it is laid over the lit frame where it is a forward pass; `None` for a deferred one.
+    pub forward: Option<Blend>,
 }
 
 fn native(container: &[u8]) -> Result<Native, String> {
@@ -38,6 +42,18 @@ pub fn is_gta6_shading_pass(first: &[u8], pixel: &[u8]) -> bool {
     first.program.kind == ShaderKind::Mesh
         && pixel.program.kind == ShaderKind::Pixel
         && deferred_targets(&picks(&pixel.program.words).exports)
+}
+
+/// Whether the inflated containers `first` and `pixel` are a forward pass of a model.
+// A mesh program, and a pixel program that colours or lights a surface itself, to be laid over
+// the lit frame.
+pub fn is_gta6_forward_pass(first: &[u8], pixel: &[u8]) -> bool {
+    let (Ok(first), Ok(pixel)) = (native(first), native(pixel)) else {
+        return false;
+    };
+    first.program.kind == ShaderKind::Mesh
+        && pixel.program.kind == ShaderKind::Pixel
+        && forward_of(&picks(&pixel.program.words).exports).is_some()
 }
 
 /// The pass of the inflated containers `first` and `pixel` translated, with what fills each
@@ -60,6 +76,7 @@ pub fn translate_gta6_shading(
 pub struct Gta6PixelStage {
     stage: Stage,
     half_slots: BTreeSet<u8>,
+    forward: Option<Blend>,
 }
 
 fn said(stage: &str, why: &dyn std::fmt::Display) -> String {
@@ -74,11 +91,17 @@ pub fn translate_gta6_pixel_stage(
     effect: &Sgd5Table,
 ) -> Result<Gta6PixelStage, String> {
     let pixel = native(pixel)?;
+    // A forward stage whose blend no effect states is refused before it is lowered, as the
+    // binder would refuse it after.
+    let forward = (forward_of(&picks(&pixel.program.words).exports))
+        .map(|forward| forward.blend().map_err(|why| said("pixel", &why)))
+        .transpose()?;
     let fragment =
         rdna_bind::kept::lower(&pixel, &BTreeSet::new()).map_err(|why| said("pixel", &why))?;
     Ok(Gta6PixelStage {
         half_slots: fragment.half_slots.clone(),
         stage: feed(&pixel, fragment, table, effect).map_err(|why| said("pixel", &why))?,
+        forward,
     })
 }
 
@@ -98,6 +121,7 @@ pub fn translate_gta6_mesh_stage(
         .collect();
     let geometry = rdna_bind::kept::lower(&first, &halves).map_err(|why| said("mesh", &why))?;
     let mut mesh = feed(&first, geometry, table, effect).map_err(|why| said("mesh", &why))?;
+    let forward = pixel.forward;
     let mut pixel = pixel.stage.clone();
     // The pixel stage is several passes': each pass links a copy of its own. The mesh stage's
     // parameters are at the pixel stage's slots already, and a clip distance crosses as a
@@ -112,6 +136,7 @@ pub fn translate_gta6_mesh_stage(
         mesh,
         pixel,
         linked,
+        forward,
     })
 }
 

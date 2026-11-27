@@ -66,7 +66,7 @@ pub struct AssetKit {
 }
 
 /// One state of an asset kit: the 64-bit name words of its drawable and its three maps.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AssetState {
     /// The state's name hash (`hash_3EADDCD7`).
     pub name: u32,
@@ -74,8 +74,16 @@ pub struct AssetState {
     pub albedo: u64,
     pub normal: u64,
     pub material: u64,
-    /// The pairs of the map of further assets (`hash_B70A22C1`), which are not followed.
-    pub more_assets: usize,
+    /// The map of further assets (`hash_B70A22C1`), in the body's order: each key with its
+    /// `AssetName` word, 0 for an asset that states none (one of four words).
+    pub more: Vec<(u32, u64)>,
+}
+
+impl AssetState {
+    /// The `AssetName` word of the further asset of key `key`, where the state has one.
+    pub fn more_asset(&self, key: u32) -> Option<u64> {
+        (self.more.iter()).find_map(|(k, word)| (*k == key && *word != 0).then_some(*word))
+    }
 }
 
 /// A kit that names asset kits and a state of each.
@@ -206,9 +214,9 @@ fn asset_kit(kit: &Members) -> Result<AssetKit> {
             albedo: assets.word(lit(b"Albedo")),
             normal: assets.word(lit(b"Normal")),
             material: assets.word(lit(b"Material")),
-            more_assets: match assets.get(MORE_ASSETS) {
-                Some(Value::Map(pairs)) => pairs.len(),
-                _ => 0,
+            more: match assets.get(MORE_ASSETS) {
+                Some(Value::Map(pairs)) => pairs.iter().map(further_asset).collect(),
+                _ => Vec::new(),
             },
         })
     })
@@ -219,6 +227,23 @@ fn asset_kit(kit: &Members) -> Result<AssetKit> {
         category: kit.hash(lit(b"Category")),
         states,
     })
+}
+
+/// A pair of a state's map of further assets: its key, and the `AssetName` word its structure
+/// states (0 where it states none).
+fn further_asset((key, value): &(Value, Value)) -> (u32, u64) {
+    let key = match key {
+        Value::Hash(h) => h.hash,
+        Value::UInt(word) => *word as u32,
+        _ => 0,
+    };
+    let word = match value {
+        Value::Struct(asset) | Value::Pointer(Some(asset)) => {
+            Members(asset).word(lit(b"AssetName"))
+        }
+        _ => 0,
+    };
+    (key, word)
 }
 
 fn set_kit(kit: &Members) -> Result<SetKit> {

@@ -2,7 +2,6 @@
 //! own data blocks, its pixel program writes the targets the game's deferred pass writes, and a
 //! last draw lights them onto the frame.
 
-use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
@@ -50,6 +49,8 @@ const STAGE_BINDINGS: u32 = 64;
 /// has the binder let through a stage whose loop counts to a number only the game fills, and
 /// no pass is then built but on a software adapter; `meter=frame` has a frame lit by an
 /// install's cycles metered whole, as the game meters one, and not by the model's surfaces alone.
+/// `traced` and `traced=FILE` have the sun's mask written by the game's walk, which
+/// [`super::trace::traced_aid`] reads.
 #[derive(Debug, Default, PartialEq)]
 struct Aids {
     target: f32,
@@ -113,8 +114,9 @@ pub fn device_needs(
     if aids().plain_device {
         return wgpu::Features::empty();
     }
-    // Where a backend keeps what its driver compiled of a pipeline, the passes are built with it.
-    let kept = features & wgpu::Features::PIPELINE_CACHE;
+    // Where a backend keeps what its driver compiled of a pipeline, the passes are built with it;
+    // Direct3D 12 is handed the stages `kept_dx12` compiled.
+    let kept = features & (wgpu::Features::PIPELINE_CACHE | super::kept_dx12::FEATURES);
     let raised = |asked: u32, has: u32| asked.max(has.min(STAGE_BINDINGS));
     limits.max_storage_buffers_per_shader_stage = raised(
         limits.max_storage_buffers_per_shader_stage,
@@ -176,6 +178,9 @@ pub struct MeshletSurface {
     /// The primitives of the largest of them: an instance runs three vertices for each.
     // The thread of a vertex is its primitive's, and a meshlet makes none on a thread past its own.
     pub primitives: u32,
+    /// How it is laid over the lit frame where it is a forward surface; `None` for a deferred one.
+    // ⚠ A pass is built once for its two stages: every surface of them is laid on alike.
+    pub forward: Option<Forward>,
 }
 
 /// A buffer the frame writes the view into, and where.
@@ -192,6 +197,10 @@ struct Draw {
     /// The vertices of an instance.
     vertices: u32,
     views: Vec<ViewWrite>,
+    /// The pass it draws by, and for each of `groups` the digest of the feeds it was bound by and
+    /// the views it holds: a map that comes in late binds again only the groups that read it.
+    built: Arc<Built>,
+    bound_by: Vec<(u64, Vec<ViewWrite>)>,
 }
 
 /// What a frame of a model asked of the device, counted where each call is recorded.
@@ -299,6 +308,8 @@ impl Kept {
 /// The surfaces of a model ready to draw, with the targets their pixel programs write.
 pub struct MeshletScene {
     draws: Vec<Draw>,
+    /// What the draws are bound to, each made once for every surface that binds it alike.
+    made: shared::Made,
     kept: std::cell::RefCell<Kept>,
     /// What the frame last begun by [`MeshletScene::update`] has asked of the device so far.
     calls: std::cell::Cell<MeshletCalls>,
@@ -321,10 +332,15 @@ pub struct MeshletScene {
     mask: SunMask,
     mask_layout: wgpu::BindGroupLayout,
     mask_writer: wgpu::RenderPipeline,
+    /// The mask's second writer, the game's walk over the model's arena, where one is set.
+    traced: std::cell::RefCell<Option<super::trace::TracedMask>>,
     /// The tile the sun's shadow is cast into, and the camera's matrix and the light's, which a
     /// frame copies in turn to where the surfaces read the view.
     shadow_map: wgpu::TextureView,
     matrices: wgpu::Buffer,
+    /// Its forward surfaces and the lit frame they are laid over, where it has any: the frame is
+    /// then lit into that, and toned from it.
+    over: Option<forward::Over>,
     /// The meshes of the model its programs do not draw, which the frame draws as a material.
     pub rest: Vec<usize>,
     /// The surfaces it was prepared from that the device has no pass for, each by its place
@@ -504,6 +520,7 @@ fn bind(
     group: u32,
     layout: &wgpu::BindGroupLayout,
     feeds: &BTreeMap<(u32, u32), Feed>,
+    made: &mut shared::Made,
 ) -> Result<Group, String> {
     let required = required_in(device, module, group)?;
 
@@ -524,11 +541,10 @@ fn bind(
             Resource::Uniform { size } => {
                 let mut held = bytes.to_vec();
                 held.resize((*size as usize).max(LEAST), 0);
-                let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: None,
-                    contents: &held,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                });
+                // A frame writes the view into its own buffer of each surface.
+                let shared = !matches!(feed, Some(Feed::View { .. }));
+                let usage = wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST;
+                let buffer = made.buffer(device, usage, &held, shared);
                 if let Some(Feed::View {
                     view_proj: Some(at),
                     ..
@@ -541,17 +557,13 @@ fn bind(
                 buffers.push(buffer);
                 Bound::Buffer(buffers.len() - 1)
             }
-            Resource::Storage { size, .. } => {
+            Resource::Storage { size, read_only } => {
                 let mut held = bytes.to_vec();
                 let least = (*size as usize).max(LEAST).max(held.len());
                 held.resize(least.next_multiple_of(4), 0);
-                buffers.push(
-                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: None,
-                        contents: &held,
-                        usage: wgpu::BufferUsages::STORAGE,
-                    }),
-                );
+                // A buffer a stage may write is its surface's own.
+                let usage = wgpu::BufferUsages::STORAGE;
+                buffers.push(made.buffer(device, usage, &held, *read_only));
                 match count {
                     Some(_) => Bound::Buffers(buffers.len() - 1, entries),
                     None => Bound::Buffer(buffers.len() - 1),
@@ -571,21 +583,13 @@ fn bind(
                     _ => [0; 4],
                 };
                 let first = textures.len();
-                // The entries no image fills share one white texel.
-                let mut blank = None;
+                // The entries no image fills share one white texel, and an image bound twice
+                // is one texture: the scene makes each once.
                 for entry in 0..entries {
                     let array = count.map(|_| entries);
-                    let view = match image_at(images, entry, array) {
-                        Some(image) => {
-                            view_of(device, queue, *dimension, *sample, Some(image), empty)
-                        }
-                        None => blank
-                            .get_or_insert_with(|| {
-                                view_of(device, queue, *dimension, *sample, None, empty)
-                            })
-                            .clone(),
-                    };
-                    textures.push(view);
+                    let image = image_at(images, entry, array)
+                        .and(images.get(entry).and_then(Option::as_ref));
+                    textures.push(made.view(device, queue, *dimension, *sample, image, empty));
                 }
                 match count {
                     Some(_) => Bound::Views(first, textures.len()),
@@ -593,15 +597,7 @@ fn bind(
                 }
             }
             Resource::Sampler { comparison } => {
-                samplers.push(device.create_sampler(&wgpu::SamplerDescriptor {
-                    address_mode_u: wgpu::AddressMode::Repeat,
-                    address_mode_v: wgpu::AddressMode::Repeat,
-                    address_mode_w: wgpu::AddressMode::Repeat,
-                    mag_filter: wgpu::FilterMode::Linear,
-                    min_filter: wgpu::FilterMode::Linear,
-                    compare: comparison.then_some(wgpu::CompareFunction::LessEqual),
-                    ..Default::default()
-                }));
+                samplers.push(made.sampler(device, *comparison));
                 Bound::Sampler(samplers.len() - 1)
             }
             Resource::StorageTexture { .. } => {
@@ -643,6 +639,7 @@ fn bind(
         layout,
         entries: &entries,
     });
+    made.uploads.groups += 1;
     Ok(Group { group, views })
 }
 
@@ -732,6 +729,7 @@ impl MeshletPipelines {
     /// Passes whose compiled form is kept in a file of `folder` between sessions, on a backend
     /// that has one to keep.
     pub fn kept_in(folder: PathBuf) -> Self {
+        super::kept_dx12::keep_in(folder.join("dx12"));
         Self {
             folder: Some(folder),
             ..Self::default()
@@ -790,6 +788,7 @@ impl MeshletPipelines {
             let slot = Slot::default();
             let (theirs, device) = (Arc::clone(&slot), device.clone());
             let stages = (Arc::clone(&surface.vertex), Arc::clone(&surface.fragment));
+            let forward = surface.forward;
             // No more at once than the machine spares.
             let limit = or_job::workers();
             let workers = self.workers.get_or_insert_with(|| match compiled.clone() {
@@ -805,7 +804,7 @@ impl MeshletPipelines {
                 }
                 let cache = compiled.as_ref().map(|(cache, _)| &**cache);
                 let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    build_checked(&device, stages, cache)
+                    build_checked(&device, stages, cache, forward)
                 }))
                 .unwrap_or_else(|_| Err("building the pass stopped on an internal error".into()));
                 *theirs.lock().unwrap_or_else(|p| p.into_inner()) = Some(built.map(Arc::new));
@@ -845,13 +844,17 @@ fn build_checked(
     device: &wgpu::Device,
     stages: (Arc<naga::Module>, Arc<naga::Module>),
     compiled: Option<&wgpu::PipelineCache>,
+    forward: Option<Forward>,
 ) -> Result<Built, String> {
     let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
     let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let started = std::time::Instant::now();
-    let built = build(device, stages, compiled);
+    let built = build(device, stages.clone(), compiled, forward);
     let refused = pollster::block_on(validation.pop()).or(pollster::block_on(internal.pop()));
     tracing::info!(elapsed = ?started.elapsed(), refused = refused.is_some(), "a GTA VI pass was built for the device");
+    if super::kept_dx12::forget_handed(refused.is_some()) {
+        return super::kept_dx12::without(|| build_checked(device, stages, compiled, forward));
+    }
     if let Some(error) = refused {
         return Err(error.to_string());
     }
@@ -884,18 +887,23 @@ fn stages_drawn(
     Ok((vertex, fragment))
 }
 
-/// The pass of the two `stages` built for `device`.
+/// The pass of the two `stages` built for `device`: into the targets, or with `forward` over the
+/// lit frame, tested against the targets' depth and not writing it.
 fn build(
     device: &wgpu::Device,
     stages: (Arc<naga::Module>, Arc<naga::Module>),
     compiled: Option<&wgpu::PipelineCache>,
+    forward: Option<Forward>,
 ) -> Result<Built, String> {
     // The two stages come linked: the vertex stage gives the locations the pixel stage takes.
     let (vertex, fragment) = stages_drawn(&device.adapter_info(), &stages, aids())?;
-    let mut targets = formats_of(&fragment)?;
+    let mut targets = match &forward {
+        Some(forward) => vec![Some(forward::target(forward))],
+        None => formats_of(&fragment)?,
+    };
     // The first target holds linear light, which eight bits band in the darks: it is kept
     // encoded, as a colour target is, and read back as the light the program wrote.
-    if let Some(Some(colour)) = targets.first_mut() {
+    if let (None, Some(Some(colour))) = (&forward, targets.first_mut()) {
         colour.format = colour.format.add_srgb_suffix();
     }
     let mut layouts = Vec::new();
@@ -911,12 +919,8 @@ fn build(
         bind_group_layouts: &layouts.iter().map(Option::as_ref).collect::<Vec<_>>(),
         immediate_size: 0,
     });
-    let shader = |module: &naga::Module| {
-        device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: None,
-            source: wgpu::ShaderSource::Naga(Cow::Owned(module.clone())),
-        })
-    };
+    let shader =
+        |module: &naga::Module| super::kept_dx12::shader(device, module, (&vertex, &fragment));
     let vertex_entry = entry_of(&vertex, ShaderStage::Vertex).map_err(|e| e.to_string())?;
     let fragment_entry = entry_of(&fragment, ShaderStage::Fragment).map_err(|e| e.to_string())?;
     let vertex_module = shader(&vertex);
@@ -939,7 +943,7 @@ fn build(
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: Some(wgpu::DepthStencilState {
             format: DEPTH,
-            depth_write_enabled: Some(true),
+            depth_write_enabled: Some(forward.is_none()),
             depth_compare: Some(wgpu::CompareFunction::GreaterEqual),
             stencil: Default::default(),
             bias: Default::default(),
@@ -1185,7 +1189,8 @@ fn draw_of(
     queue: &wgpu::Queue,
     at: usize,
     surface: &MeshletSurface,
-    built: &Built,
+    built: &Arc<Built>,
+    made: &mut shared::Made,
 ) -> Result<Draw, String> {
     let mut draw = Draw {
         at,
@@ -1195,6 +1200,8 @@ fn draw_of(
         meshlets: surface.meshlets,
         vertices: 3 * surface.primitives.min(VERTICES / 3),
         views: Vec::new(),
+        built: Arc::clone(built),
+        bound_by: Vec::new(),
     };
     for (group, layout) in (0..).zip(&built.layouts) {
         let Some(layout) = layout else {
@@ -1204,7 +1211,9 @@ fn draw_of(
             0 => &built.vertex,
             _ => &built.fragment,
         };
-        let bound = bind(device, queue, module, group, layout, &surface.feeds)?;
+        let bound = bind(device, queue, module, group, layout, &surface.feeds, made)?;
+        let digest = shared::digest(&surface.feeds, group);
+        draw.bound_by.push((digest, bound.views.clone()));
         draw.groups.push((group, bound.group));
         draw.views.extend(bound.views);
     }
@@ -1238,19 +1247,24 @@ impl MeshletScene {
                 Err(why) => refused.push((at, why)),
             }
         }
+        // The forward surfaces are laid over what the others light.
+        let (laid, passes): (Vec<_>, Vec<_>) =
+            (passes.into_iter()).partition(|(_, surface, _)| surface.forward.is_some());
         if passes.is_empty() {
-            return match waiting.is_empty() {
-                true => Err(refused.swap_remove(0).1),
-                false => Ok(None),
+            return match (waiting.is_empty(), refused.is_empty()) {
+                (false, _) => Ok(None),
+                (true, false) => Err(refused.swap_remove(0).1),
+                (true, true) => Err(forward::ALONE.to_string()),
             };
         }
         let formats = passes[0].2.formats.clone();
         let mut draws = Vec::with_capacity(surfaces.len());
+        let mut made = shared::Made::default();
         for (at, surface, built) in passes {
             if built.formats != formats {
                 return Err(SHAPES.to_string());
             }
-            draws.push(draw_of(device, queue, at, surface, &built)?);
+            draws.push(draw_of(device, queue, at, surface, &built, &mut made)?);
         }
 
         let (targets, depth) = targets_of(device, &formats, size);
@@ -1397,8 +1411,27 @@ impl MeshletScene {
         )?;
         let resolve_group =
             resolve_group(device, &resolve_layout, &targets, &depth, &light, &mask)?;
+        // Lit into a frame of its own from the first where any surface is a forward one, those
+        // whose pass a worker still builds among them.
+        let over = match surfaces.iter().any(|surface| surface.forward.is_some()) {
+            true => Some(forward::Over::new(
+                device,
+                queue,
+                forward::Layouts {
+                    resolve: &resolve_layout,
+                    metered: &metered_layout,
+                },
+                frame,
+                size,
+                &laid,
+                &mut made,
+            )?),
+            false => None,
+        };
         Ok(Some(Self {
             draws,
+            made,
+            over,
             kept: Default::default(),
             calls: Default::default(),
             at_most: Default::default(),
@@ -1415,6 +1448,7 @@ impl MeshletScene {
             mask,
             mask_layout,
             mask_writer,
+            traced: Default::default(),
             shadow_map,
             matrices,
             rest: Vec::new(),
@@ -1440,9 +1474,15 @@ impl MeshletScene {
                 continue;
             };
             match pipelines.of(device, surface) {
+                Ok(Some(built)) if surface.forward.is_some() => match &mut self.over {
+                    Some(over) => {
+                        over.take_on(device, queue, *at, surface, &built, &mut self.made)?
+                    }
+                    None => self.refused.push((*at, forward::ALONE.to_string())),
+                },
                 Ok(Some(built)) if built.formats != self.formats => return Err(SHAPES.to_string()),
                 Ok(Some(built)) => {
-                    let draw = draw_of(device, queue, *at, surface, &built)?;
+                    let draw = draw_of(device, queue, *at, surface, &built, &mut self.made)?;
                     let place = self.draws.partition_point(|drawn| drawn.at < *at);
                     self.draws.insert(place, draw);
                 }
@@ -1478,6 +1518,12 @@ impl MeshletScene {
             self.targets = targets;
             self.depth = depth;
             self.mask = mask;
+            if let Some(over) = &mut self.over {
+                over.resize(device, size);
+            }
+            if let Some(traced) = self.traced.get_mut() {
+                traced.resized();
+            }
             self.forget();
         }
     }
@@ -1499,7 +1545,12 @@ impl MeshletScene {
 
     /// How many surfaces draw.
     pub fn drawn(&self) -> usize {
-        self.draws.len()
+        self.draws.len() + self.drawn_forward()
+    }
+
+    /// How many of them draw by a forward pass, laid over the lit frame.
+    pub fn drawn_forward(&self) -> usize {
+        self.over.as_ref().map_or(0, forward::Over::drawn)
     }
 
     /// The meshlets of the surfaces that draw.
@@ -1592,6 +1643,12 @@ impl MeshletScene {
             for (buffer, at) in self.draws.iter().flat_map(|draw| &draw.views) {
                 self.write(queue, buffer, *at as u64, &view);
             }
+            for (buffer, at) in self.over.iter().flat_map(|over| over.views()) {
+                self.write(queue, buffer, *at as u64, &view);
+            }
+        }
+        if let Some(over) = &self.over {
+            over.update(lighting.camera);
         }
         if let (Some(tile), true) = (tile, writes.matrices) {
             self.write(
@@ -1604,6 +1661,7 @@ impl MeshletScene {
         if writes.light {
             self.write(queue, &self.light, 0, &light);
         }
+        self.update_traced(queue, lighting);
     }
 
     /// Draw the surfaces as the light sees them into the tile: the light's matrix is copied to
@@ -1644,7 +1702,7 @@ impl MeshletScene {
         encoder: &mut wgpu::CommandEncoder,
         mut mark: impl FnMut(&mut wgpu::CommandEncoder, &'static str),
     ) {
-        let now = self.kept.borrow_mut().draws();
+        let mut now = self.kept.borrow_mut().draws();
         if now.shadow {
             self.record_shadow(encoder);
         }
@@ -1653,10 +1711,18 @@ impl MeshletScene {
             self.record_surfaces(encoder);
         }
         mark(encoder, "model targets");
+        // The traced mask moves with no stale of its own: what reads it is drawn again after it.
+        now.lit |= self.record_traced(encoder);
         if now.lit {
             self.record_lit(encoder);
         }
         mark(encoder, "model meter");
+        if let Some(over) = &self.over {
+            if forward::redraws(now) {
+                over.record(self, encoder);
+            }
+            mark(encoder, "model forward");
+        }
     }
 
     /// Draw the surfaces into the targets, in a pass of their own.
@@ -1694,7 +1760,7 @@ impl MeshletScene {
 
     /// Fill the mask from the tile and the targets, and meter what the surfaces come to.
     fn record_lit(&self, encoder: &mut wgpu::CommandEncoder) {
-        if self.mask.record(encoder, &self.mask_writer) {
+        if !self.traced_writes() && self.mask.record(encoder, &self.mask_writer) {
             self.count_full_screen(1, 1);
         }
         // What the surfaces meter to, before the frame is lit by it.
@@ -1722,6 +1788,9 @@ impl MeshletScene {
 
     /// Light what the targets hold onto the frame `pass` draws, with its depth.
     pub fn record(&self, pass: &mut wgpu::RenderPass<'_>) {
+        if let Some(over) = &self.over {
+            return over.show(self, pass);
+        }
         pass.set_pipeline(&self.resolve);
         pass.set_bind_group(0, &self.resolve_group, &[]);
         pass.set_bind_group(1, &self.metered_group, &[]);
@@ -1731,16 +1800,23 @@ impl MeshletScene {
 }
 
 mod env_fit;
+mod forward;
 mod resolve;
 mod scene;
+mod shared;
 mod sun_mask;
 mod sun_shadow;
 mod tone;
+mod traced;
+pub use forward::Forward;
 use resolve::RESOLVE;
 pub use scene::{falls_on, nine_of, Clouds, Dome, Scene};
+pub use shared::Uploads;
 use sun_mask::SunMask;
 pub use sun_shadow::to_tile;
 pub use tone::{metered, Curve, Filmic, Tone};
+pub use traced::light_for;
+pub(crate) use traced::resolve_program;
 
 #[cfg(test)]
 mod calls_tests;

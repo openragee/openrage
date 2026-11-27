@@ -3386,6 +3386,7 @@ dependencies = [
  "bytemuck",
  "glam",
  "image",
+ "libloading",
  "naga",
  "or-interchange",
  "or-io",
@@ -3399,10 +3400,12 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "sha1",
  "tempfile",
  "thiserror 1.0.69",
  "tracing",
  "wgpu",
+ "windows",
 ]
 
 [[package]]
@@ -3419,12 +3422,14 @@ dependencies = [
  "sha1",
  "tempfile",
  "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]
 name = "or-shader-tool"
 version = "0.1.0"
 dependencies = [
+ "glam",
  "image",
  "naga",
  "or-cli",

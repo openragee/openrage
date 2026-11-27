@@ -15,6 +15,8 @@ native = []
 
 [dependencies]
 thiserror.workspace = true
+# `rdna_cache` says where it keeps a translation as lowered rather than optimised.
+tracing.workspace = true
 # The DXIL front end writes naga IR and the pack manifest's reflection types.
 # `serialize` and `deserialize` are how `rdna_cache` keeps a translated module on disk.
 # The WGSL writer prints a translated module for a person to read (`rpf scan-shading --wgsl`).

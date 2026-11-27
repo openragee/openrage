@@ -398,12 +398,19 @@ impl App {
             &adapter.limits(),
             &mut required_limits,
         );
+        // The device's ray query, asked only where the aid for the traced shadow asks for it
+        let (query_features, experimental_features) =
+            or_renderer::game_shaders::trace::query::aided_device_needs(
+                &adapter,
+                &mut required_limits,
+            );
+        required_features |= query_features;
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("OpenRage device"),
                 required_features,
                 required_limits,
-                experimental_features: wgpu::ExperimentalFeatures::default(),
+                experimental_features,
                 memory_hints: wgpu::MemoryHints::Performance,
                 trace: wgpu::Trace::Off,
             }))?;

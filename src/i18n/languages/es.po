@@ -14756,9 +14756,6 @@ msgstr "Sombreado — los programas de malla y de píxel propios de este drawabl
 msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the install's weather cycle at the hour and the weather set, under the sky its air gives, with the game's metering and tone curve. {zeroed} bindings only the game fills read as noughts"
 msgstr "Sombreado — los programas de malla y de píxel propios de este drawable, traducidos de los de GTA VI: {drawn} superficies dibujadas, iluminadas por el ciclo meteorológico de la instalación a la hora y con el clima establecidos, bajo el cielo que da su atmósfera, con la medición y la curva de tono del juego. {zeroed} enlaces que solo el juego rellena se leen como ceros"
 
-msgid "a worker is still decoding its maps"
-msgstr "un proceso de trabajo aún está decodificando sus texturas"
-
 msgid "a worker is still building its passes for this device"
 msgstr "un proceso de trabajo aún está construyendo sus pases para este dispositivo"
 
@@ -17398,3 +17395,27 @@ msgstr "En un archivo comprimido de GTA VI"
 
 msgid "This key changes the length of its clip's data, so its archive will be saved rebuilt, which the game refuses because only its maker can sign the table."
 msgstr "Esta clave cambia la longitud de los datos de su clip, así que su archivo se guardará reconstruido, lo que el juego rechaza porque solo su creador puede firmar la tabla."
+
+msgid "its part's state {state} has a wrinkle map, and the number the game then sets to have its pixel program sample the map is not read"
+msgstr "el estado {state} de su pieza tiene un mapa de arrugas, y el número que el juego fija entonces para que su programa de píxeles muestree el mapa no se ha leído"
+
+msgid "Drawn by their forward passes, laid over the lit frame before it is toned: {count} of those surfaces"
+msgstr "Dibujadas por sus pasadas directas, colocadas sobre la imagen iluminada antes de aplicarle la curva de tono: {count} de esas superficies"
+
+msgid "The sun's shadow: the shadow map, since the traced pass does not run: {why}"
+msgstr "La sombra del sol: el mapa de sombras, ya que el pase trazado no se ejecuta: {why}"
+
+msgid "The sun's shadow: the shadow map, while the traced pass is built"
+msgstr "La sombra del sol: el mapa de sombras, mientras se construye el pase trazado"
+
+msgid "The traced shadow is of the model at rest: a posed model's triangles are not computed on the CPU"
+msgstr "La sombra trazada es la del modelo en reposo: los triángulos de un modelo en pose no se calculan en la CPU"
+
+msgid "The sun's shadow: traced by GTA VI's own walk, translated, under the editor's rays in a compute pass; its cutout surfaces are traced solid"
+msgstr "La sombra del sol: trazada por el recorrido propio de GTA VI, traducido, con los rayos del editor en un pase de cómputo; sus superficies recortadas se trazan sólidas"
+
+msgid "The traced walk tests each node by the device's ray query"
+msgstr "El recorrido trazado prueba cada nodo con la consulta de rayos de la tarjeta gráfica"
+
+msgid "The traced walk tests each node in software"
+msgstr "El recorrido trazado prueba cada nodo por software"

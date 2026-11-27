@@ -6,6 +6,8 @@
 
 /// A structure starts on a multiple of this, so its address is carried as `address >> 8`.
 pub const STRUCTURE_ALIGN: u32 = 256;
+/// The byte of an arena a device's query is answered over that holds the top level's address: the first 256 bytes hold no structure.
+pub const QUERY_TOP: u32 = 0;
 /// The bytes a node pointer counts in: every node starts on a multiple of it.
 pub const UNIT: u32 = 64;
 

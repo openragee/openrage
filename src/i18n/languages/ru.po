@@ -14860,9 +14860,6 @@ msgstr "С затенением — собственные программы с
 msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the install's weather cycle at the hour and the weather set, under the sky its air gives, with the game's metering and tone curve. {zeroed} bindings only the game fills read as noughts"
 msgstr "С затенением — собственные программы сетки и пикселей этого drawable, транслированные из программ GTA VI: нарисовано поверхностей — {drawn}, освещение — погодный цикл установленной игры в заданные час и погоду, под небом, которое даёт его атмосфера, с замером и тональной кривой игры. Привязок, которые заполняет только игра и которые читаются как нули, — {zeroed}"
 
-msgid "a worker is still decoding its maps"
-msgstr "рабочий поток ещё декодирует его текстуры"
-
 msgid "a worker is still building its passes for this device"
 msgstr "рабочий поток ещё строит его проходы для этого устройства"
 
@@ -17556,3 +17553,27 @@ msgstr "В архиве GTA VI"
 
 msgid "This key changes the length of its clip's data, so its archive will be saved rebuilt, which the game refuses because only its maker can sign the table."
 msgstr "Этот ключ меняет длину данных своего клипа, поэтому его архив будет сохранён пересобранным, что игра отвергает, потому что подписать таблицу может только её создатель."
+
+msgid "its part's state {state} has a wrinkle map, and the number the game then sets to have its pixel program sample the map is not read"
+msgstr "у состояния {state} его части есть карта морщин, а число, которое игра тогда задаёт, чтобы её пиксельная программа выбирала эту карту, не прочитано"
+
+msgid "Drawn by their forward passes, laid over the lit frame before it is toned: {count} of those surfaces"
+msgstr "Нарисовано своими прямыми проходами поверх освещённого кадра до применения тоновой кривой: таких поверхностей — {count}"
+
+msgid "The sun's shadow: the shadow map, since the traced pass does not run: {why}"
+msgstr "Тень от солнца: карта теней, так как трассирующий проход не выполняется: {why}"
+
+msgid "The sun's shadow: the shadow map, while the traced pass is built"
+msgstr "Тень от солнца: карта теней, пока строится трассирующий проход"
+
+msgid "The traced shadow is of the model at rest: a posed model's triangles are not computed on the CPU"
+msgstr "Трассированная тень — это тень модели в покое: треугольники модели в позе не вычисляются на ЦП"
+
+msgid "The sun's shadow: traced by GTA VI's own walk, translated, under the editor's rays in a compute pass; its cutout surfaces are traced solid"
+msgstr "Тень от солнца: трассируется собственным обходом GTA VI, переведённым, лучами редактора в вычислительном проходе; её вырезанные поверхности трассируются сплошными"
+
+msgid "The traced walk tests each node by the device's ray query"
+msgstr "Трассируемый обход проверяет каждый узел запросом лучей видеокарты"
+
+msgid "The traced walk tests each node in software"
+msgstr "Трассируемый обход проверяет каждый узел программно"

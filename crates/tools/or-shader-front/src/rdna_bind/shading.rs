@@ -12,6 +12,7 @@ use super::budget::{self, Budget, Fitted};
 use super::loops;
 use super::picks::{deferred_targets, material_textures, picks, Unsettled, TEXTURE_ARRAY};
 use super::plain::plain_textures;
+use super::terrain;
 use super::{join, named, numbered, place, stated, Class, Join, Native, Place, Record, Unbound};
 use crate::dxil::ShaderKind;
 use crate::rdna::{Index, IndexSource, Lowered, Resource, ResourceKind};
@@ -124,6 +125,8 @@ pub enum Feed {
     /// The object's own record: the three rows of three floats that turn a normal to the world
     /// from byte 16, twelve bytes apart, and noughts for the rest.
     Instance,
+    /// The records an instanced draw places its instances by, each an instance at rest.
+    InstanceRecords,
     /// The numbers of the material's textures: number `i` at dword `i`.
     Numbers,
     /// The head of the material's record, which starts the buffer: each dword of it with the
@@ -145,6 +148,17 @@ pub enum Feed {
     /// The heap's first entry, which a number left at nought picks: a blank texel.
     Blank,
     Sampler,
+    /// The bytes the game leaves in a binding only it fills while what writes it is off, the rest
+    /// noughts ([`super::forward`]).
+    Stated(Vec<u8>),
+    /// The one white texel the game binds where what writes a texture is off.
+    White,
+    /// A buffer or a texture of the terrain's, as the game binds it for a tile with no record of its own.
+    Terrain(super::terrain::Terrain),
+    /// A ped component's texture of this name, picked by a number of its buffer ([`super::ped`]).
+    PedTexture(u32),
+    /// A ped component's buffer of 48 bytes, which the renderer fills from the component.
+    PedComponent,
 }
 
 /// One binding of a stage with what fills it.
@@ -183,6 +197,14 @@ pub enum Unfed {
     Batch,
     #[error("it places each instance of an instanced draw by a record only the game fills, at nought here, and draws nothing")]
     Instanced,
+    #[error("it is a forward pass that draws with the engine's own blend state, which no effect states and which is not read")]
+    Blend,
+    #[error("it is a forward pass that reads 0x{0:08X}, which only the game fills: noughts there change what it draws, and what the game leaves there is not read")]
+    Unread(u32),
+    #[error("it reads a terrain tile's cells (0xFE9D6ABC), which the game binds only with the tile's own record, and what a stage reads of them without one is not read")]
+    TerrainCells,
+    #[error("it reads back the terrain's feedback texture, which only the game keeps")]
+    TerrainFeedback,
 }
 
 /// One stage of a shading pass ready for the renderer: its module, what fills each binding, and
@@ -247,6 +269,8 @@ fn never_ending(
             Feed::Zero(Some(hash)) if !AT_REST.contains(&hash) => {
                 Some(((fed.group, fed.binding), hash))
             }
+            // Filled from the component, but of a state no loop is known to end by.
+            Feed::PedComponent => Some(((fed.group, fed.binding), super::ped::COMPONENT)),
             _ => None,
         })
         .collect();
@@ -345,14 +369,13 @@ fn draws_a_batch(feeds: &[Fed]) -> bool {
 /// The records an instanced draw places its instances by, by the hash of their name: 128 bytes
 /// an instance, which start with the three rows of four floats that place it.
 // ⚠ A mesh stage that reads them binds no matrix of the object: with the records at nought every
-// corner of every triangle is the origin. With rows that leave a vertex where it is, three
-// effects still showed nothing: the rest of a record (the tile it stands in, a fade, the row of
-// its tint) is the game's, and what it holds for an instance at rest is not read.
+// corner of every triangle is the origin. A stage that also binds what tints an instance reads
+// fields of the record no model opened alone states, and is still refused.
 const INSTANCE_RECORDS: u32 = 0xB66F_6950;
 
 /// Whether a stage fed `feeds` places the instances of an instanced draw.
 fn places_instances(feeds: &[Fed]) -> bool {
-    (feeds.iter()).any(|fed| fed.feed == Feed::Zero(Some(INSTANCE_RECORDS)))
+    (feeds.iter()).any(|fed| fed.feed == Feed::InstanceRecords)
 }
 
 /// The location a lowered stage gives the high halves of a parameter of 16-bit floats, past
@@ -423,7 +446,7 @@ const BONE: u32 = 48;
 const INSTANCE: u32 = 288;
 
 /// Whether `resource` lies in the heap, the table the third dword of a draw points at.
-fn heap_root(resource: &Resource, kind: ShaderKind, records: &[Record]) -> bool {
+pub(super) fn heap_root(resource: &Resource, kind: ShaderKind, records: &[Record]) -> bool {
     let draw = records.iter().find(|r| r.class == Class::RootConstants);
     let (Some(at), Some(draw)) = (resource.at.as_ref(), draw) else {
         return false;
@@ -695,11 +718,16 @@ fn fed(
     let mesh = kind == ShaderKind::Mesh;
     let stage_group = u32::from(kind == ShaderKind::Pixel);
     let picked = picks(&native.program.words);
-    if kind == ShaderKind::Pixel && !deferred_targets(&picked.exports) {
+    let forward = super::forward::forward_of(&picked.exports).filter(|_| !mesh);
+    if kind == ShaderKind::Pixel && !deferred_targets(&picked.exports) && forward.is_none() {
         return Err(Unfed::Targets);
+    }
+    if let Some(forward) = forward {
+        forward.blend()?;
     }
     let material = material_textures(&picked, &native.records, kind, effect)?;
     let filled = sources(&native.records, mesh, table, effect);
+    let layered = terrain::layered(&filled);
     let layouts = constant_buffers(table, &|hash, _| Some(stated(hash, Some(effect))));
     let layout = |named: &Sgd5Resource| {
         let name = stated(named.name_hash, Some(effect));
@@ -748,7 +776,12 @@ fn fed(
                 false => Feed::Zero(None),
             },
             Join::Picked => {
-                let found = heap(resource, kind, &native.records, material.buffer);
+                let found = heap(resource, kind, &native.records, material.buffer)
+                    .or_else(|| terrain::picked(resource, kind, &native.records, table))
+                    .or_else(|| {
+                        super::ped::picked(resource, kind, &native.records, table)
+                            .map(Feed::PedTexture)
+                    });
                 picked_feed(found, unguarded())?
             }
             Join::NoRecord { root, offset } => {
@@ -780,8 +813,11 @@ fn fed(
                     {
                         Feed::Placement
                     }
+                    // A forward pixel program moves its own coordinates by the same records.
                     Some(Source::Game(_))
-                        if mesh && record.class == Class::Srv && record.stride == UV_TRANSFORMS =>
+                        if (mesh || forward.is_some())
+                            && record.class == Class::Srv
+                            && record.stride == UV_TRANSFORMS =>
                     {
                         Feed::UvTransforms
                     }
@@ -803,10 +839,28 @@ fn fed(
                     {
                         Feed::Instance
                     }
-                    Some(Source::Game(hash)) => Feed::Zero(Some(hash)),
+                    Some(Source::Game(INSTANCE_RECORDS))
+                        if mesh && record.stride == super::instances::BYTES =>
+                    {
+                        Feed::InstanceRecords
+                    }
+                    // Its dword 8 decides whether the pixel program samples what it picks.
+                    Some(Source::Game(super::ped::COMPONENT))
+                        if kind == ShaderKind::Pixel && record.class == Class::Cbv =>
+                    {
+                        Feed::PedComponent
+                    }
+                    Some(Source::Game(hash)) => {
+                        terrain::buffer(hash).unwrap_or(Feed::Zero(Some(hash)))
+                    }
                     Some(Source::DrawWords | Source::Unnamed) | None => Feed::Zero(None),
                 }
             }
+        };
+        // Before the noughts are listed: a binding given the game's rest is no nought to merge.
+        let feed = match forward {
+            Some(_) => super::forward::at_rest(feed)?,
+            None => feed,
         };
         if let Feed::Heap { .. } = feed {
             let (array, row) = image_shape(&module, resource.group, resource.binding);
@@ -817,14 +871,18 @@ fn fed(
             if row {
                 rows.extend(&numbers);
             }
-            // Entry nought, then each number's: number `i` picks entry `i + 1`.
+            // Entry nought, then each number's: number `i` picks entry `i + 1`; then the
+            // terrain's defaults, which a layer's numbers pick.
+            let defaults = terrain::heap(layered && !array);
             let entries: Vec<u32> = (std::iter::once(0))
                 .chain(numbers.iter().map(|n| n + 1))
+                .chain(defaults.iter().map(|(entry, _)| *entry))
                 .collect();
             let at = (resource.group, resource.binding);
             if plain_textures(&mut module, at, &entries, stage_group, free).is_ok() {
-                let fed =
-                    std::iter::once(Feed::Blank).chain(numbers.into_iter().map(Feed::Texture));
+                let fed = std::iter::once(Feed::Blank)
+                    .chain(numbers.into_iter().map(Feed::Texture))
+                    .chain(defaults.into_iter().map(|(_, feed)| feed));
                 for (binding, feed) in (free..).zip(fed) {
                     feeds.push(Fed {
                         group: stage_group,
@@ -860,6 +918,7 @@ fn fed(
             header,
         });
     }
+    terrain::held(&mut module, &feeds, unguarded())?;
     let (stores, branches) = stores_and_branches(&module);
     if !unguarded() && past_the_software_adapter(mesh, stores, branches) {
         return Err(Unfed::Unchecked(stores, branches));
@@ -878,7 +937,7 @@ fn fed(
     if mesh && draws_a_batch(&feeds) {
         return Err(Unfed::Batch);
     }
-    if mesh && places_instances(&feeds) {
+    if mesh && places_instances(&feeds) && super::instances::reads_unsettled(&feeds) {
         return Err(Unfed::Instanced);
     }
     if mesh {
@@ -915,6 +974,9 @@ fn fed(
 /// `module` as WGSL, for a person to read what a program does with a binding.
 pub fn wgsl(module: &naga::Module) -> Result<String, String> {
     use naga::valid::{Capabilities, ValidationFlags, Validator};
+    if super::walk_file::holds_ray_query(module) {
+        return Err(super::walk_file::NO_WGSL_OF_A_QUERY.to_owned());
+    }
     let info = Validator::new(ValidationFlags::all(), Capabilities::all())
         .validate(module)
         .map_err(|e| format!("{e:?}"))?;
@@ -1106,7 +1168,7 @@ var x = 0.0;
     }
 
     #[test]
-    fn a_stage_that_places_instances_is_told_by_their_records_at_nought() {
+    fn a_stage_that_places_instances_is_told_by_their_records() {
         let fed = |feed| Fed {
             group: 0,
             binding: 7,
@@ -1115,7 +1177,7 @@ var x = 0.0;
         };
         assert!(places_instances(&[
             fed(Feed::Meshlets),
-            fed(Feed::Zero(Some(INSTANCE_RECORDS)))
+            fed(Feed::InstanceRecords)
         ]));
         // An object's own record and a batch's list are other draws.
         assert!(!places_instances(&[
@@ -1676,11 +1738,15 @@ struct Words { words: array<u32> }
 
         assert!(stage.streams.is_empty());
 
-        // With the records of an instanced draw where its matrix was, the stage is refused.
+        // With the records of an instanced draw where its matrix was, the stage is fed them.
         let mut instanced = native.clone();
-        instanced.records[1].stride = 128;
+        instanced.records[1].stride = super::super::instances::BYTES;
         let mut named = program();
         named.resources[3].name_hash = INSTANCE_RECORDS;
+        let placed = feed(&instanced, lowered(resources.clone()), &named, &effect).unwrap();
+        assert_eq!(placed.feeds[2].feed, Feed::InstanceRecords);
+        // One that also binds what tints an instance reads fields no model states: refused.
+        named.resources[2].name_hash = 0x8E78_E380;
         let refused = feed(&instanced, lowered(resources.clone()), &named, &effect).map(|_| ());
         assert_eq!(refused, Err(Unfed::Instanced));
         // For a device that gives a stage five constant buffers, with each declared as rows, as

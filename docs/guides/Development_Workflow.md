@@ -483,7 +483,13 @@ texture numbers head, whose other bytes only the game fills, `plain-device`
 asks the device for no optional feature and no raised limit, and `unguarded` has the
 binder let through a stage whose loop counts up to a number only the game fills, or
 which picks a resource by one that the heap does not give, after which no pass is built
-but on a software adapter. `Aids` in `crates/runtime/or-renderer/src/game_shaders/meshlets.rs` reads it.
+but on a software adapter. `traced`, or `traced=FILE` for one walk file in place of
+those `OPENRAGE_RDNA_WALKS` lists, has the sun's mask written by the game's own walk;
+where the adapter offers a ray query under Vulkan or Direct3D 12 the device is then
+asked for it and the walk tests its nodes by it, and `no-query` (or `plain-device`)
+keeps the walk testing them in software on such a device, for comparing the two; the
+Shaded line says which runs. `Aids` in `crates/runtime/or-renderer/src/game_shaders/meshlets.rs` reads it, and
+`crates/runtime/or-renderer/src/game_shaders/trace/mod.rs` reads the traced words.
 
 ⚠ A translated program that never ends resets the display driver of a hardware
 adapter. `OPENRAGE_SOFTWARE_ADAPTER=1` draws a script, a self-check and the

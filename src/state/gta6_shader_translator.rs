@@ -11,6 +11,11 @@ pub(super) trait Translate: Sync {
     type Pixel;
     /// Whether the two inflated containers are the pass that shades a model.
     fn shades(&self, mesh: &[u8], pixel: &[u8]) -> bool;
+    /// Whether they are a forward pass, laid over the lit frame: one a model is drawn by only
+    /// where its effect has no pass that shades it.
+    fn forward(&self, _mesh: &[u8], _pixel: &[u8]) -> bool {
+        false
+    }
     /// The streams the mesh program reads.
     fn streams(
         &self,
@@ -40,6 +45,10 @@ impl Translate for Translator {
 
     fn shades(&self, mesh: &[u8], pixel: &[u8]) -> bool {
         or_cli::is_gta6_shading_pass(mesh, pixel)
+    }
+
+    fn forward(&self, mesh: &[u8], pixel: &[u8]) -> bool {
+        or_cli::is_gta6_forward_pass(mesh, pixel)
     }
 
     fn streams(

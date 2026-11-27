@@ -31,6 +31,8 @@ pub(crate) mod mutated_tests;
 pub mod names;
 pub mod other_bodies;
 #[cfg(feature = "meta")]
+pub mod ped_assets;
+#[cfg(feature = "meta")]
 pub mod ped_catalogue;
 pub mod save;
 // Its natives list is GTA V's `NativeDb`, which `gta5` builds.

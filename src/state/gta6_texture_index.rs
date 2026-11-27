@@ -438,7 +438,7 @@ fn dictionary_textures(
 }
 
 impl AppState {
-    /// Open the pack that holds a key the active GTA VI drawable binds and nothing open holds,
+    /// Open every pack that holds a key the active GTA VI drawable binds and nothing open holds,
     /// indexing the packs of its install or folder first, as a job; whether one opened.
     pub fn try_open_texture_pack(&mut self) -> bool {
         // A drawable that asked and closed reopens under another id, so its folder is walked again.
@@ -483,12 +483,15 @@ impl AppState {
                 .filter_map(|&at| index.packs.get(at as usize).cloned())
                 .collect()
         };
+        // Every pack wanted opens in this one call, so that their maps are decoded side by side.
+        // ponytail: a pack's header is read on this thread; open it on a worker if a frame shows it.
+        let mut opened = false;
         for path in wanted {
             if self.texture_packs.tried.insert(path.clone()) && self.open_texture_pack(&path) {
-                return true;
+                opened = true;
             }
         }
-        false
+        opened
     }
 
     /// The format code the directory of the indexed pack that holds `key` states, open or not.

@@ -1022,11 +1022,14 @@ fn headless_gpu() -> Result<(std::sync::Arc<wgpu::Device>, std::sync::Arc<wgpu::
         &adapter.limits(),
         &mut required_limits,
     );
+    let (query_features, experimental_features) =
+        or_renderer::game_shaders::trace::query::aided_device_needs(&adapter, &mut required_limits);
+    required_features |= query_features;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("OpenRage self-check device"),
         required_features,
         required_limits,
-        experimental_features: wgpu::ExperimentalFeatures::default(),
+        experimental_features,
         memory_hints: wgpu::MemoryHints::Performance,
         trace: wgpu::Trace::Off,
     }))

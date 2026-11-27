@@ -5,6 +5,7 @@ use or_io::gta5::shaders::xdat::{XdatProgram, XdatStage};
 
 use super::*;
 
+mod cache;
 mod equal;
 mod exact;
 mod hand;
@@ -12,8 +13,10 @@ mod interp;
 mod link;
 mod pass_aa;
 mod pass_ab;
+mod pass_ac;
 mod pass_rt;
 mod pass_rt_body;
+mod pass_rt_query;
 mod pass_rt_walk;
 mod pass_rt_wave;
 mod pass_rt_wave_walk;
@@ -2780,7 +2783,7 @@ fn a_mesh_program_that_shares_memory_is_refused_by_name() {
     };
     assert_eq!(
         refused.name(),
-        "ds_write_b32: the memory a group's threads share, in a program run a thread at a time"
+        format!("ds_write_b32: {}", to_naga::MESH_SHARED)
     );
 }
 

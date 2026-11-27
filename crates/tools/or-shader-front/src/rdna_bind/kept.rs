@@ -22,6 +22,13 @@ pub fn keep_translations_in(dir: impl Into<PathBuf>) {
     let _ = TRANSLATIONS.set(Cache::on_disk(dir));
 }
 
+/// The translations a session keeps, of whatever options a program is lowered under.
+pub(super) fn translations() -> &'static Cache {
+    TRANSLATIONS.get_or_init(Cache::in_memory)
+}
+
+pub use super::walk_file::{shadow_walk, LoweredWalk, WALKS};
+
 /// `native` lowered as [`super::lower`] lowers it, once: a program lowered before, in this
 /// session or one that kept its translations, is read back. `Err` is the refusal as it is said.
 pub fn lower(

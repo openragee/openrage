@@ -4,6 +4,7 @@
 
 pub mod kept;
 pub mod loops;
+pub mod walk_file;
 
 use std::collections::BTreeSet;
 
@@ -612,9 +613,13 @@ fn bind_alone(
 }
 
 pub mod budget;
+pub mod forward;
+pub mod instances;
+pub mod ped;
 pub mod picks;
 pub mod plain;
 pub mod shading;
+pub mod terrain;
 
 #[cfg(test)]
 mod tests;

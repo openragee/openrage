@@ -19,6 +19,12 @@ fn hash(value: u32) -> Value {
 }
 
 fn state(name: u32, drawable: u64, more: usize) -> Value {
+    // The last further asset states its `AssetName`; the others are of a class that states none.
+    let mut pairs = vec![(hash(9), Value::Pointer(None)); more];
+    if let Some(last) = pairs.last_mut() {
+        let named = structure(0x2513_F6BA, vec![(lit(b"AssetName"), Value::UInt(0x77))]);
+        *last = (hash(0x2633_887D), named);
+    }
     let assets = structure(
         0x147F_DAB5,
         vec![
@@ -26,10 +32,7 @@ fn state(name: u32, drawable: u64, more: usize) -> Value {
             (lit(b"Albedo"), Value::UInt(drawable + 1)),
             (lit(b"Normal"), Value::UInt(drawable + 2)),
             (lit(b"Material"), Value::UInt(drawable + 3)),
-            (
-                MORE_ASSETS,
-                Value::Map(vec![(hash(9), Value::Pointer(None)); more]),
-            ),
+            (MORE_ASSETS, Value::Map(pairs)),
         ],
     );
     structure(
@@ -113,7 +116,7 @@ fn a_catalogue_reads_its_kits_states_and_members_as_the_tree_states_them() {
                 albedo: 0x1001,
                 normal: 0x1002,
                 material: 0x1003,
-                more_assets: 0,
+                more: Vec::new(),
             },
             AssetState {
                 name: 0xB2,
@@ -121,9 +124,15 @@ fn a_catalogue_reads_its_kits_states_and_members_as_the_tree_states_them() {
                 albedo: 0x2001,
                 normal: 0x2002,
                 material: 0x2003,
-                more_assets: 3,
+                more: vec![(9, 0), (9, 0), (0x2633_887D, 0x77)],
             },
         ]
+    );
+    assert_eq!(kit.states[1].more_asset(0x2633_887D), Some(0x77));
+    assert_eq!(
+        kit.states[1].more_asset(9),
+        None,
+        "a further asset that names no word"
     );
     let set = &read.set_lists[0][0];
     assert_eq!((set.id, set.template_name, set.scale), (0xC1, 0, 1.5));

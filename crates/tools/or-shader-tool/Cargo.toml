@@ -62,3 +62,5 @@ sha1.workspace = true
 tempfile = "3"
 # Fixture discovery for the `.fxc` corpus, shared with every other suite.
 or-test-support.workspace = true
+# The view and the sun a made-up frame of the traced sun's mask is drawn by.
+glam.workspace = true

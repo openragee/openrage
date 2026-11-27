@@ -14756,9 +14756,6 @@ msgstr "着色 — 此 drawable 自身的网格程序和像素程序，由 GTA V
 msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the install's weather cycle at the hour and the weather set, under the sky its air gives, with the game's metering and tone curve. {zeroed} bindings only the game fills read as noughts"
 msgstr "着色 — 此 drawable 自身的网格程序和像素程序，由 GTA VI 的程序翻译而来：已绘制 {drawn} 个表面，由安装目录的天气循环按所设时间和天气照亮，天空由其大气给出，测光和色调曲线与游戏相同。{zeroed} 个仅由游戏填充的绑定读作零"
 
-msgid "a worker is still decoding its maps"
-msgstr "工作线程仍在解码它的贴图"
-
 msgid "a worker is still building its passes for this device"
 msgstr "工作线程仍在为此设备构建它的渲染通道"
 
@@ -17398,3 +17395,27 @@ msgstr "在 GTA VI 归档中"
 
 msgid "This key changes the length of its clip's data, so its archive will be saved rebuilt, which the game refuses because only its maker can sign the table."
 msgstr "此关键帧会改变其剪辑数据的长度，因此其归档将以重建方式保存，游戏会拒绝它，因为只有其制作者能签名该表。"
+
+msgid "its part's state {state} has a wrinkle map, and the number the game then sets to have its pixel program sample the map is not read"
+msgstr "其部件的状态 {state} 带有皱纹贴图，而游戏随后为让其像素程序采样该贴图所设的数值尚未读出"
+
+msgid "Drawn by their forward passes, laid over the lit frame before it is toned: {count} of those surfaces"
+msgstr "由其前向通道绘制，在应用色调曲线之前叠加到已照明的画面上：其中 {count} 个表面"
+
+msgid "The sun's shadow: the shadow map, since the traced pass does not run: {why}"
+msgstr "太阳阴影：阴影贴图，因为光线追踪通道未运行：{why}"
+
+msgid "The sun's shadow: the shadow map, while the traced pass is built"
+msgstr "太阳阴影：阴影贴图，光线追踪通道仍在构建中"
+
+msgid "The traced shadow is of the model at rest: a posed model's triangles are not computed on the CPU"
+msgstr "追踪的阴影是模型静止时的：摆姿势的模型的三角形不在 CPU 上计算"
+
+msgid "The sun's shadow: traced by GTA VI's own walk, translated, under the editor's rays in a compute pass; its cutout surfaces are traced solid"
+msgstr "太阳阴影：由 GTA VI 自己的遍历（已翻译）在编辑器的光线下于计算通道中追踪；其镂空表面按实心追踪"
+
+msgid "The traced walk tests each node by the device's ray query"
+msgstr "追踪的遍历用显卡的光线查询测试每个节点"
+
+msgid "The traced walk tests each node in software"
+msgstr "追踪的遍历用软件测试每个节点"

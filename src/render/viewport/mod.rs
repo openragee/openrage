@@ -16,6 +16,7 @@ mod framing;
 mod game_shaders;
 mod gta6_air;
 mod gta6_day;
+mod gta6_late_maps;
 mod photo;
 pub mod pick;
 mod pick_gta6_bound;
@@ -136,6 +137,15 @@ impl MeshCacheKey {
             }),
         }
     }
+
+    /// The key less what moves as maps are learnt and their packs open: what a scene made of its maps was prepared from besides them.
+    pub(crate) fn without_maps(self) -> Self {
+        Self {
+            packs: 0,
+            texture_names: 0,
+            ..self
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -223,13 +233,18 @@ pub struct RenderBridge {
     /// The active GTA VI drawable while a worker still builds a pass of its own programs: asked
     /// for again each frame, and the surfaces of that pass drawn as Material until then.
     gta6_building: Option<crate::render::gta6_meshlets::Meshlets>,
-    /// Whether a worker still decodes a map of the active GTA VI drawable: it is read again each
-    /// frame, and drawn as Material until then.
+    /// Whether a worker still decodes a map of the active GTA VI drawable: its surfaces draw with
+    /// the blank texel there, and it is read again once a map comes in.
     gta6_decoding: bool,
+    /// The maps a worker still decodes for the active GTA VI drawable's surfaces the pack's passes
+    /// draw: they are prepared again once all are in.
+    gta6_fallback: Vec<u64>,
     /// The GTA VI drawable Shaded was last asked for, since when, and whether its own programs
     /// have drawn a surface of it since, and every surface they draw: how long a model takes to
     /// each is said once.
     gta6_since: Option<(crate::state::DocumentId, std::time::Instant, bool, bool)>,
+    /// What came of the active GTA VI drawable's maps since Shaded was asked for it.
+    gta6_maps: gta6_late_maps::LateMaps,
     /// What the day the renderer holds was worked out from: the install's timecycle, the hour and the weather.
     day_key: Option<(usize, u32, u32, crate::state::drivers::WeatherState)>,
 
@@ -310,7 +325,9 @@ impl RenderBridge {
             gta6_pipelines: game_shaders::gta6_pipelines(),
             gta6_building: None,
             gta6_decoding: false,
+            gta6_fallback: Vec::new(),
             gta6_since: None,
+            gta6_maps: Default::default(),
             day_key: None,
             gpu_textures: crate::render::gpu_budget::GpuTextures::new(
                 crate::state::DEFAULT_GPU_TEXTURE_MIB as usize * 1024 * 1024,

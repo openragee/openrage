@@ -622,25 +622,35 @@ fn shading_passes<T: Translate>(
         None => {
             let mut seen = HashSet::new();
             let (mut passes, mut pairs) = (Vec::new(), Vec::new());
-            for (first, pixel) in &listed {
-                if seen.contains(&first.at) {
-                    continue;
+            // A forward pass is taken only where no technique has a pass that shades a model.
+            for forward in [false, true] {
+                if forward && !passes.is_empty() {
+                    break;
                 }
-                let (Ok(mesh), Ok(fragment)) = (container(first), container(pixel)) else {
-                    continue;
-                };
-                if translate.shades(&mesh, &fragment) {
-                    seen.insert(first.at);
-                    did.read += 1;
-                    let streams = translate.streams(&mesh, &first.variables, parameters);
-                    let (streams, pass) = match streams {
-                        Ok(streams) => (streams, None),
-                        Err(why) => (BTreeSet::new(), Some(Err(why))),
+                for (first, pixel) in &listed {
+                    if seen.contains(&first.at) {
+                        continue;
+                    }
+                    let (Ok(mesh), Ok(fragment)) = (container(first), container(pixel)) else {
+                        continue;
                     };
-                    let at = (first.at, pixel.at);
-                    inflated.insert(at, (mesh, fragment));
-                    passes.push(Candidate { at, streams, pass });
-                    pairs.push((*first, *pixel));
+                    let taken = match forward {
+                        false => translate.shades(&mesh, &fragment),
+                        true => translate.forward(&mesh, &fragment),
+                    };
+                    if taken {
+                        seen.insert(first.at);
+                        did.read += 1;
+                        let streams = translate.streams(&mesh, &first.variables, parameters);
+                        let (streams, pass) = match streams {
+                            Ok(streams) => (streams, None),
+                            Err(why) => (BTreeSet::new(), Some(Err(why))),
+                        };
+                        let at = (first.at, pixel.at);
+                        inflated.insert(at, (mesh, fragment));
+                        passes.push(Candidate { at, streams, pass });
+                        pairs.push((*first, *pixel));
+                    }
                 }
             }
             (passes, pairs)
@@ -1020,6 +1030,10 @@ impl super::AppState {
         ));
     }
 }
+
+/// The catalogues and asset lists of an install, which join a ped's drawable to its textures.
+#[path = "gta6_ped_assets.rs"]
+pub(crate) mod ped_assets;
 
 #[path = "gta6_layer_index.rs"]
 pub(crate) mod layer_index;

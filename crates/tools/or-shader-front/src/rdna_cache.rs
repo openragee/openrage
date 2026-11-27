@@ -2,7 +2,7 @@
 //! is lowered once: [`Cache::get_or_translate`] is the whole of what a caller needs.
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -139,18 +139,79 @@ impl Cache {
         cached
     }
 
-    /// `program`'s translation under `options`: the kept one, else a new one, kept. The flag says
+    /// `program`'s translation under `options`: the kept one, else a new one, optimised, kept. The flag says
     /// whether it was kept already. A panic of the translator passes through and keeps nothing.
     pub fn get_or_translate(&self, program: &Program, options: &Options) -> (Arc<Cached>, bool) {
         let key = Key::of(program, options);
         match self.get(&key) {
             Some(found) => (found, true),
             None => {
-                let cached = Cached::of(rdna::translate_with(program, options));
-                (self.put(key, cached), false)
+                let mut result = rdna::translate_with(program, options);
+                if !options.unoptimised {
+                    result = result.map(|lowered| optimised(lowered, &key));
+                }
+                (self.put(key, Cached::of(result)), false)
             }
         }
     }
+}
+
+/// `lowered` with its module as the optimiser leaves it, where the validator takes the module
+/// before and after and [`kept_in_place`] has no objection; else as it was lowered.
+fn optimised(mut lowered: Lowered, key: &Key) -> Lowered {
+    // The optimiser takes what the validator took.
+    if rdna::check(&lowered.module).is_err() {
+        return lowered;
+    }
+    let mut module = lowered.module.clone();
+    let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        rdna::opt::optimise(&mut module, &[]);
+    }));
+    let why = match ran {
+        Ok(()) => kept_in_place(&lowered.module, &module).err(),
+        Err(_) => Some("the optimiser panicked".to_owned()),
+    };
+    match why {
+        None => lowered.module = module,
+        Some(why) => tracing::warn!(
+            key = %key.hex(),
+            %why,
+            "a GTA VI translation is kept as lowered, not optimised"
+        ),
+    }
+    lowered
+}
+
+/// Whether `optimised` may be kept in the place of `lowered`: the validator takes it, and the
+/// binder's loop check refuses a stage for the same bindings of both. `Err` says why not.
+// ⚠ The check follows a count through the registers, which the optimiser forwards and drops:
+// a stage it cleared of a loop the game's number ends, and drew with noughts there, never
+// leaves the loop on a device.
+fn kept_in_place(lowered: &naga::Module, optimised: &naga::Module) -> Result<(), String> {
+    rdna::check(optimised).map_err(|why| format!("the validator refuses it: {why}"))?;
+    let (was, is) = (counted_to(lowered), counted_to(optimised));
+    if was != is {
+        return Err(format!(
+            "the loop check counts to the bindings {is:?}, not {was:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// The bindings of `module`, as (group, binding), that a loop of it counts to a number of: what
+/// [`crate::rdna_bind::loops::counted_to`] finds of each alone.
+// ponytail: a walk of the module a binding, and only where it has a loop; one walk for all,
+// by the check's own bits, if a miss of a module of many bindings is found slow.
+fn counted_to(module: &naga::Module) -> BTreeSet<(u32, u32)> {
+    use crate::rdna_bind::loops;
+    if loops::loops(module) == 0 {
+        return BTreeSet::new();
+    }
+    (module.global_variables.iter())
+        .filter_map(|(_, global)| global.binding.as_ref())
+        .map(|binding| (binding.group, binding.binding))
+        .filter(|&at| loops::counted_to(module, &[(at, 0)]).is_some())
+        .collect()
 }
 
 /// Written beside its place and moved there, so a reader never sees half a file.
@@ -225,6 +286,7 @@ enum StoredKind {
     },
     Arena,
     Registers,
+    DeviceStructure,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -309,6 +371,7 @@ fn store_resource(resource: &Resource) -> StoredResource {
             K::StorageTexture { dim, format } => StoredKind::StorageTexture { dim, format },
             K::Arena => StoredKind::Arena,
             K::Registers => StoredKind::Registers,
+            K::DeviceStructure => StoredKind::DeviceStructure,
         },
         at: resource.at.as_ref().map(store_loc),
         words: resource.words,
@@ -332,6 +395,7 @@ fn load_resource(resource: StoredResource) -> Resource {
             K::StorageTexture { dim, format } => ResourceKind::StorageTexture { dim, format },
             K::Arena => ResourceKind::Arena,
             K::Registers => ResourceKind::Registers,
+            K::DeviceStructure => ResourceKind::DeviceStructure,
         },
         at: resource.at.map(load_loc),
         words: resource.words,
@@ -475,6 +539,74 @@ mod tests {
             ..Options::default()
         };
         assert_ne!(key, Key::of(&pixel, &halves));
+        // A test of a node answered by the device's query is another module.
+        let arena = Options {
+            arena: true,
+            ..Options::default()
+        };
+        let queried = Options {
+            query: true,
+            ..arena.clone()
+        };
+        assert_ne!(Key::of(&pixel, &arena), Key::of(&pixel, &queried));
+    }
+
+    #[test]
+    fn a_lowering_kept_as_it_is_is_kept_under_a_key_of_its_own() {
+        let pixel = program(ShaderKind::Pixel, vec![S_ENDPGM]);
+        let unoptimised = Options {
+            unoptimised: true,
+            ..Options::default()
+        };
+        assert_ne!(
+            Key::of(&pixel, &Options::default()),
+            Key::of(&pixel, &unoptimised)
+        );
+        let cache = Cache::in_memory();
+        let (optimised, _) = cache.get_or_translate(&pixel, &Options::default());
+        let (lowered, kept) = cache.get_or_translate(&pixel, &unoptimised);
+        assert!(
+            !kept,
+            "the optimised translation was served for the lowering"
+        );
+        assert!(matches!(*optimised, Cached::Translated(_)));
+        assert!(matches!(*lowered, Cached::Translated(_)));
+    }
+
+    /// A compute module whose one loop counts `i` up by one and leaves where `i == exit`;
+    /// `bound` is a number of the buffer at group 0, binding 3.
+    fn counting(exit: &str) -> naga::Module {
+        let text = format!(
+            "@group(0) @binding(3) var<uniform> bound: u32;
+@compute @workgroup_size(1) fn main() {{
+    var i: u32 = 0u;
+    loop {{
+        i = i + 1u;
+        if i == {exit} {{ break; }}
+    }}
+}}"
+        );
+        naga::front::wgsl::parse_str(&text).expect("the WGSL parses")
+    }
+
+    #[test]
+    fn an_optimised_module_takes_the_place_of_its_lowering_only_where_the_loop_check_answers_the_same(
+    ) {
+        let (counts, stated) = (counting("bound"), counting("4u"));
+        assert_eq!(counted_to(&counts), BTreeSet::from([(0, 3)]));
+        assert!(counted_to(&stated).is_empty());
+        assert_eq!(kept_in_place(&counts, &counts), Ok(()));
+        assert_eq!(kept_in_place(&stated, &stated), Ok(()));
+        // A verdict lost leaves a loop the game's number ends drawn with noughts; one gained
+        // refuses a stage that drew.
+        assert!(kept_in_place(&counts, &stated).is_err());
+        assert!(kept_in_place(&stated, &counts).is_err());
+        let mut unbound = counts.clone();
+        for (_, global) in unbound.global_variables.iter_mut() {
+            global.binding = None;
+        }
+        let refused = kept_in_place(&counts, &unbound).unwrap_err();
+        assert!(refused.starts_with("the validator"), "{refused}");
     }
 
     #[test]
@@ -575,6 +707,7 @@ mod tests {
                 resource(ResourceKind::TableWords, None),
                 resource(ResourceKind::Arena, None),
                 resource(ResourceKind::Registers, None),
+                resource(ResourceKind::DeviceStructure, None),
                 resource(
                     ResourceKind::StorageTexture {
                         dim: 1,

@@ -149,6 +149,7 @@ pub(super) fn surface() -> MeshletSurface {
         feeds,
         meshlets: 2,
         primitives: 1,
+        forward: None,
     }
 }
 

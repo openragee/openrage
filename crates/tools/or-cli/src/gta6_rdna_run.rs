@@ -201,6 +201,11 @@ fn judge(
     mut record: Record,
     said: fn(&Said),
 ) -> Record {
+    // A scan judges the lowering as it is, and the optimiser is `want.optimise`'s, run below.
+    let options = &Options {
+        unoptimised: true,
+        ..options.clone()
+    };
     let started = Instant::now();
     backends::set_doing("translating");
     let (cached, kept) = cache.get_or_translate(program, options);
@@ -491,6 +496,8 @@ pub(crate) fn cmd_worker(args: &[String]) -> Result<(), String> {
         for (block, program) in blocks.into_iter().enumerate().skip(first) {
             let mut options = super::gta6_rdna_pairs::options(&mut corpus, &pairs, index, &program);
             options.arena = arena;
+            // As `judge` asks the cache, so the key named is the one a translation is kept under.
+            options.unoptimised = true;
             let stub = Record {
                 index,
                 block,
@@ -1121,6 +1128,13 @@ mod tests {
         assert!(text(&optimised).len() < text(&lowered).len());
         // The digest is of the module as lowered either way.
         assert_eq!(optimised.module, lowered.module);
+        // The cache was asked for the lowering as it is, not for the one it optimises.
+        let as_lowered = Options {
+            unoptimised: true,
+            ..Options::default()
+        };
+        assert!(cache.get(&Key::of(&adds, &as_lowered)).is_some());
+        assert!(cache.get(&Key::of(&adds, &Options::default())).is_none());
     }
 
     #[test]

@@ -161,8 +161,13 @@ pub use gta6_shading::{
     view_passes as gta6_view_passes, Fed as Gta6Fed, Feed as Gta6Feed, Gta6PixelStage,
     Gta6ShadingPass, Stage as Gta6Stage,
 };
+pub use gta6_shading::{is_gta6_forward_pass, Blend as Gta6Blend, Factor as Gta6Factor};
 pub use gta6_translate::{translate_gta6_program, Gta6Program, Gta6Refusal, DXIL_FRONT};
 pub use mesh::{export_scene, replace_mesh, Exported};
+pub use or_shader_front::rdna_bind::instances::{
+    InstanceRecord as Gta6InstanceRecord, IDENTITY as GTA6_IN_PLACE,
+};
+pub use or_shader_front::rdna_bind::terrain as gta6_terrain;
 pub use project_resource::check_resource_folder;
 pub use project_server::{check_build_against, check_server_folder, BuildCheck, BuildConcerns};
 pub use retarget::{retarget_file, Retargeted, CONVERTED as RETARGETED};

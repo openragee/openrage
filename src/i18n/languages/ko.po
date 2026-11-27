@@ -14756,9 +14756,6 @@ msgstr "셰이디드 — GTA VI 프로그램에서 변환한 이 드로어블 �
 msgid "Shaded — this drawable's own mesh and pixel programs, translated from GTA VI's: {drawn} surfaces drawn, lit by the install's weather cycle at the hour and the weather set, under the sky its air gives, with the game's metering and tone curve. {zeroed} bindings only the game fills read as noughts"
 msgstr "셰이디드 — GTA VI 프로그램에서 변환한 이 드로어블 자체의 메시 및 픽셀 프로그램입니다: 서피스 {drawn}개가 그려지며, 설정한 시간과 날씨에서 설치본의 날씨 사이클로 조명되며, 하늘은 그 대기가 주는 것이며 측광과 톤 곡선은 게임의 것입니다. 게임만 채우는 바인딩 {zeroed}개는 0으로 읽힙니다"
 
-msgid "a worker is still decoding its maps"
-msgstr "워커가 아직 맵을 디코딩하는 중입니다"
-
 msgid "a worker is still building its passes for this device"
 msgstr "워커가 아직 이 장치용 패스를 빌드하는 중입니다"
 
@@ -17398,3 +17395,27 @@ msgstr "GTA VI 아카이브 안"
 
 msgid "This key changes the length of its clip's data, so its archive will be saved rebuilt, which the game refuses because only its maker can sign the table."
 msgstr "이 키는 클립 데이터의 길이를 바꾸므로 그 아카이브는 재구성되어 저장되며, 테이블에는 만든 사람만 서명할 수 있으므로 게임은 그것을 거부합니다."
+
+msgid "its part's state {state} has a wrinkle map, and the number the game then sets to have its pixel program sample the map is not read"
+msgstr "그 부품의 상태 {state}에는 주름 맵이 있으며, 픽셀 프로그램이 그 맵을 샘플링하도록 게임이 설정하는 숫자는 아직 읽지 않았습니다"
+
+msgid "Drawn by their forward passes, laid over the lit frame before it is toned: {count} of those surfaces"
+msgstr "포워드 패스로 그려 톤 커브를 적용하기 전의 조명된 프레임 위에 얹은 것: 그중 서피스 {count}개"
+
+msgid "The sun's shadow: the shadow map, since the traced pass does not run: {why}"
+msgstr "태양 그림자: 추적 패스가 실행되지 않으므로 섀도 맵: {why}"
+
+msgid "The sun's shadow: the shadow map, while the traced pass is built"
+msgstr "태양 그림자: 추적 패스를 빌드하는 동안 섀도 맵"
+
+msgid "The traced shadow is of the model at rest: a posed model's triangles are not computed on the CPU"
+msgstr "추적된 그림자는 정지 상태 모델의 것입니다: 포즈를 취한 모델의 삼각형은 CPU에서 계산되지 않습니다"
+
+msgid "The sun's shadow: traced by GTA VI's own walk, translated, under the editor's rays in a compute pass; its cutout surfaces are traced solid"
+msgstr "태양 그림자: GTA VI 자체 순회(번역됨)로 편집기의 광선을 사용해 컴퓨트 패스에서 추적; 컷아웃 표면은 단색으로 추적됩니다"
+
+msgid "The traced walk tests each node by the device's ray query"
+msgstr "추적된 순회는 각 노드를 그래픽 카드의 광선 쿼리로 검사합니다"
+
+msgid "The traced walk tests each node in software"
+msgstr "추적된 순회는 각 노드를 소프트웨어로 검사합니다"

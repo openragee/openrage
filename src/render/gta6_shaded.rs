@@ -21,27 +21,74 @@ pub(crate) fn shader_hashes(state: &AppState) -> Option<Vec<u32>> {
     Some(drawable.shaders.iter().map(|s| s.name_hash).collect())
 }
 
-/// The active GTA VI drawable as surfaces for the game's passes; `None` where it shows none.
-pub(crate) fn shaded_surfaces(state: &AppState) -> Option<Vec<(Surface, Material)>> {
+/// The active GTA VI drawable as surfaces for the pack's passes.
+pub(crate) struct Fallback {
+    pub surfaces: Vec<(Surface, Material)>,
+    /// Each geometry whose effect the pack draws nothing of: the effect, and why.
+    pub left_out: Vec<(String, String)>,
+    /// The keys of the maps a worker still decodes, which the surfaces lack.
+    pub decoding: Vec<u64>,
+}
+
+/// The active GTA VI drawable as surfaces for the game's passes, of the geometries whose effect
+/// `draws` takes (`Err` says why not); `None` where it shows none.
+// ⚠ Never reads or decodes a map on this thread, and never for a geometry the pack draws nothing
+// of: a building's maps decoded here held its first own frame for tens of seconds.
+pub(crate) fn shaded_surfaces(
+    state: &AppState,
+    draws: &dyn Fn(&str) -> Result<(), String>,
+) -> Option<Fallback> {
     let doc = state.active_document()?;
     let DocPayload::Gta6Drawable(resource) = &doc.payload else {
         return None;
     };
     let selection = state.selection.selected(doc.id);
     let drawable = drawable_of(resource, selection)?;
-    let materials: Vec<Material> = (drawable.shaders.iter())
-        .map(|shader| material(state, selection, shader))
+    let mut decoding = Vec::new();
+    let materials: Vec<(String, Result<Material, String>)> = (drawable.shaders.iter())
+        .map(|shader| {
+            let effect = effect_name(shader.name_hash);
+            let made = draws(&effect)
+                .map(|()| material(state, selection, shader, effect.clone(), &mut decoding));
+            (effect, made)
+        })
         .collect();
-    let mut out = Vec::new();
+    let (mut surfaces, mut left_out) = (Vec::new(), Vec::new());
     for model in drawn_level(drawable, state.preview_scene.lod) {
         for geometry in model.geometries.iter().flatten() {
-            let material = materials.get(usize::from(geometry.shader));
-            if let (Some(surface), Some(material)) = (surface(geometry), material) {
-                out.push((surface, material.clone()));
+            let Some((effect, material)) = materials.get(usize::from(geometry.shader)) else {
+                continue;
+            };
+            match (material, surface(geometry)) {
+                (Ok(material), Some(surface)) => surfaces.push((surface, material.clone())),
+                (Err(why), Some(_)) => left_out.push((effect.clone(), why.clone())),
+                (_, None) => {}
             }
         }
     }
-    Some(out)
+    Some(Fallback {
+        surfaces,
+        left_out,
+        decoding,
+    })
+}
+
+/// Whether `pack` draws anything of the effect named `effect`, as a scene of its passes finds it
+/// by name; `Err` says why not.
+pub(crate) fn pack_draws(
+    pack: &or_renderer::game_shaders::pack::GamePack,
+    effect: &str,
+) -> Result<(), String> {
+    use or_renderer::game_shaders::mesh::MeshError;
+    let manifest = pack.manifest();
+    let found = (manifest.effects.iter()).find(|e| e.name.eq_ignore_ascii_case(effect));
+    match found {
+        None => Err(MeshError::NoEffect(effect.to_string()).to_string()),
+        Some(e) if e.techniques.iter().all(|t| t.passes.is_empty()) => {
+            Err(MeshError::NoPass(effect.to_string()).to_string())
+        }
+        Some(_) => Ok(()),
+    }
 }
 
 /// The box the geometries of the active GTA VI drawable's drawn level fill, from its least
@@ -144,10 +191,17 @@ fn surface(geometry: &Geometry) -> Option<Surface> {
 }
 
 /// A shader's effect, each constant its parameter block sets in rows of four, and each texture its
-/// keys resolve to among the packs the app has, named by the parameter's +0x14 hash.
-fn material(state: &AppState, selection: Option<u64>, shader: &Shader) -> Material {
+/// keys resolve to among the packs the app has as a worker has decoded it, named by the
+/// parameter's +0x14 hash; the key of one a worker still decodes is added to `decoding`.
+fn material(
+    state: &AppState,
+    selection: Option<u64>,
+    shader: &Shader,
+    effect: String,
+    decoding: &mut Vec<u64>,
+) -> Material {
     let mut material = Material {
-        effect: effect_name(shader.name_hash),
+        effect,
         ..Material::default()
     };
     for parameter in &shader.parameters {
@@ -172,19 +226,21 @@ fn material(state: &AppState, selection: Option<u64>, shader: &Shader) -> Materi
                     .get(usize::from(*slot))
                     .copied()
                     .flatten();
-                if let Some(image) = key.and_then(|key| texture(state, selection, key)) {
-                    material.textures.insert(name, image);
+                let Some(key) = key else {
+                    continue;
+                };
+                let stored = || super::gta6_maps::stored(state, selection, key);
+                match super::gta6_meshlets::decoded(key, stored) {
+                    Ok(Some(image)) => {
+                        material.textures.insert(name, Image::clone(&image));
+                    }
+                    Ok(None) => {}
+                    Err(()) => decoding.push(key),
                 }
             }
         }
     }
     material
-}
-
-/// The first level of the texture of `key`, found as the app finds it for a mesh.
-pub(super) fn texture(state: &AppState, selection: Option<u64>, key: u64) -> Option<Image> {
-    let resolved = texture_resolution::resolve(state, None, selection, &texture_name(key))?;
-    first_level(&resolved.texture)
 }
 
 /// The first level of a texture as its pack stores it, copied out of the pack so that a worker
@@ -277,6 +333,8 @@ pub(crate) fn said(status: &Status, drawn: usize, total: usize) -> String {
 pub(crate) struct Own {
     /// The surfaces they draw.
     pub drawn: usize,
+    /// Those of them drawn by a forward pass, laid over the lit frame.
+    pub forward: usize,
     /// The bindings only the game fills, left at nought.
     pub zeroed: usize,
     /// The surfaces drawn as Material in the same frame, and why the first is.
@@ -309,6 +367,13 @@ pub(crate) fn said_of_own(
                     zeroed = own.zeroed,
                 ),
             };
+            if own.forward > 0 {
+                said.push('\n');
+                said.push_str(&tr!(
+                    "Drawn by their forward passes, laid over the lit frame before it is toned: {count} of those surfaces",
+                    count = own.forward,
+                ));
+            }
             if let Some(why) = &own.why {
                 said.push('\n');
                 said.push_str(&tr!(
@@ -335,6 +400,10 @@ pub(crate) fn said_of_own(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "gta6_fallback_tests.rs"]
+mod fallback_tests;
 
 #[cfg(test)]
 mod tests {
@@ -373,6 +442,7 @@ mod tests {
     fn the_shaded_button_says_what_draws_as_material_beside_the_drawable_s_own_programs() {
         let mut own = Own {
             drawn: 2,
+            forward: 0,
             zeroed: 9,
             rest: 0,
             why: None,
@@ -388,6 +458,16 @@ mod tests {
             lit.contains("the install's weather cycle") && !whole.contains("weather cycle"),
             "{lit}"
         );
+        let laid = Own {
+            forward: 1,
+            ..own.clone()
+        };
+        let laid = said_of_own(String::new(), Some(&Ok(laid)), false);
+        assert!(
+            laid.ends_with("laid over the lit frame before it is toned: 1 of those surfaces"),
+            "{laid}"
+        );
+        assert!(!whole.contains("forward"), "{whole}");
         own.rest = 3;
         own.why = Some("an effect: why".into());
         let partly = said_of_own(String::new(), Some(&Ok(own.clone())), false);

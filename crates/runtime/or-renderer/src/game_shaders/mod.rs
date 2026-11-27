@@ -16,6 +16,7 @@ pub mod engine;
 pub mod fog_volumes;
 pub mod frame;
 pub mod grade;
+mod kept_dx12;
 pub mod light_volumes;
 pub mod lighting;
 pub mod link;
@@ -40,6 +41,7 @@ pub mod sprite;
 pub mod stand_in;
 pub mod targets;
 pub mod tone;
+pub mod trace;
 pub mod trail;
 pub mod water;
 

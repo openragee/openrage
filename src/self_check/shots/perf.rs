@@ -243,12 +243,17 @@ impl Shell {
         let frame = started.elapsed();
         let stages = self.bridge.timed_stages();
         let cost = self.bridge.model_cost().ok_or(NOT_ITS_OWN)?;
+        let mut calls = calls_of(&cost.calls);
+        // The traced writer of the sun's mask: its rays a frame, which a still view takes to nought.
+        calls["rays"] = json!(cost.rays);
+        // Rays the watchdog left unfinished, a miss each, since the pass was built.
+        calls["capped"] = json!(cost.capped);
         Ok(json!({
             "frame_ms": ms(frame),
             "record_ms": ms(self.submitted.0),
             "submit_ms": ms(self.submitted.1),
             "gpu_stages": stages.map(|s| s.iter().map(|(s, t)| json!([s, t])).collect::<Vec<_>>()),
-            "calls": calls_of(&cost.calls),
+            "calls": calls,
         }))
     }
 
@@ -298,6 +303,18 @@ impl Shell {
             "meshlets": cost.meshlets,
             "passes_built": cost.passes,
             "casts_a_shadow": cost.casts,
+            // What the scene made on the device since it was prepared, and how its maps came in.
+            "made": {
+                "buffers": cost.made.buffers,
+                "buffer_bytes": cost.made.buffer_bytes,
+                "textures": cost.made.textures,
+                "image_bytes": cost.made.image_bytes,
+                "samplers": cost.made.samplers,
+                "bind_groups": cost.made.groups,
+                "bind_groups_bound_again": cost.made.rebound,
+                "scenes_prepared": cost.maps.prepares,
+                "maps_bound_late": cost.maps.late,
+            },
             "every_pass_every_frame": in_full,
             // As the frames before this step left them: equal in two runs of one build that
             // draw the same triangles from the same place.

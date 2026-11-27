@@ -54,6 +54,7 @@ fn surface(x: f32) -> MeshletSurface {
         feeds: BTreeMap::from([((0, 0), view), ((0, 1), about)]),
         meshlets: 1,
         primitives: 1,
+        forward: None,
     }
 }
 
@@ -267,6 +268,7 @@ fn a_surface_draws_by_its_own_pass_and_the_one_whose_pass_is_still_built_as_mate
     let building = "held: a worker is still building its passes for this device";
     let one = Own {
         drawn: 1,
+        forward: 0,
         zeroed: 0,
         rest: 1,
         why: Some(building.to_string()),
@@ -288,6 +290,7 @@ fn a_surface_draws_by_its_own_pass_and_the_one_whose_pass_is_still_built_as_mate
     ask(&mut bridge, &|bridge| bridge.gta6_building.is_none());
     let both = Own {
         drawn: 2,
+        forward: 0,
         zeroed: 0,
         rest: 0,
         why: None,

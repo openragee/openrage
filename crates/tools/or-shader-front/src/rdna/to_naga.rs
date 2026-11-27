@@ -80,6 +80,17 @@ const RAY_TRACING: &str = "a program that traces rays: it loads the nodes of an 
     of one node has a counterpart, and a ray query in the walk's place would be another program";
 /// The approximation a load of a texture of no stated kind is counted as.
 const LOADED_AS_FLOATS: &str = "an image loaded as floats";
+/// Why `image_atomic_cmpswap` is not translated.
+pub(super) const TEXEL_SWAP: &str =
+    "a texel compared and swapped: naga's update of a texel is a sum, a \
+    mask, a least or a greatest value and gives back no old value, so no exchange, and no loop \
+    that retries one, can be built on a texture";
+/// Why a mesh program's shared memory is not translated.
+pub(super) const MESH_SHARED: &str =
+    "the memory a group's threads share, in a program run a thread at a \
+    time: a thread reads what other threads of its group stored before a barrier, so run alone \
+    it would first have to run every thread of its group to that barrier, into a copy of a \
+    memory whose size the package does not state";
 const VERTEX_HALF: &str = "the vertex half of a geometry pair: it leaves its vertex in memory \
     its group shares and returns to the pipeline's own code, with no position exported";
 
@@ -146,6 +157,8 @@ pub enum ResourceKind {
     /// The registers of a walk lowered alone ([`Options::region`]), a row of dwords an
     /// invocation: those it is given, or with [`Resource::written`] those it leaves.
     Registers,
+    /// The device's own top-level structure of the arena's triangles, which its ray query walks ([`Options::query`]).
+    DeviceStructure,
 }
 
 /// One binding of a translated module and the table word its descriptor starts at.
@@ -307,6 +320,10 @@ pub struct Options {
     /// entered at a word of the program, with the registers it reads before it writes them
     /// given in one buffer and the registers named left in another where it ends.
     pub region: Option<Region>,
+    /// Whether [`crate::rdna_cache::Cache::get_or_translate`] keeps the module as lowered, not as the optimiser leaves it.
+    pub unoptimised: bool,
+    /// With [`Options::arena`]: the test of a node answered from the device's own ray query ([`ResourceKind::DeviceStructure`]).
+    pub query: bool,
 }
 
 /// The first export target of each kind: the colour targets start at 0.
@@ -6140,6 +6157,9 @@ impl<'a> Cx<'a> {
                     "xor" => F::ExclusiveOr,
                     "umin" | "smin" => F::Min,
                     "umax" | "smax" => F::Max,
+                    // A compare-and-swap loop builds the new texel from the old one, which no
+                    // update naga takes reproduces, and a texel's update gives nothing back.
+                    "cmpswap" => return Err(form(pc, inst, TEXEL_SWAP)),
                     // naga's validator takes a sum, a mask, a least and a greatest value.
                     _ => {
                         return Err(form(
@@ -7171,11 +7191,7 @@ impl<'a> Cx<'a> {
                 // A thread stores where data it loaded says, and after the barrier another
                 // reads where its own number says: a thread run alone finds what it reads
                 // only once every thread of its group has run to the barrier.
-                Some(_) => form(
-                    pc,
-                    inst,
-                    "the memory a group's threads share, in a program run a thread at a time",
-                ),
+                Some(_) => form(pc, inst, MESH_SHARED),
                 None => refused(pc, inst),
             });
         };
@@ -7951,7 +7967,7 @@ fn lower_pass(
             && !private
             && shared.is_some_and(|(_, waves)| waves == 1)
             && wave::tests_nodes(cfg),
-        trace: trace::Trace::of(options.arena, cfg, walk),
+        trace: trace::Trace::of((options.arena, options.query), cfg, walk),
         first_exact: BTreeSet::new(),
         wants_wave: false,
         first_entry: BTreeMap::new(),

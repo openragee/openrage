@@ -33,8 +33,11 @@ test-support = []
 [dependencies]
 # `ShaderSource::Naga` takes the game's modules as they are, with no WGSL between.
 wgpu = { workspace = true, features = ["naga-ir"] }
-# The game's shaders arrive as `naga::Module`s: the same naga wgpu links.
-naga = { workspace = true, features = ["wgsl-in", "spv-in"] }
+# The game's shaders arrive as `naga::Module`s: the same naga wgpu links. `hlsl-out` writes a
+# Direct3D 12 stage as the backend does, to compile it once and keep it (`game_shaders::kept_dx12`).
+naga = { workspace = true, features = ["wgsl-in", "spv-in", "hlsl-out"] }
+# The key and the digest of a kept Direct3D 12 stage.
+sha1.workspace = true
 raw-window-handle.workspace = true
 pollster.workspace = true
 thiserror.workspace = true
@@ -51,8 +54,9 @@ or-interchange.workspace = true
 # A texture of a scene is a PNG.
 image.workspace = true
 # The shader pack manifest schema and the shader-name lookups, and
-# `half_to_f32` for the tests that read back half-float render targets.
-or-io.workspace = true
+# `half_to_f32` for the tests that read back half-float render targets; GTA VI's arena of a
+# model's triangles, which the traced sun's mask walks.
+or-io = { workspace = true, features = ["gta6"] }
 # The day's floor on a light direction, which the shadow direction shares.
 or-title.workspace = true
 # The frame and game clock a shots run fixes, so that two runs draw the same frames.
@@ -66,6 +70,12 @@ or-job.workspace = true
 
 serde.workspace = true
 serde_json.workspace = true
+
+# DXC, loaded from the file Direct3D 12 compiles with, through the bindings wgpu's backend uses
+# (the same `windows` and `libloading` versions): a stage compiled once is kept between sessions.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", default-features = false, features = ["Win32_Graphics_Direct3D_Dxc"] }
+libloading = "0.8"
 
 [dev-dependencies]
 # Writing a module as SPIR-V, so a test can make the pack a baked one would be.

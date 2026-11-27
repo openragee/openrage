@@ -121,6 +121,11 @@ fn msl(module: &naga::Module, info: &ModuleInfo) -> Result<(), String> {
 
 /// `module` as WGSL, which is also what `--program` prints.
 pub(crate) fn wgsl(module: &naga::Module, info: &ModuleInfo) -> Result<String, String> {
+    use or_shader_front::rdna_bind::walk_file::{holds_ray_query, NO_WGSL_OF_A_QUERY};
+    // naga's WGSL writer stops the process on a ray query rather than refusing it.
+    if holds_ray_query(module) {
+        return Err(NO_WGSL_OF_A_QUERY.to_owned());
+    }
     naga::back::wgsl::write_string(module, info, naga::back::wgsl::WriterFlags::empty())
         .map_err(|e| e.to_string())
 }
@@ -255,6 +260,42 @@ mod tests {
         assert_eq!(capabilities, Vec::<String>::new());
         assert_eq!(started, ORDER);
         assert_eq!(requires(&module), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_module_that_holds_a_ray_query_is_never_written_as_wgsl_and_the_scan_counts_it_refused() {
+        use naga::{Span, Type, TypeInner};
+        let mut module = naga::Module::default();
+        let inner = TypeInner::RayQuery {
+            vertex_return: false,
+        };
+        module
+            .types
+            .insert(Type { name: None, inner }, Span::UNDEFINED);
+        let info = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap();
+        let why = wgsl(&module, &info).unwrap_err();
+        assert!(why.contains("ray query"), "{why}");
+        let (failures, _) = check(&module, &info, |_, _, _| {});
+        assert!(
+            failures
+                .get(WGSL)
+                .is_some_and(|why| why.contains("ray query")),
+            "{failures:?}"
+        );
+        // A module without one is still written.
+        let plain = naga::Module::default();
+        let info = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&plain)
+        .unwrap();
+        assert!(wgsl(&plain, &info).is_ok());
     }
 
     #[test]

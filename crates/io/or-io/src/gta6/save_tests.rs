@@ -193,7 +193,7 @@ fn record(kind: u32, title: &str, slot: &str, payload: &[u8]) -> Vec<u8> {
     out[..4].copy_from_slice(b"ASAV");
     let size = (ASAV_HEADER + payload.len()) as u32;
     for (at, word) in [
-        (4, 1),
+        (4, ASAV_VERSION),
         (8, kind),
         (0x0C, 1),
         (0x14, 0x170),
@@ -232,6 +232,16 @@ fn a_record_s_header_reads_as_the_file_states_it() {
         Asav::open(&bytes[..0x100]),
         Err(SaveError::Truncated { .. })
     ));
+    let mut wrong = bytes.clone();
+    wrong[4] = (ASAV_VERSION + 1) as u8;
+    assert_eq!(
+        Asav::open(&wrong),
+        Err(SaveError::Version {
+            container: "ASAV",
+            found: ASAV_VERSION + 1,
+            read: ASAV_VERSION,
+        })
+    );
     let mut inside = bytes.clone();
     inside[0x14..0x18].copy_from_slice(&0x100u32.to_le_bytes());
     assert!(matches!(
@@ -245,7 +255,7 @@ fn a_packed_copy_is_named_and_refused() {
     let mut bytes = b"SLAYER1\0".to_vec();
     let name = "slot-name";
     let inner = record(1, "A title", "SAVE07", &[0xA5; 48]);
-    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(&ASAV_VERSION.to_le_bytes());
     bytes.extend_from_slice(&(name.len() as u32).to_le_bytes());
     bytes.extend_from_slice(name.as_bytes());
     bytes.extend_from_slice(&(inner.len() as u64).to_le_bytes());
@@ -268,6 +278,98 @@ fn a_packed_copy_is_named_and_refused() {
         Slayer1::read(&bytes[..40]),
         Err(SaveError::Truncated { .. })
     ));
+}
+
+#[test]
+fn a_record_s_bytes_round_trip_through_save_and_the_version_is_asav_version() {
+    let text = "{\r\n\t\"$v\":2\r\n}";
+    let bytes = record(2, "Réglages", "SETTINGS", text.as_bytes());
+    let Save::Record(asav) = open(&bytes).expect("a record opens") else {
+        panic!("a plain record");
+    };
+    let written = asav.save().expect("the record saves");
+    assert_eq!(&written[..4], b"ASAV", "the file still starts with the tag");
+    assert_eq!(
+        u32::from_le_bytes([written[4], written[5], written[6], written[7]]),
+        ASAV_VERSION,
+        "the writer always states ASAV_VERSION"
+    );
+    assert_eq!(written, bytes, "the save round-trips to the same bytes");
+    // A changed payload keeps the header's checksum as held: the writer never computes it.
+    let mut edited = asav.clone();
+    edited.payload[..text.len()].copy_from_slice(b"{\r\n\t\"$v\":3\r\n}");
+    let again = edited.save().expect("the edited record saves");
+    assert_eq!(
+        &again[0x160..0x164],
+        &0xFEED_F00Du32.to_le_bytes(),
+        "the checksum rides as the header held it"
+    );
+    // The reader recovers the edited payload by reading the saved bytes back.
+    let Save::Record(reopened) = open(&again).expect("opens again") else {
+        panic!("a plain record");
+    };
+    assert_eq!(reopened.text(), Some("{\r\n\t\"$v\":3\r\n}"));
+}
+
+#[test]
+fn an_asav_header_refuses_a_title_or_slot_that_does_not_fit() {
+    let payload = vec![0u8; 16];
+    let header = AsavHeader {
+        kind: 2,
+        word_0c: 1,
+        word_10: 0,
+        payload_offset: 0x170,
+        stored_size: 0,
+        size: 0,
+        time: 0,
+        title: "x".repeat(200),
+        slot: String::new(),
+        checksum: 0,
+        word_164: 0,
+        size_again: 0,
+    };
+    assert_eq!(
+        Asav {
+            header,
+            payload: payload.clone()
+        }
+        .save(),
+        Err(SaveError::TooLarge)
+    );
+    let too_long_slot = AsavHeader {
+        kind: 2,
+        word_0c: 1,
+        word_10: 0,
+        payload_offset: 0x170,
+        stored_size: 0,
+        size: 0,
+        time: 0,
+        title: "ok".into(),
+        slot: "x".repeat(60),
+        checksum: 0,
+        word_164: 0,
+        size_again: 0,
+    };
+    assert_eq!(
+        Asav {
+            header: too_long_slot,
+            payload
+        }
+        .save(),
+        Err(SaveError::TooLarge)
+    );
+}
+
+#[test]
+fn a_slayer1_wraps_an_inner_record_and_reads_back_with_the_same_head() {
+    let inner = record(1, "A title", "SAVE07", &[0xA5; 48]);
+    let packed = Slayer1::write("slot-name", &inner).expect("the slayer wraps");
+    assert_eq!(&packed[..8], b"SLAYER1\0");
+    let head = Slayer1::read(&packed).expect("the head reads");
+    assert_eq!(head.name, "slot-name");
+    assert_eq!(head.payload_size, inner.len() as u64);
+    assert_eq!(head.header.title, "A title");
+    assert_eq!(head.header.slot, "SAVE07");
 }
 
 #[test]

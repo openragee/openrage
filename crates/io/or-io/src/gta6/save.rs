@@ -8,8 +8,9 @@ use serde_json::Value;
 
 /// The one `JSAV` version measured.
 pub const JSAV_VERSION: u32 = 3;
-/// The one `ASAV` and `SLAYER1` version measured.
-pub const ASAV_VERSION: u32 = 1;
+/// The `ASAV` version measured on real bytes: a GTA VI build's settings, profile and story
+/// containers all state 2. `SLAYER1` shares it, unmeasured on real bytes.
+pub const ASAV_VERSION: u32 = 2;
 /// The bytes of an `ASAV` header, and where its payload was measured to start.
 pub const ASAV_HEADER: usize = 0x170;
 /// The bytes of a story save's index entry.
@@ -511,9 +512,11 @@ fn value_span(text: &str, path: &[&str]) -> Option<Range<usize>> {
 pub struct AsavHeader {
     /// 1 on a packed story save, 2 on settings and 3 on a profile record, of those measured.
     pub kind: u32,
-    /// The word at 0x0C: 1 on a plain record and 3 on a packed one; what it states is not proven.
+    /// The word at 0x0C: 1 on a plain record and 3 on a packed one, as the real containers state it;
+    /// what it counts is not proven.
     pub word_0c: u32,
-    /// The word at 0x10: 0 on a plain record and 0x180 on a packed one; what it states is not proven.
+    /// The word at 0x10: 0 on a plain record and 0x180 on a packed one, as the real containers state
+    /// it; what it counts is not proven.
     pub word_10: u32,
     pub payload_offset: u32,
     /// The word at 0x18: 0 on a plain record, the stored size on a packed one.
@@ -531,6 +534,11 @@ pub struct AsavHeader {
     /// The file's size again, on a plain record.
     pub size_again: u64,
 }
+
+/// How many bytes each clear field of an `ASAV` header takes: the title is UTF-16 up to the slot,
+/// and the slot is UTF-8 up to the checksum.
+const ASAV_TITLE_BYTES: usize = 0x128 - 0x28;
+const ASAV_SLOT_BYTES: usize = 0x160 - 0x128;
 
 impl AsavHeader {
     pub fn read(bytes: &[u8]) -> Result<Self, SaveError> {
@@ -563,6 +571,40 @@ impl AsavHeader {
             size_again: u64_at(head, 0x168),
         })
     }
+
+    /// The 0x170 bytes of the header as a file states them, every field from this struct and
+    /// `ASAV` + [`ASAV_VERSION`] in the clear ahead of the title. A title longer than fits in
+    /// the title slot or a slot longer than fits in its own slot are refused.
+    pub fn write(&self) -> Result<[u8; ASAV_HEADER], SaveError> {
+        let mut out = [0u8; ASAV_HEADER];
+        out[..4].copy_from_slice(b"ASAV");
+        out[4..8].copy_from_slice(&ASAV_VERSION.to_le_bytes());
+        out[0x08..0x0C].copy_from_slice(&self.kind.to_le_bytes());
+        out[0x0C..0x10].copy_from_slice(&self.word_0c.to_le_bytes());
+        out[0x10..0x14].copy_from_slice(&self.word_10.to_le_bytes());
+        out[0x14..0x18].copy_from_slice(&self.payload_offset.to_le_bytes());
+        out[0x18..0x1C].copy_from_slice(&self.stored_size.to_le_bytes());
+        out[0x1C..0x20].copy_from_slice(&self.size.to_le_bytes());
+        out[0x20..0x28].copy_from_slice(&self.time.to_le_bytes());
+        // Title: UTF-16 LE, zero-terminated, must leave room for the terminator.
+        let title_units: Vec<u16> = self.title.encode_utf16().collect();
+        if title_units.len() * 2 >= ASAV_TITLE_BYTES {
+            return Err(SaveError::TooLarge);
+        }
+        for (k, unit) in title_units.into_iter().enumerate() {
+            out[0x28 + 2 * k..0x28 + 2 * k + 2].copy_from_slice(&unit.to_le_bytes());
+        }
+        // Slot: UTF-8, zero-terminated, must leave room for the terminator.
+        let slot = self.slot.as_bytes();
+        if slot.len() >= ASAV_SLOT_BYTES {
+            return Err(SaveError::TooLarge);
+        }
+        out[0x128..0x128 + slot.len()].copy_from_slice(slot);
+        out[0x160..0x164].copy_from_slice(&self.checksum.to_le_bytes());
+        out[0x164..0x168].copy_from_slice(&self.word_164.to_le_bytes());
+        out[0x168..0x170].copy_from_slice(&self.size_again.to_le_bytes());
+        Ok(out)
+    }
 }
 
 /// A plain `ASAV` record: its header and the payload after it, which is not decoded here.
@@ -593,6 +635,40 @@ impl Asav {
         let text = std::str::from_utf8(&self.payload).ok()?;
         Some(text.trim_end_matches('\0'))
     }
+
+    /// The file: the header rebuilt over the payload, written at the offset the header states. On
+    /// a plain record `stored_size` is zero and `size`, `size_again` and `payload_offset +
+    /// payload.len()` all state the file's length, so the writer reconciles them from the payload.
+    ///
+    /// ⚠ **The checksum is kept as read.** Its algorithm is not known, so a record whose payload
+    /// was changed writes a file the game would refuse; a save that leaves the payload untouched
+    /// round-trips to the same bytes. Callers that change the payload are responsible for the
+    /// checksum, which [`AsavHeader::checksum`] holds.
+    pub fn save(&self) -> Result<Vec<u8>, SaveError> {
+        let offset = self.header.payload_offset as usize;
+        if offset < ASAV_HEADER {
+            return Err(SaveError::Payload {
+                offset: self.header.payload_offset,
+                len: self.payload.len(),
+            });
+        }
+        let total = offset
+            .checked_add(self.payload.len())
+            .ok_or(SaveError::TooLarge)?;
+        let size = u32::try_from(total).map_err(|_| SaveError::TooLarge)?;
+        let mut header = self.header.clone();
+        // A plain record states its total length in `size` and `size_again`; `stored_size` is zero.
+        header.size = size;
+        header.size_again = u64::from(size);
+        if header.stored_size == 0 {
+            // Keep a packed record's stored_size as held; a plain record states zero.
+        }
+        let mut out = Vec::with_capacity(total);
+        out.extend_from_slice(&header.write()?);
+        out.resize(offset, 0);
+        out.extend_from_slice(&self.payload);
+        Ok(out)
+    }
 }
 
 /// The clear head of a `SLAYER1` packed copy: its name, and the header of the save it packs.
@@ -605,6 +681,30 @@ pub struct Slayer1 {
 }
 
 impl Slayer1 {
+    /// A `SLAYER1` packed copy: the 8-byte tag, [`ASAV_VERSION`], the name's byte length and its
+    /// bytes, the payload size and the packed `inner` body. Reading the written bytes gives a
+    /// [`Slayer1`] whose header fields match `inner`'s own header; the payload beyond that is kept
+    /// as given, since its encoding is not known.
+    pub fn write(name: &str, inner: &[u8]) -> Result<Vec<u8>, SaveError> {
+        let name_len = u32::try_from(name.len()).map_err(|_| SaveError::TooLarge)?;
+        let payload_size = u64::try_from(inner.len()).map_err(|_| SaveError::TooLarge)?;
+        let head_len = 16usize
+            .checked_add(name.len())
+            .and_then(|n| n.checked_add(8))
+            .ok_or(SaveError::TooLarge)?;
+        let total = head_len
+            .checked_add(inner.len())
+            .ok_or(SaveError::TooLarge)?;
+        let mut out = Vec::with_capacity(total);
+        out.extend_from_slice(SLAYER_TAG);
+        out.extend_from_slice(&ASAV_VERSION.to_le_bytes());
+        out.extend_from_slice(&name_len.to_le_bytes());
+        out.extend_from_slice(name.as_bytes());
+        out.extend_from_slice(&payload_size.to_le_bytes());
+        out.extend_from_slice(inner);
+        Ok(out)
+    }
+
     pub fn read(bytes: &[u8]) -> Result<Self, SaveError> {
         let truncated = SaveError::Truncated {
             what: "a SLAYER1 head",

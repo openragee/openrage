@@ -277,3 +277,32 @@ fn a_name_splits_into_the_words_it_is_written_in() {
         assert_eq!(words_of(name), words, "{name}");
     }
 }
+
+#[test]
+fn a_generic_type_is_found_filled_with_names_and_with_generics_found_before() {
+    let mut targets = Targets::default();
+    let sought = [
+        "System.Collections.Generic.Dictionary`2+Enumerator<QuillGrommet, System.Guid>",
+        "System.Collections.Generic.Dictionary`2<int, QuillGrommet>",
+        "System.Collections.Generic.IEnumerable`1<QuillGrommet>",
+        "System.Collections.Generic.KeyValuePair`2<QuillGrommet, bool>",
+        // Its argument is found in the round before.
+        "System.Nullable`1<System.Collections.Generic.KeyValuePair`2<QuillGrommet, bool>>",
+    ];
+    for name in sought {
+        member(&mut targets, name);
+    }
+    // No name of the list, and a 64-bit hash of the name in lower case, which is no record's.
+    member(&mut targets, "System.Collections.Generic.IList`1<Thimble>");
+    let lowered = "System.Collections.Generic.IList`1<QuillGrommet>";
+    let wrong = literal_hash64(lowered.to_ascii_lowercase().as_bytes());
+    targets.member(wrong, folded32(lowered));
+    let search = composed(["QuillGrommet"], &targets);
+    let mut got = names_of(&search);
+    got.sort_unstable();
+    assert_eq!(got, sought);
+    assert!(search.tried > 0 && search.complete);
+    assert!(composed(["QuillGrommet"], &Targets::default())
+        .found
+        .is_empty());
+}

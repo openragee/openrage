@@ -327,6 +327,130 @@ pub fn search_threads<'w>(
     done
 }
 
+/// The standard library's generic types of one argument, as a type record spells one: the
+/// namespace, the name and its count of arguments after a backtick, a nested type after `+`.
+// The arguments follow the whole spelling: `System.Collections.Generic.IEnumerable`1<int>`.
+const GENERIC_ONE: [&str; 22] = [
+    "System.Collections.Generic.IEnumerable`1",
+    "System.Collections.Generic.IEnumerator`1",
+    "System.Collections.Generic.ICollection`1",
+    "System.Collections.Generic.IList`1",
+    "System.Collections.Generic.IReadOnlyList`1",
+    "System.Collections.Generic.IReadOnlyCollection`1",
+    "System.Collections.Generic.List`1",
+    "System.Collections.Generic.List`1+Enumerator",
+    "System.Collections.Generic.HashSet`1",
+    "System.Collections.Generic.HashSet`1+Enumerator",
+    "System.Collections.Generic.Queue`1",
+    "System.Collections.Generic.Stack`1",
+    "System.Collections.Generic.IEqualityComparer`1",
+    "System.Nullable`1",
+    "System.Span`1",
+    "System.IEquatable`1",
+    "System.Threading.Tasks.Task`1",
+    "System.Threading.Tasks.TaskCompletionSource`1",
+    "System.Runtime.CompilerServices.TaskAwaiter`1",
+    "System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1",
+    "System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1",
+    "System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter",
+];
+
+/// The standard library's generic types of two arguments, spelled as [`GENERIC_ONE`]'s are.
+const GENERIC_TWO: [&str; 10] = [
+    "System.Collections.Generic.Dictionary`2",
+    "System.Collections.Generic.Dictionary`2+Enumerator",
+    "System.Collections.Generic.Dictionary`2+KeyCollection",
+    "System.Collections.Generic.Dictionary`2+ValueCollection",
+    "System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator",
+    "System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator",
+    "System.Collections.Generic.IDictionary`2",
+    "System.Collections.Generic.IReadOnlyDictionary`2",
+    "System.Collections.Generic.KeyValuePair`2",
+    "System.ValueTuple`2",
+];
+
+/// How an argument that is no type of the programs is spelled: a C# keyword, or a type's full name.
+const ARGUMENTS: [&str; 17] = [
+    "int",
+    "uint",
+    "long",
+    "ulong",
+    "short",
+    "ushort",
+    "byte",
+    "sbyte",
+    "float",
+    "double",
+    "bool",
+    "char",
+    "string",
+    "System.Type",
+    "System.Guid",
+    "System.Enum",
+    "Object",
+];
+
+/// The names of generic types filled with `names`, [`ARGUMENTS`] and what is found, until a round finds nothing new.
+// ⚠ A pair is tried only where one of its arguments is new in the round, so a later round
+// costs what its finds add. A generic type found is an argument of the next round.
+pub fn composed<'n>(names: impl IntoIterator<Item = &'n str>, targets: &Targets) -> Search {
+    let mut args: Vec<String> = ARGUMENTS.iter().map(|a| (*a).to_owned()).collect();
+    let mut held: BTreeSet<String> = args.iter().cloned().collect();
+    for name in names {
+        if held.insert(name.to_owned()) {
+            args.push(name.to_owned());
+        }
+    }
+    let mut found = BTreeSet::new();
+    let mut tried = 0u64;
+    let mut new_from = 0;
+    while new_from < args.len() && !targets.is_empty() {
+        let mut round = BTreeSet::new();
+        let mut try_name = |name: String| {
+            tried += 1;
+            let lower = name.to_ascii_lowercase();
+            let hash = finalize_hash(partial_literal_hash(lower.as_bytes(), 0));
+            for (kind, hash64) in targets.sought(hash).unwrap_or(&[]) {
+                if *kind == Target::Member && literal_hash64(name.as_bytes()) == *hash64 {
+                    round.insert(Found {
+                        kind: *kind,
+                        hash64: *hash64,
+                        hash32: hash,
+                        name: name.clone(),
+                    });
+                }
+            }
+        };
+        for (n, a) in args.iter().enumerate().skip(new_from) {
+            for generic in GENERIC_ONE {
+                try_name(format!("{generic}<{a}>"));
+            }
+            for (m, b) in args.iter().enumerate() {
+                // The pair was tried when `b` was the first of it.
+                if m >= new_from && m < n {
+                    continue;
+                }
+                for generic in GENERIC_TWO {
+                    try_name(format!("{generic}<{a}, {b}>"));
+                    try_name(format!("{generic}<{b}, {a}>"));
+                }
+            }
+        }
+        new_from = args.len();
+        for f in round {
+            if held.insert(f.name.clone()) {
+                args.push(f.name.clone());
+            }
+            found.insert(f);
+        }
+    }
+    Search {
+        found: found.into_iter().collect(),
+        tried,
+        complete: true,
+    }
+}
+
 /// The words a name is written in: split at `_`, where a lower-case letter meets a capital, before the capital that opens a word after capitals, and around digits.
 pub fn words_of(name: &str) -> Vec<String> {
     let mut words = Vec::new();

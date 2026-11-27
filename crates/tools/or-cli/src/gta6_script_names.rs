@@ -225,6 +225,27 @@ fn names_search(asked: &Asked) -> Result<String, String> {
         }
         lexicon.extend(learned);
     }
+    // The generic types of the standard library, filled with every type's name a list or the
+    // rounds gave.
+    let mut typed: BTreeSet<String> = (all.found.iter())
+        .filter(|f| f.kind == search::Target::Member)
+        .map(|f| f.name.clone())
+        .collect();
+    for (_, program) in &read {
+        for ty in &program.types {
+            typed.extend(names.type_name(ty.name).map(str::to_owned));
+        }
+    }
+    let generics = search::composed(typed.iter().map(String::as_str), &targets);
+    notes.push(format!(
+        "generic types: {} name(s) tried, {} proved",
+        generics.tried,
+        generics.found.len()
+    ));
+    all.tried += generics.tried;
+    all.found.extend(generics.found);
+    all.found.sort();
+    all.found.dedup();
     for note in &notes {
         super::super::note(note);
     }

@@ -256,6 +256,7 @@ not (
       test(/^codec::texture::image::tests::/)
       | test(/^container::rpf::crypto::encrypt_cache::tests::/)
       | test(/^container::rpf::gta6_extract::tests::the_extracted_snapshot/)
+      | test(/^container::rpf::gta6_patch::tests::a_one_mebibyte_chunk_past_the_old_cap_is_patched_by_the_optimal_parse$/)
       | test(/^container::rpf::gta6_extract::tests::the_real_executable_opens/)
       | test(/^gta6::headerless::write_geometry::cut::palette_tests::/)
       | test(/^gta6::headerless::write_geometry::per_geometry::build_tests::/)

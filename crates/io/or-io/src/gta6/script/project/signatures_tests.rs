@@ -668,6 +668,61 @@ fn a_parameter_every_call_passes_an_int_widened_by_its_sign_is_proved_one() {
 }
 
 #[test]
+fn a_parameter_changed_before_it_is_passed_on_and_an_argument_of_unsaid_cells_prove_nothing() {
+    let functions = [
+        function("void", 0x10, 1, "Native.DEMO.USE(p0); return;"),
+        // The caller's parameter is an `int` by its own callers, and is passed on as it came.
+        function("void", 0x20, 1, "func_000010(p0); return;"),
+        function(
+            "void",
+            0x30,
+            0,
+            "func_000020(4); func_000040(4); func_000060(4); return;",
+        ),
+        // Assigned before it is passed on: what goes on is no longer what came.
+        function(
+            "void",
+            0x40,
+            1,
+            "p0 = Native.DEMO.GET(1); func_000050(p0); return;",
+        ),
+        function("void", 0x50, 1, "Native.DEMO.USE(p0); return;"),
+        // Its address taken: a store through it changes it the same.
+        function(
+            "void",
+            0x60,
+            1,
+            "Native.DEMO.USE(Vm.Address(parameters, 0)); func_000070(p0); return;",
+        ),
+        function("void", 0x70, 1, "Native.DEMO.USE(p0); return;"),
+        // The result of a call that states no cells is the last argument: no cell after it says so.
+        function("VmValue", 0x80, 1, "return Native.DEMO.GET(p0);"),
+        function("void", 0x90, 0, "func_0000A0(3, func_000080(1)); return;"),
+        function(
+            "void",
+            0xA0,
+            2,
+            "Native.DEMO.USE(p0); Native.DEMO.USE(p1); return;",
+        ),
+        // Another call passes a constant where that result lands.
+        function("void", 0xB0, 0, "func_0000A0(3, 9); return;"),
+    ];
+    let project = project_of(&[listing(1, &functions)]);
+    let cells = |at: u32| project.widened.get(&key(at)).cloned().unwrap_or_default();
+    assert_eq!(cells(0x20), BTreeSet::from([0]));
+    assert_eq!(cells(0x10), BTreeSet::from([0]));
+    assert!(cells(0x50).is_empty(), "a parameter assigned in its caller");
+    assert!(
+        cells(0x70).is_empty(),
+        "a parameter whose address its caller takes"
+    );
+    assert!(
+        !cells(0xA0).contains(&1),
+        "the cell a call's result lands in is proved nothing, whatever another call passes there"
+    );
+}
+
+#[test]
 fn a_native_a_function_hands_back_is_a_truth_where_every_call_of_the_function_only_tests_it() {
     let functions = |read: &str| {
         let tests = format!(

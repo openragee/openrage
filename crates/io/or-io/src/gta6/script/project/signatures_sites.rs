@@ -16,6 +16,9 @@ use crate::gta6::script::project::Project;
 /// The readings that take a whole cell, or its 32 bits, looked through to reach what is read.
 const MAX_PEEL: usize = 8;
 
+/// The cells of one argument past which a call is taken to say nothing: more than any function's parameters.
+const SEVERAL: u32 = 1024;
+
 /// How the value of a call is read where it is used.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) enum Usage {
@@ -129,6 +132,7 @@ impl Sites {
             kept_natives: Vec::new(),
             stands: BTreeMap::new(),
             narrow: BTreeMap::new(),
+            changed: changed(f),
             vars: HashMap::new(),
             kept: Vec::new(),
             handed: BTreeSet::new(),
@@ -176,6 +180,8 @@ struct Scan<'a, 'r> {
     stands: BTreeMap<u64, (u64, u64)>,
     /// Whether every argument of one cell for each parameter cell of each callee is an `int` widened by its sign.
     narrow: BTreeMap<(FunctionKey, u32), bool>,
+    /// The function's own parameters that it assigns or takes the address of: one passed on is no longer what a caller handed.
+    changed: BTreeSet<u32>,
     /// How each variable is read.
     vars: HashMap<Var, Usage>,
     /// The variables assigned the result of a call, each with the function called.
@@ -389,9 +395,22 @@ impl Scan<'_, '_> {
             };
             let cells = cells_of(arg, self.head);
             at = cells.and_then(|cells| cell.checked_add(cells));
-            // A parameter passed whole is carried apart, with the function's own kind for it.
-            if cells != Some(1) || matches!(arg, Expr::Var(Var::Param(_))) {
-                continue;
+            match (cells, arg) {
+                // A parameter passed whole is carried apart, with the function's own kind for it.
+                (Some(1), Expr::Var(Var::Param(n))) if !self.changed.contains(n) => continue,
+                (Some(1), _) => {}
+                // A value of several cells lands in each of them, and none is an `int` by that.
+                (Some(cells), _) if cells <= SEVERAL => {
+                    for taken in cell..cell.saturating_add(cells) {
+                        self.narrow.insert((key, taken), false);
+                    }
+                    continue;
+                }
+                // Where the cells do not say, or say more than a function takes, this argument proves nothing of where it lands.
+                _ => {
+                    self.narrow.insert((key, u32::MAX), false);
+                    break;
+                }
             }
             *self.narrow.entry((key, cell)).or_insert(true) &= widened_i32(arg);
             let found = self.reader.given(arg, 0);
@@ -477,6 +496,36 @@ impl Scan<'_, '_> {
             gives: gives.collect(),
         }
     }
+}
+
+/// The parameters `f` assigns, or takes the address of, anywhere in its code.
+fn changed(f: &cfg::Function) -> BTreeSet<u32> {
+    let mut changed = BTreeSet::new();
+    let mut note = |var: &Var| {
+        if let Var::Param(n) = var {
+            changed.insert(*n);
+        }
+    };
+    for block in &f.cfg.blocks {
+        for stmt in &block.stmts {
+            stmt.targets().iter().for_each(&mut note);
+            stmt.each_expr(&mut |top| {
+                top.walk(&mut |e| {
+                    if let Expr::AddrOf { var, .. } = e {
+                        note(var);
+                    }
+                })
+            });
+        }
+        if let Some(e) = block.term.expr() {
+            e.walk(&mut |e| {
+                if let Expr::AddrOf { var, .. } = e {
+                    note(var);
+                }
+            });
+        }
+    }
+    changed
 }
 
 /// Whether `e`, by its own form, is an `int` widened by its sign to its cell: a constant of that range, a truth, a comparison.

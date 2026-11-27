@@ -170,8 +170,8 @@ pub(crate) struct Run {
     pub unsupported: Option<String>,
     /// The blocks the run entered, by `BlockId`.
     pub reached: Vec<bool>,
-    /// A cell handed to a parameter the project proves an `int` widened by its sign that is none.
-    pub unwidened: bool,
+    /// The first cell handed to a parameter the project proves an `int` widened by its sign that is none: the function, the cell of its parameters and what was handed.
+    pub unwidened: Option<(FunctionKey, u32, u64)>,
     /// The cells handed back by script functions whose result the project gives no kind.
     // Such a function may return constants alone, whose range no table keeps: a function that
     // hands its result on is then proved of a kind the made-up cell need not be.
@@ -710,11 +710,16 @@ impl<'f> Machine<'f> {
             Callee::Import { program, at, .. } => Some(FunctionKey::new(*program, *at)),
             _ => None,
         };
-        if let Some(widened) = key.and_then(|key| self.project.widened.get(&key)) {
-            let off = |cell: &u32| {
-                (cells.get(*cell as usize)).is_some_and(|v| cast(Scalar::I32, *v) != *v)
+        if let Some((key, widened)) =
+            key.and_then(|key| Some((key, self.project.widened.get(&key)?)))
+        {
+            let off = |cell: &&u32| {
+                (cells.get(**cell as usize)).is_some_and(|v| cast(Scalar::I32, *v) != *v)
             };
-            self.run.unwidened |= widened.iter().any(off);
+            if let (None, Some(cell)) = (self.run.unwidened, widened.iter().find(off)) {
+                let handed = cells.get(*cell as usize).copied().unwrap_or_default();
+                self.run.unwidened = Some((key, *cell, handed));
+            }
         }
         let cells: Vec<u64> = cells.into_iter().map(|cell| self.stated(cell)).collect();
         let mut exposed: Vec<(u64, u64)> = (self.exposed().into_iter())
@@ -1689,9 +1694,11 @@ pub(crate) fn check_blocks(
     }
     // ⚠ A parameter the project proves an `int` is made up as one, so each call of such a
     // function is held to what its arguments are: a proof that is wrong is found here.
-    if let Some((input, _)) = was.iter().find(|(_, run)| run.unwidened) {
+    let handed = |(input, run): &(Input, Run)| Some((input.clone(), run.unwidened?));
+    if let Some((input, (key, cell, value))) = was.iter().find_map(handed) {
         return Err(format!(
-            "signature, {input}: a parameter the project proves an int is handed another cell"
+            "signature, {input}: a parameter the project proves an int is handed another cell: cell {cell} of func_{:06X} of program {:08X} is handed {value:#X}",
+            key.at(), key.program()
         ));
     }
     // ⚠ A callee's result is made up as its signature says it widens, so the signature of this

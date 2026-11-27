@@ -2,7 +2,7 @@
 
 use or_io::gta6::script::Level;
 
-use super::lists::NAMES_FOLDER;
+use super::lists::{LABELS, NAMES_FOLDER};
 
 /// The usage of `script`, for every game it reads.
 pub fn usage() -> String {
@@ -13,15 +13,17 @@ Inspect, disassemble or decompile a compiled script: a GTA V .ysc, or a GTA VI p
 
 Usage: openrage-cli script <src> [--natives|--strings|--statics|--functions] [--json]
                                  [--offset <n>] [--limit <n>]
-       openrage-cli script disasm <src> [--function <f>]... [--no-bytes] [--project <file>]
-                                        [-o <file>]
+       openrage-cli script disasm <src> [--function <f>]... [--no-bytes]
+                                        [--project <file>|auto] [-o <file>]
        openrage-cli script decompile <src> [--function <f>]... [--with-classes]
                                            [--level <name>] [--no <pass>]...
-                                           [--project <file> | --alone] [-o <file>]
+                                           [--project <file>|auto | --alone]
+                                           [--labels <file>]... [-o <file>]
        openrage-cli script check <file-or-folder>...
        openrage-cli script list <archive.rpf> [inner/path] [--json]
        openrage-cli script export <build-folder|archive.rpf|folder> [-o <folder>]
                                   [--level <name>] [--no <pass>]... [--threads <n>]
+                                  [--labels <file>]...
        openrage-cli script passes
        openrage-cli script names-search <program|folder>... [--words <file>]... [-o <file>]
        openrage-cli script natives --unnamed <program|folder>... [--project <file>]
@@ -52,7 +54,8 @@ Usage: openrage-cli script <src> [--natives|--strings|--statics|--functions] [--
               names. A GTA VI program decompiled with no project is decompiled alone: a
               function that needs what another program states is written as a comment
               saying so, and stderr says how many were. The project.json beside the program
-              is read without being named, and the first lines say so.
+              is read without being named, and the first lines say so; --project auto builds
+              one in memory.
   check       Decode each script and check it against its own file, each by the reader its
               first bytes ask for. A folder stands for every file under it that starts as a
               GTA VI program does. Exits non-zero if any script does not decode.
@@ -102,8 +105,13 @@ Usage: openrage-cli script <src> [--natives|--strings|--statics|--functions] [--
                    in the lower form. Repeat for several. (GTA VI)
   --project <file> The project.json an export wrote: what the other programs state of the
                    types, fields and functions this one uses. (GTA VI)
+  --project auto   Build that project in memory first, as export builds it, of every program
+                   of the folder the program file lies in, or of the archive (and the archives
+                   nested in it) the --entry is read from; stderr says how far it is. It reads
+                   at most 4 GiB, and --threads <n> sets its threads. A file called `auto` is
+                   named as ./auto. (GTA VI)
   --alone          Decompile with no project, whatever lies beside the program. (GTA VI)
-  --threads <n>    The threads an export works on at most. Default: 8.
+  --threads <n>    The threads an export, or --project auto, works on at most. Default: 8.
   --json      The same facts as JSON, for `script <src>` and `list`. (GTA VI)
   -o <path>   Write to a file (a folder for export) instead of printing. (GTA VI)
 
@@ -134,6 +142,16 @@ Names:
                         file whose name holds `candidate` holds guesses and is passed over:
                         only --names reads it. A source's first lines name each list read
                         with how much it named that no list before it did.
+  --labels <path>       A list of guesses (labels) at what natives do: one `0xHASH _LABEL` a
+                        line, `NS::_LABEL` allowed, or a table whose columns name `hash` and
+                        `label`. It is never read unless named: a file of the
+                        `{NAMES_FOLDER}` folder whose name holds `{LABELS}` is passed over and
+                        said. Each label opens with `_` and is one name, or the file is
+                        refused. A label is written for a native only where no natives list
+                        names it, with no parameter or result; it names no variable and never
+                        counts as a name. Repeat for several; a later file's label stands in
+                        place of an earlier one's. A source's first lines name each labels
+                        file read and how many natives it labelled. (GTA VI)
   download-natives      Fetch alloc8or's natives lists and CSY0N's crossmap from GitHub into
                         the configuration directory, recording each file's commit. Runs only
                         when you ask. They name GTA V's natives and none of GTA VI's.

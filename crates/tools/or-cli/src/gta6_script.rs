@@ -8,8 +8,8 @@
 //! ⚠ **Nothing of a program is run.** Every verb reads bytes and writes text.
 //!
 //! ⚠ **A source has one header.** The printer writes it, and this command puts its own lines
-//! after the printer's last: `project`, `only`, `unproven`, `lists read`, `candidates`, `natives
-//! lists`, `left out` and `classes`. At the lowest level the printer writes a listing and no header, so the first lines
+//! after the printer's last: `project`, `only`, `unproven`, `lists read`, `candidates`, `labels`,
+//! `natives lists`, `labels (guesses)`, `left out` and `classes`. At the lowest level the printer writes a listing and no header, so the first lines
 //! are this command's.
 
 use std::collections::BTreeMap;
@@ -55,8 +55,15 @@ const STATICS: &str = "--statics prints a GTA V script's initial static values; 
 
 /// What a program decompiled with no project is, and what gives it one.
 const ALONE: &str = "the program was decompiled alone, without what other programs state of the \
-     types and functions it uses; `script export <folder> -o <out>` writes a project.json, and \
-     --project <out>/project.json reads it";
+     types and functions it uses; --project auto builds a project in memory of the programs \
+     beside it, and `script export <folder> -o <out>` writes a project.json, which \
+     --project <out>/project.json reads";
+
+/// What `--project` takes for a project built in memory of the programs beside the one read.
+const AUTO: &str = "auto";
+
+/// The bytes of programs or archives past which `--project auto` builds nothing: `script export` is the way past it.
+const AUTO_BYTES: u64 = 4 << 30;
 
 /// The words a type opens with at the margin of a source.
 const TYPE_WORDS: [&str; 4] = ["class ", "struct ", "enum ", "interface "];
@@ -121,11 +128,15 @@ struct Asked {
     /// The passes `--no` leaves off.
     off: Vec<Pass>,
     project: Option<PathBuf>,
+    /// `--project auto`: the project is built in memory from the programs beside the one read.
+    auto: bool,
     /// `--alone`: no project is looked for beside the program.
     alone: bool,
     out: Option<PathBuf>,
     names: Vec<PathBuf>,
     natives: Vec<PathBuf>,
+    /// `--labels`: natives lists whose names are guesses.
+    labels: Vec<PathBuf>,
     keys: Option<PathBuf>,
     exe: Option<PathBuf>,
     entry: Option<String>,
@@ -279,8 +290,9 @@ fn asked(args: &[String]) -> Asked {
             "--statics" => {
                 wrong.get_or_insert(STATICS.to_owned());
             }
-            "--natives-db" | "--names" | "--keys" | "--exe" | "--entry" | "--function"
-            | "--level" | "--no" | "--project" | "--threads" | "--offset" | "--limit" | "-o" => {
+            "--natives-db" | "--names" | "--labels" | "--keys" | "--exe" | "--entry"
+            | "--function" | "--level" | "--no" | "--project" | "--threads" | "--offset"
+            | "--limit" | "-o" => {
                 let Some(value) = iter.next() else {
                     wrong.get_or_insert(format!("{arg} needs a value"));
                     continue;
@@ -300,11 +312,16 @@ fn asked(args: &[String]) -> Asked {
                 match arg.as_str() {
                     "--natives-db" => asked.natives.push(PathBuf::from(value)),
                     "--names" => asked.names.push(PathBuf::from(value)),
+                    "--labels" => asked.labels.push(PathBuf::from(value)),
                     "--keys" => asked.keys = Some(PathBuf::from(value)),
                     "--exe" => asked.exe = Some(PathBuf::from(value)),
                     "--entry" => asked.entry = Some(value.clone()),
                     "--function" => asked.functions.push(value.clone()),
-                    "--project" => asked.project = Some(PathBuf::from(value)),
+                    // The last of `--project auto` and `--project <file>` is the one taken.
+                    "--project" => match value.as_str() {
+                        AUTO => (asked.auto, asked.project) = (true, None),
+                        _ => (asked.auto, asked.project) = (false, Some(PathBuf::from(value))),
+                    },
                     "-o" => asked.out = Some(PathBuf::from(value)),
                     "--level" => match Level::from_name(value) {
                         Some(level) => asked.level = Some(level),
@@ -365,9 +382,19 @@ fn unused(verb: Verb, asked: &Asked) -> Vec<&'static str> {
             (asked.level.is_some() || !asked.off.is_empty()) && !levelled,
             "--level or --no",
         ),
-        (asked.project.is_some() && !reads_code, "--project"),
+        (
+            (asked.project.is_some() || asked.auto) && !reads_code,
+            "--project",
+        ),
         (asked.alone && verb != Verb::Decompile, "--alone"),
-        (asked.threads.is_some() && verb != Verb::Export, "--threads"),
+        (
+            asked.threads.is_some() && !(verb == Verb::Export || (asked.auto && reads_code)),
+            "--threads",
+        ),
+        (
+            !asked.labels.is_empty() && matches!(verb, Verb::Check | Verb::List),
+            "--labels",
+        ),
     ];
     let said = given.into_iter().filter(|(given, _)| *given);
     said.map(|(_, flag)| flag).collect()
@@ -423,6 +450,15 @@ fn supplied_lists(asked: &Asked) -> Result<Supplied, String> {
             lists::CANDIDATES
         ));
     }
+    for label in &supplied.labels {
+        super::note(&format!(
+            "note: `{label}` of the names folder was passed over: a file whose name holds `{}` \
+             holds native labels, which are guesses, and --labels reads it",
+            lists::LABELS
+        ));
+    }
+    let mut supplied = supplied;
+    lists::labelled(&mut supplied, &asked.labels)?;
     Ok(supplied)
 }
 
@@ -448,20 +484,32 @@ fn one(verb: Verb, asked: &Asked) -> Result<String, String> {
     let program = Program::read(&src.bytes)
         .map_err(|e| format!("{} is no GTA VI program: {e}", src.read_from))?;
     let mut lists = supplied_lists(asked)?;
+    // ⚠ Before this program's own records: a name is bound once, in the order an export binds it.
+    let built = match (asked.auto, verb) {
+        (true, Verb::Disasm | Verb::Decompile) => Some(auto_project(asked, &mut lists.names)?),
+        _ => None,
+    };
     bind(&mut lists.names, &program);
     let names = &lists.names;
     match verb {
         // With a project, a function only another program calls starts where the project holds it.
         Verb::Disasm => {
-            let project = asked.project.as_deref().map(project_at).transpose()?;
+            let project = match built {
+                Some(held) => held.project,
+                None => (asked.project.as_deref().map(project_at).transpose()?)
+                    .map(|(_, project)| project),
+            };
             let program = match &project {
-                Some((_, project)) => lift::read(&src.bytes, project).map_err(|e| e.to_string())?,
+                Some(project) => lift::read(&src.bytes, project).map_err(|e| e.to_string())?,
                 None => program,
             };
             listing(&program, names, &asked.functions)
         }
         Verb::Decompile => {
-            let held = held(asked)?;
+            let held = match built {
+                Some(held) => held,
+                None => held(asked)?,
+            };
             if let Some(unread) = &held.unread {
                 super::note(&format!("note: {unread}"));
             }
@@ -548,14 +596,90 @@ fn held(asked: &Asked) -> Result<Held, String> {
     })
 }
 
+/// Where `--project auto` finds the programs to build a project of: the folder a program file lies in, or the archive an entry is read from.
+fn auto_root(asked: &Asked) -> Result<PathBuf, String> {
+    match (asked.paths.as_slice(), &asked.entry) {
+        ([path, ..], Some(_)) => Ok(PathBuf::from(path)),
+        ([path], None) => {
+            let folder = Path::new(path)
+                .parent()
+                .filter(|at| !at.as_os_str().is_empty());
+            Ok(folder.map_or_else(|| PathBuf::from("."), Path::to_path_buf))
+        }
+        _ => Err(
+            "--project auto builds a project of the folder of one program file, or of \
+                  the archive of one entry"
+                .to_owned(),
+        ),
+    }
+}
+
+/// The bytes `--project auto` would read under `root`: an archive's, a build folder's archives', else the program files of the folder.
+fn auto_bytes(root: &Path) -> Result<u64, String> {
+    let size = |path: &Path| std::fs::metadata(path).map_or(0, |meta| meta.len());
+    if !root.is_dir() {
+        return Ok(size(root));
+    }
+    let archives = crate::rpf9::build_archives(root);
+    let files = match archives.is_empty() {
+        true => source::program_files(root)?,
+        false => archives,
+    };
+    Ok(files.iter().map(|path| size(path.as_path())).sum())
+}
+
+/// The project of every program beside the one read, built in memory as `script export` builds it, each program's records named in `names` on the way; stderr is told how far it is.
+fn auto_project(asked: &Asked, names: &mut Names) -> Result<Held, String> {
+    let root = auto_root(asked)?;
+    let bytes = auto_bytes(&root)?;
+    if bytes > AUTO_BYTES {
+        return Err(format!(
+            "--project auto reads at most {AUTO_BYTES} byte(s), and {} holds {bytes}: `script \
+             export` of it writes a project.json once, which --project then reads",
+            root.display()
+        ));
+    }
+    let started = std::time::Instant::now();
+    let say = |line: String| super::note(&format!("note: --project auto: {line}"));
+    say(format!("reading the programs of {}", root.display()));
+    let (read, found) = source::gathered(&root, asked.keys())?;
+    if found.bodies.is_empty() {
+        return Err(format!(
+            "{} holds no GTA VI program to build a project of",
+            root.display()
+        ));
+    }
+    let threads = asked.threads.unwrap_or(super::lifted::THREADS);
+    say(format!(
+        "{} program(s) read from {read}; building their project on {threads} thread(s)",
+        found.bodies.len()
+    ));
+    let (project, none) = export::in_memory(&found.bodies, names, threads, &say);
+    say(format!(
+        "project built in {} s",
+        started.elapsed().as_secs()
+    ));
+    let name = root.file_name().map(|name| name.to_string_lossy());
+    let name = name.map_or_else(|| root.display().to_string(), |name| name.into_owned());
+    Ok(Held {
+        project: Some(project),
+        said: format!(
+            "built in memory by --project auto, as `script export` builds it, from the {} \
+             program(s) of `{name}` ({read}), {none} of which gave it no part; kept in no file",
+            found.bodies.len()
+        ),
+        unread: None,
+    })
+}
+
 /// What stderr is told of the functions written with no body; nothing where each has one.
 fn bodies_note(stats: &Stats, with_project: bool) -> Option<String> {
     let remedy = match with_project {
         true => "each says why where it stands",
         false => {
-            "each says why where it stands, and most need what another program states: `script \
-             export <folder> -o <out>` writes a project.json, and --project <out>/project.json \
-             reads it"
+            "each says why where it stands, and most need what another program states: --project \
+             auto builds a project in memory of the programs beside this one, and `script export \
+             <folder> -o <out>` writes a project.json, which --project <out>/project.json reads"
         }
     };
     (stats.incomplete > 0).then(|| {

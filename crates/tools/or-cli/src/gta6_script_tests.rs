@@ -689,7 +689,7 @@ fn a_program_with_no_project_named_reads_the_one_beside_it_and_says_what_gives_o
     assert!(
         alone
             .said
-            .ends_with("--project <out>/project.json reads it"),
+            .ends_with("which --project <out>/project.json reads"),
         "{}",
         alone.said
     );
@@ -817,4 +817,78 @@ fn each_file_of_a_check_goes_to_the_reader_its_first_bytes_ask_for_whatever_the_
     assert!(!claimed(Verb::Check, &[script.clone(), other]));
     assert!(!claimed(Verb::Info, &[script, program.clone()]));
     assert!(claimed(Verb::Info, &[program]));
+}
+
+#[test]
+fn project_auto_is_read_as_a_build_in_memory_and_the_last_project_named_is_taken() {
+    let auto = asked(&words(&["x", "--project", "auto", "--threads", "3"]));
+    assert!(auto.wrong.is_none(), "{:?}", auto.wrong);
+    assert!(auto.auto && auto.project.is_none());
+    // --threads says something to a decompile that builds a project, and to no other.
+    assert!(unused(Verb::Decompile, &auto).is_empty());
+    assert!(unused(Verb::Disasm, &auto).is_empty());
+    assert_eq!(unused(Verb::Info, &auto), ["--project", "--threads"]);
+    let file = asked(&words(&["x", "--project", "./auto", "--threads", "3"]));
+    assert!(!file.auto && file.project.as_deref() == Some(Path::new("./auto")));
+    assert_eq!(unused(Verb::Decompile, &file), ["--threads"]);
+    let last = asked(&words(&["x", "--project", "auto", "--project", "p.json"]));
+    assert!(!last.auto && last.project.is_some());
+    let last = asked(&words(&["x", "--project", "p.json", "--project", "auto"]));
+    assert!(last.auto && last.project.is_none());
+
+    // The programs are those of the folder a file lies in, or of the archive an entry is read from.
+    let root = |args: &[&str]| auto_root(&asked(&words(args)));
+    assert_eq!(root(&["dir/program"]), Ok(PathBuf::from("dir")));
+    assert_eq!(root(&["program"]), Ok(PathBuf::from(".")));
+    let entry = root(&["game.rpf", "inner", "--entry", "0"]);
+    assert_eq!(entry, Ok(PathBuf::from("game.rpf")));
+    assert!(root(&["a", "b"]).is_err());
+}
+
+#[test]
+fn a_project_built_in_memory_reads_the_folder_beside_the_program_and_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    // Eight zero bytes and nothing a program holds after them: read, and no part of the project.
+    let body = [vec![0u8; 8], vec![0x11; 56]].concat();
+    std::fs::write(dir.path().join("first"), &body).unwrap();
+    std::fs::write(dir.path().join("second"), &body).unwrap();
+    std::fs::write(dir.path().join("notes.txt"), "not a program\n").unwrap();
+    assert_eq!(auto_bytes(dir.path()), Ok(2 * body.len() as u64));
+    let program = dir.path().join("first").display().to_string();
+    let ask = asked(&words(&[
+        program.as_str(),
+        "--project",
+        "auto",
+        "--threads",
+        "1",
+    ]));
+    let mut names = Names::default();
+    let held = auto_project(&ask, &mut names).expect("the folder builds");
+    assert!(held.project.is_some() && held.unread.is_none());
+    assert!(
+        held.said.starts_with("built in memory by --project auto"),
+        "{}",
+        held.said
+    );
+    assert!(
+        held.said.contains("from the 2 program(s) of `"),
+        "{}",
+        held.said
+    );
+    assert!(
+        held.said.contains("2 of which gave it no part"),
+        "{}",
+        held.said
+    );
+    // A folder of no program builds nothing, and the reason stands.
+    let empty = tempfile::tempdir().unwrap();
+    let lone = empty.path().join("lone");
+    std::fs::write(&lone, "text\n").unwrap();
+    let lone = lone.display().to_string();
+    let ask = asked(&words(&[lone.as_str(), "--project", "auto"]));
+    let none = auto_project(&ask, &mut names).err().unwrap_or_default();
+    assert!(
+        none.ends_with("holds no GTA VI program to build a project of"),
+        "{none}"
+    );
 }

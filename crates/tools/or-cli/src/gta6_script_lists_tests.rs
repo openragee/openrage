@@ -233,3 +233,82 @@ fn a_proved_generic_type_name_of_the_folder_is_never_displaced_by_a_printed_labe
         found.refused
     );
 }
+
+/// Two handlers, of which a natives list names the first.
+const TWO_HANDLERS: &str =
+    "hash\trva\n0x00000000000000A1\t0x01020304\n0x00000000000000B2\t0x01020308\n";
+
+#[test]
+fn a_labels_file_is_never_read_from_the_folder_and_named_it_labels_what_no_list_names() {
+    let config = tempfile::tempdir().unwrap();
+    let dir = names_dir(config.path());
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("handlers.tsv"), TWO_HANDLERS).unwrap();
+    // Read from the folder, a natives list by its name would name both natives.
+    let labels = "0x00000000000000A1 _GUESS_DEMO_FIRST\n0x00000000000000B2 _GUESS_DEMO_SECOND\n";
+    std::fs::write(dir.join("natives-Demo-Labels.txt"), labels).unwrap();
+    // A natives list is named beside the folder so that no list of this machine's is looked for.
+    let natives = config.path().join("natives-demo.txt");
+    std::fs::write(&natives, NATIVES).unwrap();
+
+    let lists = supplied(&[], std::slice::from_ref(&natives), Some(config.path()));
+    let lists = lists.expect("the lists read");
+    assert_eq!(lists.labels, ["natives-Demo-Labels.txt"]);
+    assert!(lists.names.native(0xB2).is_none());
+    let said = lists.said();
+    assert!(
+        said.iter()
+            .any(|line| line.starts_with("labels: `natives-Demo-Labels.txt` of the")),
+        "{said:?}"
+    );
+
+    // Named, it labels the native no list names, and the natives list keeps the one it names.
+    let mut lists = lists;
+    let named = [dir.join("natives-Demo-Labels.txt")];
+    labelled(&mut lists, &named).expect("the labels read");
+    assert_eq!(lists.labelled, [("natives-Demo-Labels.txt".to_owned(), 1)]);
+    let name = |hash: u64| lists.names.native(hash).map(ToString::to_string);
+    let label = |hash: u64| lists.names.native_label(hash).map(ToString::to_string);
+    assert_eq!(name(0xA1).as_deref(), Some("DEMO::GET_DEMO_THING"));
+    // ⚠ A label is a guess, never a name: the natives list in use is not changed by it.
+    assert_eq!(name(0xB2), None);
+    assert_eq!(label(0xB2).as_deref(), Some("_GUESS_DEMO_SECOND"));
+    assert_eq!(label(0xA1), None);
+    let list = lists.names.natives.as_ref().map(NativeDb::label);
+    assert_eq!(list, Some("natives-demo.txt"));
+    let said = lists.said();
+    let line = said.last().cloned().unwrap_or_default();
+    assert!(
+        line.starts_with("labels (guesses): `natives-Demo-Labels.txt` read"),
+        "{line}"
+    );
+    assert!(line.contains("it labelled 1 native(s)"), "{line}");
+
+    // A file named that is no list of labels is a failure, as a natives list named is.
+    let broken = config.path().join("broken-labels.txt");
+    std::fs::write(&broken, "no hash here\n").unwrap();
+    assert!(labelled(&mut lists, &[broken]).is_err());
+    assert!(labels_file("A-LABELS.json") && !labels_file("a_label.tsv"));
+}
+
+#[test]
+fn a_label_is_one_name_after_an_underscore_and_a_later_files_stands_in_place() {
+    let config = tempfile::tempdir().unwrap();
+    let mut lists = supplied(&[], &[], Some(config.path())).expect("the lists read");
+    lists
+        .names
+        .read_list("handlers.tsv", TWO_HANDLERS)
+        .expect("the table reads");
+    let first = config.path().join("first-labels.txt");
+    std::fs::write(&first, "0x00000000000000A1 DEMO::_GUESS_DEMO_FIRST\n").unwrap();
+    let later = config.path().join("later-labels.txt");
+    std::fs::write(&later, "0x00000000000000A1 _GUESS_DEMO_LATER\n").unwrap();
+    labelled(&mut lists, &[first, later]).expect("the labels read");
+    let label = lists.names.native_label(0xA1).cloned().unwrap_or_default();
+    assert_eq!(label.to_string(), "_GUESS_DEMO_LATER");
+    assert!(label.params.is_empty() && label.returns.is_none());
+    // A label that does not open with `_`, or is two words, is refused with its file.
+    let plain = config.path().join("plain-labels.txt");
+    std::fs::write(&plain, "0x00000000000000B2 GUESS\n").unwrap();
+    assert!(labelled(&mut lists, &[plain]).is_err());
+}

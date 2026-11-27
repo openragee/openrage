@@ -8,8 +8,9 @@
 //! So a table of `hash` and `rva` gives the handlers' hashes whatever it is called. A file that
 //! reads as neither is passed over and said. A file whose name starts with a dot, and
 //! `project.json`, are no lists and are not read; one whose name holds `candidate` holds guesses
-//! and is read only where `--names` names it. A list each row of which proves itself by its hash
-//! is read before every other, so that a label another file gives on trust never displaces it.
+//! and is read only where `--names` names it, and one whose name holds `labels` holds native labels,
+//! guesses too, read only where `--labels` names it. A list each row of which proves itself by its
+//! hash is read before every other, so that a label another file gives on trust never displaces it.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -29,6 +30,10 @@ const NATIVES_PREFIX: &str = "natives";
 /// What a file's name holds, in any case, that makes it a file of guesses the folder never reads.
 // ⚠ A guessed row of a 32-bit hash proves itself as a true one does: only the file's name tells them apart.
 pub const CANDIDATES: &str = "candidate";
+
+/// What a file's name holds, in any case, that makes it a file of native labels the folder never reads.
+// ⚠ A label is a guess at a native's name, and a natives list in form: read from the folder it would name natives.
+pub const LABELS: &str = "labels";
 
 /// Why natives lists name nothing where no names list is a table of handlers.
 const NO_HANDLERS: &str = "a natives list names by hash, and no names list gives the hash of a \
@@ -51,6 +56,10 @@ pub struct Supplied {
     pub named: Vec<(String, usize)>,
     /// The files of the folder passed over for the guesses their names say they hold.
     pub candidates: Vec<String>,
+    /// The files of the folder passed over for the native labels their names say they hold.
+    pub labels: Vec<String>,
+    /// Each labels file `--labels` named, in the order named, with how many natives it labelled.
+    pub labelled: Vec<(String, usize)>,
 }
 
 impl Supplied {
@@ -78,11 +87,27 @@ impl Supplied {
                 quoted(&self.candidates)
             ));
         }
+        if !self.labels.is_empty() {
+            said.push(format!(
+                "labels: {} of the names folder passed over, as a file whose name holds \
+                 `{LABELS}` holds native labels, which are guesses; --labels reads it",
+                quoted(&self.labels)
+            ));
+        }
         if !self.idle.is_empty() {
             said.push(format!(
                 "natives lists: {} read, and none names a native here: {}",
                 quoted(&self.idle),
                 self.idle_why
+            ));
+        }
+        for (label, new) in &self.labelled {
+            said.push(format!(
+                "labels (guesses): `{label}` read as native labels, which are guesses and not \
+                 names, each opening with an underscore; it labelled {new} native(s) the names \
+                 lists give a handler's hash of and no natives list names, a native a natives \
+                 list names keeps that name, and a later file's label stands in place of an \
+                 earlier file's"
             ));
         }
         said
@@ -101,11 +126,18 @@ pub struct Folder {
     pub named: Vec<(String, usize)>,
     /// The files passed over for their names, in the order of those names.
     pub candidates: Vec<String>,
+    /// The files passed over as native labels, in the order of their names.
+    pub labels: Vec<String>,
 }
 
 /// Whether a file of the folder is called as a file of guesses is.
 pub fn guessed(label: &str) -> bool {
     label.to_ascii_lowercase().contains(CANDIDATES)
+}
+
+/// Whether a file of the folder is called as a file of native labels is.
+pub fn labels_file(label: &str) -> bool {
+    label.to_ascii_lowercase().contains(LABELS)
 }
 
 /// Whether `bytes`, read alone as a names list, read whole and every row of them proved itself by its hash.
@@ -151,6 +183,10 @@ pub fn folder(dir: &Path) -> Folder {
         }
         if guessed(&label) {
             found.candidates.push(label);
+            continue;
+        }
+        if labels_file(&label) {
+            found.labels.push(label);
             continue;
         }
         let bytes = match std::fs::read(&path) {
@@ -222,6 +258,7 @@ pub fn supplied(
         refused,
         named: counted,
         candidates,
+        labels,
     } = read;
     // ⚠ Like the folder, the table the listings left in the configuration directory is read only
     // where no names list is named: a run that names its lists takes nothing it was not given.
@@ -243,16 +280,16 @@ pub fn supplied(
         let ambient = super::super::load_lists(Vec::new())?;
         lists.extend(ambient.dbs().iter().cloned());
     }
-    let labels = || -> Vec<String> { lists.iter().map(|list| list.label().to_owned()).collect() };
+    let held = || -> Vec<String> { lists.iter().map(|list| list.label().to_owned()).collect() };
     // A natives list names by hash: with no hash of any handler it names nothing.
     let (idle, idle_why) = match hashes.is_empty() {
-        true => (labels(), NO_HANDLERS),
+        true => (held(), NO_HANDLERS),
         false => match Names::best_natives(&lists, &hashes) {
             Some((list, _)) => {
                 names.natives = Some(list.clone());
                 (Vec::new(), "")
             }
-            None => (labels(), NO_HASH_HELD),
+            None => (held(), NO_HASH_HELD),
         },
     };
     Ok(Supplied {
@@ -262,7 +299,26 @@ pub fn supplied(
         refused,
         named: counted,
         candidates,
+        labels,
+        labelled: Vec::new(),
     })
+}
+
+/// Reads each labels file `paths` names as [`Names::read_labels`] reads a list of labels: a native no natives list names is written by its label, a later file's in place of an earlier's.
+pub fn labelled(supplied: &mut Supplied, paths: &[PathBuf]) -> Result<(), String> {
+    for path in paths {
+        let label = path.file_name().map(|name| name.to_string_lossy());
+        let label = label.map_or_else(|| path.display().to_string(), |name| name.into_owned());
+        let text =
+            std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+        let names = &mut supplied.names;
+        names
+            .read_labels(&label, &text)
+            .map_err(|e| e.to_string())?;
+        let new = names.labelled_by(names.label_lists.len().saturating_sub(1));
+        supplied.labelled.push((label, new));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -4,9 +4,11 @@
 //! ⚠ The same input, lists and options write the same bytes: no file holds a time, an absolute
 //! path or a machine's name.
 
+use std::cmp::Reverse;
 use std::collections::BTreeSet;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use or_io::gta6::script::program::Program;
 use or_io::gta6::script::project::index;
@@ -49,7 +51,7 @@ struct Row {
 }
 
 /// What the first pass keeps of one program.
-struct Stated {
+pub(super) struct Stated {
     /// The program's tables; its code is dropped.
     program: Program,
     /// Why the program gave no part of the project, where it gave none.
@@ -123,34 +125,7 @@ pub fn exported(
         std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     }
 
-    // The first pass: what the programs state of each other, then what the code of each shows.
-    let tables = index::tables(bodies.iter().map(|body| body.bytes.as_slice()));
-    let firsts = over(bodies, threads, |body| {
-        guarded(|| first(&body.bytes, &tables))
-    });
-    let mut parts = Vec::new();
-    let mut stated = Vec::with_capacity(bodies.len());
-    for (one, body) in firsts.into_iter().zip(bodies.iter()) {
-        stated.push(one.map(|(kept, part)| {
-            // A type's members are named in every program that uses the type, so all are bound before any is written.
-            super::bind(&mut names, &kept.program);
-            // A word with no hash names a program only where the entry's 64-bit hash is of the same name.
-            if let Some(entry) = &body.entry {
-                names.bind_program(kept.program.program, entry.name64);
-            }
-            parts.extend(part);
-            kept
-        }));
-    }
-    let mut project = index::merge(parts);
-    // What the code shows through the variables and receivers the whole project types.
-    let typed = over(bodies, threads, |body| {
-        guarded(|| index::typed_part(&body.bytes, &tables, &project).map_err(|e| e.to_string()))
-    });
-    index::refine(
-        &mut project,
-        typed.into_iter().filter_map(Result::ok).collect(),
-    );
+    let (project, stated) = built(bodies, &mut names, threads, &|_| {});
     write(
         PROJECT_FILE,
         &index::save(&project).map_err(|e| e.to_string())?,
@@ -175,8 +150,8 @@ pub fn exported(
         Some(_) => format!("`{PROJECT_FILE}`"),
         None => "that of the programs read with it, kept in no file".to_owned(),
     };
-    let jobs: Vec<_> = bodies.iter().zip(&stated).zip(&files).collect();
-    let outcomes = over(&jobs, threads, |((body, stated), file)| {
+    let jobs: Vec<Job<'_>> = bodies.iter().zip(&stated).zip(&files).collect();
+    let outcomes = largest_first(&jobs, job_bytes, threads, |((body, stated), file)| {
         if let Err(why) = stated {
             return Err(why.clone());
         }
@@ -274,6 +249,133 @@ fn first(bytes: &[u8], tables: &index::Tables) -> Result<(Stated, Option<Project
         Err(why) => (None, Some(why.to_string())),
     };
     Ok((Stated { program, left_out }, part))
+}
+
+/// One program of the second pass: its body, what the first pass kept of it, and the file its source goes to.
+type Job<'a> = ((&'a Body, &'a Result<Stated, String>), &'a Option<String>);
+
+fn job_bytes(job: &Job<'_>) -> usize {
+    job.0 .0.bytes.len()
+}
+
+/// The project of `bodies` as an export builds it, and what the first pass kept of each body or why it read as no program; every program's records are named in `names` first, in the order of the bodies.
+// `said` is told a line as each pass starts and as about each tenth of its programs is done.
+pub(super) fn built(
+    bodies: &[Body],
+    names: &mut Names,
+    threads: usize,
+    said: &(dyn Fn(String) + Sync),
+) -> (Project, Vec<Result<Stated, String>>) {
+    let size = |body: &Body| body.bytes.len();
+    // The first pass: what the programs state of each other, then what the code of each shows.
+    let tables = index::tables(bodies.iter().map(|body| body.bytes.as_slice()));
+    let counted = Counted::new("first reading", bodies.len(), said);
+    let firsts = largest_first(bodies, size, threads, |body| {
+        let one = guarded(|| first(&body.bytes, &tables));
+        counted.one();
+        one
+    });
+    let mut parts = Vec::new();
+    let mut stated = Vec::with_capacity(bodies.len());
+    for (one, body) in firsts.into_iter().zip(bodies.iter()) {
+        // ⚠ A program that gives no part still runs its code, which may call into any other.
+        if !matches!(&one, Ok((_, Some(_)))) {
+            let unread = guarded(|| Ok(index::unread_part(&body.bytes)));
+            parts.extend(unread.ok().flatten());
+        }
+        stated.push(one.map(|(kept, part)| {
+            // A type's members are named in every program that uses the type, so all are bound before any is written.
+            super::bind(names, &kept.program);
+            // A word with no hash names a program only where the entry's 64-bit hash is of the same name.
+            if let Some(entry) = &body.entry {
+                names.bind_program(kept.program.program, entry.name64);
+            }
+            parts.extend(part);
+            kept
+        }));
+    }
+    let mut project = index::merge(parts);
+    // What the code shows through the variables and receivers the whole project types.
+    let counted = Counted::new("second reading with the project", bodies.len(), said);
+    let typed = largest_first(bodies, size, threads, |body| {
+        let one = guarded(|| {
+            index::typed_part(&body.bytes, &tables, &project).map_err(|e| e.to_string())
+        });
+        counted.one();
+        one
+    });
+    index::refine(
+        &mut project,
+        typed.into_iter().filter_map(Result::ok).collect(),
+    );
+    (project, stated)
+}
+
+/// The project of `bodies` built as [`built`] builds it, kept in memory, with how many of the bodies gave it no part.
+pub(super) fn in_memory(
+    bodies: &[Body],
+    names: &mut Names,
+    threads: usize,
+    said: &(dyn Fn(String) + Sync),
+) -> (Project, usize) {
+    let (project, stated) = built(bodies, names, threads, said);
+    let gave = |one: &Result<Stated, String>| one.as_ref().is_ok_and(|s| s.left_out.is_none());
+    let none = stated.iter().filter(|one| !gave(one)).count();
+    (project, none)
+}
+
+/// A count of the programs a pass has done, told to `said` at about each tenth of them.
+struct Counted<'a> {
+    pass: &'static str,
+    all: usize,
+    step: usize,
+    done: AtomicUsize,
+    said: &'a (dyn Fn(String) + Sync),
+}
+
+impl<'a> Counted<'a> {
+    fn new(pass: &'static str, all: usize, said: &'a (dyn Fn(String) + Sync)) -> Self {
+        said(format!("{pass}: {all} program(s) to read"));
+        Counted {
+            pass,
+            all,
+            step: (all / 10).max(1),
+            done: AtomicUsize::new(0),
+            said,
+        }
+    }
+
+    fn one(&self) {
+        let done = self.done.fetch_add(1, Ordering::Relaxed) + 1;
+        if done.is_multiple_of(self.step) || done == self.all {
+            (self.said)(format!(
+                "{}: {done} of {} program(s) done",
+                self.pass, self.all
+            ));
+        }
+    }
+}
+
+/// What `each` gives for every item, in the items' order, the items of most `size` started first.
+// ⚠ An item is one thread's from start to end: the largest started last would run alone after the rest.
+fn largest_first<I: Sync, T: Send>(
+    items: &[I],
+    size: impl Fn(&I) -> usize,
+    threads: usize,
+    each: impl Fn(&I) -> T + Sync,
+) -> Vec<T> {
+    let mut order: Vec<usize> = (0..items.len()).collect();
+    // Stable, so that items of one size keep their own order.
+    order.sort_by_key(|n| Reverse(items.get(*n).map_or(0, &size)));
+    let done = over(&order, threads, |n| items.get(*n).map(&each));
+    let mut placed: Vec<Option<T>> = (0..items.len()).map(|_| None).collect();
+    for (n, result) in order.iter().zip(done) {
+        if let Some(place) = placed.get_mut(*n) {
+            *place = result;
+        }
+    }
+    // Every place was given its item's result once, so none is left out.
+    placed.into_iter().flatten().collect()
 }
 
 /// What `work` gives, a fault in it turned into its body's failure.

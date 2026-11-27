@@ -94,3 +94,51 @@ fn a_file_of_a_folder_that_starts_as_no_program_does_is_counted_and_not_read() {
     assert_eq!((found.bodies.len(), found.passed_over), (1, 2));
     assert_eq!(found.bodies[0].label, "body");
 }
+
+#[test]
+fn the_largest_items_start_first_and_each_result_stands_in_its_items_place() {
+    use std::sync::Mutex;
+    let sizes = [3usize, 9, 1, 9, 5];
+    let started = Mutex::new(Vec::new());
+    let each = |size: &usize| {
+        started.lock().unwrap().push(*size);
+        size * 10
+    };
+    // One thread takes the items in the order they are started.
+    let done = largest_first(&sizes, |size| *size, 1, each);
+    assert_eq!(done, [30, 90, 10, 90, 50]);
+    assert_eq!(*started.lock().unwrap(), [9, 9, 5, 3, 1]);
+    // On several threads each result still stands in its item's place.
+    assert_eq!(
+        largest_first(&sizes, |size| *size, 4, |size| size * 10),
+        done
+    );
+    assert!(largest_first(&[] as &[usize], |size| *size, 4, |size| *size).is_empty());
+}
+
+#[test]
+fn a_project_built_in_memory_says_how_far_each_pass_is_and_counts_what_gave_no_part() {
+    use std::sync::Mutex;
+    // Eight zero bytes start a program, and what follows them here is none.
+    let zeros = [vec![0u8; 8], vec![0x11; 56]].concat();
+    let bodies = [body("a", zeros.clone()), body("b", zeros)];
+    let lines = Mutex::new(Vec::new());
+    let said = |line: String| lines.lock().unwrap().push(line);
+    let mut names = Names::default();
+    // On one thread, so that the lines come in the order the programs are done.
+    let (project, none) = in_memory(&bodies, &mut names, 1, &said);
+    assert_eq!(none, 2);
+    assert!(project.programs.is_empty());
+    let lines = lines.into_inner().unwrap();
+    assert_eq!(
+        lines,
+        [
+            "first reading: 2 program(s) to read",
+            "first reading: 1 of 2 program(s) done",
+            "first reading: 2 of 2 program(s) done",
+            "second reading with the project: 2 program(s) to read",
+            "second reading with the project: 1 of 2 program(s) done",
+            "second reading with the project: 2 of 2 program(s) done",
+        ]
+    );
+}

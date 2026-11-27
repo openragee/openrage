@@ -16,10 +16,20 @@ use super::rpf_node::{
 
 const BYTE_CACHE_CAPACITY: usize = 64;
 
+type SortedChildren = (
+    u64,
+    super::explorer::SortOrder,
+    Vec<RpfNodeId>,
+    Arc<[RpfNodeId]>,
+);
+
 pub struct RpfEditSession {
     pub(super) nodes: HashMap<RpfNodeId, RpfSessionNode>,
     pub(super) cache: Mutex<LruCache<RpfNodeId, Arc<Vec<u8>>>>,
     pub(super) archives: HashMap<ArchiveId, ArchiveSlot>,
+    /// Each folder's children as [`super::explorer::sorted_children_at`] last sorted them, with the
+    /// payload epoch, order and children they were sorted from.
+    pub(super) sorted: Mutex<HashMap<RpfNodeId, SortedChildren>>,
     pub crypto: Arc<dyn RpfCryptoProvider>,
     root_id: RpfNodeId,
     next_id: RpfNodeId,
@@ -44,6 +54,7 @@ impl RpfEditSession {
                 NonZeroUsize::new(BYTE_CACHE_CAPACITY).expect("non-zero cap"),
             )),
             archives: HashMap::new(),
+            sorted: Mutex::new(HashMap::new()),
             crypto: Arc::new(NoOpCryptoProvider::new()),
             root_id: 0,
             next_id: 1,
@@ -866,6 +877,7 @@ impl Clone for RpfEditSession {
                 NonZeroUsize::new(BYTE_CACHE_CAPACITY).expect("non-zero cap"),
             )),
             archives: self.archives.clone(),
+            sorted: Mutex::new(HashMap::new()),
             crypto: Arc::clone(&self.crypto),
             root_id: self.root_id,
             next_id: self.next_id,
@@ -983,8 +995,8 @@ mod tests {
     }
 
     /// The VFS listing fills the tree: every archive file keeps its entry
-    /// index and an empty override slot, and a nested archive keeps the handle
-    /// the listing opened, unexpanded.
+    /// index and an empty override slot, and a nested archive waits, unopened,
+    /// for a click.
     #[test]
     fn the_tree_is_filled_from_the_vfs_listing() {
         use or_io::container::rpf::RpfBuilder;
@@ -1032,8 +1044,7 @@ mod tests {
                 } => {
                     assert_eq!(node.name, "mid.rpf");
                     assert!(!scanned, "a nested archive waits for a click");
-                    let opened = opened.as_ref().expect("the listing opened it");
-                    assert!(opened.nodes.iter().any(|n| n.name() == "mid.ydr"));
+                    assert!(opened.is_none(), "the listing leaves it unopened");
                     assert!(node.children.is_empty());
                 }
                 _ => {}

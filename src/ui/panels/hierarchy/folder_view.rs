@@ -55,12 +55,14 @@ pub(super) struct Listing {
 
 impl Listing {
     pub(super) fn of(state: &AppState, doc: DocumentId, folder: RpfNodeId) -> Option<Self> {
-        let DocPayload::Rpf(rpf) = &state.document(doc)?.payload else {
+        let document = state.document(doc)?;
+        let DocPayload::Rpf(rpf) = &document.payload else {
             return None;
         };
         let node = rpf.session.node(folder)?;
         let groups = explorer::grouped_children(
             &rpf.session,
+            document.payload_epoch(),
             folder,
             state.prefs.explorer.sort,
             state.prefs.explorer.group,
@@ -220,7 +222,7 @@ fn row_of(state: &AppState, doc: DocumentId, id: RpfNodeId) -> Option<Row> {
     let DocPayload::Rpf(rpf) = &state.document(doc)?.payload else {
         return None;
     };
-    let node = rpf.session.node(id)?.clone();
+    let node = rpf.session.node(id)?.without_children();
     let facts = row_facts(&rpf.session, id)?;
     // A GTA VI row's kind picks its icon and extension, as it does in the Files tree.
     let kind = crate::state::explorer::gta6_kind(&rpf.session, &node);

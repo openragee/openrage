@@ -173,32 +173,36 @@ fn an_archive_shared_by_two_slots_is_counted_once() {
 }
 
 /// A session over `outer.rpf`, which holds `mid.rpf` of `n` drawables: the outer archive its
-/// slot holds and the middle one its listing opened.
+/// slot holds and the middle one its row holds opened, not yet expanded.
 fn nested_session(n: usize) -> (RpfEditSession, Arc<RpfArchive>, Arc<RpfArchive>) {
     let mid = archive_of(n);
     let outer = archive(&[("top.ydr", b"x"), ("mid.rpf", &mid)]);
     let opened = RpfArchive::from_bytes(outer).expect("the outer archive opens");
-    let session = RpfEditSession::from_archive(opened).expect("a session");
+    let mut session = RpfEditSession::from_archive(opened).expect("a session");
     let Some(RpfNodeBacking::ArchiveDir { archive_id }) =
         session.node(session.root_id()).map(|root| &root.backing)
     else {
         unreachable!("the root of an archive's tree is the archive");
     };
     let outer = Arc::clone(&session.archive(*archive_id).expect("its slot").archive);
-    let mid = session
-        .all_nodes()
-        .into_iter()
-        .find_map(|id| match &session.node(id)?.backing {
-            RpfNodeBacking::Archive {
-                source:
-                    ArchiveSource::Nested {
-                        opened: Some(mid), ..
-                    },
+    let row = (session.all_nodes().into_iter())
+        .find(|&id| session.node(id).is_some_and(|n| n.name == "mid.rpf"))
+        .expect("the nested archive's row");
+    let Some(RpfNodeBacking::Archive {
+        source:
+            ArchiveSource::Nested {
+                parent_entry_index,
+                opened,
                 ..
-            } => Some(Arc::clone(mid)),
-            _ => None,
-        })
-        .expect("the listing opened the nested archive");
+            },
+        ..
+    }) = session.node_mut(row).map(|n| &mut n.backing)
+    else {
+        unreachable!("a nested archive's row");
+    };
+    let device = or_title::vfs::ArchiveDevice::new(Arc::clone(&outer));
+    let mid = device.open_nested(*parent_entry_index).expect("mid opens");
+    *opened = Some(Arc::clone(&mid));
     (session, outer, mid)
 }
 

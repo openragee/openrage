@@ -354,6 +354,7 @@ not (
   | binary_id(=or-io-verify::navmesh)
   | binary_id(=or-io-verify::particle)
   | binary_id(=or-io-verify::path_region)
+  | binary_id(=or-io-verify::rdr2_world_census)
   | binary_id(=or-io-verify::retarget)
   | binary_id(=or-io-verify::rsc7_header)
   | binary_id(=or-io-verify::skeleton_rest_pose)

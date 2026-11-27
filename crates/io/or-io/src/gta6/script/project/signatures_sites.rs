@@ -112,6 +112,8 @@ pub(super) struct Sites {
     /// For each parameter cell of a callee one argument of one cell lands in, whether every such argument here is an `int` widened by its sign; the cell `u32::MAX` where a call's cells are not all known.
     pub(super) narrow: Vec<(FunctionKey, u32, bool)>,
     pub(super) handed: Vec<FunctionKey>,
+    /// The natives, by [`native_key`], whose result the function hands back as its own.
+    pub(super) returned_natives: Vec<u64>,
     pub(super) taken: Vec<FunctionKey>,
     pub(super) gives: Vec<Given>,
 }
@@ -130,6 +132,8 @@ impl Sites {
             vars: HashMap::new(),
             kept: Vec::new(),
             handed: BTreeSet::new(),
+            returned_natives: BTreeSet::new(),
+            returned_vars: BTreeSet::new(),
             taken: BTreeSet::new(),
             given: BTreeMap::new(),
         };
@@ -179,6 +183,9 @@ struct Scan<'a, 'r> {
     handed: BTreeSet<FunctionKey>,
     taken: BTreeSet<FunctionKey>,
     given: BTreeMap<(FunctionKey, u32), Found>,
+    /// The natives whose result the function hands back, and the variables it returns.
+    returned_natives: BTreeSet<u64>,
+    returned_vars: BTreeSet<Var>,
 }
 
 impl Scan<'_, '_> {
@@ -357,6 +364,13 @@ impl Scan<'_, '_> {
             if let Some(key) = key_of(self.head.program, callee) {
                 self.handed.insert(key);
             }
+            if let Some(key) = native_key(callee) {
+                self.returned_natives.insert(key);
+                self.accounted(callee);
+            }
+        }
+        if let Expr::Var(var) = whole(e) {
+            self.returned_vars.insert(*var);
         }
     }
 
@@ -418,6 +432,9 @@ impl Scan<'_, '_> {
         // assigned anything else as well is read as that too: it is no truth by its reads alone.
         let kept = std::mem::take(&mut self.kept_natives);
         for (var, key) in kept {
+            if self.returned_vars.contains(&var) {
+                self.returned_natives.insert(key);
+            }
             // What any code reads a global as is not said here.
             let usage = match var {
                 Var::Global { .. } => Usage::Mixed,
@@ -455,6 +472,7 @@ impl Scan<'_, '_> {
                 .filter(|(_, usage)| *usage != Usage::Unsaid)
                 .collect(),
             handed: self.handed.into_iter().collect(),
+            returned_natives: self.returned_natives.into_iter().collect(),
             taken: self.taken.into_iter().collect(),
             gives: gives.collect(),
         }

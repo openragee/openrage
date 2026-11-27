@@ -158,6 +158,10 @@ pub fn of_function(project: &mut Project, f: &cfg::Function) {
     for (native, usage) in &sites.natives {
         *project.native_uses.entry(*native).or_insert(true) &= *usage == Usage::Truth;
     }
+    for native in &sites.returned_natives {
+        project.native_uses.entry(*native).or_insert(true);
+    }
+    open.returned_natives.clone_from(&sites.returned_natives);
     open.uses = sites.uses;
     open.handed = sites.handed;
     open.taken = sites.taken;
@@ -206,10 +210,21 @@ pub fn settle(project: &mut Project) {
     shared::overridden(project, &shared);
     shared::slot_results(project, &shared);
     shared::widened(project, &open, &shared);
+    // ⚠ A native's result a function hands back is read as that function's result is, and is no
+    // truth where a call no code names may read it.
+    let mut handing: BTreeMap<u64, Vec<FunctionKey>> = BTreeMap::new();
+    for (key, waits) in &open {
+        for native in &waits.returned_natives {
+            handing.entry(*native).or_default().push(*key);
+        }
+    }
     let uses = std::mem::take(&mut project.native_uses);
     project.native_truths = uses
         .into_iter()
-        .filter(|(_, truth)| *truth)
+        .filter(|(native, truth)| {
+            let handers = handing.get(native).map(Vec::as_slice).unwrap_or_default();
+            *truth && handers.iter().all(|key| shared.read_only_as_truth(key))
+        })
         .map(|(native, _)| native)
         .collect();
 }
@@ -288,6 +303,9 @@ struct Open {
     /// For each parameter cell of each function it calls, whether every argument of one cell it passes there is an `int` widened by its sign.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     narrow: Vec<(FunctionKey, u32, bool)>,
+    /// The natives, by key, whose result the function hands back as its own.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    returned_natives: Vec<u64>,
 }
 
 /// Puts what a signature waits on at its end, as a parameter of no cells; `false` where it cannot be written.

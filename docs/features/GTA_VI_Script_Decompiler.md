@@ -65,7 +65,9 @@ was.
 - **Kinds**: `types`, `kinds`, `signs` give a variable a declared type where every read and write
   agrees; a variable of no proved kind is declared `Cell`, and a 32-bit reading of it is written
   as a cast. A field of one byte that every program only ever stores a truth to and only tests
-  for zero is a `bool`. A pointer, like a reference, is compared with `null`. A variable every
+  for zero is a `bool`, and so is the result of a native that every program only tests, or only
+  hands back from a function every call of which only tests it. A pointer, like a reference, is
+  compared with `null`. A variable every
   assignment of which makes an array is an array of that element type. A value of two cells that
   the code only takes from natives, compares and hands back to them is declared `Handle`, a word
   the header explains. A value of several cells that a `box<T>` of it, or a method of the value

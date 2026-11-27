@@ -648,3 +648,38 @@ fn a_parameter_every_call_passes_an_int_widened_by_its_sign_is_proved_one() {
     // No call names the function at 0x20 or 0x50: their callers are not known.
     assert!(cells(0x20).is_empty() && cells(0x50).is_empty());
 }
+
+#[test]
+fn a_native_a_function_hands_back_is_a_truth_where_every_call_of_the_function_only_tests_it() {
+    let functions = |read: &str| {
+        let tests = format!(
+            "if (((as_u32(func_000010(p0)) != 0))) {{ Native.DEMO.USE(1); }} {read} return;"
+        );
+        [
+            function("VmValue", 0x10, 1, "return Native.DEMO.ASK(p0);"),
+            function(
+                "VmValue",
+                0x20,
+                1,
+                "local_0 = Native.DEMO.GET(p0); return local_0;",
+            ),
+            function("void", 0x30, 1, &tests),
+            function(
+                "void",
+                0x40,
+                1,
+                "if (((as_u32(func_000020(p0)) == 0))) { return; } return;",
+            ),
+        ]
+    };
+    let project = project_of(&[listing(1, &functions(""))]);
+    assert_eq!(project.native_truths, BTreeSet::from([5, 6]));
+    // A call that counts with what the function hands back reads the native as a number.
+    let counted = "Native.DEMO.USE(((as_i32(func_000010(p0)) + as_i32(1))));";
+    let project = project_of(&[listing(1, &functions(counted))]);
+    assert_eq!(project.native_truths, BTreeSet::from([6]));
+    // A reference taken to the function lets calls no code names read what it hands back.
+    let taken = "Native.DEMO.USE(Vm.Function(0x00000001U, 0x000020));";
+    let project = project_of(&[listing(1, &functions(taken))]);
+    assert_eq!(project.native_truths, BTreeSet::from([5]));
+}

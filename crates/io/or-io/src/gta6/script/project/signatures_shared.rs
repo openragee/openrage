@@ -73,6 +73,12 @@ impl Shared {
         }
         self.uses.get(key).and_then(|usage| usage.kind(found))
     }
+
+    /// Whether every call that may reach `key` reads its result for whether it is zero alone: every call names it, and none reads it as anything else.
+    pub(super) fn read_only_as_truth(&self, key: &FunctionKey) -> bool {
+        let usage = self.uses.get(key).copied().unwrap_or_default();
+        !self.blind.contains(key) && matches!(usage, Usage::Truth | Usage::Unsaid)
+    }
 }
 
 /// Notes for each function a virtual slot holds the kind of the one cell every function of its line hands back, where all of them prove the same.

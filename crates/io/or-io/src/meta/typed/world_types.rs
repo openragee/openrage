@@ -12,8 +12,8 @@
 //! ⚠ **A document these types lay out is a PSO, never an RBM.** An RBM class carries a `signature`
 //! word that nothing in this tree derives, and a PSO type table states none, so a root built here
 //! is written as PSO. A record built in an RBM file whose own table does not state its class is
-//! refused with that reason where no snapshot declares the class either; where one does, the class
-//! is laid out from it with a zero signature.
+//! refused with that reason where no snapshot declares the class either; where one does, and the
+//! table does not so much as name the class, the class is laid out from it with a zero signature.
 //!
 //! ⚠ **A record copied from another file is laid out as this file's class, never as its own.** It
 //! carries the tree it was read from, and a file whose table states no class for it (a map that holds
@@ -28,20 +28,35 @@
 //! its document holds, so an interior with no room names the room class in `rooms` and states it
 //! nowhere, and the library a save is made against then holds that name with no member. A record of
 //! it, built or copied, is refused as one of a class the file lacks: laid out by the name alone it
-//! would be written with no member, and in an RBM file with a signature nothing derived.
+//! would be written with no member, and in an RBM file with a signature nothing derived. An
+//! installed snapshot's class does not stand in for the name: the class of an array that holds
+//! nothing is written into a synthesised table, so a process that installed a snapshot would write
+//! other bytes than one with none.
 //!
 //! ⚠ **The declaration is the last source and the first.** A class the document's own table states
-//! is laid out as that table states it and never as declared here. Where the table states none, the
-//! declaration wins over an installed snapshot: a project's source compiles through its base's type
-//! table with no snapshot, so a save has to write the same members on every machine.
+//! is laid out as that table states it, never as declared here and never as an installed snapshot
+//! declares it: a snapshot is of one build of the game, and a class laid out by it demands members
+//! the document's records do not hold and drops the ones only they hold. Where the table states none,
+//! the declaration wins over an installed snapshot: a project's source compiles through its base's
+//! type table with no snapshot, so a save has to write the same members on every machine.
+//!
+//! ⚠ **A copy of a class the file states takes the members the class has here.** A member the class
+//! has and the copy lacks is stated at the value the typed record holds, which is the engine's `init`
+//! where the file it came from stated none, or at its empty value where no record types it. A member
+//! the copy holds and the class lacks is refused, as above.
 
+use std::collections::HashMap;
 use std::sync::OnceLock;
 
+use crate::meta::binary::hash_index::default_hash_index;
+use crate::meta::binary::pso::schema::ARRAY_INFO_NAME_HASH;
 use crate::meta::binary::synth::name_hash;
 use crate::meta::binary::type_tables;
 use crate::meta::binary::{ContainerLayout, MetaLayout};
 use crate::meta::instance::{MetaInstance, SourceFormat, Value};
-use crate::meta::schema::{parse_psc, ResolvedStruct, SchemaItem, SchemaLibrary};
+use crate::meta::schema::{
+    parse_psc, Field, FieldType, ResolvedStruct, SchemaItem, SchemaLibrary, StructDef,
+};
 
 use super::{ped_types, Arrival};
 
@@ -122,10 +137,22 @@ fn no_signature(type_name: &str, how: &str) -> String {
     )
 }
 
-/// Why a record laid out by a class that lacks `member` is not saved.
-fn would_drop(class: &str, member: &str) -> String {
+/// Why a record laid out by a class that lacks `member` is not saved; `declared_here` says the class is the one declared
+/// in this module, and not the installed snapshot's.
+fn would_drop(class: &str, member: &str, declared_here: bool) -> String {
+    let laid_out_as = match declared_here {
+        true => "the class as it is built from nothing",
+        false => "the class as the installed schema snapshot declares it",
+    };
     format!(
-        "a `{class}` here holds `{member}`, a member of the file it came from: this file's own type table does not state the class it is laid out as, and the class as it is built from nothing has no such member, so the save would drop it; build the record here instead of copying it"
+        "a `{class}` here holds `{member}`, a member of the file it came from: this file's own type table does not state the class it is laid out as, and {laid_out_as} has no such member, so the save would drop it; build the record here instead of copying it"
+    )
+}
+
+/// Why a `type_name` built in a file whose table names the class and states none of its members is not saved.
+fn only_named(type_name: &str) -> String {
+    format!(
+        "a `{type_name}` built here cannot be saved into this file: its own type table names `{type_name}` and states none of its members, and none is declared for a file that states none, so there is no layout to write it with; build it in a file that holds one"
     )
 }
 
@@ -133,6 +160,13 @@ fn would_drop(class: &str, member: &str) -> String {
 pub(super) fn would_drop_stated(class: &str, member: &str) -> String {
     format!(
         "a `{class}` here holds `{member}`, a member of the file it came from: this file's own type table states `{class}` without it, so the save would drop it; build the record here instead of copying it"
+    )
+}
+
+/// Why a record that lacks `member` is not saved into a file whose own table states it with a type no value is built for.
+fn no_value_for(class: &str, member: &str, ty: &FieldType) -> String {
+    format!(
+        "a `{class}` here lacks `{member}`, which this file's own type table states for `{class}` as {ty:?}: no empty value is built for a member of that type, so there is nothing to write; copy the record from a file whose `{class}` states `{member}`"
     )
 }
 
@@ -216,6 +250,43 @@ pub fn first_member_unstated<'a>(
     first_in(root, &lacking)
 }
 
+/// The class and the name hash of the first member a record under `root` lacks that its class has in the type table of `layout`.
+pub fn first_member_missing<'a>(
+    layout: &MetaLayout,
+    root: &'a MetaInstance,
+) -> Option<(&'a str, u32)> {
+    // ⚠ A tree as it was read lacks none: only a record copied from a file whose class states fewer members does, and
+    // a writer has no value to write for the member. A class the table lacks is not judged here.
+    fn missed(inst: &MetaInstance, stated: impl Iterator<Item = u32>) -> Option<(&str, u32)> {
+        let held: Vec<u32> = inst.fields.iter().map(|(n, _)| name_hash(n)).collect();
+        let member = stated
+            .filter(|member| *member != ARRAY_INFO_NAME_HASH)
+            .find(|member| !held.contains(member))?;
+        Some((inst.type_name.as_str(), member))
+    }
+    let missing = |inst: &'a MetaInstance| {
+        let key = name_hash(&inst.type_name);
+        match &layout.container {
+            ContainerLayout::Pso(pso) if !pso.is_gta6() => {
+                let class = pso.schema.struct_for(key)?;
+                missed(inst, class.entries.iter().map(|e| e.name_hash))
+            }
+            ContainerLayout::Rbm(rbm) => {
+                let class = rbm.model.class_for(key)?;
+                missed(inst, class.entries.iter().map(|e| e.name_hash))
+            }
+            _ => None,
+        }
+    };
+    first_in(root, &missing)
+}
+
+/// How many members a record of the class `resolved` holds: every one but the bytes no member names.
+fn members_of(resolved: &ResolvedStruct<'_>) -> usize {
+    let named = |field: &&&Field| !matches!(field.ty, FieldType::Pad(_));
+    resolved.fields.iter().filter(named).count()
+}
+
 /// The types a world document is saved against, and which of them this declaration gave.
 pub(super) struct Saving {
     pub(super) library: SchemaLibrary,
@@ -227,17 +298,19 @@ pub(super) struct Saving {
     /// document, which has no table to lack a class.
     stated: Option<Vec<u32>>,
     /// The name hash of each class `library` holds as the document's own table states it, which is every stated class
-    /// where no snapshot is installed: a snapshot's class stands where both state one.
+    /// but one a family declares in code: a snapshot's class never stands where the table states one.
     as_stated: Vec<u32>,
     /// The name hash of each class `library` holds as a name alone, with no member: the table names the class of an
     /// array that holds nothing and states it nowhere, so nothing lays a record of it out.
     named_only: Vec<u32>,
+    /// How many members each class the document's own table states has in `library`, by the class's name hash.
+    members: HashMap<u32, usize>,
 }
 
 impl Saving {
     /// The types of a root that arrived as `arrival`, or was built here when there is none.
     pub(super) fn of(arrival: Option<&Arrival>) -> Self {
-        let family = ped_types::library(crate::meta::default_library());
+        let family = ped_types::family();
         let own = arrival
             .and_then(|a| a.layout.as_ref())
             .map(type_tables::of_layout);
@@ -248,17 +321,22 @@ impl Saving {
             .collect();
         let (mut library, mut named_only) = match &own {
             Some(tables) => {
-                let library = type_tables::extend(&family, tables).into_owned();
+                let library = super::types_of(tables);
+                // ⚠ Of what the table itself holds: a snapshot's class is no name alone, and none stands where the table names one.
+                let held = type_tables::extend(family, tables);
                 let given = |name: &str| {
                     family.struct_(name).is_some() || tables.structs.contains_key(name)
                 };
-                let named_only: Vec<u32> = (library.structs.keys())
+                let named_only: Vec<u32> = (held.structs.keys())
                     .filter(|name| !given(name))
                     .map(|name| name_hash(name))
                     .collect();
                 (library, named_only)
             }
-            None => (family.into_owned(), Vec::new()),
+            None => (
+                ped_types::library(crate::meta::default_library()).into_owned(),
+                Vec::new(),
+            ),
         };
         let stated = |name: &str| {
             let key = name_hash(name);
@@ -284,6 +362,10 @@ impl Saving {
                     .collect(),
             ),
         };
+        let members = (own.iter())
+            .flat_map(|tables| tables.structs.keys())
+            .filter_map(|name| Some((name_hash(name), members_of(&library.resolve_any(name)?))))
+            .collect();
         Self {
             library,
             declared: given,
@@ -291,6 +373,7 @@ impl Saving {
             stated,
             as_stated,
             named_only,
+            members,
         }
     }
 
@@ -303,21 +386,83 @@ impl Saving {
     /// Gives `inst` the members its class has in this document.
     pub(super) fn conform(&self, inst: &mut MetaInstance) -> Result<(), String> {
         if self.class(&inst.type_name).is_none() {
-            return Err(match self.rbm {
-                true => no_signature(&inst.type_name, "built here"),
-                false => super::no_class_to_build(&inst.type_name),
+            let named_only = self.named_only.contains(&name_hash(&inst.type_name));
+            return Err(match (self.rbm, named_only) {
+                (true, _) => no_signature(&inst.type_name, "built here"),
+                // ⚠ No snapshot gives a class the table names: the sentence is the same with one installed and with none.
+                (false, true) => only_named(&inst.type_name),
+                (false, false) => super::no_class_to_build(&inst.type_name),
             });
         }
         super::conform(&self.library, inst)
     }
 
-    /// Gives `inst`, a record that carries the tree it was read from, the members its class has in this document where the
-    /// document's own table states no such class; a record of a class the table states is left as it arrived.
+    /// Whether the class `resolved` is, or derives from, one this module declares, and not one an installed snapshot gave.
+    fn declared_here(&self, resolved: &ResolvedStruct<'_>) -> bool {
+        let declared = |def: &&StructDef| self.declared.contains(&name_hash(&def.name));
+        resolved.chain.iter().any(declared)
+    }
+
+    /// Gives `inst`, a record of a class the document's own table states, and each such record under it, the members the
+    /// class has here and the record lacks, each at its empty value.
+    ///
+    /// ⚠ Before the typed members are written, so a member a record types takes the value the record holds, which is
+    /// the engine's `init` where the file the record came from stated none.
+    fn fill_stated(&self, inst: &mut MetaInstance) -> Result<(), String> {
+        // ⚠ By the count alone, since this runs for every record of a save: a record with as many members as its class
+        // lacks none, or holds one the class lacks, for which the save is refused.
+        let stated = self.members.get(&name_hash(&inst.type_name));
+        let resolved = stated
+            .filter(|members| inst.fields.len() < **members)
+            .and_then(|_| self.class(&inst.type_name));
+        if let Some(resolved) = resolved {
+            let held: Vec<u32> = inst.fields.iter().map(|(n, _)| name_hash(n)).collect();
+            for field in &resolved.fields {
+                let key = name_hash(&field.name);
+                if held.contains(&key) || matches!(field.ty, FieldType::Pad(_)) {
+                    continue;
+                }
+                // ⚠ The one member whose value is needed and cannot be derived: a type the table states and nothing
+                // here builds (a run of bytes nothing counts, a type byte no reader names).
+                if matches!(field.ty, FieldType::Unknown(_)) {
+                    return Err(no_value_for(&inst.type_name, &field.name, &field.ty));
+                }
+                let value = super::empty(&self.library, &field.ty, field.init.as_ref())?;
+                // Spelt as the writer looks it up.
+                let spelt = default_hash_index().name_or_literal(key);
+                inst.fields.push((spelt, value));
+            }
+        }
+        for (_, value) in &mut inst.fields {
+            self.fill_stated_in(value)?;
+        }
+        Ok(())
+    }
+
+    fn fill_stated_in(&self, value: &mut Value) -> Result<(), String> {
+        match value {
+            Value::Struct(inner) | Value::Pointer(Some(inner)) => self.fill_stated(inner),
+            Value::Array(items) => items.iter_mut().try_for_each(|v| self.fill_stated_in(v)),
+            Value::Map(pairs) => pairs.iter_mut().try_for_each(|(k, v)| {
+                self.fill_stated_in(k)?;
+                self.fill_stated_in(v)
+            }),
+            _ => Ok(()),
+        }
+    }
+
+    /// Gives `inst`, a record that carries the tree it was read from, the members its class has in this document: where
+    /// the document's own table states the class, the ones the record lacks; where it states none, the class as it is
+    /// declared or refused.
     pub(super) fn conform_carried(&self, inst: &mut MetaInstance) -> Result<(), String> {
         let class = name_hash(&inst.type_name);
-        let Some(false) = self.stated.as_ref().map(|stated| stated.contains(&class)) else {
+        // A text document has no table: it states what it holds.
+        let Some(stated) = &self.stated else {
             return Ok(());
         };
+        if stated.contains(&class) {
+            return self.fill_stated(inst);
+        }
         let Some(resolved) = self.class(&inst.type_name) else {
             return Err(no_class(&inst.type_name, self.rbm));
         };
@@ -326,7 +471,8 @@ impl Saving {
             resolved.fields.iter().any(|f| name_hash(&f.name) == key)
         };
         if let Some((member, _)) = inst.fields.iter().find(|(member, _)| !held(member)) {
-            return Err(would_drop(&inst.type_name, member));
+            let declared_here = self.declared_here(&resolved);
+            return Err(would_drop(&inst.type_name, member, declared_here));
         }
         super::conform(&self.library, inst)
     }
@@ -345,9 +491,9 @@ impl Saving {
             let Some(resolved) = self.class(&inst.type_name) else {
                 return Some(no_class(&inst.type_name, self.rbm));
             };
-            let declared_here = |class: &str| self.declared.contains(&name_hash(class));
+            let declared_here = self.declared_here(&resolved);
             let as_stated = self.as_stated.contains(&class);
-            if !as_stated && !resolved.chain.iter().any(|def| declared_here(&def.name)) {
+            if !as_stated && !declared_here {
                 return None;
             }
             let held = |member: &str| {
@@ -357,7 +503,7 @@ impl Saving {
             let (member, _) = inst.fields.iter().find(|(member, _)| !held(member))?;
             Some(match stated.contains(&class) {
                 true => would_drop_stated(&inst.type_name, member),
-                false => would_drop(&inst.type_name, member),
+                false => would_drop(&inst.type_name, member, declared_here),
             })
         };
         first_in(root, &refusal).map_or(Ok(()), Err)
@@ -1028,6 +1174,91 @@ mod tests {
         let why = (Saving::of(None).refuse_what_has_no_place(&root))
             .expect_err("no class of that name is declared for a file built here");
         assert!(why.contains("`Item` copied here"), "{why}");
+    }
+
+    /// What a save is made against where a file's own table states the classes of `psc`, and nothing else gives any.
+    fn stating(psc: &str, edit: impl FnOnce(&mut SchemaLibrary)) -> Saving {
+        let psc = format!("<ParserSchema>{psc}</ParserSchema>");
+        let mut library = build_library([("stated.psc", psc.as_bytes())]).expect("parses");
+        edit(&mut library);
+        let stated: Vec<u32> = library.structs.keys().map(|n| name_hash(n)).collect();
+        let members = (library.structs.keys())
+            .map(|name| {
+                let class = library.resolve_any(name).expect("the class");
+                (name_hash(name), members_of(&class))
+            })
+            .collect();
+        Saving {
+            library,
+            declared: Vec::new(),
+            rbm: true,
+            stated: Some(stated.clone()),
+            as_stated: stated,
+            named_only: Vec::new(),
+            members,
+        }
+    }
+
+    const HELD: &str = r#"<structdef type="Held">
+        <u32 name="shared"/>
+        <s32 name="lacked"/>
+        <struct name="inner" type="Inner"/>
+      </structdef>
+      <structdef type="Inner"><u32 name="shared"/><float name="lacked"/></structdef>"#;
+
+    /// A `Held` as a file whose classes state `shared` alone states one.
+    fn narrower_copy() -> MetaInstance {
+        let mut inner = MetaInstance::new("Inner");
+        inner.set(spelt("shared"), Value::UInt(2));
+        let mut copy = MetaInstance::new("Held");
+        copy.set(spelt("shared"), Value::UInt(1));
+        copy.set(spelt("inner"), Value::Struct(Box::new(inner)));
+        copy
+    }
+
+    #[test]
+    fn a_copy_of_a_class_the_file_states_takes_the_members_it_lacks_and_so_does_a_record_it_holds()
+    {
+        let saving = stating(HELD, |_| {});
+        let mut copy = narrower_copy();
+        saving
+            .conform_carried(&mut copy)
+            .expect("each member has a value");
+        assert_eq!(
+            stated(&copy),
+            hashes(&["shared", "inner", "lacked"]),
+            "the member the copy lacked comes after the ones it held"
+        );
+        let lacked = |inst: &MetaInstance| inst.get(&spelt("lacked")).cloned();
+        assert_eq!(lacked(&copy), Some(Value::Int(0)), "at its empty value");
+        let Some(Value::Struct(inner)) = copy.get(&spelt("inner")) else {
+            panic!("the copy holds its inner record");
+        };
+        assert_eq!(stated(inner), hashes(&["shared", "lacked"]));
+        assert_eq!(lacked(inner), Some(Value::Float(0.0)));
+        assert_eq!(inner.get(&spelt("shared")), Some(&Value::UInt(2)));
+    }
+
+    #[test]
+    fn a_copy_that_lacks_a_member_of_a_type_no_value_is_built_for_is_refused_by_name() {
+        // ⚠ A type table states such a member, a run of bytes nothing counts, and no declaration parses to one.
+        let saving = stating(HELD, |library| {
+            let held = library.structs.get_mut("Held").expect("the class");
+            let lacked = held.fields.iter_mut().find(|f| f.name == "lacked");
+            lacked.expect("the member").ty = FieldType::Unknown("raw array pointer".into());
+        });
+        let why = saving
+            .conform_carried(&mut narrower_copy())
+            .expect_err("nothing derives a value for the member");
+        assert!(why.contains("a `Held` here lacks `lacked`"), "{why}");
+        assert!(why.contains("raw array pointer"), "{why}");
+
+        // A copy that holds the member is not asked for a value of it.
+        let mut whole = narrower_copy();
+        whole.set(spelt("lacked"), Value::Null);
+        saving
+            .conform_carried(&mut whole)
+            .expect("the copy holds the member");
     }
 
     /// The one entity of the file `map` saved as, as a record that carries that file's tree.

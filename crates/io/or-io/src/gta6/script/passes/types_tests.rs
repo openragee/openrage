@@ -1792,3 +1792,44 @@ fn a_parameter_the_project_proves_an_int_widened_by_its_sign_is_read_as_one_with
     let f = typed(Project::empty());
     assert_eq!(f.cfg.blocks[0].stmts[1], set(1, as_i32(param(1))));
 }
+
+#[test]
+fn a_parameter_proved_widened_is_not_sealed_where_an_address_of_a_lower_parameter_is_handed_on() {
+    let reads = |filled: bool| {
+        let mut stmts = Vec::new();
+        if filled {
+            let low = Expr::AddrOf {
+                var: Var::Param(0),
+                cell: 0,
+            };
+            stmts.push(used(vec![low]));
+        }
+        stmts.push(set(1, as_i32(param(2))));
+        stmts
+    };
+    let mut project = Project::default();
+    let own = FunctionKey::new(0x1122_3344, 0);
+    project
+        .widened
+        .insert(own, std::collections::BTreeSet::from([2]));
+    let names = Names::default();
+    let options = Options::baseline()
+        .with(Pass::Kinds)
+        .with(Pass::Signs)
+        .with(Pass::Interproc);
+    let typed = |filled: bool| {
+        let mut f = function(reads(filled));
+        run_in(
+            &mut f,
+            &Context::new(&names, &project, options),
+            &mut Stats::default(),
+        );
+        f
+    };
+    let plain = typed(false);
+    assert_eq!(plain.cfg.blocks[0].stmts[0], set(1, param(2)));
+    // A callee handed `&p0` may write any cell from p0 up, p2 among them.
+    let filled = typed(true);
+    let stmts = &filled.cfg.blocks[0].stmts;
+    assert_eq!(stmts[1], set(1, as_i32(param(2))), "{stmts:?}");
+}

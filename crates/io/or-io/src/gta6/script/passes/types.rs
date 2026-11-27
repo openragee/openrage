@@ -1741,10 +1741,12 @@ impl Typing<'_> {
         match var {
             Var::Local(n) => self.facts.lowest_local.is_none_or(|lowest| n < lowest),
             Var::Value { .. } | Var::Stack { .. } => !self.facts.addressed.contains(&var),
-            // A caller sets a parameter: only where the project proves every caller widens it.
+            // A caller sets a parameter: only where the project proves every caller widens it, and
+            // no address of it or of a parameter below it is handed on.
             Var::Param(n) => {
                 let widened = self.around.widened.is_some_and(|cells| cells.contains(&n));
-                widened && !self.facts.addressed.contains(&var)
+                let reached = self.facts.params_escape.is_some_and(|low| n >= low);
+                widened && !reached && !self.facts.addressed.contains(&var)
             }
             Var::Global { .. } => false,
         }
@@ -1815,7 +1817,10 @@ impl Typing<'_> {
                 callee,
                 args,
                 returns,
-            } => match self.element(callee, args) {
+            } => match self
+                .element(callee, args)
+                .or_else(|| self.around.cast_yields(callee))
+            {
                 Some(lat) => lat,
                 None => self.around.yields(callee, *returns).0,
             },

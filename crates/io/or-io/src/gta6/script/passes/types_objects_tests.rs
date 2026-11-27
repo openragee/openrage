@@ -306,6 +306,176 @@ fn a_virtual_call_yields_what_every_function_of_its_slots_line_proves() {
     assert_eq!(f.cfg.blocks[0].stmts, tested());
 }
 
+/// An intrinsic of one argument that yields one cell.
+fn intrinsic(name: &str, arg: Expr) -> Expr {
+    Expr::Call {
+        callee: Callee::Intrinsic {
+            name: name.to_owned(),
+            ty: None,
+            wrapper: None,
+        },
+        args: vec![arg],
+        returns: Some(1),
+    }
+}
+
+/// A call of the function at `at` of the tests' program.
+fn direct(at: u32, args: Vec<Expr>) -> Stmt {
+    Stmt::Eval(Expr::Call {
+        callee: Callee::Local {
+            at,
+            name: format!("func_{at:06X}"),
+        },
+        args,
+        returns: Some(0),
+    })
+}
+
+/// `project` with the function at `at` of the tests' program a member of the type `owner`.
+fn member_at(mut project: Project, at: u32, owner: TypeKey, is_static: bool) -> Project {
+    let member = Member {
+        owner,
+        role: Role::Method,
+        is_static,
+        slot: None,
+    };
+    project
+        .members
+        .insert(FunctionKey::new(PROGRAM, at), member);
+    project
+}
+
+#[test]
+fn what_a_cast_to_an_object_type_yields_is_an_object_of_it() {
+    let stmts = |stem: &str| {
+        vec![
+            // A null first, as a variable declared before the cast is given.
+            set(0, int(0)),
+            set(0, intrinsic(&format!("{stem}<{THING}>"), param(1))),
+        ]
+    };
+    for stem in ["try_cast", "cast"] {
+        let f = typed(stmts(stem), &with_member(0, None));
+        assert_eq!(kind_of(&f, Var::Local(0)), object(THING), "{stem}");
+    }
+
+    // A cast of another mode, to a type the project does not hold or to a value type says nothing.
+    let f = typed(stmts("cast_mode_2"), &with_member(0, None));
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Unknown);
+    for project in [Project::default(), with_member(0x04, None)] {
+        let f = typed(stmts("try_cast"), &project);
+        assert_eq!(kind_of(&f, Var::Local(0)), Kind::Unknown);
+    }
+
+    // With `kinds` off the project is not read.
+    let off = typed_with(
+        stmts("try_cast"),
+        &with_member(0, None),
+        Options::baseline(),
+    );
+    assert_eq!(kind_of(&off, Var::Local(0)), Kind::Unknown);
+}
+
+#[test]
+fn what_an_instance_member_is_called_on_is_an_object_of_its_owner() {
+    let stmts = || vec![set(0, unknown()), direct(0x300, vec![local(0), int(1)])];
+    let project = member_at(with_member(0, None), 0x300, TypeKey(0xAA), false);
+    let f = typed(stmts(), &project);
+    assert_eq!(kind_of(&f, Var::Local(0)), object(THING));
+
+    // A static member takes no receiver, a value type's member a pointer, and a function that is
+    // no member says nothing.
+    let unproved = [
+        member_at(with_member(0, None), 0x300, TypeKey(0xAA), true),
+        member_at(with_member(0x04, None), 0x300, TypeKey(0xAA), false),
+        member_at(with_member(0, None), 0x400, TypeKey(0xAA), false),
+    ];
+    for project in unproved {
+        let f = typed(stmts(), &project);
+        assert_eq!(kind_of(&f, Var::Local(0)), Kind::Unknown);
+    }
+
+    // A local assigned twice may hold another value where the member is not called on it.
+    let mut twice = stmts();
+    twice.push(set(0, unknown()));
+    let f = typed(twice, &project);
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Unknown);
+}
+
+#[test]
+fn calls_made_on_a_value_as_a_type_and_as_its_base_make_it_an_object_of_the_derived_one() {
+    let stmts = || {
+        vec![
+            set(0, unknown()),
+            Stmt::Eval(virtual_call(THING, 3, vec![local(0)], 0)),
+            direct(0x300, vec![local(0)]),
+        ]
+    };
+    let mut project = member_at(with_member(0, None), 0x300, TypeKey(0xBB), false);
+    let derived = TypeFacts {
+        base: Some(TypeKey(0xAA)),
+        ..TypeFacts::default()
+    };
+    project.types.insert(TypeKey(0xBB), derived);
+    let f = typed(stmts(), &project);
+    assert_eq!(kind_of(&f, Var::Local(0)), object(OTHER));
+
+    // Of two types neither of which derives from the other, the value is of neither.
+    project.types.insert(TypeKey(0xBB), TypeFacts::default());
+    let f = typed(stmts(), &project);
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Unknown);
+}
+
+#[test]
+fn an_array_an_element_of_which_is_called_on_as_an_object_type_is_an_array_of_it() {
+    let stmts = || {
+        vec![
+            set(0, load(param(1), 0x10)),
+            set(1, element(local(0), int(0))),
+            Stmt::Eval(virtual_call(THING, 3, vec![local(1)], 0)),
+        ]
+    };
+    let project = with_member(0, None);
+    let f = typed(stmts(), &project);
+    assert_eq!(
+        kind_of(&f, Var::Local(0)),
+        Kind::Array(Box::new(object(THING)))
+    );
+    assert_eq!(kind_of(&f, Var::Local(1)), object(THING));
+
+    // An array assigned twice, an element assigned twice, an element read under a cast: no array.
+    let mut array_twice = stmts();
+    array_twice.insert(0, set(0, unknown()));
+    let mut element_twice = stmts();
+    element_twice.push(set(1, unknown()));
+    let mut cast = stmts();
+    cast[1] = set(
+        1,
+        intrinsic(&format!("cast<{THING}>"), element(local(0), int(0))),
+    );
+    for stmts in [array_twice, element_twice, cast] {
+        let f = typed(stmts, &project);
+        assert!(
+            !matches!(kind_of(&f, Var::Local(0)), Kind::Array(_)),
+            "{:?}",
+            f.cfg.blocks[0].stmts
+        );
+    }
+
+    // Elements called on as two unrelated types: an array of neither.
+    let mut two = stmts();
+    two.push(set(2, element(local(0), int(1))));
+    two.push(Stmt::Eval(virtual_call(OTHER, 3, vec![local(2)], 0)));
+    let mut unrelated = project.clone();
+    unrelated.types.insert(TypeKey(0xBB), TypeFacts::default());
+    let f = typed(two, &unrelated);
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Unknown);
+
+    // With `kinds` off nothing is read.
+    let off = typed_with(stmts(), &project, Options::baseline());
+    assert_eq!(kind_of(&off, Var::Local(0)), Kind::Unknown);
+}
+
 #[test]
 fn an_element_read_from_an_array_of_references_refers_to_what_the_array_holds() {
     let mut project = with_member(0, None);

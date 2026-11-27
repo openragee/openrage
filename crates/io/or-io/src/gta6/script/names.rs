@@ -13,7 +13,12 @@
 //! hashes is found to be the stated hash of ([`Words`]), and a row with a hash always goes before it.
 //!
 //! A row may also name a function as `program:offset name`, the program by its hash or its name,
-//! and a table under `enum_type_hash64`, `member`, `value` names the members of an enum.
+//! and a table under `enum_type_hash64`, `member`, `value` names the members of an enum. A table
+//! of texts with an `enum_type_hash64` column states that each row's hash is a value of that enum,
+//! whose member the text then names.
+//!
+//! A later list's name for a builtin stands in place of an earlier list's, and the header says so.
+//! A list of native labels, guesses the user marks as such, is read only by [`Names::read_labels`].
 
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -92,6 +97,20 @@ pub struct Names {
     pub candidates: Vec<usize>,
     /// Enum member names by the enum's type and the member's value as 64 bits, a negative one with its sign.
     pub enum_members: HashMap<(TypeKey, u64), String>,
+    /// The values of enums whose values are hashes, by the enum's type and the hash, that a table of texts states: the text of such a hash names its member.
+    pub enum_hashes: HashSet<(TypeKey, u64)>,
+    /// The labels lists of guesses give natives, by hash, each with the place of its list in `label_lists`.
+    pub labels: HashMap<u64, (usize, NativeName)>,
+    /// The label of each list of native labels read, in the order read.
+    pub label_lists: Vec<String>,
+    /// For each list of `lists`, how many builtin names it gave in place of an earlier list's, by that list's place in `lists`.
+    pub replaced: Vec<BTreeMap<usize, usize>>,
+    /// The place in `lists` of the list each builtin method's name is from.
+    pub(crate) builtin_lists: HashMap<(u32, u32), usize>,
+    /// The place in `lists` of the list each builtin type's name is from, by its key in `types`.
+    pub(crate) builtin_type_lists: HashMap<u64, usize>,
+    /// What the list being read has given in place of earlier lists' names so far.
+    pub(crate) replacing: BTreeMap<usize, usize>,
 }
 
 /// Why a names list was refused.
@@ -105,7 +124,12 @@ pub enum NamesError {
     },
     #[error("names list `{label}` names nothing: it holds no `0xHASH name` line")]
     Empty { label: String },
+    #[error("list of native labels `{label}` labels nothing: it holds no `0xHASH _LABEL` row")]
+    NoLabel { label: String },
 }
+
+/// The column of a table of texts that names the enum each row's hash is a value of.
+const ENUM_COLUMN: &str = "enum_type_hash64";
 
 /// What the rows of a list are, which its row of column names says.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -116,7 +140,9 @@ enum Table {
     // ⚠ A vocabulary is large, and one name in thousands of a large one has the 32-bit hash of
     // some program or method by accident: under this column a row is the text of a constant only.
     Texts,
-    /// `native_hash64`, `cell`: a native's hash, the index of one of its argument cells, and `Hash`.
+    /// A column named `text` and one named `enum_type_hash64`, at `at`: texts, each the name of the member of that enum whose value is the row's hash.
+    EnumTexts { at: usize },
+    /// `native_hash64`, `cell`:a native's hash, the index of one of its argument cells, and `Hash`.
     HashSlots,
     /// `owner_type_hash64`, `offset`: a type's hash, a byte offset as `0x` hex, and the name of the field there.
     Fields,
@@ -158,7 +184,10 @@ impl Table {
             ("enum_type_hash64", "member") => Table::EnumMembers,
             (first, _) if hash_of(first).is_some() => return Ok(None),
             (first, _) if function_key(first).is_some() => return Ok(None),
-            _ if fields.contains(&"text") => Table::Texts,
+            _ if fields.contains(&"text") => match fields.iter().position(|f| *f == ENUM_COLUMN) {
+                Some(at) => Table::EnumTexts { at },
+                None => Table::Texts,
+            },
             _ => Table::Names,
         }))
     }
@@ -218,8 +247,10 @@ impl Names {
 
     /// The member of the enum `ty` a list names for the value whose low `bytes` bytes `value` is; `None` where `value` holds more, or two members of the two readings of its sign.
     // A list states `-1` or `4294967295` for one value of four bytes, as its enum's sign has it.
+    // A member a row of members names goes before the text of a hash.
     pub fn enum_member(&self, ty: TypeKey, value: u64, bytes: u32) -> Option<&str> {
-        if self.enum_members.is_empty() || !(1..=8).contains(&bytes) {
+        let none = self.enum_members.is_empty() && self.enum_hashes.is_empty();
+        if none || !(1..=8).contains(&bytes) {
             return None;
         }
         let mask = match bytes {
@@ -233,10 +264,42 @@ impl Names {
         let signed = if negative { value | !mask } else { value };
         let zero = self.enum_members.get(&(ty, value));
         let sign = self.enum_members.get(&(ty, signed));
-        match (zero, sign) {
-            (Some(a), Some(b)) if a != b => None,
+        let listed = match (zero, sign) {
+            (Some(a), Some(b)) if a != b => return None,
             (a, b) => a.or(b).map(String::as_str),
+        };
+        listed.or_else(|| self.enum_text(ty, value, bytes))
+    }
+
+    /// The text of the hash `value`, of `bytes` bytes, that a table of texts states is a value of the enum `ty`, as the name of its member; `None` where it is no identifier.
+    // ⚠ Only the text a row proves: a hash two texts prove names nothing, and is no longer held.
+    fn enum_text(&self, ty: TypeKey, value: u64, bytes: u32) -> Option<&str> {
+        if !self.enum_hashes.contains(&(ty, value)) {
+            return None;
         }
+        let text = match bytes {
+            4 => self.texts.get(&u32::try_from(value).ok()?),
+            8 => self.texts64.get(&value),
+            _ => None,
+        };
+        text.map(String::as_str).filter(|text| identifier(text))
+    }
+
+    /// The label a list of guesses gives the native `hash`, where no natives list names it.
+    /// How many natives the names lists give a handler's hash of and no natives list names the list of labels at `list` labels.
+    pub fn labelled_by(&self, list: usize) -> usize {
+        let hashes: BTreeSet<u64> = self.native_hashes.values().copied().collect();
+        let by = |hash: &u64| self.labels.get(hash).is_some_and(|(at, _)| *at == list);
+        (hashes.iter())
+            .filter(|hash| self.native(**hash).is_none() && by(hash))
+            .count()
+    }
+
+    pub fn native_label(&self, hash: u64) -> Option<&NativeName> {
+        if self.native(hash).is_some() {
+            return None;
+        }
+        self.labels.get(&hash).map(|(_, label)| label)
     }
 
     /// The one text `hash` is the hash of in the user's vocabulary; `None` for a number too small, or too near -1, to be a name's hash.
@@ -373,11 +436,11 @@ impl Names {
         put(&mut self.programs, u64::from(program), &name).is_ok()
     }
 
-    /// Each list read as a header names it: its label, with the rows that proved their own hashes and the rows taken on trust, or the words a hashless list gave.
+    /// Each list read as a header names it: its label, with the rows that proved their own hashes and the rows taken on trust, or the words a hashless list gave; then each list of native labels, as guesses.
     pub fn sources(&self) -> Vec<String> {
         let rows = self.rows.iter().map(Some).chain(std::iter::repeat(None));
         let listed = self.lists.iter().zip(rows).enumerate();
-        listed
+        let mut said: Vec<String> = listed
             .map(|(n, (label, rows))| match rows {
                 _ if self.candidates.get(n).is_some_and(|words| *words > 0) => {
                     let words = self.candidates.get(n).copied().unwrap_or(0);
@@ -386,12 +449,37 @@ impl Names {
                          its own hashes are found to be)"
                     )
                 }
-                Some((proved, trusted)) => {
-                    format!("`{label}` ({proved} row(s) proved by their hash, {trusted} on trust)")
-                }
+                Some((proved, trusted)) => format!(
+                    "`{label}` ({proved} row(s) proved by their hash, {trusted} on trust{})",
+                    self.in_place(n)
+                ),
                 None => format!("`{label}`"),
             })
-            .collect()
+            .collect();
+        for (n, label) in self.label_lists.iter().enumerate() {
+            let shown = (self.labels.iter())
+                .filter(|(hash, (list, _))| *list == n && self.native(**hash).is_none())
+                .count();
+            said.push(format!(
+                "`{label}` (labels (guesses): {shown} native(s) no natives list names, each \
+                 written after `_` as a guess at what it does, and no name)"
+            ));
+        }
+        said
+    }
+
+    /// What the list at `n` of `lists` gave in place of earlier lists' names, as a header says it after its rows.
+    pub(crate) fn in_place(&self, n: usize) -> String {
+        let Some(replaced) = self.replaced.get(n).filter(|replaced| !replaced.is_empty()) else {
+            return String::new();
+        };
+        let each: Vec<String> = (replaced.iter())
+            .map(|(earlier, count)| {
+                let earlier = self.lists.get(*earlier).map_or("", String::as_str);
+                format!("{count} builtin name(s) in place of `{earlier}`'s")
+            })
+            .collect();
+        format!("; {}", each.join(", "))
     }
 
     /// Reads a names list; returns how many hashes, cells and indices it newly named, or how many words new to the names a hashless list gave.
@@ -409,6 +497,7 @@ impl Names {
         let mut words = 0usize;
         let mut table = Table::Names;
         let mut first_row = true;
+        self.replacing.clear();
         for (n, raw) in text.trim_start_matches('\u{feff}').lines().enumerate() {
             let line = raw.trim();
             if line.is_empty() || line.starts_with('#') || line.starts_with("//") {
@@ -451,6 +540,8 @@ impl Names {
         // At the list's own place in `lists`, whatever was pushed there with no entry before.
         self.candidates.resize(self.lists.len(), 0);
         self.candidates.push(words);
+        self.replaced.resize(self.lists.len(), BTreeMap::new());
+        self.replaced.push(std::mem::take(&mut self.replacing));
         self.lists.push(label.to_owned());
         self.rows.push((proved, trusted));
         Ok(named)
@@ -469,6 +560,25 @@ impl Names {
                 None => return self.names_row(fields, false),
             },
             Table::Texts => return self.names_row(fields, true),
+            Table::EnumTexts { at } => {
+                let rest: Vec<&str> = (fields.iter().enumerate())
+                    .filter(|(n, _)| *n != at)
+                    .map(|(_, field)| *field)
+                    .collect();
+                let taken = self.names_row(&rest, true)?;
+                let of = field(at);
+                if of.is_empty() || !matches!(taken, Taken::Proved(_)) {
+                    return Ok(taken);
+                }
+                let ty = TypeKey::of_name(of).or_else(|| hash(at).map(TypeKey));
+                let Some(ty) = ty else {
+                    return Err(format!("`{of}` is no enum's type"));
+                };
+                for (value, _) in rest.iter().map_while(|field| hash_of(field)) {
+                    self.enum_hashes.insert((ty, value));
+                }
+                return Ok(taken);
+            }
             // ⚠ Any other line is refused, a row of hashes among them: a file that only opens
             // with one word is some other text, and read as words it would name nothing and say so
             // nowhere.
@@ -531,7 +641,12 @@ impl Names {
                 if !path.chars().all(spelled) {
                     return Err(format!("`{path}` is not a name"));
                 }
-                put(&mut self.builtins, (ty, method), path).map_err(|held| again(path, held))?
+                let list = self.lists.len();
+                let from = &mut self.builtin_lists;
+                let (new, earlier) = later(&mut self.builtins, from, (ty, method), path, list)
+                    .map_err(|held| again(path, held))?;
+                self.in_place_of(earlier);
+                new
             }
             Table::NativeAddresses => {
                 let rva = hash(1).and_then(|rva| u32::try_from(rva).ok());
@@ -580,7 +695,12 @@ impl Names {
                     return Err(format!("`{name}` is not a name"));
                 }
                 let key = u64::from(0x8000_0000 | builtin);
-                put(&mut self.types, key, name).map_err(|held| again(name, held))?
+                let list = self.lists.len();
+                let from = &mut self.builtin_type_lists;
+                let (new, earlier) = later(&mut self.types, from, key, name, list)
+                    .map_err(|held| again(name, held))?;
+                self.in_place_of(earlier);
+                new
             }
         };
         Ok(Taken::Trusted(usize::from(new)))
@@ -589,6 +709,95 @@ impl Names {
     /// Holds `word` as a candidate.
     fn word(&mut self, word: &str) -> Taken {
         Taken::Word(Arc::make_mut(&mut self.words).add(word))
+    }
+
+    /// Counts a name the list being read gave in place of the name of the list at `earlier` of `lists`.
+    fn in_place_of(&mut self, earlier: Option<usize>) {
+        if let Some(earlier) = earlier {
+            let count = self.replacing.entry(earlier).or_insert(0);
+            *count = count.saturating_add(1);
+        }
+    }
+
+    /// Reads a list of native labels the user marks as guesses: `0xHASH _LABEL` a line, or a table whose column names hold `hash` and `label`; returns how many natives it labels that no list of labels did.
+    // ⚠ Never read unless the user asks for it. A label must open with `_`, as the community
+    // writes a native's name it guessed, so that no call it is written in reads as named. A later
+    // list's label stands in place of an earlier one's, and a list refused labels nothing.
+    pub fn read_labels(&mut self, label: &str, text: &str) -> Result<usize, NamesError> {
+        let refused = |n: usize, what: String| NamesError::Line {
+            label: label.to_owned(),
+            line: n + 1,
+            what,
+        };
+        let mut columns = (0, 1);
+        let mut first_row = true;
+        let mut read: HashMap<u64, NativeName> = HashMap::new();
+        for (n, raw) in text.trim_start_matches('\u{feff}').lines().enumerate() {
+            let line = raw.trim();
+            if line.is_empty() || line.starts_with('#') || line.starts_with("//") {
+                continue;
+            }
+            let fields: Vec<&str> = match raw.contains('\t') {
+                true => raw.split('\t').map(str::trim).collect(),
+                false => raw.split_whitespace().collect(),
+            };
+            let field = |at: usize| fields.get(at).copied().unwrap_or("");
+            if std::mem::replace(&mut first_row, false) && hash_of(field(0)).is_none() {
+                let at = |name: &str| fields.iter().position(|field| *field == name);
+                let (Some(hash_at), Some(label_at)) = (at("hash"), at("label")) else {
+                    let what = "a table of labels names a `hash` and a `label` column".to_owned();
+                    return Err(refused(n, what));
+                };
+                columns = (hash_at, label_at);
+                continue;
+            }
+            let Some((hash, _)) = hash_of(field(columns.0)) else {
+                let what = "the row holds no `0x` hash where its hash goes".to_owned();
+                return Err(refused(n, what));
+            };
+            let written = field(columns.1);
+            // A row of a native no guess was made of, or one only its hash spells, labels nothing.
+            if written.is_empty() || written.starts_with("_0x") {
+                continue;
+            }
+            let (namespace, name) = match written.split_once("::") {
+                Some((namespace, name)) => (Some(namespace), name),
+                None => (None, written),
+            };
+            let guess = name.len() > 1 && name.starts_with('_') && identifier(name);
+            if !(guess && namespace.is_none_or(identifier)) {
+                let what = format!("`{written}` is no label: one name that opens with `_`");
+                return Err(refused(n, what));
+            }
+            let native = NativeName {
+                namespace: namespace.map(str::to_owned),
+                name: name.to_owned(),
+                ..NativeName::default()
+            };
+            match read.get(&hash) {
+                Some(held) if *held != native => {
+                    let what =
+                        format!("0x{hash:016X} is labelled `{native}` here and `{held}` before");
+                    return Err(refused(n, what));
+                }
+                Some(_) => {}
+                None => {
+                    read.insert(hash, native);
+                }
+            }
+        }
+        if read.is_empty() {
+            return Err(NamesError::NoLabel {
+                label: label.to_owned(),
+            });
+        }
+        let list = self.label_lists.len();
+        let mut new = 0;
+        for (hash, native) in read {
+            new += usize::from(self.labels.insert(hash, (list, native)).is_none());
+        }
+        self.label_lists.push(label.to_owned());
+        Ok(new)
     }
 
     /// Takes one row that names the function `key`, on trust: no hash of a function's name is stated anywhere.
@@ -746,6 +955,34 @@ fn put<K: Eq + Hash>(map: &mut HashMap<K, String>, key: K, name: &str) -> Result
         None => {
             map.insert(key, name.to_owned());
             Ok(true)
+        }
+    }
+}
+
+/// Names `key` in `map` as the list at `list` of `lists` does, `from` holding which list each name is from: whether it is new, and the earlier list whose other name it stands in place of; the name held where this list already named it otherwise.
+// ⚠ Only a name `from` says an earlier list gave: one list is refused two names, and a name no
+// row of this kind gave stays the error it was.
+fn later<K: Eq + Hash + Copy>(
+    map: &mut HashMap<K, String>,
+    from: &mut HashMap<K, usize>,
+    key: K,
+    name: &str,
+    list: usize,
+) -> Result<(bool, Option<usize>), String> {
+    let same = map.get(&key).map(|held| held == name);
+    match (same, from.get(&key).copied()) {
+        (Some(true), _) => Ok((false, None)),
+        (Some(false), Some(earlier)) if earlier != list => {
+            map.insert(key, name.to_owned());
+            from.insert(key, list);
+            Ok((false, Some(earlier)))
+        }
+        _ => {
+            let new = put(map, key, name)?;
+            if new {
+                from.insert(key, list);
+            }
+            Ok((new, None))
         }
     }
 }

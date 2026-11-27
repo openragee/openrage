@@ -1,8 +1,9 @@
 //! Names: a role name for a variable that one fact names, and the hash constants a text may show for.
 //!
 //! A variable is named from the native it holds the only result of, `playerPed` from
-//! `PLAYER_PED_ID`, or from the parameter of a native it is passed as on every use. Under
-//! `role-names` the type of a new object, what a getter gets and a named field name the variable
+//! `PLAYER_PED_ID`, or from the parameter of a native it is passed as on every use; a label a
+//! list of guesses gives a native names no variable. Under `role-names` the type of a new object
+//! or of a cast, what a getter gets and a named field name the variable
 //! that holds them, a variable every assignment of which gives one role takes it, one of a single
 //! value takes the parameter's name it is passed as however else it is read, and the index a
 //! `for` counts with is `i`, `j` or `k`; under `native-params`
@@ -558,7 +559,7 @@ fn counters(
     lettered.collect()
 }
 
-/// The role the one value a variable holds gives it: the type of a new object, what a getter gets, or the named field it is read from.
+/// The role the one value a variable holds gives it: the type of a new object or of a cast, what a getter gets, or the named field it is read from.
 fn held_role(value: &Expr, head: &Head, cx: &Context<'_>) -> Option<String> {
     let mut value = value;
     loop {
@@ -582,6 +583,10 @@ fn held_role(value: &Expr, head: &Head, cx: &Context<'_>) -> Option<String> {
                 };
                 return type_role(name);
             }
+            Expr::Call {
+                callee: Callee::Intrinsic { name, .. },
+                ..
+            } => return cast_role(name, cx.names),
             Expr::Call { callee, .. } => return method_role(method_name(callee, head, cx)?),
             _ => return None,
         }
@@ -782,6 +787,17 @@ fn type_role(name: &str) -> Option<String> {
     let (stem, count) = short.rsplit_once('_').unwrap_or((short, ""));
     let generic = !count.is_empty() && count.bytes().all(|b| b.is_ascii_digit());
     camel(if generic { stem } else { short })
+}
+
+/// The role `x as T` or `(T)x` gives the variable that holds it, where `T` is a script's type a list names.
+// ⚠ A script's type only: a cast to one of the runtime's is as often an unboxing, `(int)o`,
+// and the runtime's name of a number says nothing of what the number is.
+fn cast_role(intrinsic: &str, names: &Names) -> Option<String> {
+    let ty = ["try_cast<", "cast<"]
+        .iter()
+        .find_map(|cast| intrinsic.strip_prefix(*cast))?;
+    let key = TypeKey::of_name(ty.strip_suffix('>')?).filter(|key| key.builtin().is_none())?;
+    type_role(names.type_name(key.0)?)
 }
 
 /// `kite` for `GetKite`, `count` for `get_Count` and `isMoored` for `IsMoored`: what a getter, a maker or a test hands back; `None` for any other method.

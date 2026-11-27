@@ -1172,3 +1172,48 @@ fn a_variable_takes_the_role_of_the_named_field_whose_bytes_it_copies() {
     let off = named(head(1, 2), body(), &names);
     assert_eq!(name_of(&off, a), None);
 }
+
+#[test]
+fn a_variable_takes_the_role_of_the_named_script_type_it_is_cast_to() {
+    let mut names = Names::default();
+    names.types.insert(0xAA, "Lantern".to_owned());
+    names.types.insert(0x8000_0051, "Demo.Flagon".to_owned());
+    let cast = |name: &str| intrinsic(name, vec![var(Var::Param(0))]);
+    let locals: Vec<Var> = (0..5).map(Var::Local).collect();
+    let body = || {
+        vec![
+            assign(locals[0], cast("try_cast<type_00000000000000AA>")),
+            assign(
+                locals[1],
+                Expr::cast(Scalar::I32, cast("cast<type_00000000000000AA>")),
+            ),
+            // A cast to a runtime type is as often an unboxing, and no list names this one.
+            assign(locals[2], cast("try_cast<type_80000051>")),
+            assign(locals[3], cast("cast<type_00000000000000CC>")),
+            // A mode the decoder does not read is no cast.
+            assign(locals[4], cast("cast_mode_2<type_00000000000000AA>")),
+        ]
+    };
+    let (f, did) = applied(head(1, 5), body(), &with(&names, &[Pass::RoleNames]));
+    let roles: Vec<Option<&str>> = locals.iter().map(|v| name_of(&f, *v)).collect();
+    assert_eq!(
+        roles,
+        [Some("lantern"), Some("lantern_2"), None, None, None]
+    );
+    assert_eq!(did.roles, 2);
+
+    let off = named(head(1, 5), body(), &names);
+    assert_eq!(name_of(&off, locals[0]), None, "with `role-names` off");
+}
+
+#[test]
+fn a_label_a_list_of_guesses_gives_a_native_names_no_variable() {
+    let mut names = Names::default();
+    let guesses = "0x00000000000000A1 _GET_DEMO_FLASK\n";
+    assert_eq!(names.read_labels("guesses", guesses), Ok(1));
+    let held = Var::Local(0);
+    let body = vec![assign(held, native("_0x00000000000000A1", 0xA1, vec![]))];
+    let (f, did) = applied(head(0, 1), body, &with(&names, &[Pass::RoleNames]));
+    assert_eq!(name_of(&f, held), None);
+    assert_eq!(did.roles, 0);
+}

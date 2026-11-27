@@ -805,3 +805,203 @@ fn a_table_of_enum_members_names_a_value_of_its_enum_under_either_reading_of_its
         (2, "`demo.member` is not a name".to_owned())
     );
 }
+
+#[test]
+fn a_later_lists_name_of_a_builtin_stands_in_place_of_an_earlier_lists_and_the_header_says_so() {
+    let head = "type_index\tmethod_index\twrapper_path\n";
+    let mut names = Names::default();
+    let first = format!("{head}4\t2\tDemo.Flask.Swirl\n4\t3\tDemo.Flask.Cork\n");
+    assert_eq!(names.read_list("first.tsv", &first), Ok(2));
+    let second = format!(
+        "{head}4\t2\tDemo.Flask.SwirlInternal\n4\t3\tDemo.Flask.Cork\n4\t5\tDemo.Flask.Gurgle\n"
+    );
+    assert_eq!(
+        names.read_list("second.tsv", &second),
+        Ok(1),
+        "a name in place of another is of a builtin a list named before"
+    );
+    assert_eq!(names.builtin(4, 2), Some("Demo.Flask.SwirlInternal"));
+    assert_eq!(names.builtin(4, 3), Some("Demo.Flask.Cork"));
+    assert_eq!(names.builtin(4, 5), Some("Demo.Flask.Gurgle"));
+
+    let types = "index\tname\n11\tDemo.Flagon\n";
+    assert_eq!(names.read_list("types.tsv", types), Ok(1));
+    let again = "index\tname\n11\tDemo.Tankard\n";
+    assert_eq!(names.read_list("types again.tsv", again), Ok(0));
+    assert_eq!(names.listed_type("type_8000000B"), Some("Demo.Tankard"));
+
+    // The first list's name again, after the second's, stands in place of the second's.
+    let third = format!("{head}4\t2\tDemo.Flask.Swirl\n");
+    assert_eq!(names.read_list("third.tsv", &third), Ok(0));
+    assert_eq!(names.builtin(4, 2), Some("Demo.Flask.Swirl"));
+
+    assert_eq!(
+        names.sources(),
+        [
+            "`first.tsv` (0 row(s) proved by their hash, 2 on trust)",
+            "`second.tsv` (0 row(s) proved by their hash, 3 on trust; 1 builtin name(s) in \
+             place of `first.tsv`'s)",
+            "`types.tsv` (0 row(s) proved by their hash, 1 on trust)",
+            "`types again.tsv` (0 row(s) proved by their hash, 1 on trust; 1 builtin name(s) in \
+             place of `types.tsv`'s)",
+            "`third.tsv` (0 row(s) proved by their hash, 1 on trust; 1 builtin name(s) in place \
+             of `second.tsv`'s)",
+        ]
+    );
+
+    // One list still names one builtin once, and a type no builtin row named keeps its one label.
+    assert_eq!(
+        refused(&format!("{head}4\t2\tDemo.A\n4\t2\tDemo.B\n")),
+        (3, "`Demo.B` here was `Demo.A` before".to_owned())
+    );
+    let mut labelled = Names::default();
+    let one = "0x0123456789ABCDEF DemoFlagon\n";
+    assert_eq!(labelled.read_list("one", one), Ok(1));
+    let other = "0x0123456789ABCDEF DemoTankard\n";
+    assert!(labelled.read_list("other", other).is_err());
+}
+
+#[test]
+fn a_table_of_texts_of_an_enums_values_names_its_members() {
+    let wink = folded32("zorble_wink");
+    let blink = folded32("zorble/blink");
+    let (zorble, other) = (TypeKey(0x00E1_0000_0000_00E1), TypeKey(0xE2));
+    let mut names = Names::default();
+    let text = format!(
+        "hash32\ttext\tenum_type_hash64\tproof\n\
+         0x{wink:08X}\tzorble_wink\ttype_00E10000000000E1\tsibling\n\
+         0x{blink:08X}\tzorble/blink\t0x00E10000000000E1\tsibling\n"
+    );
+    assert_eq!(names.read_list("enum texts", &text), Ok(2));
+    assert_eq!(held(&names.texts, wink), Some("zorble_wink"));
+    assert!(names.programs.is_empty(), "a text names no program");
+    let member = |names: &Names, ty: TypeKey, bytes: u32| {
+        names
+            .enum_member(ty, u64::from(wink), bytes)
+            .map(str::to_owned)
+    };
+    assert_eq!(member(&names, zorble, 4).as_deref(), Some("zorble_wink"));
+    assert_eq!(
+        names.enum_member(zorble, u64::from(blink), 4),
+        None,
+        "a text that is no identifier names no member"
+    );
+    assert_eq!(
+        member(&names, other, 4),
+        None,
+        "only the enum the row states"
+    );
+    assert_eq!(
+        member(&names, zorble, 8),
+        None,
+        "a 32-bit hash is no value of 8 bytes"
+    );
+
+    // A row of members goes before a text.
+    let members =
+        format!("enum_type_hash64\tmember\tvalue\n0x00E10000000000E1\tWinked\t0x{wink:08X}\n");
+    assert_eq!(names.read_list("members", &members), Ok(1));
+    assert_eq!(member(&names, zorble, 4).as_deref(), Some("Winked"));
+
+    // Under `text` alone a row states no enum.
+    let mut plain = Names::default();
+    let row = format!("hash32\ttext\n0x{wink:08X}\tzorble_wink\n");
+    assert_eq!(plain.read_list("texts", &row), Ok(1));
+    assert_eq!(member(&plain, zorble, 4), None);
+
+    // A text is still proved by its hash, and the enum's column holds a type.
+    let head = "hash32\ttext\tenum_type_hash64\n";
+    let unproved = format!(
+        "{head}0x{:08X}\tzorble_wink\ttype_00E10000000000E1\n",
+        wink ^ 1
+    );
+    assert_eq!(refused(&unproved).0, 2);
+    assert_eq!(
+        refused(&format!("{head}0x{wink:08X}\tzorble_wink\tsomething\n")),
+        (2, "`something` is no enum's type".to_owned())
+    );
+}
+
+#[test]
+fn a_list_of_labels_labels_only_what_no_natives_list_names_and_the_header_calls_them_guesses() {
+    let mut names = Names::default();
+    let text = "# guesses, not names\n\
+                hash\trva\tlabel\tconfidence\n\
+                0x00000000000000D1\t0x00001000\t_GET_DEMO_FLASK\tlow\n\
+                0x00000000000000D2\t0x00002000\tDEMO::_SET_DEMO_FLASK\tmedium\n\
+                0x00000000000000D3\t0x00003000\t\tlow\n\
+                0x00000000000000D4\t0x00004000\t_0x00000000000000D4\tlow\n";
+    assert_eq!(names.read_labels("labels.tsv", text), Ok(2));
+    assert!(
+        names.lists.is_empty() && names.native_hashes.is_empty(),
+        "a list of labels is no names list, and states no handler"
+    );
+    assert!(
+        names.native(0xD1).is_none(),
+        "a label is no natives list's name"
+    );
+    let label = |names: &Names, hash: u64| names.native_label(hash).map(ToString::to_string);
+    assert_eq!(label(&names, 0xD1).as_deref(), Some("_GET_DEMO_FLASK"));
+    assert_eq!(
+        label(&names, 0xD2).as_deref(),
+        Some("DEMO::_SET_DEMO_FLASK")
+    );
+    assert_eq!(label(&names, 0xD3), None);
+    assert_eq!(
+        label(&names, 0xD4),
+        None,
+        "a label that is its hash labels nothing"
+    );
+
+    // A later list's label stands in place of an earlier one's.
+    let more = "0x00000000000000D1 _GET_DEMO_FLAGON\n0xD5 _DEMO_GUESS\n";
+    assert_eq!(names.read_labels("more.txt", more), Ok(1));
+    assert_eq!(label(&names, 0xD1).as_deref(), Some("_GET_DEMO_FLAGON"));
+
+    // A list refused labels nothing.
+    let bad = "0xD6 _DEMO_GUESS\n0xD7 NOT_A_GUESS\n";
+    assert!(names.read_labels("bad", bad).is_err());
+    assert_eq!((names.labels.len(), names.label_lists.len()), (3, 2));
+
+    // A natives list's name goes before any label.
+    let natives = [(0xD2, named("SET_REAL_FLASK"))];
+    names.natives = Some(NativeDb::from_names("natives", natives));
+    assert_eq!(label(&names, 0xD2), None);
+    let said = |file: &str, shown: usize| {
+        format!(
+            "`{file}` (labels (guesses): {shown} native(s) no natives list names, each written \
+             after `_` as a guess at what it does, and no name)"
+        )
+    };
+    assert_eq!(
+        names.sources(),
+        [said("labels.tsv", 0), said("more.txt", 2)]
+    );
+
+    let refused = |text: &str| match Names::default().read_labels("bad", text) {
+        Err(NamesError::Line { line, what, .. }) => (line, what),
+        other => panic!("`{text}` read as {other:?}"),
+    };
+    assert_eq!(
+        refused("0xD1 GET_DEMO_FLASK\n"),
+        (
+            1,
+            "`GET_DEMO_FLASK` is no label: one name that opens with `_`".to_owned()
+        )
+    );
+    assert_eq!(refused("hash\tname\n0xD1\t_GET_DEMO_FLASK\n").0, 1);
+    assert_eq!(refused("0xD1 _\n").0, 1);
+    assert_eq!(
+        refused("0xD1 _DEMO_A\n0xD1 _DEMO_B\n"),
+        (
+            2,
+            "0x00000000000000D1 is labelled `_DEMO_B` here and `_DEMO_A` before".to_owned()
+        )
+    );
+    assert_eq!(
+        Names::default().read_labels("empty", "# no rows\n"),
+        Err(NamesError::NoLabel {
+            label: "empty".to_owned()
+        })
+    );
+}

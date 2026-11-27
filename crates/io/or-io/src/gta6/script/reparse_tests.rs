@@ -8,6 +8,7 @@ use crate::gta6::script::{print, sample, Stats};
 
 fn function(body: Vec<tree::Stmt>) -> tree::Function {
     let head = Head {
+        value_types: Default::default(),
         program: 0x1122_3344,
         at: 0x40,
         name: "func_000040".to_owned(),
@@ -838,4 +839,335 @@ fn a_row_of_comparisons_is_read_once() {
     assert_eq!(parse(&text_of(&format!("    DEMO.USE({row});\n"))), Ok(1));
     // Type arguments within the bound are still read as that.
     assert_eq!(parse(&text_of("    DEMO.USE(box<type_1>(p0));\n")), Ok(1));
+}
+
+/// Whether text written by hand as the source level writes `body`, every pass on, says the same as `body`; a form not read back yet is the error it is.
+fn source_says(body: Vec<tree::Stmt>, lines: &str) -> Result<bool, ReparseError> {
+    method_says(body, lines, false)
+}
+
+/// [`source_says`], of the text of a method whose receiver is its first parameter where `receiver` says so.
+fn method_says(body: Vec<tree::Stmt>, lines: &str, receiver: bool) -> Result<bool, ReparseError> {
+    let text = text_of(lines).replace("var", "Cell");
+    match agrees_source(&function(body), &text, Options::default(), receiver) {
+        Ok(()) => Ok(true),
+        Err(ReparseError::Differs { .. }) => Ok(false),
+        Err(other) => Err(other),
+    }
+}
+
+/// The form `lines` holds that is not read back yet, where reading them back stopped at one.
+fn unread_of(body: Vec<tree::Stmt>, lines: &str) -> Option<String> {
+    match source_says(body, lines) {
+        Err(ReparseError::Unread { form, .. }) => Some(form),
+        Ok(_) => None,
+        Err(other) => panic!("{other}\nin:\n{lines}"),
+    }
+}
+
+fn compound(part: Stmt) -> tree::Stmt {
+    construct(Sugar::Group {
+        kind: Group::Compound,
+        parts: vec![part],
+    })
+}
+
+#[test]
+fn a_number_spelled_with_its_float_beside_it_and_an_unchecked_int_read_as_their_bits() {
+    let float = || vec![used(constant_of(0x3F80_0000, Kind::Unknown))];
+    assert_eq!(
+        source_says(float(), "    DEMO.USE(0x3F800000 /* 1.0f */);\n"),
+        Ok(true)
+    );
+    assert_eq!(
+        source_says(float(), "    DEMO.USE(0x3F800001 /* 1.0f */);\n"),
+        Ok(false)
+    );
+    // A comment over lines leaves the lines after it counted.
+    let refused = parse(&text_of("    /* one\n two */ DEMO.USE(1);\n    # \n"));
+    assert!(
+        matches!(refused, Err(ReparseError::Syntax { line: 5, .. })),
+        "{refused:?}"
+    );
+    let hashed = || vec![used(int(0x89AB_CDEF_u32 as i32))];
+    assert_eq!(
+        source_says(hashed(), "    DEMO.USE(unchecked((int)0x89ABCDEF));\n"),
+        Ok(true)
+    );
+}
+
+#[test]
+fn a_compound_assignment_reads_as_the_place_it_writes_worked_on() {
+    let added = || vec![compound(set(Var::Local(1), op(BinOp::Add, local(1), p(0))))];
+    assert_eq!(source_says(added(), "    local_1 += p0;\n"), Ok(true));
+    assert_eq!(source_says(added(), "    local_1 -= p0;\n"), Ok(false));
+    assert_eq!(source_says(added(), "    local_2 += p0;\n"), Ok(false));
+    let stepped = || {
+        vec![compound(set(
+            Var::Local(1),
+            op(BinOp::Add, local(1), int(1)),
+        ))]
+    };
+    assert_eq!(source_says(stepped(), "    local_1++;\n"), Ok(true));
+    assert_eq!(source_says(stepped(), "    local_1--;\n"), Ok(false));
+    // A whole cell stored through a pointer it was loaded through.
+    let load = Expr::Load {
+        ty: Scalar::U64,
+        addr: boxed(p(0)),
+        offset: 0x10,
+    };
+    let flagged = || {
+        vec![compound(Stmt::Store {
+            kind: StoreKind::U64,
+            addr: p(0),
+            offset: 0x10,
+            value: op(BinOp::Or, load.clone(), int(4)),
+        })]
+    };
+    assert_eq!(source_says(flagged(), "    p0->f_10 |= 4;\n"), Ok(true));
+    assert_eq!(source_says(flagged(), "    p0->f_18 |= 4;\n"), Ok(false));
+    // The form of old writes the same group as the statement it holds.
+    assert!(says(flagged(), "    p0->f_10 = p0->f_10 | 4;\n"));
+}
+
+#[test]
+fn an_await_reads_as_what_its_awaiter_is_taken_from_and_what_it_yields() {
+    let awaited = || {
+        vec![construct(Sugar::Await {
+            before: vec![set(Var::Local(1), native("GET", vec![p(0)]))],
+            ready: native("READY", vec![local(1)]),
+            suspend: vec![tree::Stmt::Return(None)],
+            resumed: Label::At(0x50),
+            resume: Vec::new(),
+            after: vec![set(Var::Local(2), native("RESULT", vec![local(1)]))],
+        })]
+    };
+    assert_eq!(
+        source_says(awaited(), "    local_2 = await p0;\n"),
+        Ok(true)
+    );
+    assert_eq!(
+        source_says(awaited(), "    local_2 = await p1;\n"),
+        Ok(false)
+    );
+    assert_eq!(
+        source_says(awaited(), "    local_3 = await p0;\n"),
+        Ok(false)
+    );
+    // The form of old writes the awaiter taken and what is asked of it after.
+    let old =
+        "    local_1 = DEMO.GET(p0);\n    await local_1;\n    local_2 = DEMO.RESULT(local_1);\n";
+    assert!(says(awaited(), old));
+}
+
+#[test]
+fn a_yield_reads_as_what_it_yields() {
+    let yielded = || {
+        vec![construct(Sugar::Yield {
+            value: vec![set(Var::Local(2), p(1))],
+            suspend: vec![tree::Stmt::Return(None)],
+            resumed: Label::At(0x60),
+            resume: Vec::new(),
+        })]
+    };
+    assert_eq!(source_says(yielded(), "    yield return p1;\n"), Ok(true));
+    assert_eq!(source_says(yielded(), "    yield return p0;\n"), Ok(false));
+    assert_eq!(source_says(yielded(), "    yield return;\n"), Ok(false));
+}
+
+#[test]
+fn this_and_base_are_the_receiver_and_their_fields_are_reached_through_it() {
+    let stored = || {
+        vec![simple(Stmt::Store {
+            kind: StoreKind::U64,
+            addr: p(0),
+            offset: 0x10,
+            value: p(1),
+        })]
+    };
+    assert_eq!(
+        method_says(stored(), "    this.f_10 = p1;\n", true),
+        Ok(true)
+    );
+    assert_eq!(
+        method_says(stored(), "    base.f_10 = p1;\n", true),
+        Ok(true)
+    );
+    assert_eq!(
+        method_says(stored(), "    this.f_18 = p1;\n", true),
+        Ok(false)
+    );
+    // A method's `this` is no `p1`; and outside a method `this` is a name like any.
+    let other = || {
+        vec![simple(Stmt::Store {
+            kind: StoreKind::U64,
+            addr: p(1),
+            offset: 0x10,
+            value: p(1),
+        })]
+    };
+    assert_eq!(
+        method_says(other(), "    this.f_10 = p1;\n", true),
+        Ok(false)
+    );
+    assert_eq!(
+        method_says(stored(), "    this.f_10 = p1;\n", false),
+        Ok(false)
+    );
+    // A call on the receiver is a call on the first parameter.
+    let called = || vec![used(method(vec![p(0), p(1)]))];
+    assert_eq!(
+        method_says(called(), "    DEMO.USE(this.Method_3(p1));\n", true),
+        Ok(true)
+    );
+}
+
+#[test]
+fn the_forms_of_true_csharp_that_say_the_same_read_as_it() {
+    // A cast to a type no keyword names, `out` that declares its variable, `?.`, an operator.
+    assert_eq!(
+        source_says(vec![used(p(0))], "    DEMO.USE((Cells2)p0);\n"),
+        Ok(true)
+    );
+    let out = || {
+        let address = Expr::AddrOf {
+            var: Var::Local(1),
+            cell: 0,
+        };
+        vec![sugared(ExprSugar::Out, address)]
+    };
+    assert_eq!(
+        source_says(out(), "    DEMO.USE(out Cell local_1);\n"),
+        Ok(true)
+    );
+    assert_eq!(source_says(out(), "    DEMO.USE(out local_1);\n"), Ok(true));
+    let asked = || {
+        let field = Expr::Load {
+            ty: Scalar::U64,
+            addr: boxed(p(0)),
+            offset: 0x18,
+        };
+        let nothing = Expr::Const(Const {
+            bits: 0,
+            kind: Kind::Unknown,
+        });
+        let select = Expr::Select {
+            cond: boxed(Expr::Truth(boxed(p(0)))),
+            then: boxed(field),
+            els: boxed(nothing),
+        };
+        vec![sugared(ExprSugar::NullConditional, select)]
+    };
+    assert_eq!(source_says(asked(), "    DEMO.USE(p0?.f_18);\n"), Ok(true));
+    assert_eq!(source_says(asked(), "    DEMO.USE(p1?.f_18);\n"), Ok(false));
+    let added = || {
+        vec![sugared(
+            ExprSugar::Operator,
+            builtin("System.Thing.op_Addition", vec![p(0), p(1)]),
+        )]
+    };
+    assert_eq!(source_says(added(), "    DEMO.USE(p0 + p1);\n"), Ok(true));
+    assert_eq!(source_says(added(), "    DEMO.USE(p0 - p1);\n"), Ok(false));
+    // The control that never comes, said by the exception made for it.
+    let never = || vec![tree::Stmt::Unreachable];
+    let thrown = "    throw new System.Diagnostics.UnreachableException();\n";
+    assert_eq!(source_says(never(), thrown), Ok(true));
+    assert_eq!(source_says(vec![used(int(1))], thrown), Ok(false));
+}
+
+#[test]
+fn the_token_of_a_type_reads_as_typeof_it() {
+    let token = || {
+        let call = Expr::Call {
+            callee: Callee::Intrinsic {
+                name: TYPE_TOKEN.to_owned(),
+                ty: Some(a_type()),
+                wrapper: None,
+            },
+            args: Vec::new(),
+            returns: Some(1),
+        };
+        vec![used(call)]
+    };
+    assert!(says(
+        token(),
+        "    DEMO.USE(typeof(type_0123456789ABCDEF));\n"
+    ));
+    let handle = "    DEMO.USE(typeof(type_0123456789ABCDEF).TypeHandle);\n";
+    assert_eq!(source_says(token(), handle), Ok(true));
+    let bare = "    DEMO.USE(typeof(type_0123456789ABCDEF));\n";
+    assert_eq!(source_says(token(), bare), Ok(false));
+}
+
+#[test]
+fn a_form_not_read_back_yet_is_counted_by_name_and_not_compared() {
+    let one = || vec![simple(set(Var::Local(0), p(0)))];
+    let lambda = "    local_0 = (Cell p1) => DEMO.USE(p1);\n";
+    assert_eq!(
+        unread_of(one(), lambda).as_deref(),
+        Some("a lambda written where it is bound")
+    );
+    let block = "    local_0 = (Cell p1) =>\n    {\n        DEMO.USE(p1);\n    };\n";
+    assert_eq!(
+        unread_of(one(), block).as_deref(),
+        Some("a lambda written where it is bound")
+    );
+    let made = "    local_0 = new type_0123456789ABCDEF { f_8 = 1, f_C = 0.2f };\n";
+    assert_eq!(
+        unread_of(one(), made).as_deref(),
+        Some("an object written with its fields")
+    );
+    let cached = "    local_0 = Global_28 ??= Global_20.func_000100;\n";
+    assert_eq!(unread_of(one(), cached).as_deref(), Some("??="));
+    let tested = "    local_0 = p0 is type_0123456789ABCDEF;\n";
+    assert_eq!(unread_of(one(), tested).as_deref(), Some("is"));
+    let ran_on = "    goto case 3;\n";
+    assert_eq!(unread_of(one(), ran_on).as_deref(), Some("goto case"));
+    // What the function holds of a form not held yet stops the comparison just as well.
+    let foreach = || {
+        vec![construct(Sugar::Foreach {
+            setup: vec![set(Var::Local(1), native("GET", vec![p(1)]))],
+            cond: native("NEXT", vec![local(1)]),
+            item: Box::new(set(Var::Local(2), native("CURRENT", vec![local(1)]))),
+            body: vec![used(local(2))],
+            step: None,
+            after: Vec::new(),
+        })]
+    };
+    let written = "    foreach (Cell local_2 in p1)\n    {\n        DEMO.USE(local_2);\n    }\n";
+    assert_eq!(unread_of(foreach(), written).as_deref(), Some("foreach"));
+    // A form read and a statement that differs before it is a difference, not a form unread.
+    let before = format!("    local_0 = p1;\n{lambda}");
+    let two = || {
+        vec![
+            simple(set(Var::Local(0), p(0))),
+            simple(set(Var::Local(0), p(0))),
+        ]
+    };
+    assert_eq!(source_says(two(), &before), Ok(false));
+}
+
+#[test]
+fn what_the_source_level_writes_of_a_compound_and_an_await_reads_back() {
+    let body = vec![
+        compound(set(Var::Local(1), op(BinOp::Add, local(1), p(0)))),
+        construct(Sugar::Await {
+            before: vec![set(Var::Local(1), native("GET", vec![p(0)]))],
+            ready: native("READY", vec![local(1)]),
+            suspend: vec![tree::Stmt::Return(None)],
+            resumed: Label::At(0x50),
+            resume: Vec::new(),
+            after: vec![set(Var::Local(2), native("RESULT", vec![local(1)]))],
+        }),
+        used(local(2)),
+    ];
+    let f = function(body);
+    let names = Names::default();
+    let project = crate::gta6::script::Project::empty();
+    let cx = crate::gta6::script::Context::new(&names, project, Options::default());
+    let mut text = String::new();
+    print::function_in(&mut text, &f, &cx);
+    if let Err(why) = agrees_source(&f, &text, cx.options, false) {
+        panic!("{why}\nin:\n{text}");
+    }
 }

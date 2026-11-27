@@ -36,6 +36,8 @@ use super::ir::{
 };
 use super::listing::Listing;
 use super::passes;
+use super::project::reach::UNBOUNDED;
+use super::project::signatures::native_key;
 use super::project::Signature;
 use super::tree;
 use super::{Context, Level, Names, Options, Pass, Project, Stats};
@@ -44,6 +46,8 @@ use super::{Context, Level, Names, Options, Pass, Project, Stats};
 mod corpus;
 #[path = "exec_inputs_tests.rs"]
 mod inputs;
+#[path = "exec_proofs_tests.rs"]
+mod proofs;
 
 use inputs::{Input, Origin, Side, Turn, Turned};
 
@@ -55,6 +59,50 @@ const STATICS: u64 = 0xA5 << 56;
 const HEAP: u64 = 0xA6 << 56;
 /// The bits of a temporary's address that say which of its cells, and which byte of it.
 const TEMP_CELLS: u64 = 0xF_FFFF;
+/// The addresses a run that holds the project's reach to the code hands its parameter cells: the cell in bits 40 to 55, and each at [`MIDDLE`] of its own space.
+const POINTED: u64 = 0xA7 << 56;
+/// Where a parameter cell's own address stands in its space: bytes before it are reached as much as bytes after.
+const MIDDLE: u64 = 1 << 39;
+/// The base types a check of what an object may stand for follows before it cannot say.
+const BASES: usize = 64;
+
+/// The kinds of project-wide proof a function's own code is held to, as the first word of the failure of each.
+pub(crate) const PROOFS: [&str; 8] = [
+    "signature",
+    "native truth",
+    "slot result",
+    "reach",
+    "bool field",
+    "typed field",
+    "typed parameter",
+    "typed result",
+];
+
+/// What a run makes up otherwise than its input says, to hold a proof of the project to the code.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Proving {
+    /// The cells the input makes up, and no others.
+    Nothing,
+    /// The result of a native the project proves only ever tested for zero is 2 wherever its low byte is not zero.
+    Truths,
+    /// Each parameter cell the project gives a bounded reach, and a method's receiver, holds an address of its own.
+    Addresses,
+}
+
+/// The address a run that holds the reach to the code hands parameter cell `cell`.
+fn pointer_of(cell: u32) -> u64 {
+    POINTED | (u64::from(cell & 0xFFFF) << 40) | MIDDLE
+}
+
+/// The parameter cell an address of [`pointer_of`] is moved from, and by how many bytes, where it is one.
+fn pointed(addr: u64) -> Option<(u32, i64)> {
+    if addr >> 56 != POINTED >> 56 {
+        return None;
+    }
+    let cell = ((addr >> 40) & 0xFFFF) as u32;
+    let at = (addr & ((1 << 40) - 1)) as i64 - MIDDLE as i64;
+    Some((cell, at))
+}
 
 /// What a run may take: statements and jumps, events, the seeds past the first [`SEEDS`] that are tried for blocks none has entered, and the inputs then tried that are chosen to turn a test towards such a block.
 #[derive(Clone, Copy, Debug)]
@@ -178,6 +226,8 @@ pub(crate) struct Run {
     pub unstated: HashSet<u64>,
     /// The cells that would have turned a test of the run towards a block it was asked to note.
     pub turns: Vec<Turn>,
+    /// The first proof of the project the run found the code to deny: its kind, of [`PROOFS`], and what was seen.
+    pub proof: Option<(&'static str, String)>,
 }
 
 enum Val {
@@ -393,12 +443,210 @@ struct Machine<'f> {
     noting: bool,
     /// How often each block's test was noted in this run.
     noted: Vec<u8>,
+    /// What the run makes up otherwise than the input says.
+    proving: Proving,
+    /// The type of each object the function made, by the object's address.
+    objects: HashMap<u64, TypeKey>,
+    /// The parameter cells that hold an address of their own, with the bytes the project says each reaches; `None` for the receiver, given one only to know what its fields are.
+    pointers: BTreeMap<u32, Option<u32>>,
+    /// The type of the receiver, where it holds an address of its own.
+    receiver: Option<TypeKey>,
 }
 
 impl<'f> Machine<'f> {
     fn unsupported(&mut self, what: &str) {
         if self.run.unsupported.is_none() {
             self.run.unsupported = Some(what.to_owned());
+        }
+    }
+
+    /// Notes that the code denies a proof of the project, where the run has noted none yet.
+    fn disproved(&mut self, what: &'static str, why: String) {
+        if self.run.proof.is_none() {
+            self.run.proof = Some((what, why));
+        }
+    }
+
+    /// Holds an access of `bytes` bytes at `addr` to the reach the project gives the parameter cell the address is moved from, where it is one.
+    fn touched(&mut self, addr: u64, bytes: u32) {
+        let Some((cell, at)) = pointed(addr) else {
+            return;
+        };
+        let Some(Some(reach)) = self.pointers.get(&cell).copied() else {
+            return;
+        };
+        let end = at + i64::from(bytes);
+        if at < 0 || end > i64::from(reach) {
+            let why = format!(
+                "bytes {at} to {end} from the address in parameter cell {cell} are touched, where the project says {reach} are reached"
+            );
+            self.disproved("reach", why);
+        }
+    }
+
+    /// Notes that `value` went `how`, where it is an address the project says reaches a bound: no such address leaves the function's reading.
+    fn kept(&mut self, value: u64, how: &str) {
+        let Some((cell, _)) = pointed(value) else {
+            return;
+        };
+        if let Some(Some(reach)) = self.pointers.get(&cell).copied() {
+            let why = format!(
+                "the address in parameter cell {cell}, which the project says reaches {reach} bytes, is {how}"
+            );
+            self.disproved("reach", why);
+        }
+    }
+
+    /// Holds the address an argument hands a script function on to what the project says that function reaches through the cell it lands in.
+    fn handed_on(&mut self, value: u64, to: FunctionKey, cell: u32) {
+        let Some((own, at)) = pointed(value) else {
+            return;
+        };
+        let Some(Some(reach)) = self.pointers.get(&own).copied() else {
+            return;
+        };
+        let theirs = self
+            .project
+            .reach(to, cell)
+            .filter(|bytes| *bytes != UNBOUNDED);
+        let within =
+            theirs.is_some_and(|bytes| at >= 0 && at + i64::from(bytes) <= i64::from(reach));
+        if !within {
+            let why = format!(
+                "the address in parameter cell {own}, which the project says reaches {reach} bytes, is handed {at} bytes on to cell {cell} of func_{:06X} of program {:08X}, which reaches {theirs:?}",
+                to.at(),
+                to.program()
+            );
+            self.disproved("reach", why);
+        }
+    }
+
+    /// The type of the object `value` refers to, where the function made it.
+    fn object_type(&self, value: u64) -> Option<TypeKey> {
+        let whole = value >> 56 == HEAP >> 56 && value & 0xFFFF == 0;
+        whole.then(|| self.objects.get(&value).copied()).flatten()
+    }
+
+    /// The type of the object `addr` is in and the byte of it, where the run knows the type: an object the function made, or the receiver given an address of its own.
+    fn object_at(&self, addr: u64) -> Option<(TypeKey, u32)> {
+        if let Some((cell, at)) = pointed(addr) {
+            let ty = self.receiver.filter(|_| cell == 0)?;
+            return Some((ty, u32::try_from(at).ok()?));
+        }
+        if addr >> 56 != HEAP >> 56 {
+            return None;
+        }
+        let ty = self.objects.get(&(addr & !0xFFFF))?;
+        Some((*ty, (addr & 0xFFFF) as u32))
+    }
+
+    /// Whether an object of type `made` may stand where `want` is declared: it is `want`, derives from it or implements it; `true` where the project cannot say.
+    // ⚠ An interface is followed two deep, and a generic type or one the project holds no facts
+    // of is never held against anything.
+    fn fits(&self, made: TypeKey, want: TypeKey) -> bool {
+        let types = &self.project.types;
+        if types.get(&want).is_none_or(|facts| facts.generic.is_some()) {
+            return true;
+        }
+        let mut ty = made;
+        for _ in 0..BASES {
+            if ty == want {
+                return true;
+            }
+            let Some(facts) = types.get(&ty) else {
+                return true;
+            };
+            let implements = facts.interfaces.iter().any(|iface| {
+                *iface == want
+                    || types.get(iface).is_none_or(|above| {
+                        above.interfaces.contains(&want) || above.base == Some(want)
+                    })
+            });
+            if facts.generic.is_some() || implements {
+                return true;
+            }
+            match facts.base {
+                Some(base) => ty = base,
+                None => return false,
+            }
+        }
+        true
+    }
+
+    /// Holds a write of the low `bytes` bytes of `value` at `addr` to the fields the project declares there: a `bool` holds 0 or 1, a reference an object of its type.
+    // ⚠ Only where the run knows the object's type. A `bool` is not held where what is stored is
+    // a variable or a load (`excused`): those hold bits the run made up, which the kinds the
+    // project proves of them say nothing of here.
+    fn fields_written(&mut self, addr: u64, value: u64, bytes: u32, excused: bool) {
+        let Some((ty, at)) = self.object_at(addr) else {
+            return;
+        };
+        let project = self.project;
+        let bytes = bytes.min(8);
+        for i in 0..bytes {
+            let Some(offset) = at.checked_add(i) else {
+                break;
+            };
+            let Some(field) = project.field(ty, offset) else {
+                continue;
+            };
+            match &field.kind {
+                Kind::Bool if field.bytes == 1 && !excused => {
+                    let byte = (value >> (8 * i)) & 0xFF;
+                    if byte > 1 {
+                        let why =
+                            format!("{byte:#X} is written to the bool at byte {offset:#X} of {ty}");
+                        self.disproved("bool field", why);
+                    }
+                }
+                Kind::Object(name) if i == 0 && bytes == 8 => {
+                    let want = TypeKey::of_name(name);
+                    if let (Some(made), Some(want)) = (self.object_type(value), want) {
+                        if !self.fits(made, want) {
+                            let why = format!(
+                                "an object of {made} is written to the field at byte {offset:#X} of {ty}, which the project says holds a {want}"
+                            );
+                            self.disproved("typed field", why);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Holds the objects a call hands a script function to the types the project says its parameters are.
+    fn typed_arguments(&mut self, signature: &Signature, cells: &[u64], to: &str) {
+        let mut at = 0usize;
+        for param in &signature.params {
+            if let (Kind::Object(name), Some(cell)) = (&param.kind, cells.get(at)) {
+                let want = TypeKey::of_name(name);
+                if let (Some(made), Some(want)) = (self.object_type(*cell), want) {
+                    if !self.fits(made, want) {
+                        let why = format!(
+                            "an object of {made} is handed to cell {at} of {to}, which the project says takes a {want}"
+                        );
+                        self.disproved("typed parameter", why);
+                    }
+                }
+            }
+            at = at.saturating_add(param.cells as usize);
+        }
+    }
+
+    /// Holds the one cell the function returns to the type the project says it returns, where that is an object's.
+    fn returned_object(&mut self, cell: u64) {
+        let own = FunctionKey::new(self.f.head.program, self.f.head.at);
+        let project = self.project;
+        let Some(Kind::Object(name)) = project.signatures.get(&own).map(|held| &held.result) else {
+            return;
+        };
+        if let (Some(made), Some(want)) = (self.object_type(cell), TypeKey::of_name(name)) {
+            if !self.fits(made, want) {
+                let why =
+                    format!("an object of {made} is returned, where the project says a {want} is");
+                self.disproved("typed result", why);
+            }
         }
     }
 
@@ -445,6 +693,11 @@ impl<'f> Machine<'f> {
             // ⚠ A parameter the project proves every caller hands an `int` widened by its sign is
             // one: each caller is held to that where its own run is checked.
             0xA2 => {
+                let own = u32::try_from((addr - PARAMS) / 8).ok();
+                let pointer = own.filter(|n| addr & 7 == 0 && self.pointers.contains_key(n));
+                if let Some(n) = pointer {
+                    return pointer_of(n);
+                }
                 let cell = self.draw(mix2(self.seed, addr));
                 match self.widened_param(addr) {
                     true => cast(Scalar::I32, cell),
@@ -516,6 +769,10 @@ impl<'f> Machine<'f> {
     /// Writes the low `bytes` bytes of `value`; a write outside the frame is an event.
     fn write(&mut self, addr: u64, value: u64, bytes: u32) {
         let bytes = bytes.min(8);
+        self.touched(addr, bytes);
+        if !framed(addr) && bytes == 8 {
+            self.kept(value, "stored");
+        }
         if framed(addr) && self.tracks() {
             self.origins.remove(&(addr & !7));
             let last = addr.wrapping_add(u64::from(bytes.max(1)) - 1);
@@ -667,6 +924,34 @@ impl<'f> Machine<'f> {
         // What the call yields is its own draw, or none: never the last of its arguments'.
         self.from.set(None);
         let id = callee_id(callee);
+        // What the project says of where each cell lands, held before the runtime reads any of them.
+        let project = self.project;
+        let script = match callee {
+            Callee::Local { at, .. } => Some(FunctionKey::new(self.f.head.program, *at)),
+            Callee::Import { program, at, .. } => Some(FunctionKey::new(*program, *at)),
+            _ => None,
+        };
+        for (n, cell) in cells.iter().enumerate() {
+            match (script, u32::try_from(n)) {
+                (Some(to), Ok(n)) => self.handed_on(*cell, to, n),
+                _ => self.kept(
+                    *cell,
+                    "handed to a callee the project follows no address into",
+                ),
+            }
+        }
+        // A call through a slot hands its cells to the function the slot holds on the type named, as a call by name does.
+        let held = match callee {
+            Callee::Virtual { ty, slot, .. } => {
+                TypeKey::of_name(ty).and_then(|ty| project.slot(ty, *slot))
+            }
+            _ => script,
+        };
+        if let Some((to, signature)) = held.and_then(|to| Some((to, project.signatures.get(&to)?)))
+        {
+            let to = format!("func_{:06X} of program {:08X}", to.at(), to.program());
+            self.typed_arguments(signature, &cells, &to);
+        }
         if let Callee::Intrinsic { name, .. } = callee {
             // An intrinsic sees of each cell what the runtime reads of it, whatever it then does.
             for (n, cell) in cells.iter_mut().enumerate() {
@@ -759,6 +1044,10 @@ impl<'f> Machine<'f> {
                 .cloned(),
             _ => None,
         };
+        // ⚠ The result of a native proved only ever tested for zero is another nonzero cell where
+        // a run holds that proof to the code: a function that reads more of it does otherwise.
+        let truth = self.proving == Proving::Truths
+            && native_key(callee).is_some_and(|key| self.project.native_truths.contains(&key));
         match (stated, self.yielded(mix2(mix2(self.seed, id), n), returns)) {
             (Some(stated), Val::One(cell)) if stated.result != Kind::Unknown => {
                 Val::One(widened(&stated.result, cell))
@@ -766,6 +1055,7 @@ impl<'f> Machine<'f> {
             (None, Val::One(cell)) if slot.is_some() => {
                 Val::One(slot.map_or(cell, |kind| widened(&kind, cell)))
             }
+            (_, Val::One(cell)) if truth && cell as u8 != 0 => Val::One(2),
             (_, Val::One(cell)) => {
                 if matches!(callee, Callee::Local { .. } | Callee::Import { .. }) {
                     self.run.unstated.insert(cell);
@@ -891,6 +1181,7 @@ impl<'f> Machine<'f> {
             } => return self.call(callee, args, *returns),
             Expr::Load { ty, addr, offset } => {
                 let addr = self.eval(addr).one().wrapping_add(u64::from(*offset));
+                self.touched(addr, ty.bytes());
                 // A load hands on the draw of the cell it reads from the cell's first byte, and no other.
                 self.from.set(None);
                 let raw = self.read(addr, ty.bytes());
@@ -916,6 +1207,7 @@ impl<'f> Machine<'f> {
                 if !self.sized(cells) {
                     return Val::One(0);
                 }
+                self.touched(addr, *bytes);
                 let load = |n: u32| {
                     self.read(addr.wrapping_add(8 * u64::from(n)), (*bytes - 8 * n).min(8))
                 };
@@ -960,7 +1252,13 @@ impl<'f> Machine<'f> {
                 let z = self.eval(&parts[2]).one() & 0xFFFF_FFFF;
                 return Val::Many(vec![x | (y << 32), z]);
             }
-            Expr::NewObject(ty) => self.alloc(text_hash(&ty.name)),
+            Expr::NewObject(ty) => {
+                let object = self.alloc(text_hash(&ty.name));
+                if let Some(key) = TypeKey::of(ty) {
+                    self.objects.insert(object, key);
+                }
+                object
+            }
             Expr::NewArray { ty, len, .. } => {
                 self.eval(len);
                 self.alloc(mix2(7, text_hash(&ty.name)))
@@ -1061,8 +1359,10 @@ impl<'f> Machine<'f> {
                 value,
             } => {
                 let addr = self.eval(addr).one().wrapping_add(u64::from(*offset));
+                let excused = made_up(value);
                 let value = self.eval(value).one();
                 let from = self.from.get();
+                self.fields_written(addr, value, kind.bytes(), excused);
                 self.write(addr, value, kind.bytes());
                 // A frame cell stored to from its first byte holds the draw stored.
                 if framed(addr) && addr & 7 == 0 {
@@ -1079,10 +1379,13 @@ impl<'f> Machine<'f> {
                     return;
                 }
                 let addr = self.eval(addr).one().wrapping_add(u64::from(*offset));
+                let excused = made_up(value);
                 let mut cells = Vec::new();
                 self.eval(value).push_to(&mut cells);
                 for n in 0..bytes.div_ceil(8) {
                     let cell = cells.get(n as usize).copied().unwrap_or(0);
+                    let at = addr.wrapping_add(8 * u64::from(n));
+                    self.fields_written(at, cell, (*bytes - 8 * n).min(8), excused);
                     self.write(
                         addr.wrapping_add(8 * u64::from(n)),
                         cell,
@@ -1298,6 +1601,12 @@ impl<'f> Machine<'f> {
                             (_, value) => value.push_to(&mut cells),
                         }
                     }
+                    for cell in &cells {
+                        self.kept(*cell, "returned");
+                    }
+                    if let [cell] = cells.as_slice() {
+                        self.returned_object(*cell);
+                    }
                     let cells = cells.into_iter().map(|cell| self.stated(cell)).collect();
                     self.run.events.push(Event::Return(cells));
                     return;
@@ -1307,6 +1616,24 @@ impl<'f> Machine<'f> {
                     return;
                 }
             }
+        }
+    }
+}
+
+/// Whether the bits of `e` are ones a run made up and no operator of the function computed: a variable, a piece of one, a load, a choice between such.
+fn made_up(e: &Expr) -> bool {
+    let mut e = e;
+    loop {
+        match e {
+            Expr::Cast { e: inner, .. } | Expr::Sugar { e: inner, .. } => e = &**inner,
+            Expr::Var(_)
+            | Expr::Cell { .. }
+            | Expr::Cells(_)
+            | Expr::Load { .. }
+            | Expr::LoadBytes { .. }
+            | Expr::ExtractBytes { .. }
+            | Expr::Select { .. } => return true,
+            _ => return false,
         }
     }
 }
@@ -1483,6 +1810,61 @@ pub(crate) fn run_on(
     project: &Project,
     singles: &BTreeSet<u32>,
 ) -> Run {
+    run_with(f, input, wanted, limits, project, singles, Proving::Nothing)
+}
+
+/// The parameter cells a run that holds the reach to the code gives addresses of their own, with the bytes the project says each reaches, and the receiver's type where the receiver is given one.
+// ⚠ The receiver only where its type or a base declares a field the run holds: a `bool` or a reference.
+fn pointers_of(
+    f: &cfg::Function,
+    project: &Project,
+) -> (BTreeMap<u32, Option<u32>>, Option<TypeKey>) {
+    let own = FunctionKey::new(f.head.program, f.head.at);
+    let mut pointers = BTreeMap::new();
+    for (cell, reach) in project.reach.get(&own).into_iter().flatten() {
+        if reach.bytes != UNBOUNDED && *cell < f.head.params {
+            pointers.insert(*cell, Some(reach.bytes));
+        }
+    }
+    let held = |kind: &Kind| matches!(kind, Kind::Bool | Kind::Object(_));
+    let declares = |owner: TypeKey| {
+        let mut ty = Some(owner);
+        for _ in 0..BASES {
+            let Some(at) = ty else {
+                return false;
+            };
+            let fields = project.fields.get(&at);
+            if fields.is_some_and(|fields| fields.iter().any(|field| held(&field.kind))) {
+                return true;
+            }
+            ty = project.types.get(&at).and_then(|facts| facts.base);
+        }
+        false
+    };
+    let receiver = (project.members.get(&own))
+        .filter(|member| !member.is_static && f.head.params > 0)
+        .map(|member| member.owner)
+        .filter(|owner| declares(*owner));
+    if receiver.is_some() {
+        pointers.entry(0).or_insert(None);
+    }
+    (pointers, receiver)
+}
+
+/// Runs a function's blocks on `input` as [`run_on`] does, making up what `proving` asks otherwise than the input says.
+fn run_with(
+    f: &cfg::Function,
+    input: &Input,
+    wanted: &[bool],
+    limits: Limits,
+    project: &Project,
+    singles: &BTreeSet<u32>,
+    proving: Proving,
+) -> Run {
+    let (pointers, receiver) = match proving {
+        Proving::Addresses => pointers_of(f, project),
+        Proving::Nothing | Proving::Truths => (BTreeMap::new(), None),
+    };
     let mut machine = Machine {
         f,
         project,
@@ -1510,6 +1892,10 @@ pub(crate) fn run_on(
         tests: Vec::new(),
         noting: false,
         noted: vec![0; wanted.len()],
+        proving,
+        objects: HashMap::new(),
+        pointers,
+        receiver,
     };
     if f.head.locals > FRAME_CELLS || f.head.params > FRAME_CELLS {
         machine.unsupported("a frame of more cells than the oracle makes");
@@ -1652,6 +2038,119 @@ pub(crate) fn check_in(
     check_blocks(&read, cx, limits)
 }
 
+/// `run` with the one cell it returns, where it returns one, as whether that is zero, and with no call's view of the frame: what is held of a result proved only ever tested.
+// ⚠ A callee is taken to see every local from one whose address it was given up to the next one
+// cell wide, which says nothing of whether it reads them: what it sees is left out.
+fn tested(run: &Run) -> Run {
+    let mut run = run.clone();
+    for event in &mut run.events {
+        match event {
+            Event::Return(cells) => {
+                if let [cell] = cells.as_mut_slice() {
+                    *cell = u64::from(*cell != 0);
+                }
+            }
+            Event::Call { seen, .. } => *seen = 0,
+            Event::Store { .. } | Event::Unreachable => {}
+        }
+    }
+    run
+}
+
+/// Whether `f` calls a native the project proves only ever tested for zero.
+fn calls_a_truth(f: &cfg::Function, project: &Project) -> bool {
+    if project.native_truths.is_empty() {
+        return false;
+    }
+    let mut found = false;
+    let mut look = |top: &Expr| {
+        top.walk(&mut |e| {
+            if let Expr::Call { callee, .. } = e {
+                found |= native_key(callee).is_some_and(|key| project.native_truths.contains(&key));
+            }
+        });
+    };
+    for block in &f.cfg.blocks {
+        for stmt in &block.stmts {
+            stmt.each_expr(&mut look);
+        }
+        if let Some(e) = block.term.expr() {
+            look(e);
+        }
+    }
+    found
+}
+
+/// Holds what the project proves of `read`, and of what it calls and hands its cells to, to the runs `was` made of it and to runs that make up what each proof asks; `Some` names the kind of the first proof the code denies, of [`PROOFS`], and what was seen.
+// ⚠ As far as the inputs go, and through the code of the function read alone: a proof is held
+// in every function the suites read, each holding its own part. Not held: what a delegate's
+// target is handed, and a `bool` field written with a variable or a load (`fields_written`).
+fn proofs_held(
+    read: &cfg::Function,
+    was: &[(Input, Run)],
+    limits: Limits,
+    project: &Project,
+    singles: &BTreeSet<u32>,
+) -> Option<String> {
+    // The objects the function made, and where each went: a field, a parameter, its result.
+    for (input, run) in was {
+        if let Some((what, why)) = &run.proof {
+            return Some(format!("{what}, {input}: {why}"));
+        }
+    }
+    // A call through a slot yields what every function of the slot's line is said to return.
+    let own = FunctionKey::new(read.head.program, read.head.at);
+    if let Some(kind) = project.slot_results.get(&own) {
+        for (input, run) in was {
+            let one = run.events.iter().find_map(|event| match event {
+                Event::Return(cells) if cells.len() == 1 => cells.first().copied(),
+                _ => None,
+            });
+            let off = |cell: &u64| widened(kind, *cell) != *cell && !run.unstated.contains(cell);
+            if let Some(cell) = one.filter(off) {
+                return Some(format!(
+                    "slot result, {input}: {cell:X} is returned, where the project says every function of the slot's line returns a {kind:?}"
+                ));
+            }
+        }
+    }
+    // ⚠ The result of such a native that the function returns is held as a truth: whether every
+    // caller only tests the function's result is the project's, and no run of this function says it.
+    if calls_a_truth(read, project) {
+        for (input, run) in was {
+            let is = run_with(read, input, &[], limits, project, singles, Proving::Truths);
+            if is.unsupported.is_some() {
+                continue;
+            }
+            if let Err(why) = same(&tested(run), &tested(&is)) {
+                return Some(format!(
+                    "native truth, {input}: a native the project proves only ever tested for zero is read for more: {why}"
+                ));
+            }
+        }
+    }
+    if !pointers_of(read, project).0.is_empty() {
+        for (input, _) in was {
+            let run = run_with(
+                read,
+                input,
+                &[],
+                limits,
+                project,
+                singles,
+                Proving::Addresses,
+            );
+            if run.unsupported.is_some() {
+                continue;
+            }
+            if let Some((what, why)) = run.proof {
+                return Some(format!("{what}, {input}: {why}"));
+            }
+        }
+    }
+    None
+}
+
 /// Runs a function's blocks as a front end made them and after the passes `cx` asks; `Err` names the pass that makes the runs differ once it is switched on after those before it.
 // ⚠ The way back from a source construct is `cfg::lower`, which writes each as the statements
 // it holds: a construct made wrongly differs here like any other rewrite.
@@ -1718,6 +2217,9 @@ pub(crate) fn check_blocks(
                 ));
             }
         }
+    }
+    if let Some(why) = proofs_held(read, &was, limits, cx.project, singles) {
+        return Err(why);
     }
     // `Err` where a run differs, `Ok(false)` where the passes left what the oracle does not run.
     let holds = |options: Options| -> Result<bool, String> {

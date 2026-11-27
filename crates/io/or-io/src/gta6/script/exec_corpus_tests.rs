@@ -437,8 +437,11 @@ fn turned(lifted: &cfg::Function, read: &cfg::Function) -> (Vec<u32>, u64) {
 
 /// Where two forms of one function first part.
 fn cause(lifted: &cfg::Function, read: &cfg::Function) -> String {
-    if lifted.head != read.head {
-        return format!("head: {}", parting(&lifted.head, &read.head));
+    // The types the instructions name are what no listing states.
+    let mut head = lifted.head.clone();
+    head.value_types.clear();
+    if head != read.head {
+        return format!("head: {}", parting(&head, &read.head));
     }
     if lifted.cfg.blocks.len() != read.cfg.blocks.len() {
         return "the count of blocks".to_owned();
@@ -500,11 +503,12 @@ impl Found {
             }
             Some(Err(why)) => {
                 let first = why.split(',').next().unwrap_or("");
-                let what = match Pass::from_name(first) {
-                    Some(pass) => pass.name(),
-                    // What the project says the function returns is not what its code returned.
-                    None if first == "signature" => "signature",
-                    None => "differs",
+                // A proof of the project the function's own code denies, by its kind.
+                let proof = PROOFS.into_iter().find(|kind| *kind == first);
+                let what = match (Pass::from_name(first), proof) {
+                    (Some(pass), _) => pass.name(),
+                    (None, Some(kind)) => kind,
+                    (None, None) => "differs",
                 };
                 self.wrong(what, at, &why);
             }
@@ -523,6 +527,14 @@ impl Found {
             // ⚠ Counted and compared by nothing: the bound is what one function may take of memory.
             Some(Some(Err(ReparseError::TooLarge { .. }))) => {
                 self.count("functions too large to read back", 1);
+            }
+            // ⚠ Counted by the form, and compared no further than it.
+            Some(Some(Err(ReparseError::Unread { form, .. }))) => {
+                self.count("functions with a form not read back yet", 1);
+                *self
+                    .causes
+                    .entry(format!("a form not read back: {form}"))
+                    .or_default() += 1;
             }
             Some(Some(Err(why))) => self.wrong("functions not read", at, &why.to_string()),
             Some(None) => self.wrong("functions not decompiled", at, "does not lower"),
@@ -802,18 +814,34 @@ fn every_address_of_a_local_handed_to_a_function_reaches_no_further_than_the_pas
     found.report("REACH");
 }
 
-/// Takes `f` through the passes `cx` asks, writes it in the readable form and reads that back; `None` where it does not lower. With `lowered`, every source construct is first written back as the statements and expressions it holds.
-// ⚠ The text read back is the readable form of no names list. Of a construct the check so sees
-// the statements it holds, as the before/after check does, and never how the source level
-// spells the construct itself.
-fn reread(f: tree::Function, cx: &Context<'_>, lowered: bool) -> Option<Result<(), ReparseError>> {
-    let mut done = function_in(f, cx, &mut Stats::default()).ok()?;
-    if lowered {
-        done.body = tree::desugar(done.body);
-    }
+/// Takes `f` through the passes `cx` asks, writes it in the readable form and reads that back; `None` where it does not lower.
+// ⚠ The text read back is the readable form of no names list.
+fn reread(f: tree::Function, cx: &Context<'_>) -> Option<Result<(), ReparseError>> {
+    let done = function_in(f, cx, &mut Stats::default()).ok()?;
     let mut source = String::new();
     print::function(&mut source, &done, cx.names);
     Some(reparse::agrees(&done, &source))
+}
+
+/// Takes `f` through the passes `cx` asks once, and reads back both what the readable form writes of it with each construct as what it holds, and what the source level writes of it as its own text; `None` where it does not lower.
+// ⚠ Both texts are of no names list. The first sees of a construct the statements it holds, as
+// the before/after check does; the second how the source level spells the construct.
+fn reread_both(
+    f: tree::Function,
+    cx: &Context<'_>,
+) -> Option<(Result<(), ReparseError>, Result<(), ReparseError>)> {
+    let done = function_in(f, cx, &mut Stats::default()).ok()?;
+    let mut own = String::new();
+    print::function_in(&mut own, &done, cx);
+    let sharp = reparse::agrees_source(&done, &own, cx.options, false);
+    let tree::Function { head, body } = done;
+    let lowered = tree::Function {
+        head,
+        body: tree::desugar(body),
+    };
+    let mut source = String::new();
+    print::function(&mut source, &lowered, cx.names);
+    Some((reparse::agrees(&lowered, &source), sharp))
 }
 
 #[test]
@@ -826,11 +854,12 @@ fn every_function_written_reads_back_as_the_function() {
     let whole = whole_project();
     let found = each(&paths, |path| {
         let (mut first, mut every) = (Found::default(), Found::default());
+        let mut third = Found::default();
         let text = std::fs::read_to_string(path).expect("the listing is text");
         let stem = stem(path);
         let Ok(listing) = Listing::open(&text) else {
             first.wrong("listings refused", &stem, "does not open");
-            return (first, every);
+            return (first, every, third);
         };
         // What the passes of the source level know of the program: the project named, else its own part of one.
         let own = match &whole {
@@ -854,19 +883,36 @@ fn every_function_written_reads_back_as_the_function() {
             };
             let at = format!("{stem}: {}", f.head.name);
             let again = f.clone();
-            first.read_back(&at, caught(|| reread(f, &four, false)));
-            every.read_back(&at, caught(|| reread(again, &all, true)));
+            first.read_back(&at, caught(|| reread(f, &four)));
+            let (lowered, sharp) = match caught(|| reread_both(again, &all)) {
+                Some(Some((lowered, sharp))) => (Some(Some(lowered)), Some(Some(sharp))),
+                Some(None) => (Some(None), Some(None)),
+                None => (None, None),
+            };
+            every.read_back(&at, lowered);
+            third.read_back(&at, sharp);
             first.keep(SHOWN);
             every.keep(SHOWN);
+            third.keep(SHOWN);
         }
-        (first, every)
+        (first, every, third)
     });
-    let (first, every): (Vec<Found>, Vec<Found>) = found.into_iter().unzip();
-    let (mut first, mut every) = (Found::all(first), Found::all(every));
+    let (mut firsts, mut everys, mut owns) = (Vec::new(), Vec::new(), Vec::new());
+    for (first, every, own) in found {
+        firsts.push(first);
+        everys.push(every);
+        owns.push(own);
+    }
+    let (mut first, mut every) = (Found::all(firsts), Found::all(everys));
+    let mut own = Found::all(owns);
     first.keep(SHOWN);
     every.keep(SHOWN);
+    own.keep(SHOWN);
     first.report("REREAD, the four first passes");
     every.report("REREAD, every pass, each construct as what it holds");
+    // ⚠ Reported and not held: the reader does not yet hold every form the source level writes,
+    // and a form it does not read is counted by name, not compared.
+    own.report("REREAD, every pass, the source level's own text");
     assert!(first.wrong.is_empty() && every.wrong.is_empty());
 }
 
@@ -1022,9 +1068,18 @@ fn every_compiled_program_reads_and_lifts_to_what_its_listing_does() {
             }
         };
         found.count("programs read", 1);
+        // Lifted as the decompiler lifts a program, slot counts one function learns given to the rest;
+        // a function at a time where that panics.
+        let whole = caught(|| lift::program_in(&program, project));
         let lifted = |at: u32| {
             let row = program.function(at)?;
-            caught(|| lift::function_in(&program, project, row))
+            match &whole {
+                Some(all) => {
+                    let place = program.functions.iter().position(|of| of.at == row.at)?;
+                    all.get(place).cloned()
+                }
+                None => caught(|| lift::function_in(&program, project, row)),
+            }
         };
         for row in &program.functions {
             let at = format!("{stem}: func_{:06X}", row.at);
@@ -1066,6 +1121,8 @@ fn every_compiled_program_reads_and_lifts_to_what_its_listing_does() {
                 continue;
             };
             let mut lifted = lifted.function;
+            // The types a lifted program's instructions name are what no listing states.
+            lifted.head.value_types.clear();
             by_address(&mut lifted);
             by_address(&mut read);
             found.count("functions in both", 1);

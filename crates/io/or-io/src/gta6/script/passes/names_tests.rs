@@ -1012,3 +1012,47 @@ fn a_variable_handed_to_a_cell_that_holds_hashes_holds_hashes() {
     apply(&mut f, &with(&names, &[]));
     assert_eq!(f.head.vars[&Var::Param(0)].kind, Kind::Unknown);
 }
+
+#[test]
+fn a_value_only_ever_stored_whole_to_one_named_field_takes_that_fields_role() {
+    let owner = TypeKey(0xA0);
+    let store = |offset: u32, value: Var| {
+        let stored = Stmt::Store {
+            kind: crate::gta6::script::ir::StoreKind::I32,
+            addr: var(Var::Param(0)),
+            offset,
+            value: var(value),
+        };
+        tree::Stmt::Sugar(Box::new(tree::Sugar::Group {
+            kind: tree::Group::Field { owner },
+            parts: vec![stored],
+        }))
+    };
+    let mut names = Names::default();
+    names.fields.insert((owner, 0x10), "_tint".to_owned());
+    names.fields.insert((owner, 0x14), "Shade".to_owned());
+    let (a, b) = (Var::Local(0), Var::Local(1));
+    let body = vec![
+        // A parameter stored to a named field, and a local given once and stored so.
+        store(0x10, Var::Param(1)),
+        assign(a, int(3)),
+        store(0x14, a),
+        // A local also read otherwise, and a parameter stored to two named fields.
+        assign(b, int(4)),
+        store(0x10, b),
+        eval(native("USE", 0xD5, vec![var(b)])),
+        store(0x10, Var::Param(2)),
+        store(0x14, Var::Param(2)),
+    ];
+    let (f, _) = applied(head(3, 2), body, &with(&names, &[Pass::RoleNames]));
+    let named = |v: Var| name_of(&f, v);
+    assert_eq!(
+        (
+            named(Var::Param(1)),
+            named(a),
+            named(b),
+            named(Var::Param(2))
+        ),
+        (Some("tint"), Some("shade"), None, None)
+    );
+}

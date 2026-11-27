@@ -112,6 +112,7 @@ fn hash_text(f: &mut tree::Function, names: &Names) -> usize {
     }
     let head = &f.head;
     let mut shown = 0;
+    let mut held: BTreeSet<Var> = BTreeSet::new();
     // An explicit stack: a body nests as deep as its listing does.
     let mut work: Vec<&mut Vec<tree::Stmt>> = vec![&mut f.body];
     while let Some(list) = work.pop() {
@@ -230,6 +231,11 @@ struct Facts {
     parameter: Option<String>,
     /// Two of those parameters have different names.
     disagree: bool,
+    /// The reads that store it whole to a field a list names, and the role that name gives.
+    stored: u32,
+    stored_as: Option<String>,
+    /// Two of those fields have different names.
+    stored_apart: bool,
     /// The assignments that are the start or the step of a `for` it is the index of.
     counted: u32,
     /// The reads that are the whole index of an array's element.
@@ -304,6 +310,13 @@ fn gather(body: &[tree::Stmt], head: &Head, cx: &Context<'_>) -> Gathered {
                             gathered.facts.entry(var).or_default().assigned += 1;
                         }
                     }
+                    if let tree::Sugar::Group {
+                        kind: tree::Group::Field { owner },
+                        parts,
+                    } = &**sugar
+                    {
+                        gathered.stored(*owner, parts, cx);
+                    }
                     let parts = sugar.parts();
                     for s in parts.simples {
                         gathered.simple(s, head, cx);
@@ -368,6 +381,28 @@ impl Gathered {
             }
             _ => {}
         });
+    }
+
+    /// Notes each variable a store of a field of `owner` stores whole, with the role the field's name gives, where a list names it.
+    fn stored(&mut self, owner: TypeKey, parts: &[Stmt], cx: &Context<'_>) {
+        if !cx.options.on(Pass::RoleNames) {
+            return;
+        }
+        for part in parts {
+            let Stmt::Store { offset, value, .. } = part else {
+                continue;
+            };
+            let Expr::Var(var) = bare(value) else {
+                continue;
+            };
+            let Some(role) = cx.names.field(owner, *offset).and_then(camel) else {
+                continue;
+            };
+            let facts = self.facts.entry(*var).or_default();
+            facts.stored += 1;
+            facts.stored_apart |= (facts.stored_as.as_ref()).is_some_and(|held| *held != role);
+            facts.stored_as = Some(role);
+        }
     }
 
     /// Counts each argument that is a variable passed as the whole of a named parameter of `native`, and where `fills`, notes each whose address is passed for the native to fill.
@@ -582,6 +617,12 @@ fn role(var: Var, facts: &Facts, exposed: &[u32], head: &Head) -> Option<String>
     }
     let always = facts.read > 0 && facts.read == facts.passed && !facts.disagree;
     if let Some(role) = facts.parameter.as_ref().filter(|_| always) {
+        return Some(role.clone());
+    }
+    // A value only ever stored whole to one named field is what that field holds: `this.target = target`.
+    let kept = facts.read > 0 && facts.read == facts.stored && !facts.stored_apart;
+    let given = holds_one || (matches!(var, Var::Param(_)) && facts.assigned == 0);
+    if let Some(role) = facts.stored_as.as_ref().filter(|_| kept && given) {
         return Some(role.clone());
     }
     facts.holds.clone().filter(|_| holds_one)

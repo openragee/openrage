@@ -81,6 +81,9 @@ was.
 - **Names**: `names`, `hash-text`, `native-params`, `role-names`. `hash-text` writes a constant
   as the text of its hash only in a cell a user's list says holds hashes; a variable handed to
   such a cell holds hashes, so the labels of a switch on it are written as texts too.
+  `role-names` names a variable by what a list names: the native or method whose result it
+  holds, the native parameter it is passed as, the field it is read from or the one field it is
+  only ever stored to, the type of the object it holds.
 - **Classes**: `fields`, `classes`, `receivers`, `constructors`, `operators`. An access through a
   variable the kinds pass proves holds an object of a script type is a field of that type, where
   the bytes lie in the type and no field the layouts state overlaps them; such a field is

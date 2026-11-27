@@ -299,8 +299,7 @@ pub mod tests {
 
     /// A map body of `falloff` level-of-detail lights pointing down with cones of 64 and 128, and
     /// of distant lights (position, RGB word, intensity) of type 2 and category 1.
-    // ⚠ The model declares no class: an entry of a class table cannot be made outside or-io, so
-    // the refusal of a body that declares a list elsewhere is not tested here.
+    // ⚠ The model declares no class, so no member of it is held to a table.
     pub fn model(falloff: &[f32], distant: &[([f32; 3], u32, f32)]) -> RbmModel {
         let mut root = vec![0u8; MAP_DATA_SIZE];
         let n = falloff.len();
@@ -402,5 +401,48 @@ pub mod tests {
         let mut other = model(&[], &[]);
         other.data_blocks[0].data_type = LOD_LIGHT;
         assert_eq!(read(&other), Err(LodError::NotAMap));
+    }
+
+    #[test]
+    fn a_body_that_declares_a_list_elsewhere_or_of_another_type_is_refused() {
+        use crate::meta::binary::rbm::schema::{PsoType, RbmClass, RbmClassEntry};
+        // A body whose table declares the level-of-detail light as read here, but for `falloff`.
+        let declaring = |offset: u32, code: u8| {
+            let entries = (LAYOUT.iter())
+                .filter(|member| member.0 == LOD_LIGHT)
+                .map(|&(_, _, name, at, declared)| match name == b"falloff" {
+                    true => (name, offset, code),
+                    false => (name, at as u32, declared.unwrap_or(0)),
+                })
+                .map(|(name, at, code)| {
+                    RbmClassEntry::synthesised(lit(name), at, PsoType::from_byte(code), 0, 0)
+                })
+                .collect();
+            let mut body = model(&[3.0], &[]);
+            body.classes.insert(
+                LOD_LIGHT,
+                RbmClass {
+                    name_hash: LOD_LIGHT,
+                    signature: 0,
+                    flags: 0,
+                    align_power: 4,
+                    data_size: 0x60,
+                    major_version: 0,
+                    entries,
+                },
+            );
+            read(&body)
+        };
+        let refused = Err(LodError::Layout {
+            class: "CLODLight",
+            member: "falloff".to_owned(),
+            offset: 0x10,
+        });
+        assert_eq!(
+            declaring(0x10, ARRAY).map(|lists| lists.falloff),
+            Ok(vec![3.0])
+        );
+        assert_eq!(declaring(0x18, ARRAY), refused, "another place");
+        assert_eq!(declaring(0x10, STRUCT), refused, "another type");
     }
 }

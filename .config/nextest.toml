@@ -559,6 +559,13 @@ filter = 'test(every_ypt_of_a_legacy_install_becomes_a_source_that_compiles_and_
 slow-timeout = { period = "60s", terminate-after = 45 }
 priority = 100
 
+# The shape-edit suite of an install edits a sample of its type files, maps and ped variations, in a process that installed the
+# staged snapshot and in one that installed none. One install took twenty-eight minutes beside four other install suites and a
+# gate, so it is held to forty-five.
+[[profile.all.overrides]]
+filter = 'test(a_sample_of_an_installs_typed_files_takes_a_shape_edit_with_and_without_the_staged_snapshot)'
+slow-timeout = { period = "60s", terminate-after = 45 }
+
 # The install suite of the maps content reads every `.ymap` and `.ytyp` of an install and runs the rules over all of them as one set.
 # It took three minutes alone, so under the load of a whole-workspace run it is held to forty-five, and starts first.
 [[profile.all.overrides]]

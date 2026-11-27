@@ -1,5 +1,5 @@
 //! One type file in fifty of an install takes an archetype added by copy and removed again, one map in fifty an
-//! entity removed and put back, the first interior of one type file in ten a room, a portal and an attachment added
+//! entity removed and put back and an entity built there and removed again, the first interior of one type file in ten a room, a portal and an attachment added
 //! by copy and removed again, and one `.ymt` in twenty, where it is a ped variation, a drawable added by copy, one
 //! built there, and both removed again, each saved, read back and saved again, in a process that installed the staged
 //! schema snapshot as the app installs it and in one that installed none, and the two processes write the same bytes.
@@ -27,10 +27,11 @@ use or_io::container::RpfCryptoProvider;
 use or_io::decl::File;
 use or_io::meta::binary::synth::name_hash;
 use or_io::meta::binary::type_tables;
+use or_io::meta::instance::value::HashedString;
 use or_io::meta::typed::{ped_types, world_types};
 use or_io::meta::{
-    CBaseArchetypeDefAny, CMapData, CMapTypes, CPVDrawblData, CPVTextureData, CPedVariationInfo,
-    FieldType, MetaDocument, SchemaLibrary,
+    CBaseArchetypeDefAny, CEntityDef, CEntityDefAny, CMapData, CMapTypes, CPVDrawblData,
+    CPVTextureData, CPedVariationInfo, FieldType, MetaDocument, SchemaLibrary,
 };
 use or_test_support::{game_roots, skip_install, GAME_ROOT_ENV, SCHEMA_ENV};
 use or_title::game::Game;
@@ -184,6 +185,58 @@ fn remove_and_put_back_an_entity(bytes: &[u8]) -> Outcome {
         return Err("the entity put back is not at its fixed point".into());
     }
     Ok(Edited::Saved(vec![written(&without), written(&with)]))
+}
+
+/// An entity built here put after the ones a map holds, then removed again.
+fn add_and_remove_an_entity_built_here(bytes: &[u8]) -> Outcome {
+    let map = step("opens", CMapData::from_bytes(bytes))?;
+    // ⚠ Only where the map holds an entity of the class built: a file that states no such class has no layout for one.
+    let of_the_class = |e: &CEntityDefAny| matches!(e, CEntityDefAny::Base(_));
+    if !map.entities.iter().any(of_the_class) {
+        return Ok(Edited::Nothing);
+    }
+    let held = map.entities.len();
+    let untouched = step("the file as read saves", map.to_bytes())?;
+    let mut lamp = CEntityDef::default();
+    lamp.archetype_name = HashedString::new("prop_lamp_02b");
+    (lamp.guid, lamp.parent_index, lamp.lod_dist) = (7, -1, 45.0);
+    (lamp.scale_xy, lamp.scale_z) = (1.0, 1.0);
+    let mut added = map.clone();
+    added.entities.push(CEntityDefAny::Base(lamp));
+    let with = step("the entity built here saves", added.to_bytes())?;
+    // The entity taken out before the file is read again, as an undo does, the save is the one of the file as read.
+    added.entities.pop();
+    if step("the entity taken back saves", added.to_bytes())? != untouched {
+        return Err("the entity taken back does not save the bytes of the file as read".into());
+    }
+    let back = step(
+        "the entity built here reads back",
+        CMapData::from_bytes(&with),
+    )?;
+    let built = match back.entities.last() {
+        Some(CEntityDefAny::Base(built)) if back.entities.len() == held + 1 => built,
+        _ => return Err("the entity built here does not read back after the ones held".into()),
+    };
+    let reads = (built.guid, built.parent_index, built.lod_dist) == (7, -1, 45.0)
+        && built.archetype_name == "prop_lamp_02b"
+        && (built.scale_xy, built.scale_z) == (1.0, 1.0);
+    if !reads || back.entities[..held] != map.entities[..] {
+        return Err("the entity built here reads back as another value".into());
+    }
+    if step("the entity built here saves again", back.to_bytes())? != with {
+        return Err("the entity built here is not at its fixed point".into());
+    }
+    let mut removed = back;
+    removed.entities.pop();
+    let without = step("the removal saves", removed.to_bytes())?;
+    let back = step("the removal reads back", CMapData::from_bytes(&without))?;
+    if back != map {
+        return Err("the removal reads back as another value than the file read".into());
+    }
+    if step("the removal saves again", back.to_bytes())? != without {
+        return Err("the removal is not at its fixed point".into());
+    }
+    Ok(Edited::Saved(vec![written(&with), written(&without)]))
 }
 
 /// The first interior of `types` that holds a room, and where it is.
@@ -388,20 +441,21 @@ fn states_other_members_than_the_snapshot(bytes: &[u8], class: &str) -> Option<b
 type Against = (&'static str, &'static str);
 
 const THE_SNAPSHOT: Against = (
-    "states the class of the record",
+    "sampled files whose type table states the class of the record",
     "state it with another set of members than the staged snapshot declares",
 );
 const THE_DECLARATION: Against = (
-    "states a class the ped family declares in code",
+    "files whose type table states a class the ped family declares in code",
     "state one with another set of members than its declaration",
 );
 
-/// How many sampled files of an install are counted against a source of classes, and how many of those differ from
-/// it, by install, edit and source.
+/// How many files of an install are counted against a source of classes, and how many of those differ from it, by
+/// install, edit and source.
 type Differing = BTreeMap<(String, String, Against), (usize, usize)>;
 
-/// One line for each sampled file of each install: the install, the edit, the file and what the edit came to.
-fn measure() -> Option<(Vec<String>, Differing)> {
+/// One line for each sampled file of each install: the install, the edit, the file and what the edit came to. With
+/// `every_ymt`, every `.ymt` of the install is held to the declaration too.
+fn measure(every_ymt: bool) -> Option<(Vec<String>, Differing)> {
     let mut lines = Vec::new();
     let mut differing = Differing::new();
     let mut mounted = 0;
@@ -426,7 +480,7 @@ fn measure() -> Option<(Vec<String>, Differing)> {
             };
             files[kind].insert(logical.to_ascii_lowercase(), logical.to_string());
         });
-        let edits: [Edit; 4] = [
+        let edits: [Edit; 5] = [
             (
                 "archetype",
                 "CBaseArchetypeDef",
@@ -440,6 +494,13 @@ fn measure() -> Option<(Vec<String>, Differing)> {
                 1,
                 ONE_IN,
                 remove_and_put_back_an_entity,
+            ),
+            (
+                "built entity",
+                "CEntityDef",
+                1,
+                ONE_IN,
+                add_and_remove_an_entity_built_here,
             ),
             (
                 "interior",
@@ -461,16 +522,11 @@ fn measure() -> Option<(Vec<String>, Differing)> {
                 let bytes = game.vfs.open(path);
                 let other = (bytes.as_deref())
                     .and_then(|bytes| states_other_members_than_the_snapshot(bytes, class));
-                let apart = (bytes.as_deref())
-                    .filter(|_| edit == "drawable")
-                    .and_then(states_a_ped_class_otherwise_than_declared);
-                for (other, against) in [(other, THE_SNAPSHOT), (apart, THE_DECLARATION)] {
-                    if let Some(other) = other {
-                        let key = (root.display().to_string(), edit.to_string(), against);
-                        let (stating, differ) = differing.entry(key).or_default();
-                        *stating += 1;
-                        *differ += usize::from(other);
-                    }
+                if let Some(other) = other {
+                    let key = (root.display().to_string(), edit.to_string(), THE_SNAPSHOT);
+                    let (stating, differ) = differing.entry(key).or_default();
+                    *stating += 1;
+                    *differ += usize::from(other);
                 }
                 let outcome = match bytes {
                     Some(bytes) => match lacks_a_member_as_read(&bytes) {
@@ -490,6 +546,22 @@ fn measure() -> Option<(Vec<String>, Differing)> {
                 lines.push(format!("{}\t{edit}\t{path}\t{outcome}", root.display()));
             }
         }
+        // ⚠ Of every `.ymt` and not of the sample: one whose table states a ped class otherwise than declared is
+        // refused an edit of its shape, so how many do is the reach of that refusal on the install.
+        for path in files[2].values().filter(|_| every_ymt) {
+            let bytes = game.vfs.open(path);
+            let apart = (bytes.as_deref()).and_then(states_a_ped_class_otherwise_than_declared);
+            if let Some(apart) = apart {
+                let key = (
+                    root.display().to_string(),
+                    "every .ymt".to_string(),
+                    THE_DECLARATION,
+                );
+                let (stating, differ) = differing.entry(key).or_default();
+                *stating += 1;
+                *differ += usize::from(apart);
+            }
+        }
     }
     (mounted > 0).then_some((lines, differing))
 }
@@ -505,7 +577,7 @@ fn measure_for_a_parent_with_no_snapshot() {
         !or_io::meta::has_default_library(),
         "the child installs no snapshot"
     );
-    let (lines, _) = measure().unwrap_or_default();
+    let (lines, _) = measure(false).unwrap_or_default();
     assert!(!or_io::meta::has_default_library());
     let mut out = std::io::stdout();
     let _ = write!(out, "{BEGIN}{}{END}", lines.join("\n"));
@@ -627,14 +699,12 @@ fn a_sample_of_an_installs_typed_files_takes_a_shape_edit_with_and_without_the_s
 
     if support::schema_or_skip(WHAT).is_some() {
         assert!(or_io::meta::has_default_library());
-        let (with, differing) = measure().expect("the install the child mounted mounts here");
+        let (with, differing) = measure(true).expect("the install the child mounted mounts here");
         failed.extend(report("with the staged snapshot", &with));
         // What the run with the snapshot proves of an install: nothing more than the run with none, where no sampled
         // file states a class otherwise than the snapshot declares it.
         for ((install, edit, (counted, differs)), (stating, differ)) in &differing {
-            eprintln!(
-                "{install}: {edit}: of {stating} sampled files whose type table {counted}, {differ} {differs}"
-            );
+            eprintln!("{install}: {edit}: of {stating} {counted}, {differ} {differs}");
         }
         assert_eq!(with.len(), without.len(), "the same sample both times");
         let mut parted: BTreeMap<String, usize> = BTreeMap::new();

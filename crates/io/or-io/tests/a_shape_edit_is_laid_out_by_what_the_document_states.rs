@@ -18,7 +18,7 @@ use or_io::meta::binary::type_tables;
 use or_io::meta::binary::ContainerLayout;
 use or_io::meta::instance::value::HashedString;
 use or_io::meta::typed::ped_types::PED_TYPES;
-use or_io::meta::typed::world_types::WORLD_TYPES;
+use or_io::meta::typed::world_types::{self, WORLD_TYPES};
 use or_io::meta::{
     build_library, canonical, detect_binary_format, write_meta_binary, ArrayKind, BinaryFormat,
     CBaseArchetypeDefAny, CCarGen, CEntityDef, CEntityDefAny, CMapData, CMapTypes,
@@ -32,6 +32,7 @@ const CHILD_ENV: &str = "OPENRAGE_SHAPE_EDIT_CHILD";
 /// What a line the child prints holds: a save or a sentence the two processes share, or an outcome they part on.
 const SAME: &str = "same";
 const APART: &str = "apart";
+const BUILT: &str = "built";
 const BEGIN: &str = "\u{1e}saves begin\u{1e}";
 const END: &str = "\u{1e}saves end\u{1e}";
 
@@ -958,9 +959,8 @@ fn drawable_built_here(mask: u8) -> CPVDrawblData {
     drawable
 }
 
-/// A ped variation of one component slot that holds two drawables of one texture each, whose table states a drawable
-/// as `of` says.
-fn ped_file(of: DrawableOf, format: BinaryFormat) -> Vec<u8> {
+/// The tree of a ped variation of one component slot that holds two drawables of one texture each.
+fn ped_tree() -> MetaInstance {
     let mut built = CPedVariationInfo::default();
     built.avail_comp[3] = 0;
     built.b_has_drawbl_variations = true;
@@ -968,7 +968,13 @@ fn ped_file(of: DrawableOf, format: BinaryFormat) -> Vec<u8> {
     component.a_drawbl_data3 = vec![drawable_built_here(1), drawable_built_here(3)];
     built.a_component_data3.push(component);
     built.restate_counts();
-    let mut root = tree(&built.to_bytes().expect("a variation built here saves"));
+    tree(&built.to_bytes().expect("a variation built here saves"))
+}
+
+/// A ped variation of one component slot that holds two drawables of one texture each, whose table states a drawable
+/// as `of` says.
+fn ped_file(of: DrawableOf, format: BinaryFormat) -> Vec<u8> {
+    let mut root = ped_tree();
     let psc = match of {
         DrawableOf::AsDeclared => PED_TYPES.to_string(),
         DrawableOf::Fewer => {
@@ -1524,6 +1530,30 @@ fn where_the_two_part() -> Vec<(String, String)> {
     DIFFERENCES.into_iter().map(came_to).collect()
 }
 
+/// What a type file built from nothing that holds an interior comes to: `saved`, or the sentence it is refused with.
+///
+/// ⚠ A root built here has no type table, and no code declares the class of an interior, so the installed snapshot is
+/// all that lays one out.
+fn an_interior_built_in_a_type_file_built_from_nothing() -> String {
+    let mut built = CMapTypes::default();
+    built.name = HashedString::new("hills_types");
+    let mut interior = CMloArchetypeDef::default();
+    interior.base.name = HashedString::new("an_interior");
+    built.archetypes = vec![CBaseArchetypeDefAny::CMloArchetypeDef(interior)];
+    match built.to_bytes() {
+        Ok(bytes) => {
+            let back = CMapTypes::from_bytes(&bytes).expect("the type file reads back");
+            assert_eq!(back.archetypes.len(), 1);
+            assert_eq!(back.to_bytes().expect("saves again"), bytes);
+            "saved".to_string()
+        }
+        Err(refused) => {
+            assert!(matches!(refused, or_io::Error::Save { .. }), "{refused}");
+            refused.to_string()
+        }
+    }
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -1629,6 +1659,76 @@ fn a_ped_variation_that_states_a_class_otherwise_than_declared_is_refused_by_the
 }
 
 #[test]
+fn a_ped_variation_that_parts_on_two_classes_is_refused_by_the_one_whose_name_hashes_lower() {
+    assert!(snapshot(), "this binary's tests run with a snapshot");
+    const TEXTURE: &str = r#"<structdef type="CPVTextureData" simple="true">
+    <u8 name="texId"/>"#;
+    let header = TEXTURE.lines().next().expect("the first line");
+    let psc = without_member(PED_TYPES, ALTERNATIVES).replace(TEXTURE, header);
+    assert!(PED_TYPES.contains(TEXTURE) && !psc.contains(TEXTURE));
+    // ⚠ A map of classes is walked in an order that changes from one process to the next, and the sentence must not.
+    let lower = name_hash("CPVDrawblData") < name_hash("CPVTextureData");
+    let (class, member) = match lower {
+        true => ("CPVDrawblData", "numAlternatives"),
+        false => ("CPVTextureData", "texId"),
+    };
+    for format in FORMATS {
+        let mut root = ped_tree();
+        restated(&mut root, "CPVDrawblData", "numAlternatives", None);
+        restated(&mut root, "CPVTextureData", "texId", None);
+        let file = encoded(&library(&psc), &root, format);
+        let mut grown = CPedVariationInfo::from_bytes(&file).expect("the variation opens");
+        drawables_mut(&mut grown).push(drawable_built_here(7));
+        grown.restate_counts();
+        let why = refusal(&grown, &format!("{format:?}: a drawable built here"));
+        assert!(
+            why.contains(&format!("states `{class}` without `{member}`")),
+            "{format:?}: {why}"
+        );
+    }
+}
+
+#[test]
+fn a_file_as_read_lacks_no_member_its_own_table_states_and_a_copy_from_a_narrower_class_does() {
+    assert!(snapshot(), "this binary's tests run with a snapshot");
+    let read = |bytes: &[u8]| {
+        MetaDocument::parse(&SchemaLibrary::default(), bytes.to_vec()).expect("the file reads")
+    };
+    for format in FORMATS {
+        let mut files = vec![
+            car_gen_file(CarGenOf::WithOwn, format, "a_model"),
+            ped_file(DrawableOf::AsDeclared, format),
+        ];
+        for differs in DIFFERENCES {
+            files.push(type_file(differs, format));
+            files.push(map_file(differs, format));
+            files.push(interior_file(differs, format));
+            files.push(region_file(differs, format));
+        }
+        for (at, file) in files.iter().enumerate() {
+            let doc = read(file);
+            let layout = doc.layout.as_ref().expect("a binary file has a layout");
+            assert_eq!(
+                world_types::first_member_missing(layout, &doc.instance),
+                None,
+                "{format:?}: file {at} as it was read"
+            );
+        }
+        // The tree of a file whose parked vehicle states no `livery`, held to the table of one that states it.
+        let wider = read(&car_gen_file(CarGenOf::Typed, format, "a_model"));
+        let narrower = tree(&car_gen_file(CarGenOf::WithoutLivery, format, "a_model"));
+        let layout = wider.layout.as_ref().expect("a binary file has a layout");
+        let missing = world_types::first_member_missing(layout, &narrower);
+        let missing = missing.map(|(class, member)| (name_hash(class), member));
+        assert_eq!(
+            missing,
+            Some((name_hash("CCarGen"), name_hash("livery"))),
+            "{format:?}"
+        );
+    }
+}
+
+#[test]
 fn a_parked_vehicle_that_holds_a_member_the_file_it_enters_lacks_is_refused_by_name() {
     assert!(snapshot(), "this binary's tests run with a snapshot");
     let member = spelt("aMemberOnlyTheFileStates");
@@ -1667,7 +1767,9 @@ fn save_for_a_parent_with_no_snapshot() {
     );
     let same = (saves.iter()).map(|(what, bytes)| format!("{SAME}\t{what}\t{}", hex(bytes)));
     let apart = (apart.iter()).map(|(what, came_to)| format!("{APART}\t{what}\t{came_to}"));
-    let lines: Vec<String> = same.chain(apart).collect();
+    let built = an_interior_built_in_a_type_file_built_from_nothing();
+    let built = std::iter::once(format!("{BUILT}\t{built}"));
+    let lines: Vec<String> = same.chain(apart).chain(built).collect();
     let mut out = std::io::stdout();
     let _ = write!(out, "{BEGIN}{}{END}", lines.join("\n"));
     let _ = out.flush();
@@ -1753,6 +1855,24 @@ fn a_copy_of_a_class_an_rbm_file_neither_states_nor_names_is_laid_out_by_the_sna
             "{what}: {came_to}"
         );
     }
+}
+
+/// ⚠ The other place the two processes part, held here for the same reason: a root built from nothing has no table,
+/// so a class no code declares is laid out by an installed snapshot or by nothing.
+#[test]
+fn an_interior_built_in_a_type_file_built_from_nothing_is_laid_out_by_the_snapshot_and_refused_with_none(
+) {
+    assert!(snapshot(), "this binary's tests run with a snapshot");
+    assert_eq!(
+        an_interior_built_in_a_type_file_built_from_nothing(),
+        "saved"
+    );
+    let without = printed_by_a_child_with_no_snapshot(BUILT);
+    assert_eq!(without.len(), 1, "{without:?}");
+    assert!(
+        without[0].contains("no schema snapshot is installed, so a `CMloArchetypeDef` built"),
+        "{without:?}"
+    );
 }
 
 #[test]

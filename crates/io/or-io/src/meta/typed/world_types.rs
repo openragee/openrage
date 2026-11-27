@@ -810,6 +810,44 @@ mod tests {
     }
 
     #[test]
+    fn only_a_gta_v_type_table_is_judged() {
+        use crate::meta::binary::layout::OpaqueSection;
+        use crate::meta::binary::pso::sections::PsoSection;
+        use crate::meta::binary::rbf::layout::RbfLayout;
+
+        let layout = |format| {
+            let bytes = wider_map(format, 1);
+            let doc = MetaDocument::parse(&SchemaLibrary::default(), bytes).expect("reads");
+            doc.layout.expect("a binary file has a layout")
+        };
+        assert!(judges(&layout(BinaryFormat::Rbm)));
+        let mut pso = layout(BinaryFormat::Pso);
+        assert!(judges(&pso));
+
+        // GTA VI's tag in the checksum section, which is all that tells its documents from GTA V's.
+        let ContainerLayout::Pso(tables) = &mut pso.container else {
+            panic!("a PSO");
+        };
+        let mut chks = vec![0u8; 20];
+        chks[16..].copy_from_slice(b"zppp");
+        tables.opaque_sections = vec![OpaqueSection {
+            ident: PsoSection::Chks,
+            bytes: chks,
+        }];
+        assert!(tables.is_gta6());
+        assert!(
+            !judges(&pso),
+            "a GTA VI document's tables are of its own form"
+        );
+
+        let rbf = MetaLayout {
+            format: BinaryFormat::Rbf,
+            container: ContainerLayout::Rbf(RbfLayout::default()),
+        };
+        assert!(!judges(&rbf), "an RBF states tags and no class");
+    }
+
+    #[test]
     fn an_entity_built_into_a_file_states_the_members_that_file_states() {
         for format in [BinaryFormat::Pso, BinaryFormat::Rbm] {
             let mut map = CMapData::from_bytes(&wider_map(format, 1)).expect("opens");

@@ -597,6 +597,25 @@ impl Found {
     }
 }
 
+/// Holds the two functions an `async` method gives back to the kick-off and the step function it was made of, each as the passes left it.
+fn given_back(
+    join: &passes::async_await::Join,
+    finished: &[tree::Function],
+    project: &Project,
+) -> Result<(), String> {
+    let (kick, step) = join
+        .parts()
+        .ok_or("the method does not go back into two functions")?;
+    for (part, was) in [(kick, &finished[join.kick]), (step, &finished[join.step])] {
+        let name = part.head.name.clone();
+        let part =
+            cfg::lower(part).map_err(|e| format!("{name} given back does not lower: {e}"))?;
+        let was = cfg::lower(was.clone()).map_err(|e| format!("{name} does not lower: {e}"))?;
+        agree(&part, &was, Limits::CORPUS, project).map_err(|why| format!("{name}: {why}"))?;
+    }
+    Ok(())
+}
+
 #[test]
 fn every_function_of_every_listing_does_what_it_did() {
     let what = "the before/after check over a folder of lifted listings";
@@ -629,6 +648,7 @@ fn every_function_of_every_listing_does_what_it_did() {
         };
         let project = whole.as_ref().or(own.as_ref()).unwrap_or(Project::empty());
         let all = Context::new(&names, project, Options::default());
+        let mut finished = Vec::new();
         for f in listing.functions() {
             let f = match f {
                 Ok(f) => f,
@@ -639,9 +659,21 @@ fn every_function_of_every_listing_does_what_it_did() {
             };
             let at = format!("{stem}: {}", f.head.name);
             let again = f.clone();
+            if let Some(Ok(done)) = caught(|| function_in(f.clone(), &all, &mut Stats::default())) {
+                finished.push(done);
+            }
             let four = Context::baseline(&names);
             first.checked(&at, caught(|| check_in(f, &four, Limits::CORPUS)));
             every.checked(&at, caught(|| check_in(again, &all, Limits::CORPUS)));
+        }
+        for join in passes::async_await::joins(&finished, &all) {
+            let at = format!("{stem}: {}", join.whole.head.name);
+            every.count("async methods joined", 1);
+            match caught(|| given_back(&join, &finished, project)) {
+                Some(Ok(())) => every.count("async methods given back as their two functions", 1),
+                Some(Err(why)) => every.wrong("join", &at, &why),
+                None => every.wrong("panics", &at, "the join's way back or the oracle panicked"),
+            }
         }
         (first, every)
     });

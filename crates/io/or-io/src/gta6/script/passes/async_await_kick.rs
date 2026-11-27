@@ -13,7 +13,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::gta6::script::cfg::{self, Block, Terminator};
-use crate::gta6::script::ir::{Callee, Expr, Returns, Stmt, StoreKind, Var, VarInfo};
+use crate::gta6::script::ir::{Callee, Expr, Head, Returns, Stmt, StoreKind, Var, VarInfo};
 use crate::gta6::script::tree::{self, Sugar};
 use crate::gta6::script::{Context, Pass};
 
@@ -532,16 +532,24 @@ struct Move<'a> {
     mine: &'a BTreeSet<Var>,
     /// Cleared where a variable cannot be moved.
     fits: bool,
+    /// Whether the body goes back out of the kick-off's frame into the step function's own.
+    back: bool,
 }
 
 impl Move<'_> {
-    /// Where a variable of the step function stands in the kick-off's frame.
+    /// Where a variable of the step function stands in the kick-off's frame, or back in its own.
     fn var(&mut self, var: &mut Var) {
         match *var {
-            Var::Local(n) => match n.checked_add(self.by) {
-                Some(moved) => *var = Var::Local(moved),
-                None => self.fits = false,
-            },
+            Var::Local(n) => {
+                let moved = match self.back {
+                    false => n.checked_add(self.by),
+                    true => n.checked_sub(self.by),
+                };
+                match moved {
+                    Some(moved) => *var = Var::Local(moved),
+                    None => self.fits = false,
+                }
+            }
             // The one parameter is the machine's address, written as that where it is read.
             Var::Param(_) => self.fits = false,
             Var::Value { .. } | Var::Stack { .. } => self.fits &= !self.mine.contains(var),
@@ -550,13 +558,16 @@ impl Move<'_> {
     }
 
     fn expr(&mut self, top: &mut Expr) {
-        let storage = self.storage;
+        let (storage, back) = (self.storage, self.back);
         top.walk_mut(&mut |e| match e {
-            Expr::Var(Var::Param(0)) => {
+            Expr::Var(Var::Param(0)) if !back => {
                 *e = Expr::AddrOf {
                     var: storage,
                     cell: 0,
                 };
+            }
+            Expr::AddrOf { var, cell: 0 } if back && *var == storage => {
+                *e = Expr::Var(Var::Param(0));
             }
             Expr::Var(var) | Expr::AddrOf { var, .. } => self.var(var),
             _ => {}
@@ -581,6 +592,13 @@ impl Move<'_> {
         let mut work: Vec<&mut Vec<tree::Stmt>> = vec![body];
         while let Some(list) = work.pop() {
             for stmt in list {
+                // Going back, what the kick-off returns is its own expression, and is not moved.
+                if let (true, tree::Stmt::Return(value)) = (self.back, &mut *stmt) {
+                    match *value == *leave {
+                        true => *value = None,
+                        false => self.fits = false,
+                    }
+                }
                 tree::own_exprs_mut(stmt, &mut |top| self.expr(top));
                 match stmt {
                     tree::Stmt::Simple(simple) => self.assigned(simple),
@@ -590,7 +608,7 @@ impl Move<'_> {
                         }
                     }
                     // A step function returns nothing; the kick-off's task is the kick-off's own expression, and is not moved.
-                    tree::Stmt::Return(value) => match value {
+                    tree::Stmt::Return(value) if !self.back => match value {
                         Some(_) => self.fits = false,
                         None => *value = leave.clone(),
                     },
@@ -633,7 +651,7 @@ impl Move<'_> {
 // ⚠ This is the call written out: the step function's locals go after the kick-off's, where
 // they start as zero as a call's do, its parameter is the address the call was handed, and each
 // of its `return` statements returns what the kick-off returns after the call.
-fn inlined(kick: &tree::Function, stub: &Stub, step: &tree::Function) -> Option<tree::Function> {
+fn inlined(kick: &tree::Function, stub: &Stub, step: &tree::Function) -> Option<Join> {
     let head = &step.head;
     let fits = head.params == 1
         && head.returns == Returns::Void
@@ -658,6 +676,7 @@ fn inlined(kick: &tree::Function, stub: &Stub, step: &tree::Function) -> Option<
         storage: stub.storage,
         mine: &mine,
         fits: true,
+        back: false,
     };
     let mut body = step.body.clone();
     moved.body(&mut body, &stub.leave);
@@ -700,24 +719,104 @@ fn inlined(kick: &tree::Function, stub: &Stub, step: &tree::Function) -> Option<
         }
     }
     hidden(&mut run, &mut out);
+    let front = out.len();
     out.extend(body);
     if stub.leave.is_some() {
         let back = tree::Stmt::Return(stub.leave.clone());
         out.push(tree::Stmt::Sugar(Box::new(Sugar::Hidden(vec![back]))));
     }
-    Some(tree::Function { head, body: out })
+    let call = stub.hide.len();
+    Some(Join {
+        kick: 0,
+        step: 0,
+        whole: tree::Function { head, body: out },
+        front,
+        by,
+        storage: stub.storage,
+        leave: stub.leave.clone(),
+        call: kick.body.get(call)?.clone(),
+        tail: kick.body.get(call + 1..)?.to_vec(),
+        heads: [kick.head.clone(), step.head.clone()],
+    })
 }
 
-/// A program's finished functions, each kick-off that calls a step function of the program read as the one `async` method the two were compiled from.
-// ⚠ The step function stays where it was: the runtime calls it again at every resumed await,
-// and nothing here says no other function does.
-// A step function two kick-offs call is joined to neither: a method has one kick-off, and each
-// body is then copied once at the most.
-pub fn joined(functions: Vec<tree::Function>, cx: &Context<'_>) -> Vec<tree::Function> {
-    if !cx.options.on(Pass::Await) {
-        return functions;
+/// A kick-off read as one method with the body of the step function it calls, and what gives the two back.
+pub struct Join {
+    /// The places of the kick-off and of the step function among the functions joined.
+    pub kick: usize,
+    pub step: usize,
+    /// The method the two are read as.
+    pub whole: tree::Function,
+    /// The statements of `whole` that are the kick-off's, before the step function's body.
+    front: usize,
+    by: u32,
+    storage: Var,
+    leave: Option<Expr>,
+    /// The kick-off's call of the step function, and what follows it.
+    call: tree::Stmt,
+    tail: Vec<tree::Stmt>,
+    heads: [Head; 2],
+}
+
+impl Join {
+    /// The way back: the kick-off and the step function as `whole` holds them, the call written where the step function's body stands; `None` where the body does not go back into a frame of its own.
+    // ⚠ Read from `whole` itself, so a join that lost or moved a statement or a variable gives
+    // back other functions than the two it was made of.
+    pub fn parts(&self) -> Option<(tree::Function, tree::Function)> {
+        let ends = usize::from(self.leave.is_some());
+        let split = self.whole.body.len().checked_sub(ends)?;
+        let (front, body) = (
+            self.whole.body.get(..self.front)?,
+            self.whole.body.get(self.front..split)?,
+        );
+        let mut kick: Vec<tree::Stmt> = Vec::with_capacity(front.len() + 1 + self.tail.len());
+        for stmt in front {
+            match stmt {
+                tree::Stmt::Sugar(sugar) => match &**sugar {
+                    Sugar::Hidden(run) => kick.extend(run.iter().cloned()),
+                    _ => kick.push(stmt.clone()),
+                },
+                _ => kick.push(stmt.clone()),
+            }
+        }
+        kick.push(self.call.clone());
+        kick.extend(self.tail.iter().cloned());
+        let mut mine: BTreeSet<Var> = self.heads[0].vars.keys().copied().collect();
+        each_var(&kick, &mut |var| {
+            mine.insert(var);
+        });
+        let mut moved = Move {
+            by: self.by,
+            storage: self.storage,
+            mine: &mine,
+            fits: true,
+            back: true,
+        };
+        let mut step = body.to_vec();
+        moved.body(&mut step, &self.leave);
+        if !moved.fits {
+            return None;
+        }
+        let [kick_head, step_head] = self.heads.clone();
+        let kick = tree::Function {
+            head: kick_head,
+            body: kick,
+        };
+        Some((
+            kick,
+            tree::Function {
+                head: step_head,
+                body: step,
+            },
+        ))
     }
-    let mut functions = functions;
+}
+
+/// The kick-offs of a program's finished functions that [`joined`] reads as one method with the step function each calls.
+pub fn joins(functions: &[tree::Function], cx: &Context<'_>) -> Vec<Join> {
+    if !cx.options.on(Pass::Await) {
+        return Vec::new();
+    }
     let by_place: BTreeMap<(u32, u32), usize> = functions
         .iter()
         .enumerate()
@@ -736,17 +835,31 @@ pub fn joined(functions: Vec<tree::Function>, cx: &Context<'_>) -> Vec<tree::Fun
         }
     }
     // Every kick-off is read against the functions as they came: one joined is no step function to another.
-    let mut done: Vec<(usize, tree::Function)> = Vec::new();
+    let mut done = Vec::new();
     for (index, step, stub) in &read {
         if callers.get(step) != Some(&1) {
             continue;
         }
-        if let Some(whole) = inlined(&functions[*index], stub, &functions[*step]) {
-            done.push((*index, whole));
+        if let Some(join) = inlined(&functions[*index], stub, &functions[*step]) {
+            done.push(Join {
+                kick: *index,
+                step: *step,
+                ..join
+            });
         }
     }
-    for (index, whole) in done {
-        functions[index] = whole;
+    done
+}
+
+/// A program's finished functions, each kick-off that calls a step function of the program read as the one `async` method the two were compiled from.
+// ⚠ The step function stays where it was: the runtime calls it again at every resumed await,
+// and nothing here says no other function does.
+// A step function two kick-offs call is joined to neither: a method has one kick-off, and each
+// body is then copied once at the most.
+pub fn joined(functions: Vec<tree::Function>, cx: &Context<'_>) -> Vec<tree::Function> {
+    let mut functions = functions;
+    for join in joins(&functions, cx) {
+        functions[join.kick] = join.whole;
     }
     functions
 }

@@ -39,7 +39,7 @@ use crate::gta6::script::tree::{self, Label, Sugar};
 use crate::gta6::script::{Context, Pass, Stats};
 
 pub use self::ends::{handed_back, result, AsyncResult};
-pub use self::kick::joined;
+pub use self::kick::{joined, joins, Join};
 
 /// The names this file's rewrites are switched by.
 pub const PASSES: &[Pass] = &[Pass::Await, Pass::Iterators, Pass::Wait];

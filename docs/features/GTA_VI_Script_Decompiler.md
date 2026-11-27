@@ -168,7 +168,9 @@ folder where none lies beside the script.
   `OPENRAGE_LIFTED_PROJECT` names it holds the premise above to an independent measure: the
   project states, for each parameter cell of each function, how many bytes from an address handed
   in that cell the function and the functions it hands it on to may touch, and every address of a
-  local handed to a function is held to the width the passes take it to reach.
+  local handed to a function is held to the width the passes take it to reach. An `async`
+  method made of a kick-off and its step function is read back into the two, and each is held to
+  the function it was made of.
 - `reparse.rs` reads printed source back to the tree it was printed from, over hand-written
   functions, with a bound on the statements and operands of one function; ⚠ its run over a folder
   of listings (slow tier) has not been run to its end.

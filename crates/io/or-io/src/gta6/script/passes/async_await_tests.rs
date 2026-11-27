@@ -881,6 +881,18 @@ fn a_kick_off_takes_the_body_of_the_step_function_it_calls() {
     assert!(!shown.contains("Return(None)"), "{shown}");
     assert!(cfg::lower(kick.clone()).is_ok());
 
+    // Given back, the method is the kick-off and the step function it was made of.
+    let mut made = joins(&read, &cx);
+    assert_eq!((made.len(), made[0].kick, made[0].step), (1, 1, 0));
+    assert_eq!(made[0].whole, *kick);
+    let (front, step) = made[0].parts().expect("the method goes back");
+    assert_eq!((&front, &step), (&read[1], &read[0]));
+    // What the method lost is lost from what it gives back.
+    let last = made[0].whole.body.len() - 2;
+    made[0].whole.body.remove(last);
+    let (_, step) = made[0].parts().expect("the method goes back");
+    assert_ne!(step, read[0]);
+
     // Switched off by its name, nothing is joined.
     let off = Context::new(&names, Project::empty(), Options::baseline());
     assert_eq!(joined(read.clone(), &off), read);

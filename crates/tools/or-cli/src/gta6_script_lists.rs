@@ -165,12 +165,24 @@ pub fn names_dir(config_root: &Path) -> PathBuf {
 
 /// The lists of the folder `dir`, each file read by the one rule; a folder that is not there holds none.
 pub fn folder(dir: &Path) -> Folder {
-    let entries = std::fs::read_dir(dir).into_iter().flatten().flatten();
-    let mut files: Vec<PathBuf> = entries
-        .map(|entry| entry.path())
-        .filter(|path| path.is_file())
-        .collect();
-    files.sort();
+    folders(&[dir])
+}
+
+/// [`folder`] over several folders, a later folder's file in place of an earlier one's of its name.
+pub fn folders(dirs: &[&Path]) -> Folder {
+    let mut by_name: std::collections::BTreeMap<std::ffi::OsString, PathBuf> = Default::default();
+    for dir in dirs {
+        let entries = std::fs::read_dir(dir).into_iter().flatten().flatten();
+        for path in entries
+            .map(|entry| entry.path())
+            .filter(|path| path.is_file())
+        {
+            if let Some(name) = path.file_name() {
+                by_name.insert(name.to_owned(), path);
+            }
+        }
+    }
+    let files = by_name.into_values();
     let mut found = Folder::default();
     // Each file read once, with whether it is a list every row of which proves itself.
     let mut held: Vec<(String, Vec<u8>, bool)> = Vec::new();
@@ -242,7 +254,15 @@ pub fn supplied(
     config: Option<&Path>,
 ) -> Result<Supplied, String> {
     let read = match named.is_empty() {
-        true => config.map_or_else(Folder::default, |root| folder(&names_dir(root))),
+        // The lists a package ships are read first; a file of the user's folder stands in place of one of its name.
+        true => config.map_or_else(Folder::default, |root| {
+            let shipped = or_io::container::rpf::shipped_dir(NAMES_FOLDER);
+            let user = names_dir(root);
+            let dirs: Vec<&Path> = (shipped.iter().map(PathBuf::as_path))
+                .chain([user.as_path()])
+                .collect();
+            folders(&dirs)
+        }),
         false => {
             let (names, counted) = super::super::lifted::names_counted(named)?;
             Folder {

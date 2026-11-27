@@ -1,9 +1,9 @@
 //! `openrage-cli script` on a compiled GTA VI script: its source, its instructions, its natives
 //! and its strings, by file or by archive entry, and every script of a build into one folder.
 //!
-//! ⚠ **Every name is the user's.** OpenRage ships none: a type, a method, a field or a program
-//! prints under a name only where a list the user supplies names it, and a native, which the code
-//! calls by the address of its handler, only where a list gives the hash of the handler there.
+//! ⚠ **A name comes from a list:** a type, a method, a field or a program prints under a name only
+//! where a list a package ships or the user supplies names it, and a native, which the code calls
+//! by the address of its handler, only where a list gives the hash of the handler there.
 //!
 //! ⚠ **Nothing of a program is run.** Every verb reads bytes and writes text.
 //!

@@ -17473,8 +17473,8 @@ msgstr "Декомпилировано отдельно: у функции, ко
 msgid "A project file was found and not read: {why}"
 msgstr "Файл проекта найден, но не прочитан: {why}"
 
-msgid "Put names lists, natives lists and a project.json in this folder, then open the script again: OpenRage ships none. Each file is read as a names list where it reads as one, else as a natives list; a file whose name starts with natives, or that holds JSON, is tried as a natives list first"
-msgstr "Поместите списки имён, списки нативных функций и project.json в эту папку, затем снова откройте скрипт: OpenRage их не поставляет. Каждый файл читается как список имён, если он читается как таковой, иначе — как список нативных функций; файл, имя которого начинается с natives или который содержит JSON, сначала проверяется как список нативных функций"
+msgid "Put names lists, natives lists and a project.json in this folder, then open the script again: a file here stands in place of a list OpenRage ships under the same name. Each file is read as a names list where it reads as one, else as a natives list; a file whose name starts with natives, or that holds JSON, is tried as a natives list first"
+msgstr "Поместите списки имён, списки нативных функций и project.json в эту папку, затем снова откройте скрипт: файл здесь заменяет список с тем же именем, поставляемый с OpenRage. Каждый файл читается как список имён, если он читается как таковой, иначе — как список нативных функций; файл, имя которого начинается с natives или который содержит JSON, сначала проверяется как список нативных функций"
 
 msgid "Lifted listing"
 msgstr "Листинг из байт-кода"

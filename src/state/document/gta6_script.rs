@@ -1,8 +1,9 @@
 //! A compiled GTA VI script opened read-only: the source it decompiles to, the classes and
 //! functions that source lists, and the program it was read from.
 //!
-//! ⚠ **Every name is the user's.** OpenRage ships none: a native, a type, a field or a method
-//! reads under a name only where a list in [`names_dir`] names it.
+//! ⚠ A native, a type, a field or a method reads under a name only where a list names it: one a
+//! package ships beside the executable, or the user's in [`names_dir`], which stands in place of
+//! a shipped list of its name.
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -90,6 +91,9 @@ pub fn labels_on() -> bool {
 pub fn set_labels(on: bool) {
     LABELS.store(on, Ordering::Relaxed);
 }
+
+/// The folder of lists a package ships beside the executable, read before the names folder's.
+const SHIPPED_FOLDER: &str = "gta6_script_names";
 
 /// Where natives lists, names lists and a project for GTA VI scripts are read from, in the configuration directory.
 pub fn names_dir() -> Option<PathBuf> {
@@ -431,7 +435,8 @@ fn written(
     progress: Option<&Progress>,
 ) -> Result<Gta6ScriptDocument, String> {
     let folder = names_dir();
-    let mut supplied = lists::supplied(folder.as_deref());
+    let shipped = or_io::container::rpf::shipped_dir(SHIPPED_FOLDER);
+    let mut supplied = lists::supplied_over(shipped.as_deref(), folder.as_deref());
     if labels_on() {
         lists::labelled(&mut supplied, folder.as_deref());
     }

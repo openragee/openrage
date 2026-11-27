@@ -26,22 +26,22 @@ use crate::error::{IoError, Result};
 /// The environment variable naming a folder of GTA VI names: a vocabulary and name tables.
 pub const GTA6_NAMES_ENV: &str = "OPENRAGE_GTA6_NAMES";
 
-/// The folder of the names a package ships, where it is laid beside the executable, in a macOS
-/// bundle's resources or under a prefix's `share`.
-const SHIPPED_NAMES: [&str; 3] = [
-    "gta6_names",
-    "../Resources/gta6_names",
-    "../share/openrage/gta6_names",
-];
+/// Where a package lays its folders: beside the executable, in a macOS bundle's resources or under a prefix's `share`.
+const SHIPPED_AT: [&str; 3] = [".", "../Resources", "../share/openrage"];
+
+/// The folder `name` a package ships with the executable, where one is there.
+pub fn shipped_dir(name: &str) -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let beside = exe.parent()?;
+    (SHIPPED_AT.iter().map(|at| beside.join(at).join(name))).find(|folder| folder.is_dir())
+}
 
 /// The names folder a run reads when it is given none: the one [`GTA6_NAMES_ENV`] names, else the one shipped with the executable.
 pub fn default_names_dir() -> Option<std::path::PathBuf> {
     if let Some(named) = std::env::var_os(GTA6_NAMES_ENV) {
         return Some(named.into());
     }
-    let exe = std::env::current_exe().ok()?;
-    let beside = exe.parent()?;
-    (SHIPPED_NAMES.iter().map(|folder| beside.join(folder))).find(|folder| folder.is_dir())
+    shipped_dir("gta6_names")
 }
 
 /// The longest name a folder or file is given, in bytes.

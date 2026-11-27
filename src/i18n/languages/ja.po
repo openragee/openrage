@@ -17317,8 +17317,8 @@ msgstr "単独でデコンパイルされました。他のプログラムが示
 msgid "A project file was found and not read: {why}"
 msgstr "プロジェクトファイルが見つかりましたが、読み込まれませんでした：{why}"
 
-msgid "Put names lists, natives lists and a project.json in this folder, then open the script again: OpenRage ships none. Each file is read as a names list where it reads as one, else as a natives list; a file whose name starts with natives, or that holds JSON, is tried as a natives list first"
-msgstr "名前リスト、ネイティブ関数のリスト、project.json をこのフォルダーに置いてから、スクリプトを開き直してください。OpenRageにはどれも同梱されていません。各ファイルは、名前リストとして読める場合は名前リストとして、そうでなければネイティブ関数のリストとして読み込まれます。名前がnativesで始まるファイルとJSONを含むファイルは、先にネイティブ関数のリストとして試されます"
+msgid "Put names lists, natives lists and a project.json in this folder, then open the script again: a file here stands in place of a list OpenRage ships under the same name. Each file is read as a names list where it reads as one, else as a natives list; a file whose name starts with natives, or that holds JSON, is tried as a natives list first"
+msgstr "名前リスト、ネイティブ関数のリスト、project.json をこのフォルダーに置いてから、スクリプトを開き直してください。ここにあるファイルは、OpenRageに同梱された同じ名前のリストの代わりに使われます。各ファイルは、名前リストとして読める場合は名前リストとして、そうでなければネイティブ関数のリストとして読み込まれます。名前がnativesで始まるファイルとJSONを含むファイルは、先にネイティブ関数のリストとして試されます"
 
 msgid "Lifted listing"
 msgstr "バイトコードから起こしたリスティング"

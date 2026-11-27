@@ -17317,8 +17317,8 @@ msgstr "Decompilato da solo: una funzione che ha bisogno di ciò che un altro pr
 msgid "A project file was found and not read: {why}"
 msgstr "È stato trovato un file di progetto che non è stato letto: {why}"
 
-msgid "Put names lists, natives lists and a project.json in this folder, then open the script again: OpenRage ships none. Each file is read as a names list where it reads as one, else as a natives list; a file whose name starts with natives, or that holds JSON, is tried as a natives list first"
-msgstr "Metti gli elenchi di nomi, gli elenchi di native e un project.json in questa cartella, poi riapri lo script: OpenRage non ne include nessuno. Ogni file viene letto come elenco di nomi se si legge come tale, altrimenti come elenco di native; un file il cui nome inizia con natives, o che contiene JSON, viene provato prima come elenco di native"
+msgid "Put names lists, natives lists and a project.json in this folder, then open the script again: a file here stands in place of a list OpenRage ships under the same name. Each file is read as a names list where it reads as one, else as a natives list; a file whose name starts with natives, or that holds JSON, is tried as a natives list first"
+msgstr "Metti gli elenchi di nomi, gli elenchi di native e un project.json in questa cartella, poi riapri lo script: un file qui sostituisce l'elenco con lo stesso nome incluso in OpenRage. Ogni file viene letto come elenco di nomi se si legge come tale, altrimenti come elenco di native; un file il cui nome inizia con natives, o che contiene JSON, viene provato prima come elenco di native"
 
 msgid "Lifted listing"
 msgstr "Listato ricavato dal bytecode"

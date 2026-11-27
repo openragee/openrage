@@ -17317,8 +17317,8 @@ msgstr "单独反编译：需要其他程序所述内容的函数没有函数体
 msgid "A project file was found and not read: {why}"
 msgstr "找到了项目文件但未读取：{why}"
 
-msgid "Put names lists, natives lists and a project.json in this folder, then open the script again: OpenRage ships none. Each file is read as a names list where it reads as one, else as a natives list; a file whose name starts with natives, or that holds JSON, is tried as a natives list first"
-msgstr "将名称列表、原生函数列表和 project.json 放入此文件夹，然后重新打开脚本：OpenRage 不附带任何一项。每个文件若能按名称列表读取则按名称列表读取，否则按原生函数列表读取；名称以 natives 开头或内容为 JSON 的文件会先按原生函数列表尝试"
+msgid "Put names lists, natives lists and a project.json in this folder, then open the script again: a file here stands in place of a list OpenRage ships under the same name. Each file is read as a names list where it reads as one, else as a natives list; a file whose name starts with natives, or that holds JSON, is tried as a natives list first"
+msgstr "将名称列表、原生函数列表和 project.json 放入此文件夹，然后重新打开脚本：此处的文件会取代 OpenRage 附带的同名列表。每个文件若能按名称列表读取则按名称列表读取，否则按原生函数列表读取；名称以 natives 开头或内容为 JSON 的文件会先按原生函数列表尝试"
 
 msgid "Lifted listing"
 msgstr "由字节码提升的清单"

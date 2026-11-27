@@ -162,8 +162,12 @@ the functions of one program are written by one thread.
 
 ## Names
 
-OpenRage ships no natives list and no names. The first lines of a decompiled source say which
-lists named things; `disasm` and the facts of a program consult no list.
+A package ships the GTA VI lists of `assets/gta6_script_names` (a natives list, a handler table and
+names lists) in a `gta6_script_names` folder beside the executable; the editor and the CLI read
+them before the names folder of the configuration directory, where a file of the same name stands
+in place of the shipped one. No project ships: the inspector builds one from the user's archive.
+The first lines of a decompiled source say which lists named things; `disasm` and the facts of a
+program consult no list.
 
 | List | Form | Names |
 |---|---|---|

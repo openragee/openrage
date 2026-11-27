@@ -1,0 +1,252 @@
+type_hash64	type_hash32	name	evidence
+0x013772C948F373B3	0xA44CD273	EVENT_PERSCHAR_PED_SPAWNED	strings list, whole names
+0x02588C63D828318A	0x4B48889D	ComputerActionData	word search: one word + a learned last word (101)
+0x02C4AC0C208B5DB7	0x65A988C2	MediaAdSlot	word search: a learned first word + two words (top 12,000)
+0x02F0E42917CAEED4	0x52AE9189	EVENT_PLAYER_PROMPT_TRIGGERED	parser dump
+0x030E7899F42F7876	0x1B7C6163	ILocalisedString	word search: a learned first word + two words (top 12,000)
+0x05461425F6BAE99B	0x10F9309A	EVENT_CONTENT_REGISTRATION	word search: UPPER_UPPER_UPPER (top 1,100)
+0x05821B80C09B9E47	0x64636825	TaskInteractionActionData	word search: two words (top 12,000) + a learned last word
+0x066F616ECE521229	0x59B8075E	TutorialData	word search: a learned first word (59) + one word
+0x06A3CDF0B6F93F3C	0x18188027	Matrix44	parser dump members
+0x06BF3F9F3E4E9D90	0x3B0F14FE	CheckTagQuery	word search: one word + a learned last word (101)
+0x077BDFF54734FA70	0x9A583282	AIEventType	word search: one word + a learned last word (101)
+0x07CF157D5DB212F9	0x31B44E41	UIHashString	word search: one word + a learned last word (101)
+0x083E10FC9E44E1B4	0x72B4B7DE	SimStateSaveData	word search: two words (top 12,000) + a learned last word
+0x085F126B3EB7DAED	0x4DB94B12	LootTableReward	strings list, three adjacent parts run together
+0x09605F7C0E665236	0x7A70DFA5	EVENT_CONVERSATION_STATE_CHANGED	word search: EVENT_ + three words
+0x0A51E8F30C11C022	0x3B29B7B9	InventoryTransferId	word search: one word + a learned last word (101)
+0x0B3A679097B999F3	0xC094AB61	EVENT_PED_PLACE_ENTITY	word search: EVENT_ + three words
+0x0B587787894590F3	0x2E49E9CC	EVENT_PED_EXITED_TRANSPORT	word search: EVENT_ + three words
+0x0BE7505715C1FFEC	0x42617404	EVENT_ENTITY_DISARMED	strings list, whole names
+0x0D096E91A55A4DC9	0xD5A6545D	UIFeedActionData	word search: two words (top 12,000) + a learned last word
+0x0DBC477336D521D3	0xCF221DD9	MediaSchedules	word search: a learned first word (59) + one word
+0x0E0D800DFCCDFA6D	0xB03F4D44	LayoutModelHide	word search: one word + a learned last word (101)
+0x0FCE713EBE7E80B9	0xF79F5B8B	EVENT_ENTITY_EXPLOSION	strings list, whole names
+0x0FD0A658B08D13CE	0x0768A42B	MediaBinkData	word search: one word + a learned last word (101)
+0x10B37A2315A41266	0x011FD2CB	EVENT_ITEM_INTERACTION_PLAYER_EVENT	word search: EVENT_ + four words (top 160)
+0x11257BE55C6893F8	0xD814E68A	MissionInventoryConfig	word search: one word + a learned last word (101)
+0x11826419E5033EDA	0x46107F8E	BedSceneActionData	word search: two words (top 12,000) + a learned last word
+0x137D29A877358E8E	0x530BC0BD	InventoryItemData	word search: one word + a learned last word (101)
+0x14F820A30449A283	0x12AB59DE	EVENT_PLAYER_GREETED_PED	strings list, whole names
+0x15AE68B2698EF067	0x906D8124	TutorialSignalActionData	word search: two words (top 12,000) + a learned last word
+0x166BE46BCE984ABD	0x50870403	EVENT_CHALLENGE_GOAL_COMPLETE	strings list, whole names
+0x19C4A58870497EF4	0xB69B22C7	EVENT_VEHICLE_DESTROYED	strings list, whole names
+0x1A2D90417D3EE0A8	0xEE720342	EVENT_WEAPON_STATE_CHANGED	word search: EVENT_ + three words
+0x1A56A5378B20A4A7	0x1BD74A45	EVENT_SCRIPT_MELEE_ACTION	word search: EVENT_ + three words
+0x1A773BD9EC59785F	0x60F35A24	EVENT_PED_DESTROYED	strings list, whole names
+0x1A8E2420A75CA329	0xE56CE4F9	CarriableEntrySaveData	word search: two words (top 12,000) + a learned last word
+0x1DD7E1DE4B197C95	0xD49E35FC	NetworkGroupId	word search: one word + a learned last word (101)
+0x1DE21991C338938A	0xBF68BFEC	MediaBlockData	word search: one word + a learned last word (101)
+0x1F718503D67C51B4	0x159F954C	UseTaxiActionData	word search: two words (top 12,000) + a learned last word
+0x20625B70CFD226BA	0xD6D40C9F	TxdHashString	word search: one word + a learned last word (101)
+0x21236941DF9EC73A	0xC98C79C2	EVENT_ENTITY_DAMAGED_BY_PLAYER	word search: EVENT_ + four words (top 160)
+0x222833B3619CDE93	0xF4282B93	DwdHashString	word search: one word + a learned last word (101)
+0x22AC624DBC9842DC	0x12BED0FB	EVENT_DOOR_INTERACTION_TASK	word search: EVENT_ + three words
+0x23F8DAF98967C138	0xFD59CA16	PendingProxyActionData	word search: two words (top 12,000) + a learned last word
+0x25DD810413DFF0DA	0x88FA5BBA	IInputAction	word search: a learned first word + two words (top 12,000)
+0x25F1BA0F331E5DBC	0xE9476A6B	ChallengeTaskInfo	word search: one word + a learned last word (101)
+0x25FA75A60D9A4C9B	0xA0BD9A75	BlockScenarioActionData	word search: two words (top 12,000) + a learned last word
+0x269040BCE56EBBDF	0xE9FDE9D0	MediaDisplayData	word search: one word + a learned last word (101)
+0x26E7DCD414658920	0x49925A83	SetRadioActionData	word search: two words (top 12,000) + a learned last word
+0x26EE125AC669EE1A	0x1D088AE3	Matrix34	parser dump
+0x296855E573FA5F50	0x9227B471	BoxCreateParams	word search: one word + a learned last word (101)
+0x29E12A12EDF5AD98	0xF6764A29	IOnDynamicUpdate	word search: I + three words (top 900)
+0x2A2E9CA80D9CFF3D	0x3337473C	EVENT_ENTITY_INTERACTION_COMPLETE	word search: EVENT_ + three words
+0x2B9D774F8C16D49A	0x20499452	IOnUpdate	word search: a learned first word + two words (top 12,000)
+0x305D95DC9696EBD6	0x149E6988	PolyCreateParams	word search: one word + a learned last word (101)
+0x3172BF4F4562CF59	0x576B08B9	LayoutEntity	word search: a learned first word (59) + one word
+0x322417AF1513BCBB	0x85719378	ScriptReservationHandle	word search: one word + a learned last word (101)
+0x32BE7B637E24E95F	0x3F1DC2BF	DialogueEntityActionData	word search: two words (top 12,000) + a learned last word
+0x34FDEF5CE895BAA5	0x991B09F5	PlayParticleActionData	word search: two words (top 12,000) + a learned last word
+0x354D1A8540B1A21E	0x498B4F64	QueryConditionData	word search: one word + a learned last word (101)
+0x360DD87C54869D76	0x22D593F8	ChallengeSubTaskInfo	word search: two words (top 12,000) + a learned last word
+0x3652FD0F869A7C55	0x2CC152B4	EVENT_TEXT_MESSAGE_RECEIVED	strings list, whole names
+0x37A581EFE237AAC2	0x93B7032F	EVENT_PLAYER_ESCALATED_PED	strings list, whole names
+0x383C089959A083DD	0x75CB3E0C	EVENT_NETWORK_NETWORK_BAIL	strings list, whole names
+0x38CF1DAB56A27D13	0xF37D336E	Vector2	strings list
+0x398207EDDC3B7FC6	0x7FDA4C5A	EVENT_ENTITY_DESTROYED	strings list, whole names
+0x3A1D731801AFB362	0xBBB7E55E	IsAvailableQuery	word search: a learned first word + two words (top 12,000)
+0x3A90B3F141886345	0x976E7CBF	IVehicleRacing	word search: a learned first word + two words (top 12,000)
+0x3C54EC5AFD682643	0x4BD8BF78	AmbientSignalActionData	word search: two words (top 12,000) + a learned last word
+0x3EB2AC895609B266	0xAAB956CC	EVENT_KNOCKEDOUT	strings list, whole names
+0x3F824810DFF909EB	0x01B2FD46	InventoryItemGuid	word search: one word + a learned last word (101)
+0x402894FEF572C26E	0x9B5B1221	EVENT_NETWORK_NETWORK_ROS_CHANGED	strings list, whole names
+0x42DC8D9084206B67	0x30F974AF	CooldownTutorialActionData	word search: two words (top 12,000) + a learned last word
+0x448F13D6F26F2053	0xE4D85C8A	EntityInteractionConfiguration	word search: a learned first word + two words (top 12,000)
+0x453B65B9A6158BE2	0xCE2030E3	CopyCreateParams	word search: one word + a learned last word (101)
+0x462762AC1787DA83	0xCE863CA3	EVENT_CRIME_REPORTED	strings list, whole names
+0x4912CCDD1C351CDA	0xDADC8634	IAnimBlackboard	word search: a learned first word + two words (top 12,000)
+0x4951848B39E0AF3A	0xFB45330E	ClearAreaActionData	word search: two words (top 12,000) + a learned last word
+0x4D74555E49C1527D	0xA5A684F1	InventoryCopyNode	word search: a learned first word + two words (top 12,000)
+0x4E59BAA296E183C5	0xACDD2469	LayoutCharacter	word search: a learned first word (59) + one word
+0x4FC20EA6822FED72	0x33B78A95	ExhaustedActionSaveData	word search: two words (top 12,000) + a learned last word
+0x51708A42F7055B80	0xAD35556E	InventoryCopyItem	word search: one word + a learned last word (101)
+0x5178B2EDE26A9E64	0xED547FD8	AggregateCreateParams	word search: one word + a learned last word (101)
+0x51CEC1B5B260CF0D	0x5006F91B	EVENT_NETWORK_PED_HAT_SHOT_OFF	strings list, whole names
+0x5308E73D08931C57	0x699D1095	AnimSceneActionData	word search: two words (top 12,000) + a learned last word
+0x533157A71E11DD0F	0x6BFF0006	EVENT_PLAYER_ANTAGONIZED_PED	strings list, whole names
+0x55DA84BFA5DD71F5	0x67F83E64	SignalTutorialActionData	word search: two words (top 12,000) + a learned last word
+0x56C64A1F5C69977C	0x20FD9B6D	AmbientObjectiveSaveData	word search: two words (top 12,000) + a learned last word
+0x56C67DFF42B50D8A	0x4DA0B18B	RobberyTillInfo	word search: one word + a learned last word (101)
+0x56F2BEE9F8033BE9	0x499FBC05	LayoutScenarioPoint	word search: one word + a learned last word (101)
+0x5CABD84F4F59C59B	0x30EA5F7D	InventoryMirrorConfig	word search: one word + a learned last word (101)
+0x5D9BD8DEC9860EEF	0xE62146FC	CapsuleCreateParams	word search: one word + a learned last word (101)
+0x5DCF95C731C393C9	0x70DB8224	LayoutLocation	word search: a learned first word (59) + one word
+0x5E52EB9D9FBC8D1D	0x88B9994B	EVENT_NETWORK_PLAYER_JOIN_SCRIPT	strings list, whole names
+0x5E8FE89A44122B2C	0xB40EB03D	SignalEntityConditionData	word search: two words (top 12,000) + a learned last word
+0x5EAC45FA7BEE9B10	0x04EA8DBE	EVENT_FISHING_STATE_CHANGED	word search: EVENT_ + three words
+0x6017878156A78D0B	0xD6947999	Vector4	parser dump
+0x607739FABDA0D07E	0x959A1672	IInjuredAssistedHelper	word search: I + three words (top 900)
+0x653F72A1CF4703D8	0x9297D5FC	DFStrRef	word search: a learned first word + two words (top 12,000)
+0x66335212CD33077B	0x8E57E7CE	EVENT_OBJECT_DROP	word search: UPPER_UPPER_UPPER (top 1,100)
+0x66E60C1F1E0F6ED4	0x2BDD985F	EVENT_PED_CREATED	strings list, whole names
+0x67F573425633695C	0x0C2D9167	FlowStateSaveData	word search: two words (top 12,000) + a learned last word
+0x687DE18693B809B7	0x76F78FFE	ShopOverrideSaveData	word search: two words (top 12,000) + a learned last word
+0x68F16E266DFCADE5	0x478199CE	RequestElevatorActionData	word search: two words (top 12,000) + a learned last word
+0x696369556E8E97F5	0xD7092502	EVENT_PICKUP_CARRIABLE	strings list, whole names
+0x697963674F6C3914	0x9DED4893	EVENT_PLAYER_PED_CHANGED	word search: EVENT_ + three words
+0x6B4AD3F554C6B827	0x6C5E423A	PhoneBinkActionData	word search: two words (top 12,000) + a learned last word
+0x6B5DD1B5B0B529C6	0xDF4F6F58	SignalInteractionActionData	word search: two words (top 12,000) + a learned last word
+0x6D04364B398950B5	0xCC12B016	ItemDatabasePath	word search: a learned first word + two words (top 12,000)
+0x6DBFF1BF04A225FF	0x60ED0108	EVENT_NETWORK_PLAYER_MISSED_SHOT	strings list, whole names
+0x6DDABCF4A2420781	0x33CA1F8D	ItemKitData	word search: one word + a learned last word (101)
+0x6E3338A62013B4CE	0xA06AA928	EVENT_WANTED_DISABLED	word search: UPPER_UPPER_UPPER (top 1,100)
+0x6ED2559BA0346800	0x22FE0161	EVENT_NETWORK_APP_LAUNCHED	strings list, whole names
+0x730596133A3D6428	0x74C3A8A2	EVENT_SCRIPT_DOOR_INTERACTION	word search: EVENT_ + three words
+0x7433F96AA70E94D7	0xB804CB61	DFField	word search: a learned first word (59) + one word
+0x747D60F314F4E800	0xDF035AF4	MapDataHashString	word search: two words (top 12,000) + a learned last word
+0x754A2953BB104C3B	0x6C92E3EA	EVENT_REGION_CHANGED	word search: EVENT_ + two words
+0x75E4D9B8B68EB217	0xD72D7FF2	EVENT_NETWORK_CLOUD_EVENT	strings list, whole names
+0x75F1730035A942ED	0x7801F196	EVENT_NETWORK_BULLET_IMPACTED_MULTIPLE_PEDS	strings list, whole names
+0x76D867C10539C952	0xE4EE4E45	EVENT_NETWORK_PLAYER_COLLECTED_PICKUP	strings list, whole names
+0x76E0506FB11D0F32	0x4B571D0C	ToggleOutfitActionData	word search: two words (top 12,000) + a learned last word
+0x77DED603725B05E8	0x6763F6C6	WardrobeEntityActionData	word search: two words (top 12,000) + a learned last word
+0x78493C08CC466CC3	0xFA92104B	HeatRequestSaveData	word search: two words (top 12,000) + a learned last word
+0x79051972187EAB43	0x8F6E91D9	EVENT_ITEM_DROPPED	word search: EVENT_ + two words
+0x795ECDB242168087	0xE4769BDC	Pixel	strings list, single parts
+0x7AA14C380CF6D229	0xC53E4672	MediaScheduleData	word search: one word + a learned last word (101)
+0x7E190A7B8F0FB943	0xA693E56E	EVENT_NETWORK_PERMISSION_CHECK_RESULT	strings list, whole names
+0x7E352CC7B38AB0D7	0x313CDF91	PedExtensions	word search: a learned first word (59) + one word
+0x7F12F3966F6AB73F	0xE8095BCE	TutorialEscalationSaveData	word search: two words (top 12,000) + a learned last word
+0x800865AB3CF7552F	0x500DE00C	Quaternion	parser dump
+0x80F3AA0880F7A62A	0xCC08BFD4	GamerHandle	word search: a learned first word (59) + one word
+0x810380A2C0A5DD79	0x3FF5A114	EVENT_SCENARIO_TRIGGERED	word search: EVENT_ + two words
+0x820F23AB0E3DC65C	0xE4C3E578	EVENT_SCENARIO_REMOVE_PED	strings list, whole names
+0x8261EFE717D34AE8	0x6AE2133B	EVENT_NETWORK_PED_DISARMED	strings list, whole names
+0x8356CA4FB8691103	0xCD30B1BC	PedMethods	word search: a learned first word (59) + one word
+0x839F1D1E0378909C	0xE5EC5018	EVENT_NETWORK_PLAYER_LEFT_SCRIPT	strings list, whole names
+0x85E5530A87888C1A	0x5B50F84E	EVENT_SCOPED	word search: UPPER_UPPER
+0x881D3DEA94EC86F9	0x2AC807F5	OpenElevatorActionData	word search: two words (top 12,000) + a learned last word
+0x899E2D4557218156	0x813399C8	EVENT_INTERACTION_TRANSITION	word search: UPPER_UPPER_UPPER (top 1,100)
+0x89C190AC1B5F4408	0x90DD4E66	LayoutCombatGoal	word search: one word + a learned last word (101)
+0x89EFC2EA1CB4E350	0xBA291CB5	EVENT_NETWORK_REVIVED_ENTITY	strings list, whole names
+0x8A2B79B62C89F639	0xC92CDECA	Vector3	parser dump
+0x8B5F0F44C7173AC5	0x18010D37	EVENT_ENTITY_DAMAGED	parser dump
+0x8CFF95518AED2633	0xADD35FE1	EVENT_CLIMB_STARTED	word search: EVENT_ + two words
+0x8E97D19A0028C41F	0xDB3269D0	EVENT_CHALLENGE_REWARD	strings list, whole names
+0x8FADB787F9481F90	0x1C712441	UnlockedTutorialSaveData	word search: two words (top 12,000) + a learned last word
+0x907495D74325197C	0xBEBE349F	UGCPhotoSaveData	word search: two words (top 12,000) + a learned last word
+0x911FAB7974E4BD9E	0x7948E1AA	ExhaustedTutorialSaveData	word search: two words (top 12,000) + a learned last word
+0x915FC64DBA99C350	0x7E21283B	VehicleBlips	word search: a learned first word (59) + one word
+0x93DCA78CF929CBD3	0xF3EC43BE	ItemEffectSaveData	word search: two words (top 12,000) + a learned last word
+0x93E3BA9CD660F811	0x55F246B7	EntityType	parser dump
+0x95A3E79D87AC4C4D	0xE5043285	CalendarChallenge	word search: a learned first word (59) + one word
+0x95D22D18DA3E61F6	0xDE1126F3	EVENT_MISS_INTENDED_TARGET	strings list, whole names
+0x95FF4D905C69FC50	0xE755A3E2	EVENT_EXPLOSION_INSTANCE	word search: UPPER_UPPER_UPPER (top 1,100)
+0x969C357160A4DF53	0xD667DAB9	DFRef	word search: a learned first word (59) + one word
+0x9769107122AF9D56	0xA5E4EAF7	EVENT_LOOT	strings list, whole names
+0x976C9781E20FB6B3	0x2E7790AD	CylinderCreateParams	word search: one word + a learned last word (101)
+0x9894454A197F8FA4	0xCA9EF433	EVENT_PICKUP_SPAWNED	strings list, whole names
+0x98C188598F1E5DF6	0x514F85AD	MediaTagSlot	word search: a learned first word + two words (top 12,000)
+0x99A46ADF653FD469	0xFB694B3C	LogChannel	word search: a learned first word (59) + one word
+0x9B6A9021207212C9	0xCF20D697	TutorialActionData	word search: one word + a learned last word (101)
+0x9BE7E597C5321AD9	0x68B37269	AmbientVehicleSaveData	word search: two words (top 12,000) + a learned last word
+0x9C5A3982B72834D5	0x63813030	EVENT_CHALLENGE_GOAL_UPDATE	strings list, whole names
+0x9D60287AEA7A0A51	0x935E2968	ArchetypeHashString	word search: one word + a learned last word (101)
+0x9E65E065EF69B175	0x92BF8ECE	EVENT_NETWORK_SYSTEM_SERVICE_EVENT	strings list, whole names
+0x9E66C5F3739D29D4	0x0D462872	RPC	strings list, single parts
+0x9F0B174583AA5456	0x598B8DFF	ElevatorEntityActionData	word search: two words (top 12,000) + a learned last word
+0xA13B3BDD961D277C	0x7E73649F	FlowCommandSaveData	word search: two words (top 12,000) + a learned last word
+0xA2EE32E601DA60A1	0x7D6FD320	EVENT_ENTITY_INTERACTION_EVENT	word search: EVENT_ + three words
+0xA7B3B809E10CC993	0x89641A69	PersistentPropActionData	word search: two words (top 12,000) + a learned last word
+0xA7B71BEE4BC81952	0x613C618F	ConsumableMenuActionData	word search: two words (top 12,000) + a learned last word
+0xA941240F4E5EDF9D	0x76A60F0A	ScaledTransform	word search: a learned first word (59) + one word
+0xAA28B5D7A4CE496A	0xA2E05BC2	LayoutWeaponPickup	word search: one word + a learned last word (101)
+0xABC3FD61E5274FA8	0x75BB8036	TimerSaveData	word search: one word + a learned last word (101)
+0xAC86DA05A49C0091	0x72B20426	EVENT_CRIME_CONFIRMED	strings list, whole names
+0xACDBF465B568F414	0xEC76A657	IncludedKit	word search: a learned first word (59) + one word
+0xAD9DDD493E94F87B	0xBF2BE741	IsShopQuery	word search: one word + a learned last word (101)
+0xB027BDB6FF30A423	0x255EA0E7	NetworkOwnershipBehaviour	word search: one word + a learned last word (101)
+0xB1715A81B15B12C9	0xB08824CC	EVENT_MEMORY	word search: UPPER_UPPER
+0xB43676841416B9CC	0x93808CF8	RigidTransform	word search: a learned first word (59) + one word
+0xB5F20C33BDB3C368	0xD6B16E1E	SphereCreateParams	word search: one word + a learned last word (101)
+0xB61F37D5C22D9BE3	0x545C9E04	EVENT_NETWORK_PRESENCE_STAT_UPDATE	strings list, whole names
+0xB6DB1F8E78151353	0x7D1EF05A	EVENT_ITEM_PROMPT_INFO_REQUEST	strings list, whole names
+0xB70F6027E8579D89	0xA8156A45	EVENT_ROPE_BREAK	word search: UPPER_UPPER_UPPER (top 1,100)
+0xB8E9FF21D7C5632D	0x1F689142	EVENT_GET_UP	strings list, whole names
+0xB9C163B399DBAE04	0x91A52AB7	PartnerTextingSaveData	word search: two words (top 12,000) + a learned last word
+0xB9F55E3ADD16D3EB	0x050F67AB	EVENT_ANIMAL_INTERACTION	word search: UPPER_UPPER_UPPER (top 1,100)
+0xBB29CFC4A5ADB8A3	0xBB10C8A0	EVENT_PLAYER_UNABLE_TO_ENTER_VEHICLE	strings list, whole names
+0xBB9E64DE27D40032	0x73A5EA18	InitialRespawnData	word search: one word + a learned last word (101)
+0xBC5AC740538F2EDE	0xC72D7977	BasketballHoop	strings list, two adjacent parts run together
+0xBD9D40694F1A7A11	0x196B19C8	Broadcast	strings list, whole names
+0xBE6FFE12DE07588C	0x46CFC7CE	ObjectiveTutorialActionData	word search: two words (top 12,000) + a learned last word
+0xBEA4BC75862C44D1	0x9CC3EB89	EVENT_PED_ENTERED_TRANSPORT	word search: EVENT_ + three words
+0xC0230C8460CF63FE	0x6B5FD353	LayoutPed	word search: a learned first word (59) + one word
+0xC2F6D11BF3F0940B	0x052D2652	<PrivateImplementationDetails>	extra candidates
+0xC4C00828E4029999	0xF1799659	AnimScene	engine handle words
+0xC5CFBA342096C9B5	0xBB89EB42	MediaSlotData	word search: one word + a learned last word (101)
+0xC696DD8E10FC0B69	0x284E1EC8	EVENT_NETWORK_INCAPACITATED_ENTITY	strings list, whole names
+0xC6C786D560E2F52E	0x62D9E649	LadderInfo	word search: a learned first word (59) + one word
+0xC937973F322D0006	0x40702B55	EVENT_INVENTORY_ITEM_PICKED_UP	strings list, whole names
+0xC979D22376501BCE	0x4C1E3DF8	StatNameHashString	word search: two words (top 12,000) + a learned last word
+0xCA5CF2821150CB78	0x1E33FF4D	ChannelSeverity	word search: a learned first word (59) + one word
+0xCE76E9161A25AD90	0xA1504468	DynamicLocationSaveData	word search: two words (top 12,000) + a learned last word
+0xCE8AB5AED0A42B38	0xCD2F8D57	LayoutVolume	word search: a learned first word (59) + one word
+0xCEBF0486903CA4FD	0xFD5137A4	EVENT_SCENARIO_ADD_PED	strings list, whole names
+0xD03959513508B6B8	0x999BE7CC	AccessibilitySettingType	word search: one word + a learned last word (101)
+0xD43D2EFE34981702	0x9C81EA5C	LiteralHashString	strings list, single parts
+0xD4DA21EC6B225E5D	0x86F4DE8D	MediaBinkSlot	word search: a learned first word + two words (top 12,000)
+0xD6060C0FBD7BC5BD	0xB03F744A	ContactSaveData	word search: one word + a learned last word (101)
+0xD6092A8FFE4EE278	0x7F0FBDBF	BundleParentNode	word search: a learned first word + two words (top 12,000)
+0xD83213139ADA7FD5	0xFF6E7EC0	EVENT_PLAYER_EXPLOSION	word search: UPPER_UPPER_UPPER (top 1,100)
+0xD8D1E775AF1AA0FB	0x09C19B90	EVENT_NETWORK_SIGN_IN_STATE_CHANGED	strings list, whole names
+0xDA98EF4A6D4ADDA7	0x7B25D3F8	AtLocationQuery	word search: one word + a learned last word (101)
+0xDC5DA2C04599E62F	0x447B7EE1	LayoutPropset	word search: a learned first word (59) + one word
+0xDC8AF0B46EBE3F61	0x1E92274D	BundlePathEntry	word search: one word + a learned last word (101)
+0xDD87DC70CC570C7D	0x213D6AA3	EVENT_NETWORK_CHEAT_TRIGGERED	strings list, whole names
+0xDEB3F814A747B2BE	0x4E6B200D	ScSticker	word search: a learned first word (59) + one word
+0xDF44AD33B187EEA9	0x427E040E	MemoryUserID	word search: one word + a learned last word (101)
+0xDFEB0064C8AF4E92	0x46FDB701	LayoutPickup	word search: a learned first word (59) + one word
+0xE15BC00599BEFA8B	0x007849EF	MediaEntryTags	word search: a learned first word + two words (top 12,000)
+0xE1618648135722AA	0x130AC105	IUiApp	word search: a learned first word + two words (top 12,000)
+0xE1E2810AA34F6ED6	0xE41EF3B6	EVENT_NETWORK_HOST_MIGRATION	strings list, whole names
+0xE44FB0C5BC20CC3A	0xB2E17922	DelayEntityActionData	word search: two words (top 12,000) + a learned last word
+0xE48AD6C9C46FF7B5	0x90F48BEB	EVENT_VEHICLE_CREATED	strings list, whole names
+0xE5125CB6FB927BAA	0xE60FE510	IUiContextHandle	word search: I + three words (top 900)
+0xE6174DD9C2A02E2F	0x6E247BCB	ExhaustTutorialActionData	word search: two words (top 12,000) + a learned last word
+0xE624A52D85A21F08	0x319BB142	EVENT_PLAYER_ROBBED_PED	strings list, whole names
+0xE7E9E0227B2D0190	0xEE2CC58C	DFObjectHandle	word search: one word + a learned last word (101)
+0xE84DC82465F52160	0x2614AE04	MediaDisplaySaveData	word search: two words (top 12,000) + a learned last word
+0xE8CFE1401F01AFFB	0x8C21D089	SecObjectId	word search: one word + a learned last word (101)
+0xE9D21738E920CF31	0xF3ED562D	TextMessageSaveData	word search: two words (top 12,000) + a learned last word
+0xEAF4B80D77725BC4	0xCF3B2D41	EVENT_STAT_VALUE_CHANGED	strings list, whole names
+0xEBE09732FB78B8E3	0xE53632F9	EVENT_VEHICLE_STUCK	word search: EVENT_ + two words
+0xED43BDC816683627	0x5E952B9C	IRaceTrack	word search: a learned first word + two words (top 12,000)
+0xEEF3FD26F3F027C0	0xEA468E8B	EntityTypeFlags	word search: one word + a learned last word (101)
+0xEF7356BE45FBA480	0xDDB15619	UILiteralHashString	word search: two words (top 12,000) + a learned last word
+0xF0B4DD8A3C6D85EB	0xCE8E8FC8	InitialSpawnSaveData	word search: two words (top 12,000) + a learned last word
+0xF4BCD680ABB11051	0x1505625B	FlowNodeSaveData	word search: two words (top 12,000) + a learned last word
+0xF52E8AB99A5BE98B	0x39FBA930	BlockedInteractionSaveData	word search: two words (top 12,000) + a learned last word
+0xF605D29096A0E779	0x48061112	EVENT_CARRIABLE_UPDATE_CARRY_STATE	strings list, whole names
+0xF6B86CAE00E9C4F6	0x14B1352F	EVENT_RAN_OVER_PED	strings list, whole names
+0xF7ED8F09C0752DDC	0xE178DD1A	DFData	word search: a learned first word (59) + one word
+0xF8BC711D4B42DAF1	0xD00CE40D	InventoryBundleAttributes	word search: a learned first word + two words (top 12,000)
+0xFA24C1132906EBFF	0x359F66B2	EVENT_SCENARIO_ENTERING	word search: UPPER_UPPER_UPPER (top 1,100)
+0xFA5AFD9E8EE036E3	0x1DB1EB3F	IsDiscoveredQuery	word search: a learned first word + two words (top 12,000)
+0xFAB693FB6BD8B91D	0x5678D12F	RobberySafeInfo	word search: one word + a learned last word (101)
+0xFB644652F7DA91E2	0xB383EF50	Safe	strings list, re-cased
+0xFB9ED3D410EDB0D9	0xDF490A5D	HashString	parser dump
+0xFBF144981B24AEE2	0xCBD10DE1	IsActivityQuery	word search: one word + a learned last word (101)
+0xFC074B84560100A3	0xD0BB18ED	IOnConditionalUpdate	word search: I + three words (top 900)
+0xFD49CBE32EAC8BD4	0xCDB85C02	EVENT_SCENARIO_DESTROY_PROP	strings list, whole names

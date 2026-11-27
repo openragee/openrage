@@ -155,7 +155,9 @@ Names:
   download-natives      Fetch alloc8or's natives lists and CSY0N's crossmap from GitHub into
                         the configuration directory, recording each file's commit. Runs only
                         when you ask. They name GTA V's natives and none of GTA VI's.
-  ⚠ OpenRage ships no natives list and no names. A hash no list names stays a hash. The
+  ⚠ A package ships GTA VI lists in a `{NAMES_FOLDER}` folder beside the executable, read
+    before the configuration directory's, where a file of the same name stands in place of
+    the shipped one. A hash no list names stays a hash. The
     first lines of a source say which lists named things, and the last lines of
     `script <src>` do; a listing and a list of functions or natives use the lists and do
     not say which.

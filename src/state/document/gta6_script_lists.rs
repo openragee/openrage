@@ -51,14 +51,26 @@ const LABELS: &str = "labels";
 // addresses: a compiled program states an address, so with no such hash no natives list names anything.
 // ponytail: read again for every script opened; cache them if opening scripts in bulk shows the cost.
 pub fn supplied(dir: Option<&Path>) -> Supplied {
+    supplied_over(None, dir)
+}
+
+/// [`supplied`] over the lists a package ships in `shipped` and the folder `dir`, a file of `dir` in place of a shipped one of its name.
+pub fn supplied_over(shipped: Option<&Path>, dir: Option<&Path>) -> Supplied {
     let mut out = Supplied::default();
     let mut lists: Vec<NativeDb> = Vec::new();
-    let entries = dir.and_then(|dir| std::fs::read_dir(dir).ok());
-    let mut files: Vec<PathBuf> = (entries.into_iter().flatten().flatten())
-        .map(|entry| entry.path())
-        .filter(|path| path.is_file())
-        .collect();
-    files.sort();
+    let mut by_name: std::collections::BTreeMap<std::ffi::OsString, PathBuf> = Default::default();
+    for dir in [shipped, dir].into_iter().flatten() {
+        let entries = std::fs::read_dir(dir).into_iter().flatten().flatten();
+        for path in entries
+            .map(|entry| entry.path())
+            .filter(|path| path.is_file())
+        {
+            if let Some(name) = path.file_name() {
+                by_name.insert(name.to_owned(), path);
+            }
+        }
+    }
+    let files = by_name.into_values();
     // Each file's text, with whether every row of it proves itself by its hash.
     let mut held: Vec<(String, Result<String, String>, bool)> = Vec::new();
     for path in files {

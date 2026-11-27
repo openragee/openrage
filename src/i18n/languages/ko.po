@@ -17317,8 +17317,8 @@ msgstr "단독으로 디컴파일되었습니다. 다른 프로그램이 알려 
 msgid "A project file was found and not read: {why}"
 msgstr "프로젝트 파일을 찾았지만 읽지 못했습니다: {why}"
 
-msgid "Put names lists, natives lists and a project.json in this folder, then open the script again: OpenRage ships none. Each file is read as a names list where it reads as one, else as a natives list; a file whose name starts with natives, or that holds JSON, is tried as a natives list first"
-msgstr "이름 목록, 네이티브 목록, project.json을 이 폴더에 넣은 다음 스크립트를 다시 여십시오. OpenRage에는 어느 것도 포함되어 있지 않습니다. 각 파일은 이름 목록으로 읽히면 이름 목록으로, 그렇지 않으면 네이티브 목록으로 읽습니다. 이름이 natives로 시작하거나 JSON이 들어 있는 파일은 먼저 네이티브 목록으로 읽어 봅니다"
+msgid "Put names lists, natives lists and a project.json in this folder, then open the script again: a file here stands in place of a list OpenRage ships under the same name. Each file is read as a names list where it reads as one, else as a natives list; a file whose name starts with natives, or that holds JSON, is tried as a natives list first"
+msgstr "이름 목록, 네이티브 목록, project.json을 이 폴더에 넣은 다음 스크립트를 다시 여십시오. 여기 있는 파일은 OpenRage에 포함된 같은 이름의 목록 대신 사용됩니다. 각 파일은 이름 목록으로 읽히면 이름 목록으로, 그렇지 않으면 네이티브 목록으로 읽습니다. 이름이 natives로 시작하거나 JSON이 들어 있는 파일은 먼저 네이티브 목록으로 읽어 봅니다"
 
 msgid "Lifted listing"
 msgstr "바이트코드에서 올린 리스팅"

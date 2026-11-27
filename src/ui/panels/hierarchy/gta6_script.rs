@@ -507,7 +507,7 @@ fn draw_facts(ui: &mut egui::Ui, state: &mut AppState, doc_id: DocumentId, selec
     draw_labels(ui, state, doc_id, &doc);
     draw_build(ui, state, doc_id, &doc);
     let open = ui.button(tr!("Open names folder")).on_hover_text(tr!(
-        "Put names lists, natives lists and a project.json in this folder, then open the script again: OpenRage ships none. Each file is read as a names list where it reads as one, else as a natives list; a file whose name starts with natives, or that holds JSON, is tried as a natives list first"
+        "Put names lists, natives lists and a project.json in this folder, then open the script again: a file here stands in place of a list OpenRage ships under the same name. Each file is read as a names list where it reads as one, else as a natives list; a file whose name starts with natives, or that holds JSON, is tried as a natives list first"
     ));
     if open.clicked() {
         if let Some(dir) = names_dir() {

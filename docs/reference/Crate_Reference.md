@@ -215,6 +215,10 @@ What follows from the rule, each on files built by hand as PSO and as RBM:
   where the file it came from stated none, and any other at its empty value
   (`a_parked_vehicle_copied_between_files_takes_the_members_the_file_it_enters_states`,
   `a_copy_of_a_class_the_file_states_takes_the_members_it_lacks_and_so_does_a_record_it_holds`).
+- **A member set on a copy whose own file's class lacks it is held where the class has it in the
+  file the copy enters**, and is refused there in the same words as in its own file where the class
+  lacks it too
+  (`a_member_set_on_a_copy_is_held_where_the_file_it_enters_has_the_member_its_own_file_lacked`).
 - **One missing member is refused, by its name**: one the table states with a type no value is
   built for, a run of bytes nothing counts or a type byte no reader names
   (`a_copy_that_lacks_a_member_of_a_type_no_value_is_built_for_is_refused_by_name`).
@@ -223,7 +227,7 @@ What follows from the rule, each on files built by hand as PSO and as RBM:
 - **An interior takes a room as a copy, a room built there, a portal and an attachment, and loses
   each**, whatever the snapshot declares of its classes
   (`an_interior_takes_rooms_a_portal_and_an_attachment_whatever_the_snapshot_declares_of_its_classes`).
-  The install measure below adds and removes an archetype, and no room, portal or attachment.
+  Left: a room built in an interior of an install, which is held on files built by hand only.
 
 `crates/io/or-io/tests/a_shape_edit_is_laid_out_by_what_the_document_states.rs` holds these in a
 process that installed a snapshot whose classes state fewer, more and other members than the files',
@@ -234,11 +238,33 @@ binary as threads of one process: a test that installs one makes every other tes
 test with a snapshot, so such a suite is a binary of its own, and its process with no snapshot is
 the binary run again as a child.
 
-On both installs, one type file in fifty takes an archetype added as a copy and removed again, and
-one map in fifty its last entity removed and put back, each step saved, read back equal and saved
-again to the same bytes, in a process that installed the staged snapshot as the app does and in one
-that installed none
-(`a_sample_of_an_installs_type_files_and_maps_takes_a_shape_edit_with_and_without_the_staged_snapshot`
+⚠ **A class the families declare in code is laid out as declared, whatever a table or a snapshot
+states of it.** The ped variation and creature classes are declared in
+`crates/io/or-io/src/meta/typed/ped_types.rs` with the bytes of a class no member names and with its
+signature word, which neither a type table read back as classes nor a snapshot carries, so the
+families come first of the three sources, and every class a root of those families reaches is
+declared there. A ped variation takes a drawable as a copy and one built there, in a process whose
+snapshot declares a member more of the drawable's class, to the bytes a process with no snapshot
+writes
+(`a_ped_variation_takes_a_drawable_copied_and_one_built_whatever_the_snapshot_declares_of_its_class`).
+A document whose own table states such a class with a member the declaration lacks, or without one
+it has, is refused an edit that changes its shape, by the name of that member, and saves an edit
+that keeps it with every member it states (`parts_from_its_declaration`,
+`a_ped_variation_that_states_a_class_otherwise_than_declared_is_refused_by_the_member_and_drops_none`).
+Before, the first saved every record without the member and said nothing, and the second stopped on
+the writer's words. A table gives a class the name the index of names has for its hash, which with
+no snapshot installed is `hash_XXXXXXXX` for every class of a variation but its root, so the two
+are held together by that hash and never by the name. No sampled `.ymt` of either install whose
+table states a class of the family states one otherwise than declared: 0 of 95 on Legacy and 0 of
+97 on Enhanced (the install suite below, 2026-11-27).
+
+On both installs, one type file in fifty takes an archetype added as a copy and removed again, one
+map in fifty its last entity removed and put back, the first interior of one type file in ten a
+room, a portal and an attachment added as copies and removed again, and one `.ymt` in twenty, where
+it is a ped variation, a drawable added as a copy, one built there, and both removed again. Each
+step is saved, read back equal and saved again to the same bytes, in a process that installed the
+staged snapshot as the app does and in one that installed none
+(`a_sample_of_an_installs_typed_files_takes_a_shape_edit_with_and_without_the_staged_snapshot`
 in `crates/domain/or-world/tests/a_shape_edit_of_an_install_saves_the_same_with_and_without_a_snapshot.rs`,
 slow tier, 2026-11-27):
 
@@ -246,8 +272,12 @@ slow tier, 2026-11-27):
 |---|---|---|---|---|
 | Legacy | archetype | 56 | 56 saved | 56 saved, to the same bytes |
 | Legacy | entity | 336, and 52 more with none to take | 336 removals saved; 280 put back, 56 refused | 336 removals saved, to the same bytes; 336 put back, 280 to the same bytes |
+| Legacy | interior | 47, and 230 more type files with none | 47 saved | 47 saved, to the same bytes |
+| Legacy | drawable | 94, and 120 more `.ymt` that hold none | 94 saved | 94 saved, to the same bytes |
 | Enhanced | archetype | 58 | 58 saved | 58 saved, to the same bytes |
 | Enhanced | entity | 352, and 48 more with none to take | 352 removals saved; 291 put back, 61 refused | 352 removals saved, to the same bytes; 292 put back, 291 to the same bytes, and 60 refused |
+| Enhanced | interior | 44, and 244 more type files with none | 44 saved | 44 saved, to the same bytes |
+| Enhanced | drawable | 96, and 118 more `.ymt` that hold none | 96 saved | 96 saved, to the same bytes |
 
 The run with the snapshot proves more than the run with none only where a file states a class
 otherwise than the snapshot declares it, which the suite counts: on Enhanced 58 of the 58 sampled
@@ -255,11 +285,17 @@ type files state `CBaseArchetypeDef` and 314 of the 314 sampled maps that state 
 it with another set of members than the staged snapshot's class, and on Legacy none of 56 and none
 of 296 does (the same suite, 2026-11-27). The Enhanced files state two members of
 `CBaseArchetypeDef` the snapshot lacks, `hash_73B8AA83` and `padding1`, and the first of them in
-`CEntityDef` (a reading of the same sample, 2026-11-27). With the snapshot's class laid over the
-table's again where a root outgrows its layout, none of the 58 Enhanced type files passes: each copy
-saves and reads back as another value (the same suite, 2026-11-27). An edit taken back before the
-file is read again, as an undo does it, saves the bytes of the file as read, in every file of the
-sample.
+`CEntityDef` (a reading of the same sample, 2026-11-27). The rooms of the sampled interiors and the
+drawables of the sampled ped variations state their classes as the snapshot declares them, on both
+installs. With the snapshot's class laid over the table's again where a root outgrows its layout,
+none of the 58 Enhanced type files and none of the 44 Enhanced interiors passes, each copy saved and
+read back as another value, and 292 of the 352 Enhanced maps read back as another value once the
+entity is removed; the 96 ped variations save as before, their classes being declared in code (the
+same suite with that order put back, 2026-11-27). An edit taken back before the file is read again,
+as an undo does it, saves the bytes of the file as read, in every file of the sample. The suite
+also holds each sampled file to what `first_member_missing` rests on, that a tree as it was read
+lacks no member its own table states, which
+`every_staged_tree_lacks_no_member_its_own_type_table_states` holds of every staged document.
 
 ⚠ **Left for the owner to rule: whether a snapshot may lay out any class of a document that carries
 its own table.** The refusals in the table are of one kind. A map saved without the last entity of
@@ -269,7 +305,7 @@ snapshot refuses it. A process that installed one lays the record out by the sna
 instead, as it did before this change, with a zero signature, which no shipped file carries
 (`a_copy_of_a_class_an_rbm_file_neither_states_nor_names_is_laid_out_by_the_snapshot_and_refused_with_none`):
 on Legacy the 56 are saved so, and on Enhanced 1 is and 60 are refused for a member the snapshot's
-class lacks. Those 56 of the 444 lines of the Legacy measure and 61 of the 458 of the Enhanced one
+class lacks. Those 56 of the 935 lines of the Legacy measure and 61 of the 960 of the Enhanced one
 are every line on which the two processes part (the same suite, 2026-11-27). The rule that closes
 it is that a document with a type table is laid out with no snapshot at all, which is
 `type_tables::extend` in place of `type_tables::layered`: the two processes then agree on every

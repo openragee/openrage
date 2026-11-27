@@ -56,6 +56,7 @@ fn runtime(path: &str, args: Vec<Expr>) -> Expr {
 
 fn head() -> Head {
     Head {
+        value_types: Default::default(),
         program: 1,
         at: 0x10,
         name: "func_000010".to_owned(),

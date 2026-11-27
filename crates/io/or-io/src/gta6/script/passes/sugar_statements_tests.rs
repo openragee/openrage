@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use super::*;
 use crate::gta6::script::cfg;
 use crate::gta6::script::exec;
-use crate::gta6::script::ir::{Const, Returns, StoreKind};
+use crate::gta6::script::ir::{Const, ExprSugar, Returns, StoreKind};
 use crate::gta6::script::project::TypeFacts;
 use crate::gta6::script::{Names, Options, Project};
 
@@ -83,6 +83,7 @@ fn hidden(stmts: Vec<Stmt>) -> Stmt {
 fn function(body: Vec<Stmt>) -> tree::Function {
     tree::Function {
         head: Head {
+            value_types: Default::default(),
             program: 1,
             at: 0x10,
             name: "func_000010".to_owned(),
@@ -599,6 +600,19 @@ fn in_place() -> Expr {
     op("array_get_i32", vec![local(4), local(5)])
 }
 
+/// `local_4[local_5]` read as a value of the cells `returns` states.
+fn wide(returns: Option<u32>) -> Expr {
+    Expr::Call {
+        callee: Callee::Intrinsic {
+            name: "array_get_value".to_owned(),
+            ty: None,
+            wrapper: Some("array_get_value".to_owned()),
+        },
+        args: vec![local(4), local(5)],
+        returns,
+    }
+}
+
 /// `local_4 = p0; for (local_5 = 0; local_5 < local_4.Length; local_5++) { <body> }`.
 fn over_parameter(body: Vec<Stmt>) -> Vec<Stmt> {
     vec![
@@ -738,15 +752,8 @@ fn an_element_read_in_place_is_no_item_where_it_may_have_changed_or_is_read_othe
         offset: 8,
         value: int(1),
     });
-    let wide = Expr::Call {
-        callee: Callee::Intrinsic {
-            name: "array_get_value".to_owned(),
-            ty: None,
-            wrapper: Some("array_get_value".to_owned()),
-        },
-        args: vec![local(4), local(5)],
-        returns: Some(2),
-    };
+    let unstated = wide(None);
+    let at_two_types = op("array_get_u32", vec![local(4), local(5)]);
     let cases: Vec<(&str, Vec<Stmt>)> = vec![
         (
             "a call is made before the read, in the same statement",
@@ -787,10 +794,40 @@ fn an_element_read_in_place_is_no_item_where_it_may_have_changed_or_is_read_othe
             }],
         ),
         (
-            "the element is read twice",
-            vec![eval(call(vec![in_place(), in_place()]))],
+            "the element is read again after a call",
+            vec![used(in_place()), used(in_place())],
         ),
-        ("the element is two cells", vec![used(wide)]),
+        (
+            "the element is read again after a store",
+            vec![
+                Stmt::Simple(ir::Stmt::Store {
+                    kind: StoreKind::I32,
+                    addr: local(0),
+                    offset: 8,
+                    value: in_place(),
+                }),
+                set(7, in_place()),
+            ],
+        ),
+        (
+            "the element is read at two types",
+            vec![eval(call(vec![in_place(), at_two_types]))],
+        ),
+        (
+            "the element is read again in a loop that calls",
+            vec![Stmt::If {
+                cond: Expr::binary(BinOp::Gt, in_place(), int(0)),
+                then: vec![Stmt::While {
+                    cond: local(0),
+                    body: vec![used(in_place())],
+                }],
+                els: Vec::new(),
+            }],
+        ),
+        (
+            "the cells of the element are not stated",
+            vec![used(unstated)],
+        ),
         (
             "the index is read as itself",
             vec![used(Expr::cast(Scalar::I32, local(5)))],
@@ -854,4 +891,206 @@ fn an_item_made_for_an_element_takes_the_kind_the_array_states() {
         f.head.vars.get(&ITEM).map(|info| &info.kind),
         Some(&Kind::F32)
     );
+}
+
+/// `body` with every `read` in it made a read of [`ITEM`].
+fn read_as_item(mut body: Vec<Stmt>, read: &Expr) -> Vec<Stmt> {
+    let mut work: Vec<&mut Vec<Stmt>> = vec![&mut body];
+    while let Some(list) = work.pop() {
+        for stmt in list {
+            tree::own_exprs_mut(stmt, &mut |top| {
+                top.walk_mut(&mut |e| {
+                    if *e == *read {
+                        *e = Expr::Var(ITEM);
+                    }
+                });
+            });
+            work.extend(tree::nested_mut(stmt));
+        }
+    }
+    body
+}
+
+#[test]
+fn a_loop_that_reads_its_element_again_before_anything_may_change_it_takes_it_once() {
+    // `if (local_4[local_5] > local_7) { local_7 = local_4[local_5]; }`
+    let most = Stmt::If {
+        cond: Expr::binary(BinOp::Gt, in_place(), local(7)),
+        then: vec![set(7, in_place())],
+        els: Vec::new(),
+    };
+    // `func(local_4[local_5], local_4[local_5]);`: both reads are made before the call.
+    let both = eval(call(vec![in_place(), in_place()]));
+    // A loop of the body that changes nothing reads what was read before it.
+    let calm = Stmt::DoWhile {
+        body: vec![set(7, Expr::binary(BinOp::Add, local(7), in_place()))],
+        cond: int(0),
+    };
+    let bodies = vec![
+        vec![most.clone()],
+        vec![both.clone()],
+        vec![most, calm, both],
+    ];
+    for body in bodies {
+        let was = over_parameter(body.clone());
+        let mut f = function(was.clone());
+        let names = Names::default();
+        let cx = Context::new(&names, Project::empty(), Options::default());
+        let found = rewrite(&mut f, &cx);
+        assert_eq!(
+            (found.arrays, found.folded, found.refused),
+            (1, 1, 0),
+            "{body:?}"
+        );
+        let [Stmt::Simple(_), Stmt::Sugar(made)] = f.body.as_slice() else {
+            panic!("{:?}", f.body)
+        };
+        let Sugar::Foreach {
+            item, body: made, ..
+        } = &**made
+        else {
+            panic!("{made:?}")
+        };
+        let taken = ir::Stmt::Assign {
+            target: ITEM,
+            value: in_place(),
+        };
+        assert_eq!(**item, taken);
+        assert_eq!(made, &read_as_item(body.clone(), &in_place()), "{body:?}");
+        assert_eq!(run_alike(function(was), f), Ok(()), "{body:?}");
+    }
+}
+
+#[test]
+fn an_element_of_the_cells_its_read_states_is_an_item_of_those_cells() {
+    let was = over_parameter(vec![eval(call(vec![wide(Some(2))]))]);
+    let names = Names::default();
+    let cx = Context::new(&names, Project::empty(), Options::default());
+    let mut f = function(was.clone());
+    let found = rewrite(&mut f, &cx);
+    assert_eq!((found.arrays, found.folded, found.refused), (1, 1, 0));
+    let info = VarInfo {
+        width: Width::Cells,
+        kind: Kind::Aggregate(2),
+        name: Some("item".to_owned()),
+        single: false,
+    };
+    assert_eq!(f.head.vars.get(&ITEM), Some(&info));
+    assert_eq!(run_alike(function(was.clone()), f), Ok(()));
+
+    // An array whose elements are handles makes a handle of the item; one of single cells says nothing of two.
+    for (of, kind) in [
+        (Kind::Handle, Kind::Handle),
+        (Kind::I32, Kind::Aggregate(2)),
+    ] {
+        let mut f = function(was.clone());
+        let array = VarInfo {
+            width: Width::Cell,
+            kind: Kind::Array(Box::new(of)),
+            name: None,
+            single: false,
+        };
+        f.head.vars.insert(Var::Local(4), array);
+        assert_eq!(rewrite(&mut f, &cx).folded, 1);
+        assert_eq!(f.head.vars.get(&ITEM).map(|info| &info.kind), Some(&kind));
+    }
+}
+
+// Made up: the type whose field holds the array.
+const OWNER: u64 = 0x1357_9BDF_2468_ACE0;
+
+/// `p0->f_20`, the field the array is held in.
+fn field() -> Expr {
+    Expr::Load {
+        ty: Scalar::U64,
+        addr: Box::new(Expr::Var(Var::Param(0))),
+        offset: 0x20,
+    }
+}
+
+/// `p0->f_20[local_5]` read as an `int`.
+fn of_field() -> Expr {
+    op("array_get_i32", vec![field(), local(5)])
+}
+
+/// `for (local_5 = 0; local_5 < p0->f_20.Length; local_5++) { <body> }`, the field read as one in the test alone.
+fn over_field(body: Vec<Stmt>) -> Vec<Stmt> {
+    let read = Expr::sugar(
+        ExprSugar::Field {
+            owner: TypeKey(OWNER),
+        },
+        field(),
+    );
+    let length = Expr::cast(Scalar::I32, op("array_length", vec![read]));
+    let cond = Expr::binary(BinOp::Lt, Expr::cast(Scalar::I32, local(5)), length);
+    vec![looped(cond, body)]
+}
+
+#[test]
+fn a_loop_over_an_array_in_a_field_is_a_foreach_where_nothing_in_it_stores_or_calls() {
+    let sum = |element: Expr| set(7, Expr::binary(BinOp::Add, local(7), element));
+    let names = Names::default();
+    let cx = Context::new(&names, Project::empty(), Options::default());
+
+    // Read in place: an item is made for it.
+    let was = over_field(vec![sum(of_field())]);
+    let mut f = function(was.clone());
+    let found = rewrite(&mut f, &cx);
+    assert_eq!((found.arrays, found.folded, found.refused), (1, 1, 0));
+    let [Stmt::Sugar(made)] = f.body.as_slice() else {
+        panic!("{:?}", f.body)
+    };
+    let Sugar::Foreach { item, body, .. } = &**made else {
+        panic!("{made:?}")
+    };
+    let taken = ir::Stmt::Assign {
+        target: ITEM,
+        value: of_field(),
+    };
+    assert_eq!(**item, taken);
+    let summed = vec![sum(of_field())];
+    assert_eq!(body, &read_as_item(summed, &of_field()));
+    assert_eq!(run_alike(function(was), f), Ok(()));
+
+    // Taken first into a variable of the function's.
+    let was = over_field(vec![set(6, of_field()), sum(local(6))]);
+    let (is, found) = read(was.clone(), &names);
+    assert_eq!((found.arrays, found.folded, found.refused), (1, 0, 0));
+    assert_eq!(cfg::lower_body(is), cfg::lower_body(was));
+
+    // ⚠ Each round's test reads the field again: anything that may store to it keeps the loop.
+    let store = Stmt::Simple(ir::Stmt::Store {
+        kind: StoreKind::I32,
+        addr: local(0),
+        offset: 8,
+        value: int(1),
+    });
+    let again = Stmt::Simple(ir::Stmt::Assign {
+        target: Var::Param(0),
+        value: local(1),
+    });
+    let cases: Vec<(&str, Vec<Stmt>)> = vec![
+        (
+            "a call is made after the read",
+            vec![sum(of_field()), eval(call(Vec::new()))],
+        ),
+        (
+            "the item is handed to a call",
+            vec![set(6, of_field()), eval(call(vec![local(6)]))],
+        ),
+        (
+            "a store is made after the read",
+            vec![sum(of_field()), store],
+        ),
+        (
+            "what the field is read from is assigned",
+            vec![set(6, of_field()), again],
+        ),
+    ];
+    for (why, body) in cases {
+        let was = over_field(body);
+        let (is, found) = read(was.clone(), &names);
+        assert_eq!(is, was, "{why}");
+        assert_eq!((found.arrays, found.refused), (0, 1), "{why}");
+    }
 }

@@ -5,9 +5,9 @@
 //! where every statement of the expansion is found in its place, and holds them all, so that
 //! `tree::desugar` gives back the code it replaced.
 //!
-//! ⚠ A list's enumerator advanced in place stays a loop: its advance is statements, which a
-//! `Sugar::Foreach` has no part for. A `try` is made of the regions a front end states beside a
-//! function, by [`protected`], and never by [`run`].
+//! ⚠ An enumerator held in place, made by one script function and advanced by another, stays a
+//! loop: nothing in the project proves the two are the pair a `foreach` calls. A `try` is made
+//! of the regions a front end states beside a function, by [`protected`], and never by [`run`].
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -32,6 +32,12 @@ const ITEMS: u32 = 128;
 
 /// The deepest that statements nest where an element read in place is looked for.
 const DEPTH: u32 = 64;
+
+/// The most cells an element read in place may yield and still be taken as an item.
+const CELLS: u32 = 64;
+
+/// The loads a path to an array is followed through before it is taken to be none.
+const LOADS: usize = 16;
 
 /// What reading one function's loops and blocks came to.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -222,8 +228,8 @@ struct Scope<'a> {
     uses: BTreeMap<Var, Use>,
     /// The variables whose address is taken.
     addressed: Vec<Var>,
-    /// How many loops [`array_loop`] takes each variable is the index of.
-    indexed: BTreeMap<Var, usize>,
+    /// The uses of each variable that the loops [`array_loop`] takes it is the index of make, all together.
+    indexed: BTreeMap<Var, Use>,
 }
 
 impl<'a> Scope<'a> {
@@ -232,12 +238,15 @@ impl<'a> Scope<'a> {
         let addressed = (uses.iter().filter(|(_, uses)| uses.addressed))
             .map(|(var, _)| *var)
             .collect();
-        let mut indexed = BTreeMap::new();
+        let mut indexed: BTreeMap<Var, Use> = BTreeMap::new();
         let mut work = vec![body];
         while let Some(list) = work.pop() {
             for stmt in list {
                 if let Some(read) = array_loop(stmt) {
-                    *indexed.entry(read.index).or_insert(0) += 1;
+                    // Set by the head and stepped; read by the test, the step and the body's reads.
+                    let only = indexed.entry(read.index).or_default();
+                    only.assigned += 2;
+                    only.read += 2 + read.index_reads;
                 }
                 work.extend(nested(stmt));
             }
@@ -285,17 +294,12 @@ impl<'a> Scope<'a> {
         }
     }
 
-    /// Whether the function names the index of an [`array_loop`] nowhere but in the heads of such loops, and changes none of its three variables behind their names.
+    /// Whether the function names the index of an [`array_loop`] nowhere but in the heads of such loops and the reads of their elements, and changes none of its three variables behind their names.
     // ⚠ A slot is the index of several loops in turn, so the count is over all of them: each
     // sets the index before it reads it, and what is read after a loop is then never its index.
     fn proves(&self, read: &Counted) -> bool {
-        let (index, array) = (read.index, read.array);
-        let loops = self.indexed.get(&index).copied().unwrap_or(0);
-        let only = Use {
-            assigned: 2 * loops,
-            read: 3 * loops,
-            addressed: false,
-        };
+        let (index, array) = (read.index, read.array.base);
+        let only = self.indexed.get(&index).copied().unwrap_or_default();
         let apart = read
             .item
             .is_none_or(|item| !self.covers(item, index) && !self.covers(item, array));
@@ -362,8 +366,42 @@ fn intrinsic(e: &Expr, named: impl Fn(&str) -> bool) -> Option<&[Expr]> {
     }
 }
 
+/// What an array is reached by: a variable, or the fields read one from another starting at one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Path {
+    base: Var,
+    /// Each load from what the one before it gave, the first from `base`: what it reads and at which byte.
+    loads: Vec<(Scalar, u32)>,
+}
+
+impl Path {
+    /// The variable that is the array itself, where no field lies between.
+    fn var(&self) -> Option<Var> {
+        self.loads.is_empty().then_some(self.base)
+    }
+}
+
+/// The path `e` is, under the source readings and the casts to 64 bits at each step of it.
+fn path_of(e: &Expr) -> Option<Path> {
+    let mut loads = Vec::new();
+    let mut e = under(e, false);
+    loop {
+        match e {
+            Expr::Var(base) => {
+                loads.reverse();
+                return Some(Path { base: *base, loads });
+            }
+            Expr::Load { ty, addr, offset } if loads.len() < LOADS => {
+                loads.push((*ty, *offset));
+                e = under(addr, false);
+            }
+            _ => return None,
+        }
+    }
+}
+
 /// The index and the array of `cond` where it is `i < array_length(a)`.
-fn below_length(cond: &Expr) -> Option<(Var, Var)> {
+fn below_length(cond: &Expr) -> Option<(Var, Path)> {
     let Expr::Binary {
         op: BinOp::Lt,
         l,
@@ -376,7 +414,7 @@ fn below_length(cond: &Expr) -> Option<(Var, Var)> {
     let [array] = intrinsic(under(r, true), |name| name == "array_length")? else {
         return None;
     };
-    Some((var_of(l, true)?, var_of(array, false)?))
+    Some((var_of(l, true)?, path_of(array)?))
 }
 
 /// The variable `stmt` steps up by one, as a listing's `i++` reads.
@@ -397,16 +435,19 @@ fn stepped_up(stmt: &ir::Stmt) -> Option<Var> {
 }
 
 /// The variables of a counted loop over an array.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct Counted {
     index: Var,
-    array: Var,
+    array: Path,
     /// The variable the body opens by taking the element in; `None` where it reads the element in place.
     item: Option<Var>,
+    /// How often the body reads the index: once in each read of the element, and nowhere else.
+    index_reads: usize,
 }
 
 impl Counted {
-    /// Whether `e` is the read of the element at the index, where that is one cell.
+    /// Whether `e` is the read of the element at the index, where the cells it yields are stated.
+    // ⚠ A listing states no cells of `array_get_value`: an item of a width guessed would be no item.
     fn reads(&self, e: &Expr) -> bool {
         let Expr::Call {
             callee: Callee::Intrinsic { name, .. },
@@ -419,18 +460,22 @@ impl Counted {
         let [array, at] = args.as_slice() else {
             return false;
         };
-        let one = match name.strip_prefix("array_get_") {
-            Some("value") => *returns == Some(1),
+        let stated = match name.strip_prefix("array_get_") {
+            Some("value") => returns.is_some_and(|cells| (1..=CELLS).contains(&cells)),
             Some(ty) => Scalar::from_name(ty).is_some(),
             None => false,
         };
-        one && var_of(array, false) == Some(self.array) && var_of(at, true) == Some(self.index)
+        stated
+            && var_of(at, true) == Some(self.index)
+            && path_of(array).as_ref() == Some(&self.array)
     }
 }
 
-/// The variables of `stmt` where it is `for (i = 0; i < array_length(a); i++) { .. }` and its body either opens with `x = a[i];` and then names `i` nowhere and assigns neither `a` nor `x`, or names `i` once, in a read of `a[i]` that nothing able to change the element comes before.
+/// The variables of `stmt` where it is `for (i = 0; i < array_length(a); i++) { .. }` and its body either opens with `x = a[i];` and then names `i` nowhere and assigns neither `a` nor `x`, or names `i` only in reads of `a[i]`, all alike, that nothing able to change the element comes before.
 // ⚠ The element's address taken in place of its value is no item: a write through it changes
-// the array, which a `foreach` over copies would not.
+// the array, which a `foreach` over copies would not. An array reached through fields is read
+// again by each round's test: it is the one array gone through only where nothing in the body
+// may store or call.
 fn array_loop(stmt: &Stmt) -> Option<Counted> {
     let Stmt::For {
         init: Some(init),
@@ -444,43 +489,182 @@ fn array_loop(stmt: &Stmt) -> Option<Counted> {
     let (i, a) = below_length(cond)?;
     let starts =
         matches!(&**init, ir::Stmt::Assign { target, value } if *target == i && is_const(value, 0));
-    if !starts || i == a || stepped_up(step) != Some(i) {
+    if !starts || i == a.base || stepped_up(step) != Some(i) {
         return None;
     }
+    let held = a.loads.is_empty();
+    let base = a.base;
     let read = Counted {
         index: i,
         array: a,
         item: None,
+        index_reads: 1,
     };
     // ⚠ A body that opens by taking an element is judged as that alone: where the item it takes
     // is not a `foreach`'s, the loop stays as it is and no other item is made for it.
     if let [Stmt::Simple(ir::Stmt::Assign { target: x, value }), rest @ ..] = body.as_slice() {
         if let Some([array, at]) = intrinsic(value, |name| name.starts_with("array_get_")) {
-            let reads = var_of(array, false) == Some(a) && var_of(at, true) == Some(i);
-            if !reads || *x == i || *x == a || labelled(rest) {
+            let reads = path_of(array).as_ref() == Some(&read.array) && var_of(at, true) == Some(i);
+            let kept = held || still(rest);
+            if !reads || *x == i || *x == base || labelled(rest) || !kept {
                 return None;
             }
             let rest = used(rest);
             let of = |var: Var| rest.get(&var).copied().unwrap_or_default();
-            let quiet = of(i) == Use::default() && of(a).assigned == 0 && of(*x).assigned == 0;
+            let quiet = of(i) == Use::default() && of(base).assigned == 0 && of(*x).assigned == 0;
             return quiet.then_some(Counted {
                 item: Some(*x),
                 ..read
             });
         }
     }
-    if labelled(body) || suspends(body) {
+    if labelled(body) || suspends(body) || !(held || still(body)) {
         return None;
     }
     let uses = used(body);
     let of = |var: Var| uses.get(&var).copied().unwrap_or_default();
-    let once = Use {
-        assigned: 0,
-        read: 1,
-        addressed: false,
-    };
-    let first = of(i) == once && of(a).assigned == 0 && lead(body, &read, 0) == Lead::Read;
-    first.then_some(read)
+    let index = of(i);
+    if index.assigned != 0 || index.addressed || of(base).assigned != 0 {
+        return None;
+    }
+    // Every read of the index is one of the element: the walk meets as many reads as there are.
+    let reads = index.read;
+    let led = reads == 1 && lead(body, &read, 0) == Lead::Read;
+    let mut seen = Ahead::default();
+    let walked = reads > 0 && ahead(body, &read, 0, &mut seen);
+    let first = led || (walked && seen.alike && seen.reads == reads);
+    first.then_some(Counted {
+        index_reads: reads,
+        ..read
+    })
+}
+
+/// Whether nothing in `body`, at any depth, may write to memory: no store, and no call but of a read or a conversion.
+fn still(body: &[Stmt]) -> bool {
+    let mut quiet = true;
+    tree::each_simple(body, &mut |s| quiet &= !stores(s));
+    tree::each_expr(body, &mut |top| top.walk(&mut |e| quiet &= !loud(e)));
+    quiet
+}
+
+/// What a walk through a body in the order it is written has met.
+#[derive(Debug)]
+struct Ahead {
+    /// The reads of the element met.
+    reads: usize,
+    /// The first of them.
+    first: Option<Expr>,
+    /// Whether every read met is the first, at the same type.
+    alike: bool,
+    /// Whether something that may change the element has been met.
+    loud: bool,
+}
+
+impl Default for Ahead {
+    fn default() -> Ahead {
+        Ahead {
+            reads: 0,
+            first: None,
+            alike: true,
+            loud: false,
+        }
+    }
+}
+
+impl Ahead {
+    /// Counts `e` as a read of the element; `false` where something that may change it came before.
+    fn read(&mut self, e: &Expr) -> bool {
+        self.reads += 1;
+        let alike = self.first.as_ref().is_none_or(|first| first == e);
+        self.alike &= alike;
+        if self.first.is_none() {
+            self.first = Some(e.clone());
+        }
+        !self.loud
+    }
+}
+
+/// [`ahead`] over one expression, its parts in the order they are evaluated.
+fn ahead_expr(top: &Expr, read: &Counted, seen: &mut Ahead) -> bool {
+    let mut calls = false;
+    top.walk(&mut |e| calls |= matches!(e, Expr::Call { .. }));
+    if !calls {
+        return true;
+    }
+    // ⚠ `walk_mut` goes through operands before the call they are given to, as `lead_expr` reads.
+    let mut copy = top.clone();
+    let mut fine = true;
+    copy.walk_mut(&mut |e| {
+        if read.reads(e) {
+            fine &= seen.read(e);
+        } else if loud(e) {
+            seen.loud = true;
+        }
+    });
+    fine
+}
+
+/// [`ahead`] over one simple statement: its expressions in their order, then its own write.
+fn ahead_simple(s: &ir::Stmt, read: &Counted, seen: &mut Ahead) -> bool {
+    let mut fine = true;
+    s.each_expr(&mut |top| fine &= ahead_expr(top, read, seen));
+    seen.loud |= stores(s);
+    fine
+}
+
+/// Walks `list` in the order it is written, an `if`'s two arms and a switch's cases one after another; `false` where a read of the element follows something that may change the element, or stands in a loop or a construct that may change it.
+// A way through runs some of what is written, in the order written: a read before every change
+// on the walk is one before every change on each way. A loop runs its body again, so a read in
+// one is taken only where nothing in that loop may change the element.
+fn ahead(list: &[Stmt], read: &Counted, depth: u32, seen: &mut Ahead) -> bool {
+    if depth > DEPTH {
+        return false;
+    }
+    for stmt in list {
+        let fine = match stmt {
+            Stmt::Simple(s) => ahead_simple(s, read, seen),
+            Stmt::If { cond, then, els } => {
+                ahead_expr(cond, read, seen)
+                    && ahead(then, read, depth + 1, seen)
+                    && ahead(els, read, depth + 1, seen)
+            }
+            Stmt::Switch { value, cases } => {
+                ahead_expr(value, read, seen)
+                    && (cases.iter()).all(|case| ahead(&case.body, read, depth + 1, seen))
+            }
+            Stmt::Return(Some(value)) => ahead_expr(value, read, seen),
+            Stmt::Return(None)
+            | Stmt::Break
+            | Stmt::Continue
+            | Stmt::Goto(_)
+            | Stmt::Label(_)
+            | Stmt::Unreachable => true,
+            Stmt::Sugar(sugar) if matches!(**sugar, Sugar::Group { .. }) => {
+                let parts = sugar.parts().simples;
+                parts.into_iter().all(|part| ahead_simple(part, read, seen))
+            }
+            _ => {
+                let within = std::slice::from_ref(stmt);
+                let mut fine = true;
+                let mut met = false;
+                tree::each_expr(within, &mut |top| {
+                    top.walk(&mut |e| {
+                        if read.reads(e) {
+                            met = true;
+                            fine &= seen.read(e);
+                        }
+                    });
+                });
+                let calm = still(within);
+                seen.loud |= !calm;
+                fine && (calm || !met)
+            }
+        };
+        if !fine {
+            return false;
+        }
+    }
+    true
 }
 
 /// Whether a body holds an `await` or a `yield` at any depth: a place the function leaves and comes back to.
@@ -642,16 +826,21 @@ fn lead(list: &[Stmt], read: &Counted, depth: u32) -> Lead {
     Lead::Quiet
 }
 
-/// Puts `item` where `body` reads the element and returns the read; `None`, with nothing changed, where it reads none.
+/// Puts `item` wherever `body` reads the element and returns the read; `None`, with nothing changed, where it reads none.
+// [`array_loop`] has seen every read alike: each is the one read taken first.
 fn take_element(body: &mut Vec<Stmt>, read: &Counted, item: Var) -> Option<Expr> {
-    let mut taken = None;
+    let mut taken: Option<Expr> = None;
     let mut work: Vec<&mut Vec<Stmt>> = vec![body];
     while let Some(list) = work.pop() {
         for stmt in list {
             tree::own_exprs_mut(stmt, &mut |top| {
                 top.walk_mut(&mut |e| {
-                    if taken.is_none() && read.reads(e) {
-                        taken = Some(std::mem::replace(e, Expr::Var(item)));
+                    let again = taken.as_ref().is_some_and(|held| *held == *e);
+                    if again || (taken.is_none() && read.reads(e)) {
+                        let held = std::mem::replace(e, Expr::Var(item));
+                        if taken.is_none() {
+                            taken = Some(held);
+                        }
                     } else if matches!(e, Expr::Sugar { e: held, .. } if **held == Expr::Var(item))
                     {
                         // What the read was read as says nothing of a variable.
@@ -665,19 +854,37 @@ fn take_element(body: &mut Vec<Stmt>, read: &Counted, item: Var) -> Option<Expr>
     taken
 }
 
-/// What is known of an item made for `element`: one cell, of the kind the array's elements are, else of the type the read is made at where that is narrower than a cell.
-fn item_info(element: &Expr, array: Var, head: &Head) -> VarInfo {
-    fn one_cell(kind: &Kind) -> bool {
+/// What is known of an item made for `element`: as many cells as the read yields, of the kind the array's elements are where it states those cells; else, for one cell, of the type the read is made at where that is narrower than a cell, and for several, a value of no stated layout.
+fn item_info(element: &Expr, array: &Path, head: &Head) -> VarInfo {
+    let cells = match element {
+        Expr::Call {
+            callee: Callee::Intrinsic { name, .. },
+            returns: Some(cells),
+            ..
+        } if name == "array_get_value" => (*cells).max(1),
+        _ => 1,
+    };
+    fn states(kind: &Kind, cells: u32) -> bool {
         match kind {
-            Kind::Unknown | Kind::Vector | Kind::Handle | Kind::Aggregate(_) => false,
-            Kind::Value { cells, .. } => *cells == 1,
-            _ => true,
+            Kind::Unknown | Kind::Aggregate(_) => false,
+            Kind::Vector | Kind::Handle => cells == 2,
+            Kind::Value { cells: of, .. } => *of == cells,
+            _ => cells == 1,
         }
     }
-    let of = match head.vars.get(&array).map(|info| &info.kind) {
-        Some(Kind::Array(of)) if one_cell(of) => Some((**of).clone()),
+    let kind = array.var().and_then(|var| head.vars.get(&var));
+    let of = match kind.map(|info| &info.kind) {
+        Some(Kind::Array(of)) if states(of, cells) => Some((**of).clone()),
         _ => None,
     };
+    if cells > 1 {
+        return VarInfo {
+            width: Width::Cells,
+            kind: of.unwrap_or(Kind::Aggregate(cells)),
+            name: None,
+            single: false,
+        };
+    }
     let read_at = match element {
         Expr::Call {
             callee: Callee::Intrinsic { name, .. },
@@ -706,7 +913,7 @@ fn folded_foreach(stmt: &mut Stmt, read: &Counted, item: Var, head: &Head) -> Op
             mut body,
         } => match take_element(&mut body, read, item) {
             Some(element) => {
-                let info = item_info(&element, read.array, head);
+                let info = item_info(&element, &read.array, head);
                 let taken = ir::Stmt::Assign {
                     target: item,
                     value: element,

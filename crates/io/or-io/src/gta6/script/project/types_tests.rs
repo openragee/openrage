@@ -69,6 +69,7 @@ fn code(program: u32, imports: &[ImportInfo], types: &[VmType]) -> Project {
         term: Terminator::Return(None),
     };
     let head = Head {
+        value_types: Default::default(),
         program,
         at: 0x40,
         name: "func_000040".to_owned(),

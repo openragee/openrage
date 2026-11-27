@@ -305,6 +305,7 @@ fn function(program: u32, stmts: Vec<Stmt>) -> Function {
         term: Terminator::Return(None),
     };
     let head = Head {
+        value_types: Default::default(),
         program,
         at: 0x40,
         name: "func_000040".to_owned(),

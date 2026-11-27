@@ -83,6 +83,9 @@ pub fn of_listing(text: &str) -> Result<Project, ProjectError> {
         let lowered = cfg::lower(read);
         let mut f = lowered.map_err(|source| ProjectError::Lower { function, source })?;
         accessed(&mut project, &f);
+        // ⚠ What a parameter's address reaches is read off the code as it is: a pass may leave out
+        // a read no later code takes, which the code still makes.
+        reach::of_function(&mut project, &f);
         // The facts are read off the code as the first two passes leave it: values whole, kinds known.
         passes::values::run_in(&mut f, &cx, &mut stats);
         passes::types::run_in(&mut f, &cx, &mut stats);
@@ -149,8 +152,9 @@ pub fn typed_part(
     let cx = Context::new(&names, project, options);
     let mut stats = Stats::default();
     let mut part = Project::default();
-    for row in &program.functions {
-        let Ok(lifted) = lift::function_in(&program, project, row) else {
+    // Lifted as the decompiler lifts the program: what one function settles of a slot sizes the rest.
+    for lifted in lift::program_in(&program, project) {
+        let Ok(lifted) = lifted else {
             continue;
         };
         if !lifted.regions.is_empty() {
@@ -189,13 +193,17 @@ pub fn of_program_in(bytes: &[u8], tables: &Tables) -> Result<Project, ProjectEr
     let names = Names::default();
     let cx = Context::baseline(&names);
     let mut stats = Stats::default();
-    for row in &program.functions {
+    // Lifted as the decompiler lifts the program: what one function settles of a slot sizes the rest.
+    for lifted in lift::program_in(&program, &tables.project) {
         // A function that does not lift shows nothing: what the tables state of it stands, and the rest of the program is read.
-        let Ok(lifted) = lift::function_in(&program, &tables.project, row) else {
+        let Ok(lifted) = lifted else {
             continue;
         };
         let mut f = lifted.function;
         accessed(&mut project, &f);
+        // ⚠ What a parameter's address reaches is read off the code as it is: a pass may leave out
+        // a read no later code takes, which the code still makes.
+        reach::of_function(&mut project, &f);
         // No pass understands a fault's way to its handler.
         if lifted.regions.is_empty() {
             passes::values::run_in(&mut f, &cx, &mut stats);
@@ -211,7 +219,6 @@ fn gather(project: &mut Project, f: &cfg::Function) {
     types::of_function(project, f);
     layouts::of_function(project, f);
     signatures::of_function(project, f);
-    reach::of_function(project, f);
     passes::classes::of_function(project, f);
     called(project, f);
 }
@@ -402,6 +409,7 @@ pub fn view(project: &Project, program: u32) -> Project {
         calls: cut(&project.calls, reads),
         members: cut(&project.members, reads),
         slot_results: cut(&project.slot_results, reads),
+        slot_params: cut(&project.slot_params, reads),
         reach: cut(&project.reach, reads),
         widened: cut(&project.widened, reads),
         native_truths: project.native_truths.clone(),

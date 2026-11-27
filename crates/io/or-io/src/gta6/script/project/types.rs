@@ -339,11 +339,14 @@ pub fn enumeration(project: &Project, key: TypeKey) -> Option<Enumeration<'_>> {
     })
 }
 
-/// A value of the enum `key` as C# writes a constant no list names, `(Name)3`; `None` for a type that is no enum, and for a cell that holds no value of it.
+/// A value of the enum `key` as C# writes it: `Name.Member` where a list names the member, else `(Name)3`; `None` for a type that is no enum, and for a cell that holds no value of it.
 pub fn enum_constant(project: &Project, names: &Names, key: TypeKey, bits: u64) -> Option<String> {
     let of = enumeration(project, key)?;
     let value = of.value(bits)?;
     let name = display(project, names, key);
+    if let Some(member) = names.enum_member(key, value, of.bytes) {
+        return Some(format!("{name}.{member}"));
+    }
     let signed = matches!(of.underlying, Kind::I8 | Kind::I16 | Kind::I32 | Kind::I64);
     let spare = 64 - of.bytes * 8;
     // The value under its sign: what the low bytes are once widened with it.

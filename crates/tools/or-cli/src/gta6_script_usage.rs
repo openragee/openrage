@@ -23,6 +23,8 @@ Usage: openrage-cli script <src> [--natives|--strings|--statics|--functions] [--
        openrage-cli script export <build-folder|archive.rpf|folder> [-o <folder>]
                                   [--level <name>] [--no <pass>]... [--threads <n>]
        openrage-cli script passes
+       openrage-cli script names-search <program|folder>... [--words <file>]... [-o <file>]
+       openrage-cli script natives --unnamed <program|folder>... [--project <file>]
        openrage-cli script download-natives
        openrage-cli script lifted <listing.ysc.cs> [--level <name>] [--no <pass>]... [-o <file>]
        openrage-cli script lifted --census <folder> [-o <folder>]
@@ -68,6 +70,11 @@ Usage: openrage-cli script <src> [--natives|--strings|--statics|--functions] [--
               goes on; it exits non-zero if any did.
   passes      The passes and the level each belongs to, one per line, as --no and --level
               take them. A name no pass reads yet is marked `rebuilds nothing yet`.
+  names-search  A names list of what a word search proves of the programs' types, fields
+              and programs, each row by two hashes of its name; `script names-search` with
+              no path prints all it takes.
+  natives --unnamed  Each native no list names, with its calls and how they use its
+              arguments, so that a list can be written where it names the most calls.
   lifted      Readable source from a lifted listing of a GTA VI script, the text another
               decompiler writes from its bytecode; `script lifted --help` says what it takes.
   compiled    A GTA VI program's header and a plain listing of its instructions, with each
@@ -121,7 +128,12 @@ Names:
                         read by one rule: a file whose name starts with `natives` is a
                         natives list where it reads as one, else a names list; any other
                         file is a names list where it reads as one, else a natives list. A
-                        file that reads as neither is said on stderr and passed over.
+                        file that reads as neither is said on stderr and passed over. A
+                        list every row of which proves itself by its hash is read before
+                        the others, so a label given on trust never displaces a proof. A
+                        file whose name holds `candidate` holds guesses and is passed over:
+                        only --names reads it. A source's first lines name each list read
+                        with how much it named that no list before it did.
   download-natives      Fetch alloc8or's natives lists and CSY0N's crossmap from GitHub into
                         the configuration directory, recording each file's commit. Runs only
                         when you ask. They name GTA V's natives and none of GTA VI's.

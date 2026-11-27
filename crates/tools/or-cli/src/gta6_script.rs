@@ -8,8 +8,8 @@
 //! ⚠ **Nothing of a program is run.** Every verb reads bytes and writes text.
 //!
 //! ⚠ **A source has one header.** The printer writes it, and this command puts its own lines
-//! after the printer's last: `project`, `only`, `unproven`, `natives lists`, `left out` and
-//! `classes`. At the lowest level the printer writes a listing and no header, so the first lines
+//! after the printer's last: `project`, `only`, `unproven`, `lists read`, `candidates`, `natives
+//! lists`, `left out` and `classes`. At the lowest level the printer writes a listing and no header, so the first lines
 //! are this command's.
 
 use std::collections::BTreeMap;
@@ -416,6 +416,13 @@ fn supplied_lists(asked: &Asked) -> Result<Supplied, String> {
     for refused in &supplied.refused {
         super::note(&format!("note: {refused}"));
     }
+    for label in &supplied.candidates {
+        super::note(&format!(
+            "note: `{label}` of the names folder was passed over: a file whose name holds `{}` \
+             holds guesses, and --names reads it",
+            lists::CANDIDATES
+        ));
+    }
     Ok(supplied)
 }
 
@@ -432,6 +439,7 @@ pub fn bind(names: &mut Names, program: &Program) {
             names.bind_method(method.name, TypeKey(owner.name), slot);
         }
     }
+    names.bind_entries(program.program, &program.entries);
 }
 
 /// One verb on one program.

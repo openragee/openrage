@@ -7,7 +7,9 @@
 //! else a names list; any other file is a names list where it reads as one, else a natives list.
 //! So a table of `hash` and `rva` gives the handlers' hashes whatever it is called. A file that
 //! reads as neither is passed over and said. A file whose name starts with a dot, and
-//! `project.json`, are no lists and are not read.
+//! `project.json`, are no lists and are not read; one whose name holds `candidate` holds guesses
+//! and is read only where `--names` names it. A list each row of which proves itself by its hash
+//! is read before every other, so that a label another file gives on trust never displaces it.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -23,6 +25,10 @@ pub const NAMES_FOLDER: &str = "gta6_script_names";
 
 /// What a file's name starts with, in any case, that is tried as a natives list first.
 const NATIVES_PREFIX: &str = "natives";
+
+/// What a file's name holds, in any case, that makes it a file of guesses the folder never reads.
+// ⚠ A guessed row of a 32-bit hash proves itself as a true one does: only the file's name tells them apart.
+pub const CANDIDATES: &str = "candidate";
 
 /// Why natives lists name nothing where no names list is a table of handlers.
 const NO_HANDLERS: &str = "a natives list names by hash, and no names list gives the hash of a \
@@ -41,22 +47,45 @@ pub struct Supplied {
     pub idle_why: &'static str,
     /// Each file of the folder that read as no list, with why.
     pub refused: Vec<String>,
+    /// Each names list in the order read, with how many hashes, cells and indices it named that no list before it did.
+    pub named: Vec<(String, usize)>,
+    /// The files of the folder passed over for the guesses their names say they hold.
+    pub candidates: Vec<String>,
 }
 
 impl Supplied {
     /// What a source's header says of the lists beyond what its printer says of them.
     pub fn said(&self) -> Vec<String> {
-        if self.idle.is_empty() {
-            return Vec::new();
+        let quoted = |labels: &[String]| -> String {
+            let labels: Vec<String> = labels.iter().map(|label| format!("`{label}`")).collect();
+            labels.join(", ")
+        };
+        let mut said = Vec::new();
+        if !self.named.is_empty() {
+            let each: Vec<String> = (self.named.iter())
+                .map(|(label, new)| format!("`{label}` {new}"))
+                .collect();
+            said.push(format!(
+                "lists read, in order, each with how many hashes, cells, indices, functions or \
+                 words it named that no list before it did: {}",
+                each.join(", ")
+            ));
         }
-        let lists: Vec<String> = (self.idle.iter())
-            .map(|label| format!("`{label}`"))
-            .collect();
-        vec![format!(
-            "natives lists: {} read, and none names a native here: {}",
-            lists.join(", "),
-            self.idle_why
-        )]
+        if !self.candidates.is_empty() {
+            said.push(format!(
+                "candidates: {} of the names folder passed over, as a file whose name holds \
+                 `{CANDIDATES}` holds guesses; --names reads it",
+                quoted(&self.candidates)
+            ));
+        }
+        if !self.idle.is_empty() {
+            said.push(format!(
+                "natives lists: {} read, and none names a native here: {}",
+                quoted(&self.idle),
+                self.idle_why
+            ));
+        }
+        said
     }
 }
 
@@ -68,6 +97,33 @@ pub struct Folder {
     pub natives: Vec<NativeDb>,
     /// Each file that read as no list, with why.
     pub refused: Vec<String>,
+    /// Each names list in the order read, with what it newly named.
+    pub named: Vec<(String, usize)>,
+    /// The files passed over for their names, in the order of those names.
+    pub candidates: Vec<String>,
+}
+
+/// Whether a file of the folder is called as a file of guesses is.
+pub fn guessed(label: &str) -> bool {
+    label.to_ascii_lowercase().contains(CANDIDATES)
+}
+
+/// Whether `bytes`, read alone as a names list, read whole and every row of them proved itself by its hash.
+// ⚠ A row taken on trust and a word are evidence of nothing: a list holding either is no proof.
+fn proves_alone(label: &str, bytes: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return false;
+    };
+    let mut alone = Names::default();
+    if alone.read_list(label, text).is_err() {
+        return false;
+    }
+    let words = alone.candidates.iter().sum::<usize>();
+    alone
+        .rows
+        .iter()
+        .all(|(proved, trusted)| *proved > 0 && *trusted == 0)
+        && words == 0
 }
 
 /// Where lists are read from when none is named, under the configuration directory the app also uses.
@@ -84,11 +140,17 @@ pub fn folder(dir: &Path) -> Folder {
         .collect();
     files.sort();
     let mut found = Folder::default();
+    // Each file read once, with whether it is a list every row of which proves itself.
+    let mut held: Vec<(String, Vec<u8>, bool)> = Vec::new();
     for path in files {
         let label = path.file_name().map(|name| name.to_string_lossy());
         let label = label.unwrap_or_default().into_owned();
         // ⚠ A project is hundreds of megabytes of JSON, which a natives list also is: it is never tried as one.
         if label.starts_with('.') || label == PROJECT_FILE {
+            continue;
+        }
+        if guessed(&label) {
+            found.candidates.push(label);
             continue;
         }
         let bytes = match std::fs::read(&path) {
@@ -99,6 +161,13 @@ pub fn folder(dir: &Path) -> Folder {
                 continue;
             }
         };
+        let natives_first = label.to_ascii_lowercase().starts_with(NATIVES_PREFIX);
+        let proved = !natives_first && proves_alone(&label, &bytes);
+        held.push((label, bytes, proved));
+    }
+    // ⚠ Of a proof and a label on trust for one hash, the list read second is refused: the proof goes first.
+    let (proofs, others): (Vec<_>, Vec<_>) = held.into_iter().partition(|(_, _, proved)| *proved);
+    for (label, bytes, _) in proofs.into_iter().chain(others) {
         let as_natives = |found: &mut Folder| {
             let list = NativeDb::parse(label.as_str(), &bytes).map_err(|e| e.to_string())?;
             found.natives.push(list);
@@ -109,8 +178,9 @@ pub fn folder(dir: &Path) -> Folder {
                 .map_err(|e| format!("names list `{label}` is not UTF-8: {e}"))?;
             // ⚠ A list that is refused leaves the lines before its bad one read, so it is tried on a copy.
             let mut tried = found.names.clone();
-            tried.read_list(&label, text).map_err(|e| e.to_string())?;
+            let new = tried.read_list(&label, text).map_err(|e| e.to_string())?;
             found.names = tried;
+            found.named.push((label.clone(), new));
             Ok::<(), String>(())
         };
         let natives_first = label.to_ascii_lowercase().starts_with(NATIVES_PREFIX);
@@ -137,15 +207,21 @@ pub fn supplied(
 ) -> Result<Supplied, String> {
     let read = match named.is_empty() {
         true => config.map_or_else(Folder::default, |root| folder(&names_dir(root))),
-        false => Folder {
-            names: super::super::lifted::names_from(named)?,
-            ..Folder::default()
-        },
+        false => {
+            let (names, counted) = super::super::lifted::names_counted(named)?;
+            Folder {
+                names,
+                named: counted,
+                ..Folder::default()
+            }
+        }
     };
     let Folder {
         mut names,
         natives: kept,
         refused,
+        named: counted,
+        candidates,
     } = read;
     // ⚠ Like the folder, the table the listings left in the configuration directory is read only
     // where no names list is named: a run that names its lists takes nothing it was not given.
@@ -184,6 +260,8 @@ pub fn supplied(
         idle,
         idle_why,
         refused,
+        named: counted,
+        candidates,
     })
 }
 

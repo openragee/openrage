@@ -79,7 +79,15 @@ fn the_folder_names_a_native_where_it_holds_the_handlers_and_a_natives_list() {
     std::fs::write(&named, NATIVES).unwrap();
     let lists = supplied(&[], std::slice::from_ref(&named), Some(config.path()));
     let lists = lists.expect("the lists read");
-    assert!(lists.idle.is_empty() && lists.said().is_empty());
+    assert!(lists.idle.is_empty());
+    // The one line said is of the names list the folder gave: the handlers' table, one handler.
+    assert_eq!(
+        lists.said(),
+        [
+            "lists read, in order, each with how many hashes, cells, indices, functions or words \
+          it named that no list before it did: `natives.tsv` 1"
+        ]
+    );
     let native = lists.names.native(0xA1).map(ToString::to_string);
     assert_eq!(native.as_deref(), Some("DEMO::GET_DEMO_THING"));
     assert_eq!(
@@ -94,11 +102,10 @@ fn the_folder_names_a_native_where_it_holds_the_handlers_and_a_natives_list() {
     let lists = lists.expect("the lists read");
     assert!(lists.names.natives.is_none());
     assert_eq!(lists.idle, ["other.txt"]);
-    assert!(
-        lists.said()[0].ends_with(NO_HASH_HELD),
-        "{:?}",
-        lists.said()
-    );
+    // The natives lists are said after the names lists.
+    let said = lists.said();
+    assert_eq!(said.len(), 2, "{said:?}");
+    assert!(said[1].ends_with(NO_HASH_HELD), "{said:?}");
 }
 
 #[test]
@@ -116,4 +123,113 @@ fn a_list_that_is_named_must_read_whatever_it_could_then_name() {
 
     let no_names = supplied(std::slice::from_ref(&missing), &[], Some(config.path()));
     assert!(no_names.is_err_and(|e| e.starts_with("read ")));
+}
+
+/// A row of a names list whose hash is the 32-bit hash of its name in lower case.
+fn proved_row(name: &str) -> String {
+    let hash = or_io::hash::literal_string_hash(name.to_ascii_lowercase().as_bytes());
+    format!("0x{hash:08X}\t{name}\n")
+}
+
+#[test]
+fn a_list_that_proves_every_row_is_read_before_a_label_the_folder_gives_on_trust() {
+    let hash = or_io::hash::literal_string_hash(b"demoalpha");
+    // Read in the order of the names alone, the label first would leave the proof refused. Its
+    // row of column names keeps it from reading as a natives list.
+    let label = format!("program_hash\tname\n0x{hash:08X}\tdemo_label\n");
+    let dir = written(&[
+        ("a_label.tsv", label.as_str()),
+        ("b_proved.tsv", proved_row("demoalpha").as_str()),
+    ]);
+    let found = folder(dir.path());
+    assert_eq!(found.names.lists, ["b_proved.tsv"]);
+    assert_eq!(found.names.program(u64::from(hash)), Some("demoalpha"));
+    assert_eq!(found.named, [("b_proved.tsv".to_owned(), 1)]);
+    assert_eq!(found.refused.len(), 1, "{:?}", found.refused);
+    assert!(found.refused[0].starts_with("`a_label.tsv` of the names folder is no list"));
+
+    // Named on the command line, the lists are read in the order given, whatever they prove.
+    let paths = [
+        dir.path().join("a_label.tsv"),
+        dir.path().join("b_proved.tsv"),
+    ];
+    assert!(supplied(&paths, &[], None).is_err());
+    let paths = [dir.path().join("b_proved.tsv")];
+    let named = supplied(&paths, &[], None).expect("the list reads");
+    assert_eq!(named.named, [("b_proved.tsv".to_owned(), 1)]);
+    assert!(
+        named.said()[0].ends_with("`b_proved.tsv` 1"),
+        "{:?}",
+        named.said()
+    );
+    assert!(proves_alone(
+        "b_proved.tsv",
+        proved_row("demoalpha").as_bytes()
+    ));
+    assert!(!proves_alone("a_label.tsv", label.as_bytes()));
+    assert!(!proves_alone("words.txt", b"demoalpha\n"));
+    assert!(!proves_alone("bytes.bin", &[0xFF, 0xFE]));
+}
+
+#[test]
+fn a_file_whose_name_says_it_holds_candidates_is_never_read_from_the_folder() {
+    let dir = written(&[
+        ("demo-candidates.tsv", proved_row("demobeta").as_str()),
+        ("Demo_Candidate.txt", proved_row("demobeta").as_str()),
+        ("demo-proved.tsv", proved_row("demoalpha").as_str()),
+    ]);
+    let found = folder(dir.path());
+    assert_eq!(found.names.lists, ["demo-proved.tsv"]);
+    assert_eq!(
+        found.candidates,
+        ["Demo_Candidate.txt", "demo-candidates.tsv"]
+    );
+    assert!(found.refused.is_empty(), "{:?}", found.refused);
+    let beta = or_io::hash::literal_string_hash(b"demobeta");
+    assert_eq!(found.names.program(u64::from(beta)), None);
+
+    // Each passed over is said in the header, and named with --names one is read.
+    let config = tempfile::tempdir().unwrap();
+    std::fs::create_dir(names_dir(config.path())).unwrap();
+    for name in [
+        "demo-candidates.tsv",
+        "Demo_Candidate.txt",
+        "demo-proved.tsv",
+    ] {
+        std::fs::copy(dir.path().join(name), names_dir(config.path()).join(name)).unwrap();
+    }
+    let lists = supplied(&[], &[], Some(config.path())).expect("the folder reads");
+    let said = lists.said();
+    assert_eq!(said.len(), 2, "{said:?}");
+    assert!(
+        said[1].starts_with("candidates: `Demo_Candidate.txt`, `demo-candidates.tsv` of the"),
+        "{said:?}"
+    );
+    let named = [names_dir(config.path()).join("demo-candidates.tsv")];
+    let lists = supplied(&named, &[], Some(config.path())).expect("the list reads");
+    assert_eq!(lists.names.program(u64::from(beta)), Some("demobeta"));
+    assert!(lists.candidates.is_empty());
+    assert!(guessed("X-CANDIDATES.tsv") && !guessed("proved.tsv"));
+}
+
+#[test]
+fn a_proved_generic_type_name_of_the_folder_is_never_displaced_by_a_printed_label_of_it() {
+    let generic = "DemoMap`2<DemoKey, DemoValue>";
+    let hash = or_io::gta6::hash::literal_hash64(generic.as_bytes());
+    let proved = format!("type_hash64\tname\n0x{hash:016X}\t{generic}\n");
+    let label = format!("type_hash64\tname\n0x{hash:016X}\tDemoMap_2__DemoKey__DemoValue\n");
+    // The label's file sorts first, as a printed spelling's beside its proof does.
+    let dir = written(&[
+        ("r_demo-printed.tsv", label.as_str()),
+        ("r_demo-proved.tsv", proved.as_str()),
+    ]);
+    let found = folder(dir.path());
+    assert_eq!(found.names.lists, ["r_demo-proved.tsv"]);
+    let written_as = found.names.type_name(hash).unwrap_or_default();
+    assert!(written_as.starts_with("DemoMap<"), "{written_as}");
+    assert!(
+        found.refused[0].starts_with("`r_demo-printed.tsv`"),
+        "{:?}",
+        found.refused
+    );
 }

@@ -225,13 +225,21 @@ pub fn supplied(natives: Vec<PathBuf>, names: &[PathBuf]) -> Result<Supplied, St
 
 /// Reads names lists, each under its file's name.
 pub(super) fn names_from(paths: &[PathBuf]) -> Result<Names, String> {
+    names_counted(paths).map(|(names, _)| names)
+}
+
+/// Reads names lists, each under its file's name, with how many hashes, cells and indices each named that none before it did.
+pub(super) fn names_counted(paths: &[PathBuf]) -> Result<(Names, Vec<(String, usize)>), String> {
     let mut names = Names::default();
+    let mut counted = Vec::with_capacity(paths.len());
     for path in paths {
         let text =
             std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-        (names.read_list(&name_of(path), &text)).map_err(|e| e.to_string())?;
+        let label = name_of(path);
+        let new = (names.read_list(&label, &text)).map_err(|e| e.to_string())?;
+        counted.push((label, new));
     }
-    Ok(names)
+    Ok((names, counted))
 }
 
 /// The readable source of the listing `text`, and what decompiling it counted.

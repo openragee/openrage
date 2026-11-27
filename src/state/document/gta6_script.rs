@@ -8,6 +8,7 @@ use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use or_io::gta6::script::lift::Progress;
@@ -77,6 +78,19 @@ pub fn set_level(level: Level) {
     *LEVEL.lock().unwrap_or_else(PoisonError::into_inner) = level;
 }
 
+/// Whether the labels files of the names folder are read, which the inspector's choice sets: off at every start, since a label is a guess.
+static LABELS: AtomicBool = AtomicBool::new(false);
+
+/// Whether a script is decompiled with the labels files of the names folder.
+pub fn labels_on() -> bool {
+    LABELS.load(Ordering::Relaxed)
+}
+
+/// Have scripts decompiled with the labels files of the names folder, or without them, from now on.
+pub fn set_labels(on: bool) {
+    LABELS.store(on, Ordering::Relaxed);
+}
+
 /// Where natives lists, names lists and a project for GTA VI scripts are read from, in the configuration directory.
 pub fn names_dir() -> Option<PathBuf> {
     crate::state::prefs::config_root().map(|root| root.join("gta6_script_names"))
@@ -136,6 +150,10 @@ pub struct Read {
     pub named: Vec<(String, usize)>,
     /// The files of the folder passed over for the guesses their names say they hold.
     pub candidates: Vec<String>,
+    /// The files of native labels the folder holds, read only while the user asks.
+    pub labels: Vec<String>,
+    /// Each labels file read, with how many natives it labelled; empty where none was read.
+    pub labelled: Vec<(String, usize)>,
     /// The file of the project the source was written with; `None` for a program decompiled alone.
     pub project: Option<PathBuf>,
     /// The project file that was found and not read, with the reason.
@@ -414,6 +432,9 @@ fn written(
 ) -> Result<Gta6ScriptDocument, String> {
     let folder = names_dir();
     let mut supplied = lists::supplied(folder.as_deref());
+    if labels_on() {
+        lists::labelled(&mut supplied, folder.as_deref());
+    }
     let found = lists::project(&[beside, folder.as_deref()]);
     let project = found.project();
     let stamp = found.stamp().cloned();
@@ -450,6 +471,8 @@ fn written(
         refused: supplied.refused,
         named: supplied.named,
         candidates: supplied.candidates,
+        labels: supplied.labels,
+        labelled: supplied.labelled,
         project: stamp.as_ref().map(|stamp| stamp.file.clone()),
         project_refused: found.refused.clone(),
     };

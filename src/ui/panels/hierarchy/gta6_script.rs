@@ -10,7 +10,7 @@ use or_io::gta6::script::{decode, opcode, Level};
 
 use super::*;
 use crate::state::capabilities::FormatCapabilities;
-use crate::state::gta6_script::{names_dir, Ask};
+use crate::state::gta6_script::{labels_on, names_dir, set_labels, Ask};
 use crate::state::Gta6ScriptDocument;
 use crate::ui::panels::text_editor::script_view;
 
@@ -430,6 +430,50 @@ fn draw_read(ui: &mut egui::Ui, doc: &Gta6ScriptDocument) {
     }
 }
 
+/// The labels files of the names folder, which are guesses, and the choice that reads them; nothing where the folder holds none.
+fn draw_labels(
+    ui: &mut egui::Ui,
+    state: &mut AppState,
+    doc_id: DocumentId,
+    doc: &Gta6ScriptDocument,
+) {
+    let read = &doc.read;
+    if read.labels.is_empty() {
+        return;
+    }
+    let dim = |text: String| egui::RichText::new(text).color(theme::TEXT_SECONDARY);
+    let idle = state.gta6_script_job(doc_id).is_none();
+    let mut on = labels_on();
+    let choice = egui::Checkbox::new(
+        &mut on,
+        tr!("Label natives from the labels files (guesses)"),
+    );
+    let toggled = ui
+        .add_enabled(idle, choice)
+        .on_hover_text(tr!(
+            "A file of the names folder whose name holds labels gives guessed names of natives. It is read only while this is on; a native a natives list names keeps that name, and each label is written with a leading underscore"
+        ))
+        .changed();
+    let line = match read.labelled.is_empty() {
+        true => tr!(
+            "Not read: {files}. A labels file holds guesses, read only while asked",
+            files = read.labels.join(", ")
+        ),
+        false => {
+            let each = (read.labelled.iter()).map(|(label, new)| format!("{label} ({new})"));
+            tr!(
+                "Natives no list names are labelled from {files}: these are guesses, not names",
+                files = each.collect::<Vec<String>>().join(", ")
+            )
+        }
+    };
+    ui.label(dim(line));
+    if toggled {
+        set_labels(on);
+        state.redo_gta6_script(doc_id, doc.ask(), None);
+    }
+}
+
 /// The program's facts, the lists that named things, the level, then the instructions of the function picked.
 fn draw_facts(ui: &mut egui::Ui, state: &mut AppState, doc_id: DocumentId, selection: Option<u64>) {
     let Some(DocPayload::Gta6Script(doc)) = state.document(doc_id).map(|d| &d.payload) else {
@@ -460,6 +504,7 @@ fn draw_facts(ui: &mut egui::Ui, state: &mut AppState, doc_id: DocumentId, selec
     }
     ui.separator();
     draw_read(ui, &doc);
+    draw_labels(ui, state, doc_id, &doc);
     draw_build(ui, state, doc_id, &doc);
     let open = ui.button(tr!("Open names folder")).on_hover_text(tr!(
         "Put names lists, natives lists and a project.json in this folder, then open the script again: OpenRage ships none. Each file is read as a names list where it reads as one, else as a natives list; a file whose name starts with natives, or that holds JSON, is tried as a natives list first"
@@ -620,6 +665,39 @@ mod tests {
         of_archive.read.project = Some("demo/project.json".into());
         let centre = painted(&mut state, of_archive);
         assert!(!centre.contains("Build project"), "{centre}");
+    }
+
+    #[test]
+    fn labels_in_the_names_folder_are_offered_as_guesses_and_said_once_read() {
+        let _serial = crate::ui::theme::serial();
+        let mut state = AppState::default();
+        let id = state.new_empty_document(DocumentKind::Text);
+        let painted = |state: &mut AppState, doc: Gta6ScriptDocument| {
+            let d = state.document_mut(id).expect("the document");
+            d.payload = DocPayload::Gta6Script(Arc::new(doc));
+            d.kind = DocumentKind::Gta6Script;
+            let output = egui::Context::default().run_ui(Default::default(), |ui| {
+                draw_facts(ui, state, id, None);
+            });
+            format!("{:?}", output.shapes)
+        };
+        // No labels file: no choice is offered.
+        let mut doc = Gta6ScriptDocument::of(Program::default(), SOURCE, Level::Source);
+        let centre = painted(&mut state, doc.clone());
+        assert!(!centre.contains("labels files"), "{centre}");
+
+        doc.read.labels = vec!["demo-labels.txt".to_owned()];
+        let centre = painted(&mut state, doc.clone());
+        assert!(
+            centre.contains("Label natives from the labels files"),
+            "{centre}"
+        );
+        assert!(centre.contains("Not read: demo-labels.txt"), "{centre}");
+
+        doc.read.labelled = vec![("demo-labels.txt".to_owned(), 2)];
+        let centre = painted(&mut state, doc);
+        assert!(centre.contains("demo-labels.txt (2)"), "{centre}");
+        assert!(centre.contains("these are guesses"), "{centre}");
     }
 
     #[test]

@@ -159,7 +159,8 @@ fn programs(
 }
 
 /// The project of the programs `bodies` are, as an export builds it: what they state of each other, then what their code shows once that is settled.
-// ⚠ A program whose part does not read, or faults, gives the project nothing; the rest are read.
+// ⚠ A program whose part does not read, or faults, gives the project only that its code may call
+// anything; the rest are read.
 fn project_of(
     bodies: &[Vec<u8>],
     building: &Building,
@@ -176,7 +177,16 @@ fn project_of(
     if progress.stopped() {
         return Err(stopped());
     }
-    let mut project = index::merge(parts.into_iter().flatten().collect());
+    let mut whole = Vec::with_capacity(parts.len());
+    for (part, bytes) in parts.into_iter().zip(bodies) {
+        let part = part.or_else(|| {
+            catch_unwind(AssertUnwindSafe(|| index::unread_part(bytes)))
+                .ok()
+                .flatten()
+        });
+        whole.extend(part);
+    }
+    let mut project = index::merge(whole);
     let typed = each(bodies, building, progress, |bytes| {
         index::typed_part(bytes, &tables, &project).ok()
     });

@@ -224,6 +224,57 @@ fn a_file_of_the_names_folder_is_a_names_list_where_it_reads_as_one_else_a_nativ
 }
 
 #[test]
+fn a_labels_file_of_the_names_folder_is_read_only_when_asked_and_labels_what_no_list_names() {
+    let folder = tempfile::tempdir().expect("a scratch folder");
+    let write = |name: &str, text: &str| {
+        std::fs::write(folder.path().join(name), text).expect("a list is written");
+    };
+    write(
+        "handlers.tsv",
+        "hash\trva\n0x00000000000A0B0C\t0x1000\n0x00000000000A0B0D\t0x1008\n",
+    );
+    write(
+        "natives_demo.json",
+        "{\"0x00000000000A0B0C\": \"DEMO_TICK\"}",
+    );
+    // By its name alone it would be read as a natives list and name both natives.
+    write(
+        "natives-demo-labels.txt",
+        "0x00000000000A0B0C _GUESS_DEMO_TICK\n0x00000000000A0B0D _GUESS_DEMO_TOCK\n",
+    );
+    let mut read = lists::supplied(Some(folder.path()));
+    assert_eq!(read.labels, ["natives-demo-labels.txt"]);
+    assert_eq!(read.natives, ["natives_demo.json"]);
+    assert!(read.names.native(0x000A_0B0D).is_none());
+    assert!(read.labelled.is_empty());
+
+    lists::labelled(&mut read, Some(folder.path()));
+    assert_eq!(read.labelled, [("natives-demo-labels.txt".to_owned(), 1)]);
+    let name = |hash: u64| read.names.native(hash).map(ToString::to_string);
+    let label = |hash: u64| read.names.native_label(hash).map(ToString::to_string);
+    // A native a natives list names keeps that name; a label is a guess, never a name.
+    assert_eq!(name(0x000A_0B0C).as_deref(), Some("DEMO_TICK"));
+    assert_eq!(label(0x000A_0B0C), None);
+    assert_eq!(name(0x000A_0B0D), None);
+    assert_eq!(label(0x000A_0B0D).as_deref(), Some("_GUESS_DEMO_TOCK"));
+    let used = read.names.natives.as_ref().map(|list| list.label());
+    assert_eq!(used, Some("natives_demo.json"));
+
+    // A labels file that reads as no list of labels is refused with its reason.
+    write("broken-labels.txt", "no hash here\n");
+    let mut read = lists::supplied(Some(folder.path()));
+    lists::labelled(&mut read, Some(folder.path()));
+    assert_eq!(read.labelled.len(), 1, "{:?}", read.labelled);
+    assert!(
+        read.refused
+            .iter()
+            .any(|why| why.starts_with("broken-labels.txt: ")),
+        "{:?}",
+        read.refused
+    );
+}
+
+#[test]
 fn a_record_of_the_program_is_named_by_the_hash_it_holds_of_its_name() {
     use or_io::gta6::script::ir::TypeKey;
     use or_io::gta6::script::program::{FieldRow, MethodRow, TypeRow};

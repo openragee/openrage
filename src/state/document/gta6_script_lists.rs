@@ -31,11 +31,19 @@ pub struct Supplied {
     pub named: Vec<(String, usize)>,
     /// The files passed over for the guesses their names say they hold.
     pub candidates: Vec<String>,
+    /// The files of native labels, passed over unless the user asks for them.
+    pub labels: Vec<String>,
+    /// Each labels file read, with how many natives it labelled.
+    pub labelled: Vec<(String, usize)>,
 }
 
 /// What a file's name holds, in any case, that makes it a file of guesses the folder never reads.
 // ⚠ A guessed row of a 32-bit hash proves itself as a true one does: only the file's name tells them apart.
 const CANDIDATES: &str = "candidate";
+
+/// What a file's name holds, in any case, that makes it a file of native labels, read only when asked.
+// ⚠ A label is a guess at a native's name, and a natives list in form: read as one it would name natives.
+const LABELS: &str = "labels";
 
 /// The lists of the folder `dir`, in the order of their names, those whose every row proves itself first: each file is a names list where it reads as one, else a natives list.
 // ⚠ The same files are names lists here and on the command line, which reads this folder too. The
@@ -64,6 +72,10 @@ pub fn supplied(dir: Option<&Path>) -> Supplied {
             out.candidates.push(label);
             continue;
         }
+        if label.to_ascii_lowercase().contains(LABELS) {
+            out.labels.push(label);
+            continue;
+        }
         let text = std::fs::read(&path)
             .map_err(|e| e.to_string())
             .and_then(|bytes| String::from_utf8(bytes).map_err(|e| e.to_string()));
@@ -87,6 +99,30 @@ pub fn supplied(dir: Option<&Path>) -> Supplied {
     out.names.natives = Names::best_natives(&lists, &hashes).map(|(list, _)| list.clone());
     out.natives = lists.iter().map(|list| list.label().to_owned()).collect();
     out
+}
+
+/// Reads each labels file of the folder `dir` that `supplied` passed over as a list of labels, as `--labels` reads one: a native no natives list names is written by its label, a later file's in place of an earlier's.
+// ⚠ A file that reads as no list of labels is refused with the reason, as any file of the folder is.
+pub fn labelled(supplied: &mut Supplied, dir: Option<&Path>) {
+    let Some(dir) = dir else {
+        return;
+    };
+    for label in supplied.labels.clone() {
+        let text = std::fs::read_to_string(dir.join(&label)).map_err(|e| e.to_string());
+        let names = &mut supplied.names;
+        let read =
+            text.and_then(|text| names.read_labels(&label, &text).map_err(|e| e.to_string()));
+        match read {
+            Ok(_) => {
+                let new = names.labelled_by(names.label_lists.len().saturating_sub(1));
+                supplied.labelled.push((label, new));
+            }
+            Err(why) => {
+                tracing::warn!(list = %label, "{why}");
+                supplied.refused.push(format!("{label}: {why}"));
+            }
+        }
+    }
 }
 
 /// What one file of the folder was taken as.

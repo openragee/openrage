@@ -3560,9 +3560,11 @@ version = "0.1.0"
 dependencies = [
  "glam",
  "or-io",
+ "or-job",
  "or-test-support",
  "or-title",
  "serde",
+ "tempfile",
  "thiserror 1.0.69",
  "tracing",
 ]

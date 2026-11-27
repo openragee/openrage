@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use glam::{Affine3A, Vec3};
 use or_world::state::Gate;
-use or_world::streaming::{Forest, Level, MapBox, NodeId, NodeState, View};
+use or_world::streaming::{Children, Forest, Level, MapBox, NodeId, NodeState, View};
 use or_world::WorldState;
 
 use crate::world_index::{tree, Map, WorldIndex, WorldSource};
@@ -299,7 +299,7 @@ impl<'a> WorldForest<'a> {
             index,
             source,
             budget,
-            forest: Forest::with_exact_children(),
+            forest: Forest::waiting_for(Children::Stated),
             held: HashMap::new(),
             held_bytes: 0,
             streamed: BTreeSet::new(),

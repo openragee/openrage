@@ -54,15 +54,9 @@ fn where_is(uses: &[Use], text: &str) -> String {
         .unwrap_or_default()
 }
 
-#[test]
-fn every_text_the_code_asks_for_is_in_every_built_in_catalog_and_every_entry_is_asked_for() {
-    let uses = used::in_the_source();
-    assert!(
-        uses.len() > 20,
-        "only {} calls found: the scan is wrong",
-        uses.len()
-    );
-    let asked = asked(&uses);
+/// Where the built-in catalogs and `uses` are out of step: a text asked for that a catalog lacks, and an entry nothing asks for.
+fn out_of_step(uses: &[Use]) -> Vec<String> {
+    let asked = asked(uses);
     let mut faults = Vec::new();
     for (code, catalog) in built_in() {
         let entries = &catalog.entries;
@@ -71,7 +65,7 @@ fn every_text_the_code_asks_for_is_in_every_built_in_catalog_and_every_entry_is_
             match have.get(text.as_str()) {
                 None => faults.push(format!(
                     "the code asks for {text:?} ({}) and the {code} catalog lacks it",
-                    where_is(&uses, text)
+                    where_is(uses, text)
                 )),
                 Some(entry) if entry.plural != *other => faults.push(format!(
                     "{text:?} is {} in the code and {} in the {code} catalog",
@@ -101,11 +95,65 @@ fn every_text_the_code_asks_for_is_in_every_built_in_catalog_and_every_entry_is_
             faults.push(format!("an entry is in the {code} catalog twice"));
         }
     }
+    faults
+}
+
+#[test]
+fn every_text_the_code_asks_for_is_in_every_built_in_catalog_and_every_entry_is_asked_for() {
+    let uses = used::in_the_source();
+    assert!(
+        uses.len() > 20,
+        "only {} calls found: the scan is wrong",
+        uses.len()
+    );
+    let faults = out_of_step(&uses);
     assert!(
         faults.is_empty(),
         "{} faults:\n{}",
         faults.len(),
         faults.join("\n")
+    );
+}
+
+#[test]
+fn a_sentence_a_world_adapter_names_that_no_catalog_holds_fails_the_gate() {
+    const TEXT: &str = "A sentence of a world adapter that no catalog holds";
+    let root = tempfile::tempdir().expect("a scratch folder");
+    let adapter = root.path().join("crates/domain/or-world-testopolis/src");
+    std::fs::create_dir_all(&adapter).expect("a folder is made");
+    for empty in ["src", "crates/domain/or-world/src"] {
+        std::fs::create_dir_all(root.path().join(empty)).expect("a folder is made");
+    }
+    std::fs::write(
+        adapter.join("lib.rs"),
+        format!(
+            "pub const SECTION: or_world::sentence::Sentence = or_world::sentence!(\"{TEXT}\");\n"
+        ),
+    )
+    .expect("a file is written");
+    let uses = used::in_the_folders(&used::source_folders(root.path()));
+    assert_eq!(uses.len(), 1, "{uses:?}");
+    assert_eq!(
+        (uses[0].macro_name.as_str(), uses[0].text.as_str()),
+        ("sentence", TEXT)
+    );
+    let faults = out_of_step(&uses);
+    for (code, _) in built_in() {
+        let lacks = format!("and the {code} catalog lacks it");
+        assert!(
+            faults
+                .iter()
+                .any(|fault| fault.contains(TEXT) && fault.ends_with(&lacks)),
+            "the gate does not say the {code} catalog lacks the adapter's sentence"
+        );
+    }
+    // The walk the gate itself makes reads the world core, where the fake title's sentences are.
+    let core = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/domain/or-world/src");
+    let read = used::in_the_source();
+    assert!(
+        read.iter()
+            .any(|u| u.macro_name == "sentence" && u.file.starts_with(&core)),
+        "no sentence of the world core was read"
     );
 }
 

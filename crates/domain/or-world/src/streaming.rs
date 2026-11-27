@@ -302,6 +302,16 @@ pub struct Selection {
     pub fading: bool,
 }
 
+/// How many children a parent that is an entity waits for before it fades out for them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Children {
+    /// What it states, raised to those loaded.
+    #[default]
+    RaisedToLoaded,
+    /// Exactly what it states.
+    Stated,
+}
+
 const NONE: u32 = u32::MAX;
 
 struct Loaded {
@@ -376,8 +386,7 @@ pub struct Forest {
     stale: bool,
     /// Where the camera stood at the last selection, and the scales it had.
     last: Option<(Vec3, [f32; Level::COUNT])>,
-    /// A parent waits for exactly the children it states, never raised to those loaded.
-    exact_children: bool,
+    children: Children,
 }
 
 impl Forest {
@@ -385,10 +394,10 @@ impl Forest {
         Self::default()
     }
 
-    /// A forest whose parents wait for exactly the children they state: GTA V's rule.
-    pub fn with_exact_children() -> Self {
+    /// A forest whose parents wait for the children `children` says.
+    pub fn waiting_for(children: Children) -> Self {
         Self {
-            exact_children: true,
+            children,
             ..Self::default()
         }
     }
@@ -710,7 +719,9 @@ impl Pass<'_> {
         // child it states is loaded. What an entity states is raised to what is loaded, none
         // included; a list's is not, as a list is no entity that a child attaches to (inferred).
         let stated = match node.extent {
-            Extent::Point if !self.forest.exact_children => node.num_children.max(found),
+            Extent::Point if self.forest.children == Children::RaisedToLoaded => {
+                node.num_children.max(found)
+            }
             _ => node.num_children,
         };
         let crosses = !node.batch && stated > 0 && found == stated;

@@ -1,4 +1,5 @@
-//! Reads the source for the texts it asks to be translated: every `tr!`, `tr_n!` and `tr_key!` with the literal it holds.
+//! Reads the source for the texts it asks to be translated: every `tr!`, `tr_n!` and `tr_key!` with the literal it holds,
+//! and every `sentence!` of the world core and of a world adapter crate, whose key the app shows through `tr`.
 
 use std::path::{Path, PathBuf};
 
@@ -34,16 +35,38 @@ pub fn rust_files(folder: &Path) -> Vec<PathBuf> {
     found
 }
 
-/// Every call in the source under `src`.
-pub fn in_the_source() -> Vec<Use> {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    rust_files(&src)
+/// The folders of the workspace at `root` whose source asks for texts: the app's, the world core's, and each world adapter crate's.
+pub fn source_folders(root: &Path) -> Vec<PathBuf> {
+    let domain = root.join("crates").join("domain");
+    let mut adapters: Vec<PathBuf> = std::fs::read_dir(&domain)
         .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("or-world-"))
+        .map(|entry| entry.path().join("src"))
+        .filter(|src| src.is_dir())
+        .collect();
+    adapters.sort();
+    let mut folders = vec![root.join("src"), domain.join("or-world").join("src")];
+    folders.extend(adapters);
+    folders
+}
+
+/// Every call in the source under `folders`.
+pub fn in_the_folders(folders: &[PathBuf]) -> Vec<Use> {
+    folders
+        .iter()
+        .flat_map(|folder| rust_files(folder))
         .flat_map(|file| {
             let text = std::fs::read_to_string(&file).expect("a file reads");
             in_text(&file, &text)
         })
         .collect()
+}
+
+/// Every call in the source of the app, of the world core and of the world adapter crates.
+pub fn in_the_source() -> Vec<Use> {
+    in_the_folders(&source_folders(Path::new(env!("CARGO_MANIFEST_DIR"))))
 }
 
 struct Scan<'a> {
@@ -254,7 +277,7 @@ pub fn in_text(file: &Path, source: &str) -> Vec<Use> {
                 let began = scan.at;
                 let name = scan.ident();
                 if !preceded
-                    && matches!(name.as_str(), "tr" | "tr_n" | "tr_key")
+                    && matches!(name.as_str(), "tr" | "tr_n" | "tr_key" | "sentence")
                     && scan.peek(0) == Some('!')
                     && scan.peek(1) == Some('(')
                 {
@@ -330,6 +353,13 @@ mod tests {
                 ("After the ticks".into(), None, false),
             ]
         );
+    }
+
+    #[test]
+    fn a_sentence_key_of_a_world_crate_is_read_as_a_call() {
+        let source = "const A: Sentence = or_world::sentence!(\"Lights\");\nlet b = my_sentence!(\"not ours\");";
+        assert_eq!(texts(source), [("Lights".into(), None, false)]);
+        assert_eq!(in_text(Path::new("x.rs"), source)[0].macro_name, "sentence");
     }
 
     #[test]

@@ -132,6 +132,8 @@ struct Inputs {
     icon_png: Vec<u8>,
     types: Vec<FileType>,
     licences: Vec<PathBuf>,
+    /// The folder of GTA VI entry names the editor reads with no setting, where the tree has it.
+    names: Option<PathBuf>,
 }
 
 fn package(target: Target, root: &Path, out: &Path, options: &Options) -> Result<Vec<PathBuf>> {
@@ -184,6 +186,7 @@ fn package(target: Target, root: &Path, out: &Path, options: &Options) -> Result
         icon_png,
         types,
         licences,
+        names: Some(root.join("assets/gta6_names")).filter(|p| p.is_dir()),
     };
 
     match target {
@@ -553,6 +556,24 @@ fn copy_licences(inputs: &Inputs, dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Copies the names folder to `to`, where the executable looks for it.
+fn copy_names(inputs: &Inputs, to: &Path) -> Result<()> {
+    let Some(names) = &inputs.names else {
+        return Ok(());
+    };
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(names)? {
+        let file = entry?.path();
+        if file.is_file() {
+            std::fs::copy(
+                &file,
+                to.join(file.file_name().context("a file has a name")?),
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn fresh(dir: &Path) -> Result<()> {
     if dir.exists() {
         std::fs::remove_dir_all(dir)?;
@@ -589,6 +610,7 @@ fn stage_linux(inputs: &Inputs, dir: &Path) -> Result<()> {
             std::fs::Permissions::from_mode(0o755),
         )?;
     }
+    copy_names(inputs, &dir.join("share/openrage/gta6_names"))?;
     copy_licences(inputs, dir)
 }
 
@@ -696,6 +718,7 @@ fn stage_macos(inputs: &Inputs, app: &Path) -> Result<()> {
         &contents.join("Resources/openrage.icns"),
         icns(&inputs.icon_png),
     )?;
+    copy_names(inputs, &contents.join("Resources/gta6_names"))?;
     copy_licences(inputs, &contents.join("Resources"))
 }
 
@@ -743,6 +766,7 @@ fn stage_windows(inputs: &Inputs, dir: &Path) -> Result<()> {
     if let Some(helper) = &inputs.helper {
         copy_executable(helper, &dir.join(format!("{HELPER}.exe")))?;
     }
+    copy_names(inputs, &dir.join("gta6_names"))?;
     copy_licences(inputs, dir)
 }
 
@@ -948,6 +972,7 @@ mod tests {
             icon_png: vec![1, 2, 3],
             types: types(),
             licences: vec![licence],
+            names: None,
         }
     }
 

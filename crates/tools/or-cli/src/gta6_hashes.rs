@@ -13,8 +13,8 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use or_io::container::rpf::{
-    read_rpf9_body, Gta6Entry, Gta6Mount, GtaViKeys, NameResolver, RpfArchive, GTA6_NAMES_ENV,
-    RPF9_MAGIC, RPF9_SLOT,
+    read_rpf9_body, Gta6Entry, Gta6Mount, GtaViKeys, NameResolver, RpfArchive, RPF9_MAGIC,
+    RPF9_SLOT,
 };
 use or_io::gta6::hash::name_hash32;
 use or_io::gta6::names::{vocabulary_file, Vocabulary};
@@ -930,12 +930,12 @@ fn load_natives(dir: Option<&Path>) -> Result<Option<NativeAddresses>, String> {
 }
 
 /// The sources of entry names, in the order a lookup tries them: the name tables and the
-/// vocabulary of the recovered-names folder `--names` (or [`GTA6_NAMES_ENV`]) points at, then the
+/// vocabulary of the recovered-names folder `--names` (or [`or_io::container::rpf::GTA6_NAMES_ENV`]) points at, then the
 /// vocabulary the app keeps, then its cache of resolved names and the bundled words.
 fn load_names(dir: Option<&Path>) -> Vec<Source> {
     let folder = dir
         .map(Path::to_path_buf)
-        .or_else(|| std::env::var_os(GTA6_NAMES_ENV).map(PathBuf::from));
+        .or_else(or_io::container::rpf::default_names_dir);
     let mut names = Vec::new();
     if let Some(folder) = folder {
         // The files `NameResolver::load` reads as its shortcut, kept apart to be credited apart.

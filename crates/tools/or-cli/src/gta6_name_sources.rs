@@ -1,9 +1,9 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use or_io::container::rpf::{NameResolver, GTA6_NAMES_ENV};
+use or_io::container::rpf::NameResolver;
 use or_io::gta6::names::Vocabulary;
 
-/// The names of `directory`, or the folder [`GTA6_NAMES_ENV`] names, and of the user's harvest, through the cache the app keeps, then the bundled words.
+/// The names of `directory`, or the folder [`or_io::container::rpf::default_names_dir`] gives, and of the user's harvest, through the cache the app keeps, then the bundled words.
 pub(crate) fn load(directory: Option<&Path>) -> NameResolver {
     // A test that runs a verb in process never reads or rewrites the user's own cache.
     let config = if cfg!(test) {
@@ -15,7 +15,7 @@ pub(crate) fn load(directory: Option<&Path>) -> NameResolver {
 }
 
 fn load_from(directory: Option<&Path>, config: Option<&Path>) -> NameResolver {
-    let external = std::env::var_os(GTA6_NAMES_ENV).map(PathBuf::from);
+    let external = or_io::container::rpf::default_names_dir();
     let mut names = NameResolver::load_cached(directory.or(external.as_deref()), config);
     names.merge_vocabulary(&Vocabulary::bundled());
     names

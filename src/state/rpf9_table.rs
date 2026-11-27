@@ -7,7 +7,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
-use or_io::container::rpf::{open_at, GtaViKeys, NameResolver, GTA6_NAMES_ENV, RPF9_MAGIC};
+use or_io::container::rpf::{open_at, GtaViKeys, NameResolver, RPF9_MAGIC};
 
 use crate::state::jobs::file_name;
 use crate::state::DocPayload;
@@ -60,7 +60,7 @@ pub(crate) fn keys() -> Result<Arc<GtaViKeys>, String> {
     keys
 }
 
-/// The names of the [`GTA6_NAMES_ENV`] folder, of the config dir's harvest and local resolved names, of the
+/// The names of the [`or_io::container::rpf::default_names_dir`] folder, of the config dir's harvest and local resolved names, of the
 /// default hash index and of the bundled words, built once a run.
 ///
 /// ⚠ The first call reads millions of names and every other caller waits on it, so it runs only on
@@ -68,7 +68,7 @@ pub(crate) fn keys() -> Result<Arc<GtaViKeys>, String> {
 pub(crate) fn resolver() -> Arc<NameResolver> {
     static RESOLVER: OnceLock<Arc<NameResolver>> = OnceLock::new();
     let load = || {
-        let dir = std::env::var_os(GTA6_NAMES_ENV).map(PathBuf::from);
+        let dir = or_io::container::rpf::default_names_dir();
         let config = crate::state::prefs::config_root();
         Arc::new(names_from(dir.as_deref(), config.as_deref()))
     };

@@ -566,9 +566,7 @@ impl NameResolver {
 
     /// Loads external names, then the local cache and vocabulary, then the shared word candidates.
     pub fn load_with_sources(dir: Option<&Path>, local: Option<&Path>) -> Self {
-        let external = dir
-            .map(Path::to_path_buf)
-            .or_else(|| std::env::var_os(super::GTA6_NAMES_ENV).map(Into::into));
+        let external = dir.map(Path::to_path_buf).or_else(super::default_names_dir);
         let mut names = external.as_deref().map(Self::load).unwrap_or_default();
         if let Some(local) = local {
             match cache::read_cache(local) {

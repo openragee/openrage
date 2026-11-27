@@ -970,7 +970,7 @@ fn regrouped(stmt: &mut Stmt) -> bool {
 }
 
 /// The variables that hold a closure object: assigned once in the body, an object of a class the compiler made, the address never taken.
-fn closures(body: &[Stmt]) -> BTreeSet<Var> {
+pub(crate) fn closures(body: &[Stmt]) -> BTreeSet<Var> {
     let mut assigned: BTreeMap<Var, u32> = BTreeMap::new();
     tree::each_simple(body, &mut |s| {
         let ir::Stmt::Assign { target, value } = s else {

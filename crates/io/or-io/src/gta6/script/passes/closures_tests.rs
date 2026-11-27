@@ -1278,7 +1278,7 @@ fn an_event_is_written_as_the_handler_added_to_its_place_or_taken_from_it() {
             .body()
         };
         let text = written(body(), &[]);
-        assert!(text.contains(&format!("    p0->f_30 {op} p1;\n")), "{text}");
+        assert!(text.contains(&format!("    p0.f_30 {op} p1;\n")), "{text}");
         assert!(!text.contains("CompareExchange"), "{text}");
         // With the name off the read and the loop are written as they stand.
         let lowered = written(body(), &[Pass::Events]);

@@ -33,12 +33,15 @@ pub fn run(f: &mut cfg::Function, names: &Names, stats: &mut Stats) {
     run_in(f, &Context::baseline(names), stats);
 }
 
-/// [`run`] as the pipeline calls it: `escape`, `constants`, `coalesce`, `wide-joins` and `repeats` each switch on a finer rule of this pass.
+/// [`run`] as the pipeline calls it: `escape`, `constants`, `coalesce`, `wide-joins`, `repeats` and `aggregates` each switch on a finer rule of this pass.
 // `escape`: two accesses are told apart by the variables their addresses are in, and an allocation
 // may change places with a call. `constants`: a test of constants is decided at every kind it is
 // taken at, and so is a test of the variable the statement straight before it gave a constant.
-// `coalesce`: a local that copies a temporary keeps its name, and two arms that only choose a
-// value for one variable are the one assignment of the choice. `wide-joins`: temporaries of one
+// `coalesce`: a local that copies a temporary keeps its name, a stack variable copied into or from
+// a local is that local where their values never need to differ, and two arms that only choose a
+// value for one variable are the one assignment of the choice. `aggregates`: a temporary of
+// several cells that only ever holds one, its address handed out or not, is a temporary of one
+// cell. `wide-joins`: temporaries of one
 // cell each that only ever carry a value of several cells whole are one variable of its cells.
 // `repeats`: a test that repeats the one its block was entered by goes the way that one went.
 // `Stats` counts temporaries on the trees either side of the passes, so nothing is counted here.
@@ -51,6 +54,7 @@ pub fn run_in(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) {
     let keep = cx.options.on(Pass::Coalesce);
     let wide = cx.options.on(Pass::WideJoins);
     let again = cx.options.on(Pass::Repeats);
+    let single = cx.options.on(Pass::Aggregates);
     named_accesses(&f.head, &mut f.cfg);
     tidy(&f.head, &mut f.cfg, ordered);
     joins::split_tuples(&mut f.cfg);
@@ -68,8 +72,9 @@ pub fn run_in(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) {
             changed |= fold::copies(f, keep);
             changed |= joins::roots(f);
             changed |= joins::merge(f);
+            changed |= keep && joins::unite(f);
             changed |= wide && joins::wholes(f);
-            changed |= cells::gather(f);
+            changed |= cells::gather(f, single);
             changed |= again && repeats(&mut f.cfg);
             changed |= tidy(&f.head, &mut f.cfg, ordered);
             if !changed {

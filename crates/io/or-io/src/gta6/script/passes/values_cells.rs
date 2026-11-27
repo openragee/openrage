@@ -721,11 +721,120 @@ fn fills(f: &mut cfg::Function) -> bool {
     changed
 }
 
-/// Puts the cells of many-cell values back together: in what is passed, in temporaries of one cell, and in locals.
-pub(super) fn gather(f: &mut cfg::Function) -> bool {
+/// Makes each temporary of several cells a temporary of one where every assignment gives it one cell and every read by name takes that cell or its low bits, its address handed out or not.
+// `v = zero_slots(1); f(&v); g(v[0]);` is `v = 0; f(&v); g(v);`: the temporary is the same one
+// cell of storage either way, so what a callee handed its address writes is read the same, and
+// what it writes past the cell no read of the temporary takes.
+// ⚠ Every assignment must state one cell: a temporary of several is as wide as what it was last given.
+fn ones(f: &mut cfg::Function) -> bool {
+    let facts = Facts::of(f);
+    // The reads of each temporary that take its first cell or its low bits, and the temporaries an address past their first cell is taken of.
+    let mut taken: HashMap<Var, u32> = HashMap::new();
+    let mut past: HashSet<Var> = HashSet::new();
+    each_top(&f.cfg, &mut |top| {
+        top.walk(&mut |e| match e {
+            Expr::Cell { base, index: 0 } | Expr::Cast { e: base, .. } => {
+                if let Expr::Var(var) = &**base {
+                    *taken.entry(*var).or_default() += 1;
+                }
+            }
+            Expr::AddrOf { var, cell } if *cell > 0 => {
+                past.insert(*var);
+            }
+            // ⚠ Bytes stored or loaded through its own address are the struct's, which the fold
+            // of a value of several cells reads as the value they make: only an address handed
+            // to a call is the cell's.
+            Expr::Load { addr, .. } | Expr::LoadBytes { addr, .. } => {
+                if let Expr::AddrOf { var, .. } = &**addr {
+                    past.insert(*var);
+                }
+            }
+            _ => {}
+        });
+    });
+    for block in &f.cfg.blocks {
+        for stmt in &block.stmts {
+            let addr = match stmt {
+                Stmt::Store { addr, .. }
+                | Stmt::StoreBytes { addr, .. }
+                | Stmt::StoreF32Slots { addr, .. }
+                | Stmt::ZeroBytes { addr, .. }
+                | Stmt::StepI32 { addr, .. } => addr,
+                _ => continue,
+            };
+            if let Expr::AddrOf { var, .. } = addr {
+                past.insert(*var);
+            }
+        }
+    }
+    let found: HashSet<Var> = (f.head.vars.iter())
+        .filter(|&(var, info)| {
+            let uses = facts.uses.get(var).copied().unwrap_or_default();
+            let read = taken.get(var).copied().unwrap_or(0) == uses.reads;
+            let one = facts.widths.get(var) == Some(&1);
+            var.is_temporary() && info.width == Width::Cells && one && read && !past.contains(var)
+        })
+        .map(|(var, _)| *var)
+        .collect();
+    if found.is_empty() {
+        return false;
+    }
+    for block in &mut f.cfg.blocks {
+        for stmt in &mut block.stmts {
+            let Stmt::Assign { target, value } = stmt else {
+                continue;
+            };
+            if !found.contains(&*target) {
+                continue;
+            }
+            let cell = match value {
+                Expr::ZeroSlots(1) => Some(Expr::Const(Const::i32(0))),
+                Expr::Cells(items) if items.len() == 1 && one_cell(&f.head, &items[0]) => {
+                    items.pop()
+                }
+                Expr::LoadBytes {
+                    addr,
+                    offset,
+                    bytes,
+                } if *bytes <= 8 => cell_load(*offset, *bytes, 0).map(|(ty, offset)| Expr::Load {
+                    ty,
+                    addr: std::mem::replace(addr, Box::new(Expr::GuidEmpty)),
+                    offset,
+                }),
+                _ => None,
+            };
+            if let Some(cell) = cell {
+                *value = cell;
+            }
+        }
+    }
+    each_top_mut(&mut f.cfg, &mut |top| {
+        top.walk_mut(&mut |e| {
+            let first = matches!(&*e, Expr::Cell { base, index: 0 } if matches!(&**base, Expr::Var(var) if found.contains(var)));
+            if first {
+                if let Expr::Cell { base, .. } = std::mem::replace(e, Expr::GuidEmpty) {
+                    *e = *base;
+                }
+            }
+        });
+    });
+    for var in &found {
+        if let Some(info) = f.head.vars.get_mut(var) {
+            info.width = Width::Cell;
+            if matches!(info.kind, Kind::Aggregate(_)) {
+                info.kind = Kind::Unknown;
+            }
+        }
+    }
+    true
+}
+
+/// Puts the cells of many-cell values back together: in what is passed, in temporaries of one cell, and in locals; with `one`, also in temporaries of one cell whose address is handed out.
+pub(super) fn gather(f: &mut cfg::Function, one: bool) -> bool {
     let mut changed = runs(f);
     changed |= fills(f);
     changed |= single(f);
+    changed |= one && ones(f);
     changed |= locals(f);
     changed
 }

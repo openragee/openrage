@@ -1258,3 +1258,238 @@ fn a_test_that_is_the_opposite_of_the_one_its_block_was_entered_by_goes_the_othe
         "{all:?}"
     );
 }
+
+/// The first stack variable of [`STACK`].
+const JOIN: Var = Var::Stack { at: 0x40, index: 0 };
+
+/// A branch on the first parameter whose arms each give the first stack variable what a call gives.
+const CALLED: &str = "if (((as_u32(p0) == 0))) { stack_000040_0 = Native.DEMO.GET(p0); } else { stack_000040_0 = Native.DEMO.GET(p1); }";
+
+/// The assignments of `f` to `var`, each by its value.
+fn given(f: &cfg::Function, var: Var) -> Vec<Expr> {
+    let all = f.cfg.blocks.iter().flat_map(|block| &block.stmts);
+    all.filter_map(|stmt| match stmt {
+        Stmt::Assign { target, value } if *target == var => Some(value.clone()),
+        _ => None,
+    })
+    .collect()
+}
+
+#[test]
+fn a_join_copied_into_a_local_and_read_again_is_that_local() {
+    let body = format!("{CALLED} local_1 = stack_000040_0; if (((as_u32(stack_000040_0) != 0))) {{ Native.DEMO.USE(local_1); }} else {{ }} return;");
+    let made = ran_with(&[Pass::Coalesce], STACK, &body);
+    assert!(!mentioned(&made, JOIN), "{:?}", made.cfg);
+    // Each arm gives the local what the call gives, and no copy of it into itself is left.
+    let local = given(&made, Var::Local(1));
+    assert_eq!(local.len(), 2, "{:?}", made.cfg);
+    assert!(
+        local.iter().all(|value| matches!(value, Expr::Call { .. })),
+        "{local:?}"
+    );
+    // The test reads the local.
+    let tested = (made.cfg.blocks.iter()).any(|block| match &block.term {
+        Terminator::Branch { cond, .. } => {
+            let mut read = false;
+            cond.walk(&mut |e| read |= *e == Expr::Var(Var::Local(1)));
+            read
+        }
+        _ => false,
+    });
+    assert!(tested, "{:?}", made.cfg);
+    // Without the name the join stays.
+    assert!(mentioned(&ran_with(&[], STACK, &body), JOIN));
+}
+
+#[test]
+fn a_local_a_join_is_given_in_one_arm_is_the_join() {
+    let body = "if (((as_u32(p0) == 0))) { local_1 = Native.DEMO.GET(p0); Native.DEMO.USE(local_1); stack_000040_0 = local_1; } else { stack_000040_0 = 7; } Native.DEMO.USE(stack_000040_0); return;";
+    let made = ran_with(&[Pass::Coalesce], STACK, body);
+    assert!(!mentioned(&made, JOIN), "{:?}", made.cfg);
+    let local = given(&made, Var::Local(1));
+    assert_eq!(local.len(), 2, "{:?}", made.cfg);
+    assert!(
+        local
+            .iter()
+            .any(|value| matches!(value, Expr::Const(c) if c.bits == 7)),
+        "{local:?}"
+    );
+    // The arm's call and the call where the arms meet both read the local.
+    let all = made.cfg.blocks.iter().flat_map(|block| &block.stmts);
+    let read = |stmt: &&Stmt| matches!(stmt, Stmt::Eval(Expr::Call { args, .. }) if args[..] == [Expr::Var(Var::Local(1))]);
+    assert_eq!(all.filter(read).count(), 2, "{:?}", made.cfg);
+    // Without the name the join stays.
+    assert!(mentioned(&ran_with(&[], STACK, body), JOIN));
+    // ⚠ Where the join is also copied into a local after it, that local is the join: the arm's
+    // local keeps its own value, which no other arm's can then be hoisted over.
+    let both = "if (((as_u32(p0) == 0))) { local_1 = Native.DEMO.GET(p0); stack_000040_0 = local_1; } else { stack_000040_0 = Native.DEMO.GET(p1); } local_2 = stack_000040_0; Native.DEMO.USE(local_2); return;";
+    let made = ran_with(&[Pass::Coalesce], STACK, both);
+    // One variable is given each arm's call and read where the arms meet: the join, or the local after it.
+    let (join, after) = (given(&made, JOIN), given(&made, Var::Local(2)));
+    assert_eq!(join.len() + after.len(), 2, "{:?}", made.cfg);
+    assert!(given(&made, Var::Local(1)).is_empty(), "{:?}", made.cfg);
+}
+
+#[test]
+fn a_join_that_takes_one_rounds_value_out_of_a_loop_stays_apart_from_it() {
+    // A search: each round makes `local_1` anew, a hit hands it to the join and leaves, and the join is zero where no round hit.
+    let search = |after: &str| {
+        format!(
+            "local_0 = 0; \
+             label_000100: ; if (((as_i32(local_0) < 4))) {{ goto label_000110; }} else {{ goto label_000130; }} \
+             label_000110: ; local_1 = Native.DEMO.GET(local_0); \
+             if (((as_u32(Native.DEMO.GET(local_1)) != 0))) {{ goto label_000120; }} else {{ goto label_000128; }} \
+             label_000120: ; stack_000040_0 = local_1; goto label_000140; \
+             label_000128: ; local_0 = ((as_i32(local_0) + 1)); goto label_000100; \
+             label_000130: ; stack_000040_0 = {after}; goto label_000140; \
+             label_000140: ; Native.DEMO.USE(stack_000040_0); return;"
+        )
+    };
+    let made = ran_with(&[Pass::Coalesce], STACK, &search("0"));
+    assert!(mentioned(&made, JOIN), "{:?}", made.cfg);
+    let local = given(&made, Var::Local(1));
+    assert!(
+        local.iter().all(|value| matches!(value, Expr::Call { .. })),
+        "the round's own variable is given nothing but what each round makes: {local:?}"
+    );
+}
+
+#[test]
+fn a_join_and_a_local_whose_values_may_differ_somewhere_stay_apart() {
+    let kept = |body: String| {
+        let made = ran_with(&[Pass::Coalesce], STACK, &body);
+        assert!(mentioned(&made, JOIN), "from:\n{body}\n{:?}", made.cfg);
+    };
+    // The local is read while it still holds what it had before the join.
+    kept(format!("{CALLED} Native.DEMO.USE(local_1); local_1 = stack_000040_0; Native.DEMO.USE2(local_1, stack_000040_0); return;"));
+    // On one path the join is read before anything gives it a value.
+    kept("if (((as_u32(p0) == 0))) { stack_000040_0 = Native.DEMO.GET(p0); } else { } local_1 = stack_000040_0; Native.DEMO.USE2(local_1, stack_000040_0); return;".to_owned());
+    // The local is given another value while the join's is still to be read.
+    kept(format!("{CALLED} local_1 = stack_000040_0; Native.DEMO.USE(local_1); local_1 = p1; Native.DEMO.USE2(local_1, stack_000040_0); return;"));
+}
+
+#[test]
+fn a_join_is_a_local_a_pointer_reaches_only_where_nothing_between_touches_memory() {
+    let escape = "Native.DEMO.USE(Vm.Address(locals, 0));";
+    // The address of the local below may run over the local; nothing runs between the arms and the copy.
+    let quiet = format!(
+        "{CALLED} local_1 = stack_000040_0; Native.DEMO.USE2(local_1, local_1); {escape} return;"
+    );
+    let made = ran_with(&[Pass::Coalesce], STACK, &quiet);
+    assert!(!mentioned(&made, JOIN), "{:?}", made.cfg);
+    assert_eq!(given(&made, Var::Local(1)).len(), 2, "{:?}", made.cfg);
+    // A call made while the join is still to be copied may read the local through that address.
+    let called = format!("{CALLED} Native.DEMO.USE(p1); local_1 = stack_000040_0; Native.DEMO.USE2(local_1, local_1); {escape} return;");
+    assert!(mentioned(
+        &ran_with(&[Pass::Coalesce], STACK, &called),
+        JOIN
+    ));
+    // On the path where the join is never copied, the address still reaches what the local held.
+    let uncopied = format!("{CALLED} if (((as_u32(p1) == 0))) {{ local_1 = stack_000040_0; Native.DEMO.USE(local_1); }} else {{ }} {escape} return;");
+    assert!(mentioned(
+        &ran_with(&[Pass::Coalesce], STACK, &uncopied),
+        JOIN
+    ));
+}
+
+#[test]
+fn cells_in_a_row_inside_a_value_carried_over_stack_slots_to_a_group_of_them_are_one_variable() {
+    let (low, high) = (
+        Var::Stack { at: 0x60, index: 0 },
+        Var::Stack { at: 0x60, index: 1 },
+    );
+    let part = "v_000018_1 = load_bytes(p1, 0x0, 24); stack_000060_0 = v_000018_1[1]; stack_000060_1 = v_000018_1[2];";
+    let zeroes = "stack_000060_0 = 0; stack_000060_1 = 0;";
+    let grouped = "Native.DEMO.USE2(new VmValues(stack_000060_0, stack_000060_1), p1);";
+    let body = pair_join(part, zeroes, grouped);
+    let made = ran_with(&[Pass::WideJoins], PAIR_SLOTS, &body);
+    assert!(!mentioned(&made, high), "{:?}", made.cfg);
+    let info = &made.head.vars[&low];
+    assert_eq!(
+        (info.width, info.kind.clone()),
+        (Width::Cells, Kind::Aggregate(2))
+    );
+    // One arm gives the bytes of the two cells, the other two zero cells.
+    let values = given(&made, low);
+    assert!(values.contains(&Expr::ZeroSlots(2)), "{values:?}");
+    let taken = (values.iter()).any(|value| {
+        matches!(
+            value,
+            Expr::ExtractBytes {
+                offset: 8,
+                bytes: 16,
+                ..
+            }
+        )
+    });
+    assert!(taken, "{values:?}");
+    let all = made.cfg.blocks.iter().flat_map(|block| &block.stmts);
+    let handed = |stmt: &&Stmt| matches!(stmt, Stmt::Eval(Expr::Call { args, .. }) if args.first() == Some(&Expr::Var(low)));
+    assert_eq!(all.filter(handed).count(), 1, "{:?}", made.cfg);
+    // Handed as two values of a call, the slots may hold two values of their own.
+    let apart = "Native.DEMO.USE3(stack_000060_0, stack_000060_1, p1);";
+    let split = ran_with(
+        &[Pass::WideJoins],
+        PAIR_SLOTS,
+        &pair_join(part, zeroes, apart),
+    );
+    assert!(mentioned(&split, high), "{:?}", split.cfg);
+    // Without the name the slots stay.
+    assert!(mentioned(&ran_with(&[], PAIR_SLOTS, &body), high));
+}
+
+#[test]
+fn a_temporary_of_several_cells_that_only_ever_holds_one_is_one_cell_its_address_handed_out_or_not()
+{
+    let v = Var::Value { at: 0x18, index: 1 };
+    let all = |f: &cfg::Function| -> Vec<Stmt> {
+        let stmts = f.cfg.blocks.iter().flat_map(|block| &block.stmts);
+        stmts.cloned().collect()
+    };
+    let handed = "v_000018_1 = zero_slots(1); Native.DEMO.USE(Vm.Address(v_000018_1, 0)); Native.DEMO.USE(v_000018_1[0]); return;";
+    let made = ran_with(&[Pass::Aggregates], MANY, handed);
+    assert_eq!(made.head.vars[&v].width, Width::Cell);
+    let stmts = all(&made);
+    let one = matches!(
+        &stmts[..],
+        [Stmt::Assign { value: Expr::Const(c), .. }, Stmt::Eval(_), Stmt::Eval(Expr::Call { args, .. })]
+            if c.bits == 0 && args[..] == [Expr::Var(v)]
+    );
+    assert!(one, "{stmts:?}");
+    // Without the name it stays a value of several cells.
+    assert_eq!(
+        ran_with(&[], MANY, handed).head.vars[&v].width,
+        Width::Cells
+    );
+    // Read only for its low bits, it is the cell loaded.
+    let cast = "v_000018_1 = load_bytes(p0, 0x18, 4); Native.DEMO.USE2(as_u32(v_000018_1), as_u32(v_000018_1)); return;";
+    let made = ran_with(&[Pass::Aggregates], MANY, cast);
+    assert_eq!(made.head.vars[&v].width, Width::Cell);
+    let loaded = matches!(
+        &all(&made)[..],
+        [
+            Stmt::Assign {
+                value: Expr::Load {
+                    ty: Scalar::U32,
+                    offset: 0x18,
+                    ..
+                },
+                ..
+            },
+            Stmt::Eval(_)
+        ]
+    );
+    assert!(loaded, "{:?}", made.cfg);
+    // Given two cells, it is as wide as that.
+    let pair = "v_000018_1 = Native.DEMO.PAIR(); Native.DEMO.USE(Vm.Address(v_000018_1, 0)); Native.DEMO.USE(v_000018_1[0]); return;";
+    assert_eq!(
+        ran_with(&[Pass::Aggregates], MANY, pair).head.vars[&v].width,
+        Width::Cells
+    );
+    // ⚠ Filled through its own address, it is a struct whose bytes the fold reads as the value
+    // they make: it is never made one cell written through its address.
+    let filled = "v_000018_1 = zero_slots(1); local_1 = 5; local_0 = Vm.Address(v_000018_1, 0); store_i32(local_0, 0x0, local_1); Native.DEMO.USE(v_000018_1[0]); return;";
+    let made = ran_with(&[Pass::Aggregates], MANY, filled);
+    let width = made.head.vars.get(&v).map(|info| info.width);
+    assert_ne!(width, Some(Width::Cell), "{:?}", made.cfg);
+}

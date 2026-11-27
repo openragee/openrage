@@ -1,7 +1,7 @@
 //! The values a lifter carries across a join in `stack_` variables: tuples taken apart, each
 //! variable that only renames another value replaced by that value, a join that is only
-//! copied into the next one merged with it, two arms that only choose a value written as the
-//! choice, and a value of several cells carried in a row of temporaries made one variable.
+//! copied into the next one merged with it or with a local, two arms that only choose a value
+//! written as the choice, and a value of several cells carried in a row of temporaries made one variable.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -493,6 +493,437 @@ pub(super) fn merge(f: &mut cfg::Function) -> bool {
     changed
 }
 
+/// Whether `stmt` copies one of `a` and `b` into the other.
+fn copy_between(stmt: &Stmt, a: Var, b: Var) -> bool {
+    match stmt {
+        Stmt::Assign {
+            target,
+            value: Expr::Var(from),
+        } => (*target, *from) == (a, b) || (*target, *from) == (b, a),
+        _ => false,
+    }
+}
+
+/// What the walks of [`united`] read of a function: the blocks that lead into each block, and the blocks that name each variable looked at.
+struct Graph {
+    preds: Vec<Vec<BlockId>>,
+    named: HashMap<Var, Vec<BlockId>>,
+}
+
+impl Graph {
+    /// The graph of `cfg`, with the blocks that read or assign each of `vars` by name.
+    fn of(cfg: &Cfg, vars: &HashSet<Var>) -> Graph {
+        let mut preds: Vec<Vec<BlockId>> = vec![Vec::new(); cfg.blocks.len()];
+        let mut named: HashMap<Var, Vec<BlockId>> = HashMap::new();
+        for (b, block) in cfg.blocks.iter().enumerate() {
+            for next in block.term.successors() {
+                if let Some(into) = preds.get_mut(next) {
+                    into.push(b);
+                }
+            }
+            let mut note = |var: Var| {
+                if vars.contains(&var) {
+                    let blocks = named.entry(var).or_default();
+                    if blocks.last() != Some(&b) {
+                        blocks.push(b);
+                    }
+                }
+            };
+            for stmt in &block.stmts {
+                for target in stmt.targets() {
+                    note(*target);
+                }
+                stmt.each_expr(&mut |top| {
+                    top.walk(&mut |e| {
+                        if let Expr::Var(var) = e {
+                            note(*var);
+                        }
+                    });
+                });
+            }
+            if let Some(top) = block.term.expr() {
+                top.walk(&mut |e| {
+                    if let Expr::Var(var) = e {
+                        note(*var);
+                    }
+                });
+            }
+        }
+        Graph { preds, named }
+    }
+
+    fn named(&self, var: Var) -> &[BlockId] {
+        match self.named.get(&var) {
+            Some(blocks) => blocks,
+            None => &[],
+        }
+    }
+}
+
+/// Where `var` is live as each block starts and as it ends: some path from there reads it before it is assigned; `None` past `budget`.
+fn liveness(
+    cfg: &Cfg,
+    graph: &Graph,
+    var: Var,
+    budget: &mut usize,
+) -> Option<(Vec<bool>, Vec<bool>)> {
+    let n = cfg.blocks.len();
+    *budget = budget.checked_sub(n)?;
+    let mut read = vec![false; n];
+    let mut assigned = vec![false; n];
+    // Only a block that names the variable reads or assigns it.
+    for b in graph.named(var).iter().copied() {
+        let Some(block) = cfg.blocks.get(b) else {
+            continue;
+        };
+        *budget = budget.checked_sub(block.stmts.len() + 1)?;
+        // A statement reads what it reads before it assigns its targets.
+        for stmt in &block.stmts {
+            read[b] |= !assigned[b] && reads(stmt, var);
+            assigned[b] |= stmt.targets().contains(&var);
+        }
+        read[b] |= !assigned[b] && block.term.expr().is_some_and(|e| reads_in(e, var));
+    }
+    // Each block turns live once at most, so the work is bounded by the edges.
+    let mut live_in = read;
+    let mut work: Vec<BlockId> = (0..n).filter(|b| live_in[*b]).collect();
+    while let Some(b) = work.pop() {
+        for p in graph.preds.get(b).into_iter().flatten() {
+            if !assigned[*p] && !live_in[*p] {
+                live_in[*p] = true;
+                work.push(*p);
+            }
+        }
+    }
+    let live_out = (cfg.blocks.iter())
+        .map(|block| {
+            let next = block.term.successors();
+            next.into_iter()
+                .any(|b| live_in.get(b).copied().unwrap_or(false))
+        })
+        .collect();
+    Some((live_in, live_out))
+}
+
+/// Whether the stack variable `s` and the local `t` may be one variable: wherever either is assigned but by a copy of the other, the other is not read again before it is assigned anew, and `s` is never read before it is assigned.
+// With `exposed`, a pointer may reach `t`: then nothing that runs while `s` holds a value still
+// to be read may call, load or store through a pointer, or name `t`, for `t` would hold that
+// value there too. The statement that assigns `s` runs what it runs before the assignment.
+fn united(
+    cfg: &Cfg,
+    graph: &Graph,
+    facts: &Facts,
+    (s, t): (Var, Var),
+    exposed: bool,
+    budget: &mut usize,
+) -> bool {
+    let Some((into_s, out_s)) = liveness(cfg, graph, s, budget) else {
+        return false;
+    };
+    let Some((_, out_t)) = liveness(cfg, graph, t, budget) else {
+        return false;
+    };
+    if into_s.get(ENTRY).copied().unwrap_or(true) {
+        return false;
+    }
+    let held = facts.place(t);
+    let quiet = |effects: Effects| {
+        let named = held.is_some_and(|place| effects.touches(place));
+        !(effects.call || effects.store || effects.load || named)
+    };
+    // A block that names neither, and that `s` is not live out of, assigns neither while the other is still to be read and runs nothing while `s` is.
+    let mut looked = vec![false; cfg.blocks.len()];
+    for b in graph.named(s).iter().chain(graph.named(t)).copied() {
+        if let Some(seen) = looked.get_mut(b) {
+            *seen = true;
+        }
+    }
+    for (b, block) in cfg.blocks.iter().enumerate() {
+        if !(looked[b] || out_s[b]) {
+            continue;
+        }
+        let Some(left) = budget.checked_sub(block.stmts.len() + 1) else {
+            return false;
+        };
+        *budget = left;
+        let (mut live_s, mut live_t) = (out_s[b], out_t[b]);
+        if let Some(e) = block.term.expr() {
+            live_s |= reads_in(e, s);
+            live_t |= reads_in(e, t);
+            if exposed && live_s && !quiet(Effects::of_expr(facts, e)) {
+                return false;
+            }
+        }
+        // Back from the block's end: `live_s` and `live_t` say what is still to be read after the statement.
+        for stmt in block.stmts.iter().rev() {
+            let copy = copy_between(stmt, s, t);
+            let targets = stmt.targets();
+            let (to_s, to_t) = (targets.contains(&s), targets.contains(&t));
+            if !copy && ((to_s && (live_t || to_t)) || (to_t && live_s)) {
+                return false;
+            }
+            live_s = (live_s && !to_s) || reads(stmt, s);
+            live_t = (live_t && !to_t) || reads(stmt, t);
+            if exposed && live_s && !copy && !quiet(Effects::of_stmt(facts, stmt)) {
+                return false;
+            }
+        }
+    }
+    !exposed || unobserved(cfg, graph, facts, (s, t), &quiet, budget)
+}
+
+/// Whether nothing that may reach `t` through a pointer runs on any path from an assignment of `s` that is no copy of `t` to the next assignment of `t`.
+// Once the two are one, that assignment writes `t`'s cell, which until then held another value.
+fn unobserved(
+    cfg: &Cfg,
+    graph: &Graph,
+    facts: &Facts,
+    (s, t): (Var, Var),
+    quiet: &impl Fn(Effects) -> bool,
+    budget: &mut usize,
+) -> bool {
+    let n = cfg.blocks.len();
+    let Some(left) = budget.checked_sub(n) else {
+        return false;
+    };
+    *budget = left;
+    // A block that names neither keeps the state it is given; each block is entered pending once at most.
+    let walk = |b: BlockId, pending: bool, budget: &mut usize| -> Option<bool> {
+        let block = cfg.blocks.get(b)?;
+        *budget = budget.checked_sub(block.stmts.len() + 1)?;
+        let mut pending = pending;
+        for stmt in &block.stmts {
+            let copy = copy_between(stmt, s, t);
+            if pending && !copy && !quiet(Effects::of_stmt(facts, stmt)) {
+                return None;
+            }
+            let targets = stmt.targets();
+            if targets.contains(&t) {
+                pending = false;
+            }
+            if targets.contains(&s) && !copy {
+                pending = true;
+            }
+        }
+        if pending && (block.term.expr()).is_some_and(|e| !quiet(Effects::of_expr(facts, e))) {
+            return None;
+        }
+        Some(pending)
+    };
+    let mut seeded: Vec<BlockId> = (graph.named(s).iter().chain(graph.named(t)))
+        .copied()
+        .collect();
+    seeded.sort_unstable();
+    seeded.dedup();
+    let mut pending_in = vec![false; n];
+    let mut work: Vec<BlockId> = Vec::new();
+    for b in seeded {
+        match walk(b, false, budget) {
+            None => return false,
+            Some(true) => work.push(b),
+            Some(false) => {}
+        }
+    }
+    while let Some(b) = work.pop() {
+        let Some(block) = cfg.blocks.get(b) else {
+            continue;
+        };
+        for next in block.term.successors() {
+            if next >= n || pending_in[next] {
+                continue;
+            }
+            pending_in[next] = true;
+            match walk(next, true, budget) {
+                None => return false,
+                Some(true) => work.push(next),
+                Some(false) => {}
+            }
+        }
+    }
+    true
+}
+
+/// Whether `s` takes one round's value of `t` out of a loop that makes `t` anew each round, while another assignment gives `s` something else: `found = item; break;`.
+// ⚠ One name for the two would mean the same, and leave the place after the loop reachable only
+// by a jump: the copy is what lets the loop end in a `break`. So the two stay apart. Past
+// `budget` the answer is yes, which only ever keeps a temporary.
+fn found_in_a_loop(cfg: &Cfg, graph: &Graph, (s, t): (Var, Var), budget: &mut usize) -> bool {
+    let (mut copies, mut made, mut joined) = (Vec::new(), Vec::new(), false);
+    let mut seen: HashSet<BlockId> = HashSet::new();
+    for b in graph.named(s).iter().chain(graph.named(t)).copied() {
+        let Some(block) = cfg.blocks.get(b).filter(|_| seen.insert(b)) else {
+            continue;
+        };
+        for stmt in &block.stmts {
+            let (targets, copy) = (stmt.targets(), copy_between(stmt, s, t));
+            match (targets.contains(&s), targets.contains(&t), copy) {
+                (true, _, true) => copies.push(b),
+                (true, _, false) => joined = true,
+                (false, true, false) => made.push(b),
+                _ => {}
+            }
+        }
+    }
+    if !joined || copies.is_empty() || made.is_empty() {
+        return false;
+    }
+    // Whether some path of one edge or more leads from `from` to `to`.
+    let mut leads = |from: BlockId, to: BlockId| -> bool {
+        let mut reached = vec![false; cfg.blocks.len()];
+        let mut work: Vec<BlockId> = cfg
+            .blocks
+            .get(from)
+            .map_or(Vec::new(), |b| b.term.successors());
+        while let Some(b) = work.pop() {
+            if b == to {
+                return true;
+            }
+            let Some(mark) = reached.get_mut(b).filter(|mark| !**mark) else {
+                continue;
+            };
+            *mark = true;
+            match budget.checked_sub(1) {
+                Some(left) => *budget = left,
+                None => return true,
+            }
+            work.extend(cfg.blocks[b].term.successors());
+        }
+        false
+    };
+    // The round's variable is made in a loop, and the copy is on a way out of it.
+    for anew in &made {
+        if !leads(*anew, *anew) {
+            continue;
+        }
+        for copy in &copies {
+            if leads(*anew, *copy) && !leads(*copy, *anew) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Makes one variable of each stack variable and a local it is copied into or from, where no place needs the two to hold different values, and removes the copies.
+// `if (c) { s = a; } else { s = b; } t = s; if (s == 0) ..` is `if (c) { t = a; } else { t = b; }
+// if (t == 0) ..`, and `if (c) { t = a; .. s = t; } else { s = b; } f(s);` is `if (c) { t = a; .. }
+// else { t = b; } f(t);`: the value a join carries is the local's from where it is made.
+// ⚠ Neither may have its address taken or hold several cells, and each pair found on the code
+// unchanged shares no variable with another.
+pub(super) fn unite(f: &mut cfg::Function) -> bool {
+    let mut changed = false;
+    for _ in 0..MERGES {
+        let facts = Facts::of(f);
+        let head = &f.head;
+        let one = |var: &Var| {
+            let wide = (head.vars.get(var)).is_some_and(|info| info.width == Width::Cells);
+            let uses = facts.uses.get(var).copied().unwrap_or_default();
+            !wide && !facts.widths.contains_key(var) && uses.addrs == 0
+        };
+        let mut seen: HashSet<(Var, Var)> = HashSet::new();
+        // ⚠ A local the join is copied into comes before a local copied into the join: the first
+        // is the join under its own name, the second one arm's value, which keeps its variable.
+        let mut pairs: Vec<(Var, Var)> = Vec::new();
+        let mut arms: Vec<(Var, Var)> = Vec::new();
+        for block in &f.cfg.blocks {
+            for stmt in &block.stmts {
+                let Stmt::Assign {
+                    target,
+                    value: Expr::Var(from),
+                } = stmt
+                else {
+                    continue;
+                };
+                let (pair, into) = match (target, from) {
+                    (Var::Local(_), Var::Stack { .. }) => ((*from, *target), true),
+                    (Var::Stack { .. }, Var::Local(_)) => ((*target, *from), false),
+                    _ => continue,
+                };
+                if one(&pair.0) && one(&pair.1) && seen.insert(pair) {
+                    match into {
+                        true => pairs.push(pair),
+                        false => arms.push(pair),
+                    }
+                }
+            }
+        }
+        pairs.append(&mut arms);
+        if pairs.is_empty() {
+            break;
+        }
+        let mut budget = allowance(&f.cfg);
+        let vars: HashSet<Var> = pairs.iter().flat_map(|(s, t)| [*s, *t]).collect();
+        let graph = Graph::of(&f.cfg, &vars);
+        let mut taken: HashSet<Var> = HashSet::new();
+        let mut renamed: HashMap<Var, Var> = HashMap::new();
+        for (s, t) in pairs {
+            if budget == 0 {
+                break;
+            }
+            if taken.contains(&s) || taken.contains(&t) {
+                continue;
+            }
+            if found_in_a_loop(&f.cfg, &graph, (s, t), &mut budget) {
+                continue;
+            }
+            let exposed = !facts.named_only(t);
+            if united(&f.cfg, &graph, &facts, (s, t), exposed, &mut budget) {
+                taken.insert(s);
+                taken.insert(t);
+                renamed.insert(s, t);
+            }
+        }
+        if renamed.is_empty() {
+            break;
+        }
+        for block in &mut f.cfg.blocks {
+            for stmt in &mut block.stmts {
+                match stmt {
+                    Stmt::Assign { target, .. } => {
+                        if let Some(to) = renamed.get(&*target) {
+                            *target = *to;
+                        }
+                    }
+                    Stmt::AssignMany { targets, .. } => {
+                        for target in targets.iter_mut() {
+                            if let Some(to) = renamed.get(&*target) {
+                                *target = *to;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        each_top_mut(&mut f.cfg, &mut |top| {
+            top.walk_mut(&mut |e| {
+                if let Expr::Var(var) = e {
+                    if let Some(to) = renamed.get(&*var) {
+                        *var = *to;
+                    }
+                }
+            });
+        });
+        // The copies between the two are now of the local into itself.
+        let kept: HashSet<Var> = renamed.values().copied().collect();
+        let itself = |stmt: &Stmt| match stmt {
+            Stmt::Assign {
+                target,
+                value: Expr::Var(from),
+            } => target == from && kept.contains(target),
+            _ => false,
+        };
+        for block in &mut f.cfg.blocks {
+            block.stmts.retain(|stmt| !itself(stmt));
+        }
+        for s in renamed.keys() {
+            f.head.vars.remove(s);
+        }
+        changed = true;
+    }
+    changed
+}
+
 /// A row of temporaries a lifter numbers one after another, `first` and the `cells - 1` after it, that a value of several cells may be carried in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Slots {
@@ -550,8 +981,47 @@ fn width_of(facts: &Facts, head: &Head, base: &Expr) -> Option<u32> {
     }
 }
 
-/// The one value the assignments `stmts` starts with give the temporaries of `slots`, each in turn: every cell of one whole value, zeroes, or locals in a row.
-fn row(facts: &Facts, head: &Head, stmts: &[Stmt], slots: Slots) -> Option<Expr> {
+/// The temporary a lifter numbers just before `var`.
+fn before(var: Var) -> Option<Var> {
+    match var {
+        Var::Stack { at, index } => Some(Var::Stack {
+            at,
+            index: index.checked_sub(1)?,
+        }),
+        Var::Value { at, index } => Some(Var::Value {
+            at,
+            index: index.checked_sub(1)?,
+        }),
+        _ => None,
+    }
+}
+
+/// How many statements `stmts` starts with that give the temporaries from `first` on the cells of `base` from `low` on, one each in turn, within its `width`.
+fn part_of(stmts: &[Stmt], first: Var, base: &Expr, low: u32, width: u32) -> u32 {
+    let slots = Slots {
+        first,
+        cells: width,
+    };
+    let mut n = 0u32;
+    for stmt in stmts.iter().take(WHOLE as usize) {
+        let Stmt::Assign {
+            target,
+            value: Expr::Cell { base: of, index },
+        } = stmt
+        else {
+            break;
+        };
+        let wanted = low.checked_add(n).filter(|cell| *cell < width);
+        if slots.member(n) != Some(*target) || wanted != Some(*index) || **of != *base {
+            break;
+        }
+        n += 1;
+    }
+    n
+}
+
+/// The one value the assignments `stmts` starts with give the temporaries of `slots`, each in turn: every cell of one whole value, zeroes, or locals in a row; with `part`, also cells in a row inside one value.
+fn row(facts: &Facts, head: &Head, stmts: &[Stmt], slots: Slots, part: bool) -> Option<Expr> {
     let run = stmts.get(..usize::try_from(slots.cells).ok()?)?;
     let mut values: Vec<&Expr> = Vec::with_capacity(run.len());
     for (stmt, i) in run.iter().zip(0u32..) {
@@ -564,14 +1034,28 @@ fn row(facts: &Facts, head: &Head, stmts: &[Stmt], slots: Slots) -> Option<Expr>
         values.push(value);
     }
     let first = *values.first()?;
-    // `t = x[0]; t+1 = x[1]; ..` over every cell of an `x` that is none of the row.
-    if let Expr::Cell { base, index: 0 } = first {
+    // `t = x[0]; t+1 = x[1]; ..` over every cell of an `x` that is none of the row, or with
+    // `part`, `t = x[k]; t+1 = x[k+1]; ..` over cells of `x` in a row, as the bytes they are.
+    if let Expr::Cell { base, index: low } = first {
         let apart = !matches!(&**base, Expr::Var(var) if slots.place(*var).is_some());
-        let whole = width_of(facts, head, base) == Some(slots.cells);
+        let width = width_of(facts, head, base);
         let cells = (values.iter().copied().zip(0u32..)).all(|(value, i)| {
-            matches!(value, Expr::Cell { base: of, index } if *index == i && of == base)
+            matches!(value, Expr::Cell { base: of, index } if Some(*index) == low.checked_add(i) && of == base)
         });
-        return (apart && whole && cells).then(|| (**base).clone());
+        if !(apart && cells) {
+            return None;
+        }
+        if *low == 0 && width == Some(slots.cells) {
+            return Some((**base).clone());
+        }
+        let end = low.checked_add(slots.cells);
+        let inside = width.zip(end).is_some_and(|(width, end)| end <= width);
+        let (offset, bytes) = (low.checked_mul(8)?, slots.cells.checked_mul(8)?);
+        return (part && inside).then(|| Expr::ExtractBytes {
+            value: base.clone(),
+            offset,
+            bytes,
+        });
     }
     let zeroes =
         (values.iter().copied()).all(|value| matches!(value, Expr::Const(c) if c.bits == 0));
@@ -626,36 +1110,62 @@ fn picked(members: &HashMap<Var, (Slots, u32)>, inner: &Expr, refused: &mut Hash
 // `t0 = x[0]; t1 = x[1]; .. f(t0, t1);` is `t0 = x; .. f(t0);`, however many rows assign the
 // temporaries on the way to a join: each row is the value one way in gives. A row of every cell
 // of one whole value says the temporaries carry a value; another row may give zeroes, or locals
-// in a row.
+// in a row. So does a row of cells in a row inside one value, `t0 = x[2]; t1 = x[3];`, where
+// every read of the temporaries is a group of exactly them, `f((t0, t1))`: the value is those bytes.
 // ⚠ Every assignment of each temporary must be in such a row, and every read in a run of all of
 // them in order that a call or a group is given whole: no cell is taken alone, so the variable is
 // only another name for the same cells.
 pub(super) fn wholes(f: &mut cfg::Function) -> bool {
     let facts = Facts::of(f);
     let head = &f.head;
-    // The rows each row of every cell of one whole value proposes, by their first temporary.
+    // The rows each row of every cell of one whole value proposes, by their first temporary, and
+    // those a row of cells inside a value proposes: a group of exactly them must read each of these.
     let mut proposed: BTreeMap<Var, u32> = BTreeMap::new();
+    let mut parted: HashSet<Var> = HashSet::new();
     let mut refused: HashSet<Var> = HashSet::new();
     for block in &f.cfg.blocks {
         for (i, stmt) in block.stmts.iter().enumerate() {
             let Stmt::Assign {
                 target,
-                value: Expr::Cell { base, index: 0 },
+                value: Expr::Cell { base, index: low },
             } = stmt
             else {
                 continue;
             };
-            let cells = width_of(&facts, head, base).filter(|cells| (2..=WHOLE).contains(cells));
-            let Some(cells) = cells else {
+            let width = width_of(&facts, head, base).filter(|cells| (2..=WHOLE).contains(cells));
+            let Some(width) = width else {
                 continue;
             };
-            let slots = Slots {
+            if !lone_cell(&facts, head, *target) {
+                continue;
+            }
+            let whole = Slots {
                 first: *target,
-                cells,
+                cells: width,
             };
-            let made = row(&facts, head, &block.stmts[i..], slots).is_some();
-            if !(lone_cell(&facts, head, *target) && made) {
+            let every = *low == 0 && row(&facts, head, &block.stmts[i..], whole, false).is_some();
+            // ⚠ A row inside a value only from its first statement: a later one starts no row of its own.
+            let earlier = before(*target).zip(low.checked_sub(1));
+            let continues = match (i.checked_sub(1).and_then(|j| block.stmts.get(j)), earlier) {
+                (
+                    Some(Stmt::Assign {
+                        target: prior,
+                        value: Expr::Cell { base: of, index },
+                    }),
+                    Some((slot, cell)),
+                ) => *prior == slot && *index == cell && of == base,
+                _ => false,
+            };
+            let (cells, part) = match (every, continues) {
+                (true, _) => (width, false),
+                (false, true) => continue,
+                (false, false) => (part_of(&block.stmts[i..], *target, base, *low, width), true),
+            };
+            if cells < 2 {
                 continue;
+            }
+            if part {
+                parted.insert(*target);
             }
             if proposed
                 .insert(*target, cells)
@@ -694,6 +1204,8 @@ pub(super) fn wholes(f: &mut cfg::Function) -> bool {
     let wide = |var: &Var| (head.vars.get(var)).is_some_and(|info| info.width == Width::Cells);
     let mut assigned: HashMap<Var, u32> = HashMap::new();
     let mut handed: HashMap<Var, u32> = HashMap::new();
+    // The rows a run of whose temporaries something reads other than as a group of exactly them.
+    let mut loose: HashSet<Var> = HashSet::new();
     for block in &f.cfg.blocks {
         for stmt in &block.stmts {
             // What a statement reads of a group only in part: an address, one cell stored, a cell assigned.
@@ -716,7 +1228,9 @@ pub(super) fn wholes(f: &mut cfg::Function) -> bool {
                 | Stmt::StepI32 { addr, .. } => picked(&members, addr, &mut refused),
                 Stmt::Assign { .. } | Stmt::Eval(_) => {}
             }
-            stmt.each_expr(&mut |top| each_run(&members, top, &mut handed, &mut refused));
+            stmt.each_expr(&mut |top| {
+                each_run(&members, top, &mut handed, &mut refused, &mut loose);
+            });
         }
         // Each assignment of a temporary of a row is a statement of a whole row that starts at its first.
         let mut i = 0;
@@ -725,7 +1239,16 @@ pub(super) fn wholes(f: &mut cfg::Function) -> bool {
                 .find_map(|target| members.get(target))
                 .copied();
             match hit {
-                Some((slots, 0)) if row(&facts, head, &block.stmts[i..], slots).is_some() => {
+                Some((slots, 0))
+                    if row(
+                        &facts,
+                        head,
+                        &block.stmts[i..],
+                        slots,
+                        parted.contains(&slots.first),
+                    )
+                    .is_some() =>
+                {
                     *assigned.entry(slots.first).or_default() += 1;
                     i += slots.cells as usize;
                 }
@@ -743,7 +1266,7 @@ pub(super) fn wholes(f: &mut cfg::Function) -> bool {
             Terminator::Jump(_) | Terminator::Return(_) | Terminator::Unreachable => {}
         }
         if let Some(e) = block.term.expr() {
-            each_run(&members, e, &mut handed, &mut refused);
+            each_run(&members, e, &mut handed, &mut refused, &mut loose);
         }
     }
 
@@ -759,7 +1282,8 @@ pub(super) fn wholes(f: &mut cfg::Function) -> bool {
                     lone_cell(&facts, head, var) && counted
                 })
             });
-            !refused.contains(&slots.first) && made > 0 && each
+            let grouped = !(parted.contains(&slots.first) && loose.contains(&slots.first));
+            !refused.contains(&slots.first) && made > 0 && each && grouped
         })
         .map(|slots| (slots.first, slots))
         .collect();
@@ -778,7 +1302,10 @@ pub(super) fn wholes(f: &mut cfg::Function) -> bool {
             };
             let made = first
                 .filter(|(_, place)| *place == 0)
-                .and_then(|(slots, _)| Some((slots, row(&facts, head, &block.stmts[i..], slots)?)));
+                .and_then(|(slots, _)| {
+                    let part = parted.contains(&slots.first);
+                    Some((slots, row(&facts, head, &block.stmts[i..], slots, part)?))
+                });
             match made {
                 Some((slots, value)) => {
                     found.push((i, slots, value));
@@ -833,20 +1360,25 @@ pub(super) fn wholes(f: &mut cfg::Function) -> bool {
     true
 }
 
-/// Counts in `top` each run of a row's temporaries a call or a group is given, and notes as taken apart each row a group of whose temporaries something reads only in part.
+/// Counts in `top` each run of a row's temporaries a call or a group is given, notes as taken apart each row a group of whose temporaries something reads only in part, and as `loose` each row a run of which is no group of exactly its temporaries.
 fn each_run(
     members: &HashMap<Var, (Slots, u32)>,
     top: &Expr,
     handed: &mut HashMap<Var, u32>,
     refused: &mut HashSet<Var>,
+    loose: &mut HashSet<Var>,
 ) {
     top.walk(&mut |e| match e {
         Expr::Call { args: items, .. } | Expr::Cells(items) => {
+            let grouped = matches!(e, Expr::Cells(_));
             let mut at = 0;
             while at < items.len() {
                 match run_of(members, items, at) {
                     Some(slots) => {
                         *handed.entry(slots.first).or_default() += 1;
+                        if !(grouped && items.len() == slots.cells as usize) {
+                            loose.insert(slots.first);
+                        }
                         at += slots.cells as usize;
                     }
                     None => at += 1,

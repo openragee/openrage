@@ -567,11 +567,17 @@ impl Names {
             Proof::Kept64 => Some(&mut self.types),
             Proof::Kept32 => None,
         };
+        // A type's record hashes its full runtime name, which code writes in C#'s spelling.
+        let shown = match (name.chars().all(spelled), proof) {
+            (true, _) => Some(name.to_owned()),
+            (false, Proof::Kept64) if !text => csharp(name, 0),
+            (false, _) => None,
+        };
         match took {
             Some(false) => Ok(false),
             Some(true) => {
-                if let Some(shared) = shared.filter(|_| name.chars().all(spelled)) {
-                    put(shared, hash, name).map_err(|held| twice(hash, name, &held))?;
+                if let (Some(shared), Some(shown)) = (shared, shown) {
+                    put(shared, hash, &shown).map_err(|held| twice(hash, &shown, &held))?;
                 }
                 Ok(true)
             }
@@ -679,6 +685,71 @@ fn written(name: &str) -> bool {
 /// Whether `c` may stand in a name written in code on trust: a dotted or scoped path's characters.
 fn spelled(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | ':')
+}
+
+/// The most generic arguments, and the most nested types, one runtime name is spelled with.
+const MOST_PARTS: usize = 64;
+/// The deepest the arguments of a runtime name nest.
+const MOST_DEPTH: u32 = 16;
+
+/// A type's runtime name as C# writes it: a nested type after a `.` in place of `+`, and a generic instance as its type and arguments, the arity marks dropped; `None` for a name of any other mark, or of arguments its types do not take.
+// The arguments of an instance of a nested type are those of every generic type it is in, in
+// order: `Map`2+Keys<A, B>` is `Map<A, B>.Keys`.
+fn csharp(name: &str, depth: u32) -> Option<String> {
+    if depth > MOST_DEPTH {
+        return None;
+    }
+    // An array of a type is spelled alike in both.
+    if let Some(element) = name.strip_suffix("[]") {
+        return Some(format!("{}[]", csharp(element, depth + 1)?));
+    }
+    let (base, args) = match name.split_once('<') {
+        Some((base, rest)) => (base, arguments(rest.strip_suffix('>')?, depth + 1)?),
+        None => (name, Vec::new()),
+    };
+    let mut left = args.into_iter();
+    let mut parts = Vec::new();
+    for part in base.split('+').take(MOST_PARTS + 1) {
+        let (word, arity) = match part.split_once('`') {
+            Some((word, arity)) => (word, arity.parse::<usize>().ok().filter(|n| *n > 0)?),
+            None => (part, 0),
+        };
+        if word.is_empty() || !word.chars().all(spelled) {
+            return None;
+        }
+        let taken: Vec<String> = left.by_ref().take(arity).collect();
+        if taken.len() != arity {
+            return None;
+        }
+        parts.push(match arity {
+            0 => word.to_owned(),
+            _ => format!("{word}<{}>", taken.join(", ")),
+        });
+    }
+    (parts.len() <= MOST_PARTS && left.next().is_none()).then(|| parts.join("."))
+}
+
+/// The arguments of a runtime name's instance, split at its own commas, each in C#'s spelling.
+fn arguments(list: &str, depth: u32) -> Option<Vec<String>> {
+    let mut args = Vec::new();
+    let (mut open, mut from) = (0u32, 0);
+    for (at, c) in list.char_indices() {
+        match c {
+            '<' => open = open.checked_add(1)?,
+            '>' => open = open.checked_sub(1)?,
+            ',' if open == 0 => {
+                args.push(list[from..at].trim());
+                from = at + 1;
+            }
+            _ => {}
+        }
+        if args.len() > MOST_PARTS {
+            return None;
+        }
+    }
+    args.push(list[from..].trim());
+    (open == 0).then_some(())?;
+    args.into_iter().map(|arg| csharp(arg, depth)).collect()
 }
 
 /// Whether `name` is one identifier, which a member is written as.

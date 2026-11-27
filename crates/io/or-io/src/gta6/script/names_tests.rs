@@ -589,3 +589,51 @@ fn a_list_of_more_words_than_32_bits_can_name_by_names_no_method() {
     // By 64 bits a list of any length names.
     assert_eq!(names.type_name(murmur_low(b"w8")), Some("w8"));
 }
+
+#[test]
+fn a_proved_runtime_type_name_is_written_in_the_spelling_of_csharp() {
+    let names_of = [
+        ("Quill+Grommet", Some("Quill.Grommet")),
+        (
+            "Demo.Quill`2<Sprocket, int>",
+            Some("Demo.Quill<Sprocket, int>"),
+        ),
+        // A nested type's arguments are those of the generic type it is in.
+        (
+            "Quill`2+Grommet<Sprocket, int>",
+            Some("Quill<Sprocket, int>.Grommet"),
+        ),
+        (
+            "Quill`1+Grommet`1<Quill`1<int>, bool>",
+            Some("Quill<Quill<int>>.Grommet<bool>"),
+        ),
+        (
+            "Quill`2<int[], Sprocket[][]>",
+            Some("Quill<int[], Sprocket[][]>"),
+        ),
+        // A generic type itself, arguments its types do not take, and any other mark: unwritten.
+        ("Quill`2", None),
+        ("Quill`2<int>", None),
+        ("Quill<int>", None),
+        ("<Sprocket>+Grommet", None),
+        ("Quill+Grommet=4", None),
+    ];
+    let rows: String = names_of
+        .iter()
+        .map(|(name, _)| format!("0x{:016X}\t{name}\n", murmur_low(name.as_bytes())))
+        .collect();
+    let mut names = Names::default();
+    assert_eq!(names.read_list("types.tsv", &rows), Ok(names_of.len()));
+    for (name, shown) in names_of {
+        assert_eq!(
+            names.type_name(murmur_low(name.as_bytes())),
+            shown,
+            "{name}"
+        );
+    }
+    // Arguments nested past any name a list holds are no name.
+    let deep = format!("{}int{}", "Quill`1<".repeat(40), ">".repeat(40));
+    let row = format!("0x{:016X}\t{deep}\n", murmur_low(deep.as_bytes()));
+    assert_eq!(names.read_list("deep.tsv", &row), Ok(1));
+    assert_eq!(names.type_name(murmur_low(deep.as_bytes())), None);
+}

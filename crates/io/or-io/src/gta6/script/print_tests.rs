@@ -2912,3 +2912,20 @@ fn an_instance_of_a_generic_type_a_list_names_is_written_as_that_type_and_its_ar
     let text = written_in(&f, &Context::new(&names, &project, Options::default()));
     assert!(text.contains(&format!("new {instance}()")), "{text}");
 }
+
+#[test]
+fn a_generic_type_a_list_names_is_written_with_its_arguments_unquoted() {
+    let ty = TypeKey(0xA0A0_0004);
+    let mut names = Names::default();
+    names
+        .types
+        .insert(ty.0, "Quill<Sprocket, int>.Grommet".to_owned());
+    let made = Expr::NewObject(crate::gta6::script::ir::VmType {
+        name: ty.to_string(),
+        byte_size: 16,
+        id: 1,
+        flags: 0,
+    });
+    let text = sharp_in(&head(), &at(&names, Level::Structured), &made);
+    assert_eq!(text, "new Quill<Sprocket, int>.Grommet()");
+}

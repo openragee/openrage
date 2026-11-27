@@ -3575,7 +3575,9 @@ fn element_bytes(kind: &Kind) -> Option<u32> {
 /// A name the listing states in a string: as it stands where it is one, quoted where it is not.
 fn spelled_name(text: &str) -> String {
     let spelled = |c: char| c.is_ascii_alphanumeric() || "_.<>,`[]".contains(c);
-    match !text.is_empty() && text.chars().all(spelled) {
+    // The arguments of a generic type stand a comma and a space apart.
+    let joined = text.replace(", ", ",");
+    match !text.is_empty() && joined.chars().all(spelled) {
         true => text.to_owned(),
         false => quoted(text),
     }

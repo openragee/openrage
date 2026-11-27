@@ -140,7 +140,11 @@ lists named things; `disasm` and the facts of a program consult no list.
 | Handler table (`--names`) | a table whose first columns are `hash` and `rva` | the hash of the native at each handler address, which is how a natives list reaches a compiled program |
 
 A row whose hash is the hash of its name proves itself and names whatever that hash function
-names; any other row is the user's own label. Without `--names`, the command line reads the
+names; any other row is the user's own label. A type's record hashes its full runtime name, so a
+proved type name is written in C#'s spelling: a nested type after a `.` in place of `+`, and an
+instance of a generic type as that type and its arguments, the arity mark dropped and the
+arguments of a nested type given to the generic type it is in (`Map<K, V>.Keys`); a name of any
+other mark is counted and not written. Without `--names`, the command line reads the
 `gta6_script_names` folder of the configuration directory, its files in the order of their names:
 a file whose name starts with `natives` is a natives list where it reads as one and a names list
 otherwise, any other file a names list where it reads as one and a natives list otherwise, and a

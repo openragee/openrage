@@ -2,7 +2,7 @@ use super::super::tests::{case, forever, not, p, returns, s, same_flow, when};
 use super::super::tidy;
 use super::*;
 use crate::gta6::script::cfg;
-use crate::gta6::script::ir::Callee;
+use crate::gta6::script::ir::{Callee, Returns, VarInfo};
 
 const L: Label = Label::Block(7);
 const M: Label = Label::Block(8);
@@ -47,7 +47,7 @@ fn swept(body: Vec<Stmt>) -> Vec<Stmt> {
     let mut named = counted(&body);
     let mut out = body;
     for _ in 0..4 {
-        if !rewritten(&mut out, &mut named) {
+        if !rewritten(&mut out, &mut named, None) {
             break;
         }
         tidy(&mut out, &mut named);
@@ -177,6 +177,36 @@ fn a_jump_to_the_end_of_its_loops_body_is_a_continue() {
         swept(body),
         [lp(Stmt::Continue, Vec::new()), s(4), returns()]
     );
+}
+
+#[test]
+fn a_jump_to_where_the_break_after_its_switch_lands_is_the_switchs_break() {
+    // `while (p0) { switch (p1) { case 0: s1; goto L; } break; } L: s2; return;`
+    let lp = |way: Stmt| Stmt::While {
+        cond: p(0),
+        body: vec![
+            Stmt::Switch {
+                value: p(1),
+                cases: vec![case(&[Some(0)], vec![s(1), way])],
+            },
+            Stmt::Break,
+        ],
+    };
+    let body = vec![lp(goes(L)), Stmt::Label(L), s(2), returns()];
+    let out = swept(body);
+    assert_eq!(out, [lp(Stmt::Break), s(2), returns()]);
+    assert_eq!(gotos(&out), 0);
+}
+
+#[test]
+fn an_arm_that_runs_on_to_a_break_landing_at_its_label_needs_no_jump() {
+    // `while (p0) { if (p1) { s1; goto L; } break; } L: s2; return;`
+    let lp = |arm: Vec<Stmt>| Stmt::While {
+        cond: p(0),
+        body: vec![only(p(1), arm), Stmt::Break],
+    };
+    let body = vec![lp(vec![s(1), goes(L)]), Stmt::Label(L), s(2), returns()];
+    assert_eq!(swept(body), [lp(vec![s(1)]), s(2), returns()]);
 }
 
 #[test]
@@ -412,4 +442,269 @@ fn what_a_list_holds_free_is_told_from_what_a_loop_or_a_switch_of_it_takes() {
     );
     assert_eq!(deepest(&list), 1);
     assert_eq!(deepest(&[s(1)]), 0);
+}
+
+// ---- a constant set after a construct whose jumps past it set the variable first ----------
+
+/// A `stack_` variable, one cell.
+const T: Var = Var::Stack { at: 0x40, index: 0 };
+
+fn give(var: Var, value: Expr) -> Stmt {
+    Stmt::Simple(ir::Stmt::Assign { target: var, value })
+}
+
+fn k(n: i32) -> Expr {
+    Expr::Const(Const::i32(n))
+}
+
+/// A head that declares each variable one cell wide, proved alone in its cells or not.
+fn head_of(vars: &[(Var, Width, bool)]) -> Head {
+    Head {
+        value_types: Default::default(),
+        program: 1,
+        at: 0x10,
+        name: "func_000010".to_owned(),
+        returns: Returns::Cell,
+        params: 10,
+        locals: 100,
+        vars: vars
+            .iter()
+            .map(|(var, width, single)| {
+                let info = VarInfo {
+                    single: *single,
+                    ..VarInfo::new(*width)
+                };
+                (*var, info)
+            })
+            .collect(),
+        incomplete: None,
+    }
+}
+
+/// `f(&var);`: a call handed the address of `var`.
+fn handed(var: Var) -> Stmt {
+    let call = Expr::Call {
+        callee: Callee::Local {
+            at: 0x200,
+            name: "func_000200".to_owned(),
+        },
+        args: vec![Expr::AddrOf { var, cell: 0 }],
+        returns: None,
+    };
+    Stmt::Simple(ir::Stmt::Eval(call))
+}
+
+/// The rules as the pass runs them, `head` saying which assignments may move: the count of each label's `goto`s must be what is left of them.
+fn moved(body: Vec<Stmt>, head: &Head) -> Vec<Stmt> {
+    let mut named = counted(&body);
+    let mut out = body;
+    for _ in 0..4 {
+        let private = Private::of(head, &out);
+        if !rewritten(&mut out, &mut named, Some(&private)) {
+            break;
+        }
+        tidy(&mut out, &mut named);
+    }
+    let left = counted(&out);
+    for (label, count) in &named {
+        assert_eq!(left.get(label).copied().unwrap_or(0), *count, "{label}");
+    }
+    out
+}
+
+/// `while (p1) { s1; if (p2) { var = p3; <way> } }`.
+fn search(var: Var, way: Stmt) -> Stmt {
+    Stmt::While {
+        cond: p(1),
+        body: vec![s(1), only(p(2), vec![give(var, p(3)), way])],
+    }
+}
+
+#[test]
+fn a_constant_set_after_a_loop_whose_jumps_past_it_set_it_first_is_set_before_the_loop() {
+    // `while (p1) { s1; if (p2) { t = p3; goto L; } } t = -1; L: s4; return;`
+    let body = vec![
+        search(T, goes(L)),
+        give(T, k(-1)),
+        Stmt::Label(L),
+        s(4),
+        returns(),
+    ];
+    let head = head_of(&[(T, Width::Cell, false)]);
+    let out = moved(body, &head);
+    assert_eq!(
+        out,
+        [give(T, k(-1)), search(T, Stmt::Break), s(4), returns()]
+    );
+    assert_eq!(gotos(&out), 0);
+}
+
+#[test]
+fn a_constant_set_after_an_if_is_set_before_it_and_the_jumps_run_off_its_arms() {
+    // `if (p0) { s1; if (p2) { t = p3; goto L; } } else { t = p5; goto L; } t = 0; L: s4; return;`
+    let then = vec![s(1), only(p(2), vec![give(T, p(3)), goes(L)])];
+    let els = vec![give(T, p(5)), goes(L)];
+    let body = vec![
+        when(p(0), then, els),
+        give(T, k(0)),
+        Stmt::Label(L),
+        s(4),
+        returns(),
+    ];
+    let head = head_of(&[(T, Width::Cell, false)]);
+    let out = moved(body, &head);
+    let then = vec![s(1), only(p(2), vec![give(T, p(3))])];
+    assert_eq!(
+        out,
+        [
+            give(T, k(0)),
+            when(p(0), then, vec![give(T, p(5))]),
+            s(4),
+            returns()
+        ]
+    );
+}
+
+#[test]
+fn a_constant_stays_behind_a_construct_a_way_out_of_which_does_not_set_it() {
+    let head = head_of(&[(T, Width::Cell, false)]);
+    // A jump past it that sets nothing: `t` keeps what it held before.
+    let unset = vec![
+        Stmt::While {
+            cond: p(1),
+            body: vec![
+                only(p(2), vec![give(T, p(3)), goes(L)]),
+                only(p(5), vec![goes(L)]),
+            ],
+        },
+        give(T, k(-1)),
+        Stmt::Label(L),
+        s(4),
+        returns(),
+    ];
+    assert_eq!(moved(unset.clone(), &head), unset);
+    // An assignment that runs on: the constant must still come after it.
+    let runs_on = vec![
+        Stmt::While {
+            cond: p(1),
+            body: vec![give(T, p(6)), only(p(2), vec![give(T, p(3)), goes(L)])],
+        },
+        give(T, k(-1)),
+        Stmt::Label(L),
+        s(4),
+        returns(),
+    ];
+    assert_eq!(moved(runs_on.clone(), &head), runs_on);
+    // A test of the loop reads it.
+    let read = vec![
+        Stmt::While {
+            cond: Expr::Var(T),
+            body: vec![s(1), only(p(2), vec![give(T, p(3)), goes(L)])],
+        },
+        give(T, k(-1)),
+        Stmt::Label(L),
+        s(4),
+        returns(),
+    ];
+    assert_eq!(moved(read.clone(), &head), read);
+}
+
+#[test]
+fn a_constant_stays_behind_a_construct_entered_or_left_another_way() {
+    let head = head_of(&[(T, Width::Cell, false)]);
+    // A `break` of the loop around the `if` leaves past the constant to where it is not set.
+    let arm = vec![
+        only(p(2), vec![give(T, p(3)), goes(L)]),
+        only(p(5), vec![Stmt::Break]),
+    ];
+    let left = vec![
+        Stmt::While {
+            cond: p(0),
+            body: vec![only(p(1), arm), give(T, k(-1)), Stmt::Label(L), s(4)],
+        },
+        returns(),
+    ];
+    assert_eq!(moved(left.clone(), &head), left);
+    // A jump from before the loop enters it at `M`, and may then run off it to the constant.
+    let entered = vec![
+        only(p(2), vec![goes(M)]),
+        s(1),
+        Stmt::While {
+            cond: p(1),
+            body: vec![
+                Stmt::Label(M),
+                s(5),
+                only(p(6), vec![give(T, p(3)), goes(L)]),
+            ],
+        },
+        give(T, k(-1)),
+        Stmt::Label(L),
+        s(4),
+        returns(),
+    ];
+    assert_eq!(moved(entered.clone(), &head), entered);
+}
+
+#[test]
+fn a_constant_of_a_variable_an_address_may_reach_stays_where_it_is() {
+    let body = |var: Var, extra: Vec<Stmt>| {
+        let mut body = vec![search(var, goes(L)), give(var, k(-1)), Stmt::Label(L), s(4)];
+        body.extend(extra);
+        body.push(returns());
+        body
+    };
+    // The temporary's own address is handed out.
+    let head = head_of(&[(T, Width::Cell, false)]);
+    let handed_out = body(T, vec![handed(T)]);
+    assert_eq!(moved(handed_out.clone(), &head), handed_out);
+    // A local of one cell moves only while it is proved alone and no frame address is taken.
+    let local = Var::Local(30);
+    let alone = head_of(&[(local, Width::Cell, true)]);
+    let out = moved(body(local, Vec::new()), &alone);
+    assert_eq!(out[0], give(local, k(-1)));
+    let unproved = head_of(&[(local, Width::Cell, false)]);
+    assert_eq!(
+        moved(body(local, Vec::new()), &unproved),
+        body(local, Vec::new())
+    );
+    let framed = body(local, vec![handed(Var::Local(29))]);
+    assert_eq!(moved(framed.clone(), &alone), framed);
+}
+
+#[test]
+fn only_a_variable_of_one_cell_no_address_reaches_is_private() {
+    let (u, wide, local, loose) = (
+        Var::Stack { at: 0x44, index: 0 },
+        Var::Stack { at: 0x48, index: 0 },
+        Var::Local(20),
+        Var::Local(21),
+    );
+    let head = head_of(&[
+        (T, Width::Cell, false),
+        (u, Width::Cell, false),
+        (wide, Width::Cells, false),
+        (local, Width::Cell, true),
+        (loose, Width::Cell, false),
+    ]);
+    let private = Private::of(&head, &[handed(u)]);
+    let mut vars: Vec<Var> = private.vars.iter().copied().collect();
+    vars.sort_unstable();
+    let mut expected = vec![T, local];
+    expected.sort_unstable();
+    assert_eq!(vars, expected);
+    // The address of any frame cell may reach the local.
+    let framed = Private::of(&head, &[handed(Var::Param(1))]);
+    assert!(framed.vars.contains(&T) && !framed.vars.contains(&local));
+    // A piece of a state machine out of sight may enter anywhere: nothing moves.
+    let piece = Expr::Call {
+        callee: Callee::Intrinsic {
+            name: PIECE.to_owned(),
+            ty: None,
+            wrapper: None,
+        },
+        args: vec![k(0)],
+        returns: None,
+    };
+    let held = Private::of(&head, &[Stmt::Simple(ir::Stmt::Eval(piece))]);
+    assert!(held.vars.is_empty());
 }

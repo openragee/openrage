@@ -12,6 +12,9 @@
 //! and the rewrites of the finished statements in `exits` and `tails`. ⚠ With it on, a tail of a
 //! few statements that leaves is written at each `goto` to it, so a statement may come out more
 //! than once, which `Stats::statements_out` then counts.
+//!
+//! The pass `conditions` writes an `if` whose two arms only give one variable a truth as that
+//! assignment (`x = a || b`, `x = c ? 1 : 0`), and an `if` that holds only an `if` as `a && b`.
 
 #[path = "structure_cond.rs"]
 mod cond;
@@ -74,7 +77,8 @@ pub fn run_in(f: cfg::Function, cx: &Context<'_>, _stats: &mut Stats) -> tree::F
             tidy(&mut body, &mut named);
         }
         for _ in 0..ROUNDS {
-            if !exits::rewritten(&mut body, &mut named) {
+            let private = exits::Private::of(&head, &body);
+            if !exits::rewritten(&mut body, &mut named, Some(&private)) {
                 break;
             }
             tidy(&mut body, &mut named);
@@ -82,6 +86,9 @@ pub fn run_in(f: cfg::Function, cx: &Context<'_>, _stats: &mut Stats) -> tree::F
         if tails::copied(&mut body, &mut named) {
             tidy(&mut body, &mut named);
         }
+    }
+    if cx.options.on(Pass::Conditions) {
+        cond::truths(&mut body);
     }
     plain_defaults(&mut body);
     // A void function returns by running off its end.

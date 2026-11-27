@@ -5,12 +5,16 @@
 //! Each rule holds only where the label a `goto` names stands at the place control reaches by
 //! what is written instead, so what runs is what ran. ⚠ One rule writes a statement twice: a
 //! `return` of a small value with no call, a `break` or a `continue`, in front of the arm it
-//! followed. No simple statement is copied and none is dropped.
+//! followed. No simple statement is copied and none is dropped. ⚠ One rule moves one: the
+//! assignment of a constant to a variable no address reaches, from behind a construct whose
+//! jumps past it each assign that variable first, to in front of the construct.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use crate::gta6::script::ir::{Const, Expr, Kind};
-use crate::gta6::script::tree::{Label, Stmt};
+use crate::gta6::script::ir::{self, Callee, Const, Expr, Head, Kind, Var, Width};
+// `PIECE`: the intrinsic `async_await::untangle` leaves a call of where it took a piece out.
+use crate::gta6::script::passes::async_await::PIECE;
+use crate::gta6::script::tree::{self, Label, Stmt};
 
 use super::cond;
 use super::graph::SCAN;
@@ -38,6 +42,24 @@ fn labels_at(list: &[Stmt], at: usize, after: &[Label]) -> Vec<Label> {
     }
     if at >= list.len() {
         found.extend_from_slice(after);
+    }
+    found
+}
+
+/// [`labels_at`], with where a `break`, a `continue` or a `goto` standing at `list[at]` goes on to.
+// Such a statement runs nothing, so control that reaches it is control where it leads.
+fn landing(list: &[Stmt], at: usize, ways: &Ways) -> Vec<Label> {
+    let mut found = labels_at(list, at, &ways.after);
+    let past = list.get(at..).map_or(0, |rest| {
+        rest.iter()
+            .take_while(|stmt| matches!(stmt, Stmt::Label(_)))
+            .count()
+    });
+    match list.get(at + past) {
+        Some(Stmt::Break) => found.extend(ways.brk.iter().flatten().copied()),
+        Some(Stmt::Continue) => found.extend(ways.cont.iter().flatten().copied()),
+        Some(Stmt::Goto(label)) => found.push(*label),
+        _ => {}
     }
     found
 }
@@ -208,9 +230,146 @@ fn place(body: &mut Vec<Stmt>, tail: Vec<Stmt>) -> Option<Vec<Stmt>> {
     Some(tail)
 }
 
+/// The variables of a function whose assignment may move in front of a construct: one cell each, and no address reaches them.
+pub(super) struct Private {
+    vars: HashSet<Var>,
+}
+
+impl Private {
+    /// What `head` and `body` prove; nothing where a piece of a state machine is out of sight.
+    // Such a piece enters the body at labels this pass cannot see named, and may read anything.
+    pub(super) fn of(head: &Head, body: &[Stmt]) -> Private {
+        let mut addressed: HashSet<Var> = HashSet::new();
+        let mut piece = false;
+        tree::each_expr(body, &mut |top| {
+            top.walk(&mut |e| match e {
+                Expr::AddrOf { var, .. } => {
+                    addressed.insert(*var);
+                }
+                Expr::Call {
+                    callee: Callee::Intrinsic { name, .. },
+                    ..
+                } => piece |= name.as_str() == PIECE,
+                _ => {}
+            });
+        });
+        // The address of a frame cell, moved, may reach a local other than its own.
+        let frame = addressed
+            .iter()
+            .any(|var| matches!(var, Var::Local(_) | Var::Param(_)));
+        let vars = match piece {
+            true => HashSet::new(),
+            false => head
+                .vars
+                .iter()
+                .filter(|(var, info)| {
+                    let plain = info.width == Width::Cell && !addressed.contains(*var);
+                    let local = matches!(**var, Var::Local(_)) && info.single && !frame;
+                    plain && (var.is_temporary() || local)
+                })
+                .map(|(var, _)| *var)
+                .collect(),
+        };
+        Private { vars }
+    }
+}
+
+/// Puts the lists `stmt` holds on `work`, each with whether a loop of the construct being read takes its `continue` and whether a loop or a switch of it takes its `break`.
+fn push_nested<'a>(
+    work: &mut Vec<(&'a [Stmt], bool, bool)>,
+    stmt: &'a Stmt,
+    looped: bool,
+    broken: bool,
+) {
+    match stmt {
+        Stmt::If { then, els, .. } => {
+            work.push((then.as_slice(), looped, broken));
+            work.push((els.as_slice(), looped, broken));
+        }
+        Stmt::While { body, .. } | Stmt::DoWhile { body, .. } | Stmt::For { body, .. } => {
+            work.push((body.as_slice(), true, true));
+        }
+        Stmt::Switch { cases, .. } => {
+            work.extend(
+                cases
+                    .iter()
+                    .map(|case| (case.body.as_slice(), looped, true)),
+            );
+        }
+        _ => {}
+    }
+}
+
+/// Whether an assignment of `var` that follows `stmt`, with the labels `end` after it, may stand in front of `stmt` instead.
+// Every `goto` of `stmt` to `end` comes right after an assignment of `var`, every assignment of
+// `var` in it right before such a `goto`, and nothing of it reads `var`: on a path that runs off
+// its end it neither reads nor assigns `var`, and on one that jumps it assigns `var` the value
+// `var` then has at `end`. Nothing enters `stmt` but at its head and nothing leaves it but by
+// running off, by `return` or by those jumps: any other way out would meet the moved value.
+fn moves_over(named: &HashMap<Label, u32>, stmt: &Stmt, var: Var, end: &[Label]) -> bool {
+    let whole = std::slice::from_ref(stmt);
+    let mut read = false;
+    tree::each_expr(whole, &mut |top| read |= cond::mentions(top, var));
+    if read {
+        return false;
+    }
+    let mut assigned = 0usize;
+    tree::each_simple(whole, &mut |simple| {
+        assigned += simple
+            .targets()
+            .iter()
+            .filter(|target| **target == var)
+            .count();
+    });
+    let assigns = |at: Option<&Stmt>| matches!(at, Some(Stmt::Simple(ir::Stmt::Assign { target, .. })) if *target == var);
+    let jumps_out =
+        |at: Option<&Stmt>| matches!(at, Some(Stmt::Goto(label)) if end.contains(label));
+    let mut pairs = 0usize;
+    let mut inside: HashMap<Label, u32> = HashMap::new();
+    let mut defined: HashSet<Label> = HashSet::new();
+    let mut elsewhere: Vec<Label> = Vec::new();
+    let mut work: Vec<(&[Stmt], bool, bool)> = Vec::new();
+    push_nested(&mut work, stmt, false, false);
+    while let Some((list, looped, broken)) = work.pop() {
+        for (k, at) in list.iter().enumerate() {
+            match at {
+                Stmt::Goto(label) => {
+                    *inside.entry(*label).or_insert(0) += 1;
+                    if !end.contains(label) {
+                        elsewhere.push(*label);
+                    } else if !assigns(k.checked_sub(1).and_then(|before| list.get(before))) {
+                        return false;
+                    }
+                }
+                Stmt::Simple(ir::Stmt::Assign { target, .. }) if *target == var => {
+                    if !jumps_out(list.get(k + 1)) {
+                        return false;
+                    }
+                    pairs += 1;
+                }
+                Stmt::Label(label) => {
+                    defined.insert(*label);
+                }
+                Stmt::Break if !broken => return false,
+                Stmt::Continue if !looped => return false,
+                Stmt::Sugar(_) => return false,
+                _ => push_nested(&mut work, at, looped, broken),
+            }
+        }
+    }
+    let stays = elsewhere.iter().all(|label| defined.contains(label));
+    let entered = defined.iter().any(|label| {
+        let all = named.get(label).copied().unwrap_or(0);
+        all > inside.get(label).copied().unwrap_or(0)
+    });
+    pairs > 0 && pairs == assigned && stays && !entered
+}
+
 struct Exits<'a> {
     /// The `goto`s that name each label.
     named: &'a mut HashMap<Label, u32>,
+    /// The variables whose assignment may move; `None` moves none.
+    private: Option<&'a Private>,
     changed: bool,
 }
 
@@ -233,6 +392,11 @@ impl Exits<'_> {
             if self.jump(list, i, ways) {
                 continue;
             }
+            if self.hoist(list, i, ways) {
+                // The assignment stands at `i`; the construct it went in front of is looked at next.
+                i += 1;
+                continue;
+            }
             self.nest(list, i, ways, depth);
             if self.guard(list, i, ways) {
                 // The guard stands at `i`; what it guarded follows and is looked at next.
@@ -249,7 +413,7 @@ impl Exits<'_> {
                 Stmt::While { .. } => labels_before(list, i),
                 _ => Vec::new(),
             };
-            let next = labels_at(list, i + 1, &ways.after);
+            let next = landing(list, i + 1, ways);
             match &mut list[i] {
                 Stmt::If { then, els, .. } => {
                     let inner = Ways {
@@ -303,7 +467,7 @@ impl Exits<'_> {
             Stmt::Goto(label) => *label,
             _ => return false,
         };
-        if labels_at(list, i + 1, &ways.after).contains(&label) {
+        if landing(list, i + 1, ways).contains(&label) {
             list.remove(i);
             self.gone(label);
             return true;
@@ -317,6 +481,39 @@ impl Exits<'_> {
             self.gone(label);
         }
         false
+    }
+
+    /// `C; v = k; L:` is `v = k; C; L:` where [`moves_over`] holds for the construct `C`; `true` when it was written so.
+    // `for (..) { if (found) { v = i; goto L; } } v = -1; L:`: with the constant set first, each
+    // jump of the loop is to where the loop runs on to, which the rules here then read as such.
+    fn hoist(&mut self, list: &mut Vec<Stmt>, i: usize, ways: &Ways) -> bool {
+        let Some(private) = self.private else {
+            return false;
+        };
+        let var = match (list.get(i), list.get(i + 1)) {
+            (
+                Some(
+                    Stmt::If { .. }
+                    | Stmt::While { .. }
+                    | Stmt::DoWhile { .. }
+                    | Stmt::For { .. }
+                    | Stmt::Switch { .. },
+                ),
+                Some(Stmt::Simple(ir::Stmt::Assign {
+                    target,
+                    value: Expr::Const(_),
+                })),
+            ) if private.vars.contains(target) => *target,
+            _ => return false,
+        };
+        let end = landing(list, i + 2, ways);
+        if end.is_empty() || !moves_over(&*self.named, &list[i], var, &end) {
+            return false;
+        }
+        let assign = list.remove(i + 1);
+        list.insert(i, assign);
+        self.changed = true;
+        true
     }
 
     /// `if (c) { ..; goto L; } rest; L:` is `if (c) { .. } else { rest }`: the jump passed over `rest` to where the `if` now runs on to.
@@ -506,11 +703,17 @@ impl Exits<'_> {
     }
 }
 
-/// Writes each `goto` a rule explains as the way out it is, once over `body`; whether anything was rewritten.
-// ⚠ `named` must count every `goto` of `body`: a label is dropped once nothing names it.
-pub(super) fn rewritten(body: &mut Vec<Stmt>, named: &mut HashMap<Label, u32>) -> bool {
+/// Writes each `goto` a rule explains as the way out it is, once over `body`; whether anything was rewritten. `private` lets assignments of its variables move.
+// ⚠ `named` must count every `goto` of `body`: a label is dropped once nothing names it, and an
+// entry into a construct from outside it is told by it.
+pub(super) fn rewritten(
+    body: &mut Vec<Stmt>,
+    named: &mut HashMap<Label, u32>,
+    private: Option<&Private>,
+) -> bool {
     let mut exits = Exits {
         named,
+        private,
         changed: false,
     };
     exits.list(body, &Ways::default(), 0);

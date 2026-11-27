@@ -1,9 +1,18 @@
 //! Conditions: negating one, joining two, and reading what a test compares or a constant makes of it.
+//!
+//! [`truths`] writes the finished statements' tests that only give a variable a truth as that
+//! value, and a test that holds only a test as the two joined.
 
-use crate::gta6::script::ir::{BinOp, Const, Expr, Kind, Scalar, UnOp, Var};
+use crate::gta6::script::ir::{self, BinOp, Const, Expr, Kind, Scalar, UnOp, Var};
+use crate::gta6::script::tree::Stmt;
+
+use super::region::MAX_NEST;
 
 /// How deep a rewrite follows a condition; past it the condition is wrapped or left as it is.
 const DEPTH: u32 = 96;
+
+/// The tests one condition [`truths`] makes may join, as `&&` and `||` count them.
+const MAX_TESTS: u32 = 64;
 
 fn wrapped(cond: Expr) -> Expr {
     Expr::Unary {
@@ -402,3 +411,165 @@ pub(super) fn cheap(value: Option<&Expr>) -> bool {
     });
     plain && nodes <= 12
 }
+
+/// A constant an arm gives its variable that is a truth: a `bool`, or 0 or 1 of an integer kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Bit {
+    Bool(bool),
+    Int(bool),
+}
+
+fn bit(e: &Expr) -> Option<Bit> {
+    let Expr::Const(c) = e else {
+        return None;
+    };
+    if c.bits > 1 {
+        return None;
+    }
+    let one = c.bits == 1;
+    match &c.kind {
+        Kind::Bool => Some(Bit::Bool(one)),
+        kind if kind.is_integer() => Some(Bit::Int(one)),
+        _ => None,
+    }
+}
+
+/// Whether `e` yields 0 or 1 and nothing else, a constant only where it is a `bool` of those bits.
+fn yields_bit(e: &Expr) -> bool {
+    match e {
+        Expr::Const(c) => c.kind == Kind::Bool && c.bits <= 1,
+        other => is_truth(other),
+    }
+}
+
+/// `cond` as the 0 or 1 a branch on it reads.
+fn as_truth(cond: Expr) -> Expr {
+    match yields_bit(&cond) {
+        true => cond,
+        false => Expr::Truth(Box::new(cond)),
+    }
+}
+
+/// The tests `&&` and `||` join in `e`, counted up to past [`MAX_TESTS`].
+fn tests_in(e: &Expr) -> u32 {
+    let mut found = 0u32;
+    let mut work = vec![e];
+    while let Some(e) = work.pop() {
+        if found > MAX_TESTS {
+            break;
+        }
+        match e {
+            Expr::Binary {
+                op: BinOp::LogicalAnd | BinOp::LogicalOr,
+                l,
+                r,
+                ..
+            } => {
+                work.push(&**l);
+                work.push(&**r);
+            }
+            _ => found += 1,
+        }
+    }
+    found
+}
+
+/// The variable a list gives a value to and the value, where that is all the list does.
+fn lone(list: &[Stmt]) -> Option<(Var, &Expr)> {
+    match list {
+        [Stmt::Simple(ir::Stmt::Assign { target, value })] => Some((*target, value)),
+        _ => None,
+    }
+}
+
+/// The value an `if` whose two arms each give one variable a truth gives it: the test, `||` or `&&` of the test, or `c ? 1 : 0`.
+// The test runs first and an arm's value only where that arm ran, as `||` and `&&` run their
+// right side; a value of 0 or 1 is what either of them yields of it. 0 and 1 of an integer kind
+// are no `bool`, so they stay the two values of a choice.
+fn truth_of(cond: &Expr, yes: &Expr, no: &Expr) -> Option<Expr> {
+    let computed = |e: &Expr| !matches!(e, Expr::Const(_)) && yields_bit(e);
+    let value = match (bit(yes), bit(no)) {
+        (Some(Bit::Bool(true)), Some(Bit::Bool(false))) => as_truth(cond.clone()),
+        (Some(Bit::Bool(false)), Some(Bit::Bool(true))) => as_truth(negate(cond.clone())),
+        (Some(Bit::Int(a)), Some(Bit::Int(b))) if a != b => {
+            select(cond.clone(), yes.clone(), no.clone())
+        }
+        (Some(Bit::Bool(true)), None) if computed(no) => or(cond.clone(), no.clone()),
+        (Some(Bit::Bool(false)), None) if computed(no) => and(negate(cond.clone()), no.clone()),
+        (None, Some(Bit::Bool(true))) if computed(yes) => or(negate(cond.clone()), yes.clone()),
+        (None, Some(Bit::Bool(false))) if computed(yes) => and(cond.clone(), yes.clone()),
+        _ => return None,
+    };
+    (tests_in(&value) <= MAX_TESTS).then_some(value)
+}
+
+/// `if (c) { x = a; } else { x = b; }` as `x = ..` by [`truth_of`]; `true` when `stmt` was written so.
+fn assigned_truth(stmt: &mut Stmt) -> bool {
+    let Stmt::If { cond, then, els } = &*stmt else {
+        return false;
+    };
+    let (Some((target, yes)), Some((other, no))) = (lone(then), lone(els)) else {
+        return false;
+    };
+    if target != other {
+        return false;
+    }
+    let Some(value) = truth_of(cond, yes, no) else {
+        return false;
+    };
+    *stmt = Stmt::Simple(ir::Stmt::Assign { target, value });
+    true
+}
+
+/// `if (a) { if (b) { body } }`, neither with an else, as `if (a && b) { body }`; `true` when `stmt` was written so.
+// `b` is tested exactly where `a` holds, as `&&` tests its right side.
+fn joined(stmt: &mut Stmt) -> bool {
+    let Stmt::If { cond, then, els } = stmt else {
+        return false;
+    };
+    let inner = match then.as_slice() {
+        [Stmt::If {
+            cond: test,
+            els: other,
+            ..
+        }] if els.is_empty() && other.is_empty() => test,
+        _ => return false,
+    };
+    if tests_in(cond) + tests_in(inner) > MAX_TESTS {
+        return false;
+    }
+    let Some(Stmt::If {
+        cond: test,
+        then: body,
+        ..
+    }) = then.pop()
+    else {
+        return false;
+    };
+    let outer = std::mem::replace(cond, Expr::GuidEmpty);
+    *cond = and(outer, test);
+    *then = body;
+    true
+}
+
+/// Writes each test of `body` that holds only a test as the two joined, and each that only gives one variable a truth as that assignment, the innermost first.
+pub(super) fn truths(body: &mut [Stmt]) {
+    truths_in(body, 0);
+}
+
+fn truths_in(list: &mut [Stmt], depth: usize) {
+    if depth > MAX_NEST {
+        return;
+    }
+    for stmt in list.iter_mut() {
+        for inner in super::nested(stmt) {
+            truths_in(inner, depth + 1);
+        }
+        joined(stmt);
+        assigned_truth(stmt);
+    }
+}
+
+#[cfg(test)]
+#[path = "structure_cond_tests.rs"]
+mod tests;

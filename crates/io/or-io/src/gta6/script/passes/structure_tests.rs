@@ -83,6 +83,7 @@ pub(super) fn forever() -> Expr {
 
 fn head(returns: Returns) -> Head {
     Head {
+        value_types: Default::default(),
         program: 1,
         at: 0x10,
         name: "func_000010".to_owned(),

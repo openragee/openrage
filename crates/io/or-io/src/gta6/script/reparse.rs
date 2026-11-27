@@ -14,7 +14,7 @@ use super::ir::{
     BinOp, Callee, Const, Expr, ExprSugar, Head, Kind, Scalar, Stmt, StoreKind, UnOp, Var,
 };
 use super::names::Names;
-use super::passes::async_await;
+use super::passes::{async_await, closures};
 use super::print::{callee_name, cells_of, reads_through};
 use super::tree;
 use super::{Level, Options, Pass};
@@ -1890,8 +1890,10 @@ impl<'a> Parser<'a> {
                 if self.eat("[")? {
                     // `new T[] { a, b }`: the elements, each stored in its place.
                     if self.eat("]")? {
-                        self.skip_braces()?;
-                        return Ok(unread("an array written with its elements"));
+                        self.expect("{")?;
+                        let mut items = vec![Sk::Name(ty)];
+                        items.extend(self.list("}", depth)?);
+                        return Ok(Sk::Op(ELEMENTS_OF, items));
                     }
                     let len = self.expr(depth)?;
                     self.expect("]")?;
@@ -1959,8 +1961,60 @@ fn bare(e: &Expr) -> &Expr {
     e
 }
 
+/// `e` under its source readings and its casts to a whole cell, which change no bit of what it holds.
+fn underneath(e: &Expr) -> &Expr {
+    let mut e = e;
+    while let Expr::Sugar { e: inner, .. }
+    | Expr::Cast {
+        to: Scalar::I64 | Scalar::U64,
+        e: inner,
+    } = e
+    {
+        e = &**inner;
+    }
+    e
+}
+
 /// The objects an initialiser holds inside one another at most, as the printer writes them.
 const NESTS: usize = 4;
+
+/// The elements an array written with them holds at most, as the printer writes one.
+const ELEMENTS: u64 = 4096;
+
+/// The mark of `new T[] { a, b }`: the type, then the elements in their order.
+const ELEMENTS_OF: &str = "new[]{}";
+
+/// The call that fills the variables the statements before it only made zero, where `parts` are those and it: `F(out T x)`.
+fn filled(parts: &[Stmt]) -> Option<&Stmt> {
+    let (call, zeroed) = parts.split_last()?;
+    if zeroed.is_empty() {
+        return None;
+    }
+    for zero in zeroed {
+        let Stmt::Assign { target, value } = zero else {
+            return None;
+        };
+        let empty = is_zero(value) || matches!(under_wide(value), Expr::ZeroSlots(_));
+        if !empty || !fills(call, *target) {
+            return None;
+        }
+    }
+    Some(call)
+}
+
+/// Whether `call` hands the address of `var` to a parameter its callee only fills.
+fn fills(call: &Stmt, var: Var) -> bool {
+    let mut found = false;
+    call.each_expr(&mut |top| {
+        top.walk(&mut |node| {
+            found |= matches!(
+                node,
+                Expr::Sugar { kind: ExprSugar::Out, e: held } if **held == Expr::AddrOf { var, cell: 0 }
+            );
+        });
+    });
+    found
+}
 
 /// `e` without the casts around it.
 fn under_casts(e: &Expr) -> &Expr {
@@ -2193,11 +2247,11 @@ fn calls(e: &Expr) -> bool {
 /// The name of the source form a group the printer writes as one statement of its own makes, where the reader does not hold that form yet.
 fn group_form(kind: tree::Group) -> Option<&'static str> {
     Some(match kind {
-        tree::Group::Collection => "an array written with its elements",
-        tree::Group::Delegate => "a delegate made",
-        tree::Group::Out => "an out argument",
         tree::Group::Deconstruct => "a deconstruction",
         tree::Group::Construct
+        | tree::Group::Collection
+        | tree::Group::Delegate
+        | tree::Group::Out
         | tree::Group::Compound
         | tree::Group::Field { .. }
         | tree::Group::Concat => return None,
@@ -3653,7 +3707,16 @@ impl Held<'_> {
             tree::Sugar::SwitchOn { .. } if on(Pass::SwitchOn) => {
                 out.push(unread_node("a switch on a chain of tests"));
             }
-            tree::Sugar::Event { .. } if on(Pass::Events) => out.push(unread_node("an event")),
+            tree::Sugar::Event { seed, round, again } if on(Pass::Events) => {
+                let Some(read) = closures::subscription(seed, round, again) else {
+                    return self.lowered(sugar, out, d);
+                };
+                // `place += handler` works on the place it writes, as any `op=` does.
+                let (place, handler) = (self.sk(read.place, d)?, self.sk(read.handler, d)?);
+                let mark = if read.remove { "-" } else { "+" };
+                let stated = assign(place.clone(), binary(mark, place, handler));
+                out.push(Node::held("", vec![stated], Vec::new()));
+            }
             tree::Sugar::Cached { .. } if on(Pass::Lambdas) => out.push(unread_node("??=")),
             _ => self.lowered(sugar, out, d)?,
         }
@@ -3678,6 +3741,30 @@ impl Held<'_> {
             }
             return Ok(());
         }
+        if let tree::Group::Delegate = kind {
+            match self.delegate(parts, d)? {
+                Some(stated) => {
+                    out.push(Node::held("", vec![stated], Vec::new()));
+                    self.simples(parts.get(2..).unwrap_or_default(), out, d)?;
+                }
+                None => self.simples(parts, out, d)?,
+            }
+            return Ok(());
+        }
+        if let tree::Group::Collection = kind {
+            match self.collection(parts, d)? {
+                Some(stated) => out.push(Node::held("", vec![stated], Vec::new())),
+                None => self.simples(parts, out, d)?,
+            }
+            return Ok(());
+        }
+        if let tree::Group::Out = kind {
+            let call = match self.on(Pass::RefOut) {
+                true => filled(parts),
+                false => None,
+            };
+            return self.simples(call.map_or(parts, std::slice::from_ref), out, d);
+        }
         if let Some(form) = group_form(kind) {
             out.push(unread_node(form));
             return Ok(());
@@ -3692,6 +3779,96 @@ impl Held<'_> {
             None => self.simples(parts, out, d)?,
         }
         Ok(())
+    }
+
+    /// `x = new T[] { a, b }`: an array made and every element of it set, in order; `None` where it is written as its parts.
+    fn collection(&self, parts: &[Stmt], d: u32) -> Result<Option<Sk>, ReparseError> {
+        if !self.on(Pass::Initialisers) {
+            return Ok(None);
+        }
+        let Some((Stmt::Assign { target, value }, sets)) = parts.split_first() else {
+            return Ok(None);
+        };
+        let Expr::NewArray { ty, len, .. } = bare(value) else {
+            return Ok(None);
+        };
+        let Expr::Const(len) = under_wide(len) else {
+            return Ok(None);
+        };
+        // ⚠ Every element and no other: one left out is zero, which fewer items would not say.
+        if sets.is_empty() || len.bits != sets.len() as u64 || len.bits > ELEMENTS {
+            return Ok(None);
+        }
+        let array = Sk::Name(self.var(*target));
+        let mut items = vec![Sk::Name(self.type_name(&ty.name))];
+        for (index, set) in sets.iter().enumerate() {
+            let Stmt::Eval(call) = set else {
+                return Ok(None);
+            };
+            // The statement is written `x[3] = value`.
+            let Some(Sk::Op("=", mut pair)) = self.assignment(bare(call), d)? else {
+                return Ok(None);
+            };
+            let place = index_of(array.clone(), num(index as u32));
+            if pair.len() != 2 || !same(&pair[0], &place) {
+                return Ok(None);
+            }
+            items.push(pair.remove(1));
+        }
+        Ok(Some(assign(array, Sk::Op(ELEMENTS_OF, items))))
+    }
+
+    /// `d = receiver.Name`, `d = Name` or `d = new D(bound, function)`: the one statement a delegate made and bound is; `None` where it is written as its parts.
+    // ⚠ A delegate bound to a body the printer writes in place is a lambda in the text, which
+    // the text's side leaves a form not read: what is stated here is never held against one.
+    fn delegate(&self, parts: &[Stmt], d: u32) -> Result<Option<Sk>, ReparseError> {
+        if !self.on(Pass::Delegates) {
+            return Ok(None);
+        }
+        let [Stmt::Assign { target, value }, Stmt::Eval(call)] = parts else {
+            return Ok(None);
+        };
+        let Expr::NewObject(ty) = bare(value) else {
+            return Ok(None);
+        };
+        let Expr::Call { args, .. } = bare(call) else {
+            return Ok(None);
+        };
+        let [object, bound, function] = args.as_slice() else {
+            return Ok(None);
+        };
+        if *bare(under_wide(object)) != Expr::Var(*target) {
+            return Ok(None);
+        }
+        let on = |name: &str| Ok(member(self.sk(under_wide(bound), d)?, name));
+        let group = match (bare(function), underneath(function)) {
+            // A function of this program reads as a method does: on what it is bound to, or alone.
+            (Expr::FunctionRef { program, at }, _) if *program == self.head.program => {
+                let name = self.function(*program, *at);
+                match is_zero(bound) {
+                    true => Sk::Name(name),
+                    false => on(&name)?,
+                }
+            }
+            // A slot of what the delegate is bound to, where the two are one value read with nothing called.
+            (_, Expr::VirtualFunctionRef { receiver, slot, .. })
+                if underneath(bound) == underneath(receiver)
+                    && !is_zero(underneath(bound))
+                    && !calls(underneath(bound)) =>
+            {
+                on(&format!("Method_{slot}"))?
+            }
+            (_, Expr::FunctionRef { program, at })
+                if *program != self.head.program && is_zero(bound) =>
+            {
+                Sk::Name(self.function(*program, *at))
+            }
+            _ => made(
+                self.type_name(&ty.name),
+                vec![self.sk(bound, d)?, self.sk(function, d)?],
+            ),
+        };
+        Ok(Some(assign(Sk::Name(self.var(*target)), group)))
     }
 
     /// `place op= value`, `place++`: the one statement a compound group is, where it has the shape the printer writes so; `None` where it is written as its part.

@@ -577,3 +577,176 @@ fn a_field_of_a_variables_own_bytes_reads_as_the_place_they_are() {
         Ok(true)
     );
 }
+
+#[test]
+fn a_delegate_made_and_bound_reads_as_the_group_or_the_object_it_is_written_as() {
+    let own = 0x1122_3344;
+    let bound = |to: Expr, function: Expr| {
+        let ctor = format!("{}.Ctor", a_type().name);
+        vec![construct(Sugar::Group {
+            kind: Group::Delegate,
+            parts: vec![
+                set(Var::Local(1), Expr::NewObject(a_type())),
+                Stmt::Eval(builtin(&ctor, vec![local(1), to, function])),
+            ],
+        })]
+    };
+    let function = |program: u32| Expr::FunctionRef { program, at: 0x80 };
+    // A function of the program, on what it is bound to.
+    let member = "    local_1 = p0.func_000080;\n";
+    assert_eq!(source_says(bound(p(0), function(own)), member), Ok(true));
+    let other = "    local_1 = p1.func_000080;\n";
+    assert_eq!(source_says(bound(p(0), function(own)), other), Ok(false));
+    let another = "    local_1 = p0.func_000090;\n";
+    assert_eq!(source_says(bound(p(0), function(own)), another), Ok(false));
+    // Bound to nothing, the function alone.
+    let alone = "    local_1 = func_000080;\n";
+    assert_eq!(source_says(bound(int(0), function(own)), alone), Ok(true));
+    assert_eq!(source_says(bound(p(0), function(own)), alone), Ok(false));
+    // Another program's function is a group only where it is bound to nothing.
+    let far = "    local_1 = program_55667788.func_000080;\n";
+    assert_eq!(
+        source_says(bound(int(0), function(0x5566_7788)), far),
+        Ok(true)
+    );
+    let made = "    local_1 = new type_0123456789ABCDEF(p0, &program_55667788.func_000080);\n";
+    assert_eq!(
+        source_says(bound(p(0), function(0x5566_7788)), made),
+        Ok(true)
+    );
+    assert_eq!(
+        source_says(bound(p(0), function(0x5566_7788)), far),
+        Ok(false)
+    );
+    // A slot of the object the delegate is bound to, and of another object the delegate made whole.
+    let slot = |receiver: Expr| Expr::VirtualFunctionRef {
+        receiver: boxed(receiver),
+        ty: a_type(),
+        slot: 5,
+    };
+    let group = "    local_1 = p0.Method_5;\n";
+    assert_eq!(source_says(bound(p(0), slot(p(0))), group), Ok(true));
+    let apart = "    local_1 = new type_0123456789ABCDEF(p0, VirtualFunction(p1, type_0123456789ABCDEF, 5));\n";
+    assert_eq!(source_says(bound(p(0), slot(p(1))), apart), Ok(true));
+    assert_eq!(source_says(bound(p(0), slot(p(1))), group), Ok(false));
+    // A lambda in the text stays a form not read.
+    let lambda = "    local_1 = (a) => a;\n";
+    let unread = unread_of(bound(p(0), function(own)), lambda);
+    assert_eq!(
+        unread.as_deref(),
+        Some("a lambda written where it is bound")
+    );
+}
+
+#[test]
+fn an_array_made_and_every_element_set_reads_as_the_array_written_with_them() {
+    let stored = |index: i32, value: Expr| {
+        Stmt::Eval(intrinsic(
+            "array_set_ref",
+            vec![local(1), int(index), value],
+        ))
+    };
+    let made = |len: i32, sets: Vec<Stmt>| {
+        let array = Expr::NewArray {
+            ty: a_type(),
+            len: boxed(int(len)),
+            wrapper: String::new(),
+        };
+        let mut parts = vec![set(Var::Local(1), array)];
+        parts.extend(sets);
+        vec![construct(Sugar::Group {
+            kind: Group::Collection,
+            parts,
+        })]
+    };
+    let both = || made(2, vec![stored(0, p(0)), stored(1, p(1))]);
+    let text = "    local_1 = new type_0123456789ABCDEF[] { p0, p1 };\n";
+    assert_eq!(source_says(both(), text), Ok(true));
+    let turned = "    local_1 = new type_0123456789ABCDEF[] { p1, p0 };\n";
+    assert_eq!(source_says(both(), turned), Ok(false));
+    let fewer = "    local_1 = new type_0123456789ABCDEF[] { p0 };\n";
+    assert_eq!(source_says(both(), fewer), Ok(false));
+    // An element left out is zero, which the elements alone would not say: the statements stand apart.
+    let apart =
+        "    local_1 = new type_0123456789ABCDEF[3];\n    local_1[0] = p0;\n    local_1[1] = p1;\n";
+    let short = || made(3, vec![stored(0, p(0)), stored(1, p(1))]);
+    assert_eq!(source_says(short(), apart), Ok(true));
+    // And so do elements set out of their order.
+    let swapped = || made(2, vec![stored(1, p(1)), stored(0, p(0))]);
+    assert_eq!(source_says(swapped(), text), Ok(false));
+}
+
+#[test]
+fn a_call_that_fills_what_was_only_made_zero_reads_as_the_call_alone() {
+    let out = |n: u32| Expr::sugar(ExprSugar::Out, address(n));
+    let filled = |zero: Expr, argument: Expr| {
+        vec![construct(Sugar::Group {
+            kind: Group::Out,
+            parts: vec![
+                set(Var::Local(1), zero),
+                Stmt::Eval(native("FILL", vec![p(0), argument])),
+            ],
+        })]
+    };
+    let call = "    DEMO.FILL(p0, out local_1);\n";
+    assert_eq!(source_says(filled(int(0), out(1)), call), Ok(true));
+    let declared = "    DEMO.FILL(p0, out Cell local_1);\n";
+    assert_eq!(source_says(filled(int(0), out(1)), declared), Ok(true));
+    let other = "    DEMO.FILL(p0, out local_2);\n";
+    assert_eq!(source_says(filled(int(0), out(1)), other), Ok(false));
+    // A variable given anything but zero, or one the call does not fill, keeps its statement.
+    let both = "    local_1 = 5;\n    DEMO.FILL(p0, out local_1);\n";
+    assert_eq!(source_says(filled(int(5), out(1)), both), Ok(true));
+    assert_eq!(source_says(filled(int(5), out(1)), call), Ok(false));
+    let zeroed = "    local_1 = 0;\n    DEMO.FILL(p0, out local_2);\n";
+    assert_eq!(source_says(filled(int(0), out(2)), zeroed), Ok(true));
+}
+
+#[test]
+fn an_events_loop_reads_as_the_handler_added_to_its_place_or_taken_from_it() {
+    let runtime = |path: &str, args: Vec<Expr>| builtin(path, args);
+    let field = || Expr::Load {
+        ty: Scalar::U64,
+        addr: boxed(p(0)),
+        offset: 0x30,
+    };
+    let place = || Expr::ByteOffset {
+        addr: boxed(p(0)),
+        offset: boxed(int(0x30)),
+    };
+    let event = |join: &str| {
+        let joined = runtime(join, vec![local(1), p(1)]);
+        let swap = runtime(
+            "Demo.Cells.CompareExchange",
+            vec![place(), joined, local(1)],
+        );
+        let again = Expr::binary(
+            BinOp::Ne,
+            Expr::cast(Scalar::I64, local(0)),
+            Expr::cast(Scalar::I64, local(1)),
+        );
+        vec![construct(Sugar::Event {
+            seed: Box::new(set(Var::Local(0), field())),
+            round: vec![set(Var::Local(1), local(0)), set(Var::Local(0), swap)],
+            again,
+        })]
+    };
+    let added = "    p0.f_30 += p1;\n";
+    let taken = "    p0.f_30 -= p1;\n";
+    assert_eq!(source_says(event("Demo.Delegate.Combine"), added), Ok(true));
+    assert_eq!(
+        source_says(event("Demo.Delegate.Combine"), taken),
+        Ok(false)
+    );
+    assert_eq!(source_says(event("Demo.Delegate.Remove"), taken), Ok(true));
+    let another = "    p0.f_38 += p1;\n";
+    assert_eq!(
+        source_says(event("Demo.Delegate.Combine"), another),
+        Ok(false)
+    );
+    let handler = "    p0.f_30 += p0;\n";
+    assert_eq!(
+        source_says(event("Demo.Delegate.Combine"), handler),
+        Ok(false)
+    );
+}

@@ -556,7 +556,8 @@ differs, how a world is drawn and the order, and gives each row below its brief.
 lettered as they were written, and [the plan's table](Unified_World_Plan.md#the-order-of-work) gives
 their order: R71a stands on nothing, R71m's measures run beside it, and R71d puts GTA V behind the
 contract before R71b's move begins. A row takes the default beside its question in [the rulings
-asked](Unified_World_Plan.md#asked-of-the-owner). R71a is built and R71m's measures are taken.
+asked](Unified_World_Plan.md#asked-of-the-owner). R71a and R71d are built, R71m's measures are taken
+and two of R71b's five parts are built.
 
 - [ ] [R71 One world for every title](#r71-one-world-for-every-title) — the plan of 2026-11-26, in the parts below; R71a is built, R71m's measures are taken and no other part is started here, and the GTA VI World screen and the headless GTA V world of R70 are what it starts from
   - [x] [R71a The world contract the conformance kit and the fake title](#r71a-the-world-contract-the-conformance-kit-and-the-fake-title)
@@ -10714,7 +10715,7 @@ world; [R71c](#r71c-one-world-session-one-frame-host-and-panels-by-capability) m
 files into its adapter; [R71i](#r71i-one-edit-stack-for-every-title) is the one edit stack and [R71j](#r71j-the-world-tools-built-once) the tools the screen rows
 of [R70](#r70-the-gta-v-world-editor) are built on; [R71k](#r71k-red-dead-redemption-2) is RDR2, and [R71l](#r71l-leftovers-and-the-ledger-of-what-was-deleted) ends with
 every ledger empty or ruled on. A part's Done when is its check, and its brief says the rest.
-R71a is built and R71m's measures are taken; no other part is started in this tree.
+R71a and R71d are built, R71m's measures are taken and two of R71b's five parts are built.
 
 ### R71a The world contract the conformance kit and the fake title
 
@@ -10765,8 +10766,8 @@ the model, texture and look readers, whose outputs are rewritten on the core's
 **Where it stands.** Parts 1 and 2 are built: the reference
 ([how a part makes and compares one](../guides/Development_Workflow.md#the-reference-of-the-gta-vi-world-screen)),
 and the closed move, after which the digests held (961 of 961,
-`the_world_reads_as_its_reference_says`, 2026-11-27); the shots were not run. What moved where
-and what is left are under "or-world-gta6" in
+`the_world_reads_as_its_reference_says`, 2026-11-27); the shots were not run, and the adapter
+states no title yet. What moved where and what is left are under "or-world-gta6" in
 [Crate_Reference.md](../reference/Crate_Reference.md#domain-crates).
 
 **Depends on.** [R71a](#r71a-the-world-contract-the-conformance-kit-and-the-fake-title); from its second part
@@ -10816,67 +10817,15 @@ textures; a registry crate that lists each title once, as `or-content` lists the
 and `openrage-cli world index`, `at`, `ground`, `find` and `select` for any registered title
 ([brief](Unified_World_Plan.md#the-gta-v-world-behind-the-contract-and-one-kept-file-r71d)).
 
-**Where it stands.** Built, with no file of `or-depends` or `or-world` moved:
-[each crate with its tests](../reference/Crate_Reference.md#domain-crates) is under "or-world-gta5"
-and "or-worlds".
-
-- **The adapter.** `crates/domain/or-world-gta5` answers the contract for both games over the
-  mount, the world index and the forest's reader as they stand. The kit passes over an install
-  built by hand and opened with no key (`crates/domain/or-world-gta5/tests/gta5_passes_the_kit.rs`),
-  and each part of the adapter was broken once to see the rule that holds it fail. Its selection
-  through the core's driver is the selection `WorldForest` makes, over installs built by hand
-  (`the_scene_of_the_kit_is_selected_as_the_forest_selects_it`,
-  `boxes_orphans_an_interiors_own_ladder_and_a_lost_parent_are_selected_as_the_forest_selects_them`)
-  and at eight fixed cameras of each real install, at noon and at midnight
-  (`the_adapter_selects_as_the_forest_does_at_fixed_cameras_of_a_real_install`: 16 of 16 views
-  the same on each install, 2026-11-27, of 11076 maps on Legacy and 11052 on Enhanced). ⚠ Its
-  first run differed at 6 of the 16 views on each install, by the driver's doing: a parent map
-  three wanted maps name was said to be the parent of the last of them, where the forest says the
-  first. The driver now follows the parents of one wanted map before the next map's
-  (`crates/domain/or-world/src/driver.rs`), which the core holds over rows of its own
-  (`a_parent_several_wanted_maps_name_is_wanted_as_the_parent_of_the_first_in_the_indexs_order`)
-  and an install built by hand holds over the adapter. What no rule of the kit and no comparison
-  asks (a gate by the weather, a model's levels and bytes, a box overlap, a placement row, an
-  interior's links, an instance's sphere, a pack the title update patches) is held in
-  `crates/domain/or-world-gta5/tests/what_no_rule_of_the_kit_asks_of_gta5.rs`.
-- **One kept file.** GTA V's rows go through the core's kept file by `or-depends`' own sealing,
-  an archive a section, and the rows joined from the sections are byte for byte the index
-  `or-depends` builds of the mount
-  (`the_rows_joined_from_the_kept_sections_are_the_index_or_depends_builds_of_the_mount`). Two
-  levels of one install share no index and no kept file, a second start reads no archive, and an
-  archive that changed is the one read again
-  (`two_levels_of_one_install_share_no_index_and_no_kept_file`,
-  `a_second_start_reads_no_archive_and_an_archive_that_changed_is_the_one_read_again`; on the
-  installs `a_level_of_a_real_install_keeps_an_index_of_its_own_and_a_second_start_reads_no_archive`,
-  2026-11-27: 10032 of 11076 maps at the pack in the middle of the DLC list on Legacy, 9996 of
-  11052 on Enhanced).
-- **What the contract gained.** A height of the ground, a ray and a box overlap as methods of
-  `WorldInstall` a capability gates; `WorldLook::switches` is handed the linked index, since
-  GTA V's switches are its files'; the kit's scene states a place with ground under it and may
-  state no list; and a fixture may keep a scratch folder and name the executable whose keys open
-  it. The fake title states its ground, and a twenty-sixth fault breaks the rule of the
-  capabilities by answering a ground it does not state.
-- **The registry and the verbs.** `crates/domain/or-worlds` lists the titles once and maps a
-  registered game onto the core's id. `openrage-cli world index`, `at`, `ground`, `find` and
-  `select` answer through it and the contract with `--neutral`, for whichever title the install's
-  folder is detected as, by capability (`crates/tools/or-cli/src/world_neutral.rs`, held over the
-  fake title and, from the command line, over a GTA V install built by hand:
-  `crates/tools/or-cli/tests/the_world_verbs_answer_for_gta5_through_its_title.rs`); without the
-  flag they are GTA V's own verbs, unchanged.
-
-Left, each with why. ⚠ Over a real install the kit is asked 11 of its 20 rules, the capabilities
-among them (`the_rules_of_the_kit_that_take_no_built_scene_hold_over_a_real_install`, 2026-11-27):
-the others state a scene no real map is arranged as (a parent map that draws alone, an interior
-with a count), have no edit store to ask, or cannot pass until a model of a dictionary reads. A
-body states no light,
-no occluder and no list, since the forest's reader reads none. A model reads only from a Legacy
-drawable that is a file of its own: an entry of a dictionary, a fragment, an Enhanced drawable
-and every texture are [R71e](#r71e-the-gta-v-world-drawn-in-the-fallback-pass)'s. The edit store
-is not behind the contract, so the registry's line states none ([R71i](#r71i-one-edit-stack-for-every-title)).
-GTA V's own verbs do not answer through the contract: their output names files the contract does
-not state. A switch has no name of its own, so GTA V's, one a held-back map, all read alike; and
-no shared code turns a weather's name into the title's number, so `world select --neutral` takes
-a number, in tens or in sixteens.
+**Where it stands.** Built, with no file moved: `crates/domain/or-world-gta5` answers the
+contract for both games and `crates/domain/or-worlds` lists it. The kit passes over an install
+built by hand; on each real install the selection through the core's driver is `WorldForest`'s at
+16 of 16 views (`the_adapter_selects_as_the_forest_does_at_fixed_cameras_of_a_real_install`,
+2026-11-27) and 11 of the kit's 20 rules are asked; the verbs answer with `--neutral`. Left:
+models beyond a Legacy drawable of its own file
+([R71e](#r71e-the-gta-v-world-drawn-in-the-fallback-pass)), the edit store
+([R71i](#r71i-one-edit-stack-for-every-title)), a body's lights and lists. The rest is under
+"or-world-gta5" in [Crate_Reference.md](../reference/Crate_Reference.md#domain-crates).
 
 **Depends on.** [R71a](#r71a-the-world-contract-the-conformance-kit-and-the-fake-title). It waits for no branch of R70.
 

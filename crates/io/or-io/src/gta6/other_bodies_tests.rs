@@ -50,6 +50,38 @@ fn a_little_endian_height_map_reads_carries_its_seven_bytes_and_saves_identical(
 }
 
 #[test]
+fn a_height_map_with_one_cell_set_saves_at_its_length_and_reads_back_equal() {
+    let bytes = pamh();
+    let mut map = Gta6HeightMap::open(&bytes).expect("opens");
+    // Column 2 of row 1, which holds 4 over 2.
+    map.grid.set_cell(2, 1, 3).expect("sets");
+    let saved = map.save().expect("saves");
+    assert_eq!(saved.len(), bytes.len());
+    let changed: Vec<usize> = (0..saved.len()).filter(|&i| saved[i] != bytes[i]).collect();
+    assert_eq!(
+        changed,
+        [44 + 16 + 5],
+        "only the cell's maximum byte changes"
+    );
+    assert_eq!(Gta6HeightMap::open(&saved).expect("reads back"), map);
+}
+
+#[test]
+fn a_height_grid_with_a_covered_cell_set_saves_at_its_length_and_reads_back_equal() {
+    let bytes = mhiu();
+    let mut grid = Gta6HeightGrid::open(&bytes).expect("opens");
+    let mut map = grid.height_map().expect("a height map");
+    // Row 2's column 1, inside its span: both halves move, as one array holds one height.
+    map.set_cell(1, 2, 0x99).expect("sets");
+    assert_eq!((map.max[9], map.min[9]), (0x99, 0x99));
+    grid.set_height_map(&map).expect("takes it");
+    let saved = grid.save().expect("saves");
+    assert_eq!(saved.len(), bytes.len());
+    let back = Gta6HeightGrid::open(&saved).expect("reads back");
+    assert_eq!(back.height_map().expect("a height map"), map);
+}
+
+#[test]
 fn a_height_map_that_breaks_a_measured_rule_is_refused() {
     let mut version = pamh();
     version[4] = 2;

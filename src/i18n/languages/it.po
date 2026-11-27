@@ -17455,3 +17455,24 @@ msgstr "Non letti: {files}. Un file di etichette contiene ipotesi, lette solo su
 
 msgid "Natives no list names are labelled from {files}: these are guesses, not names"
 msgstr "Le native che nessun elenco nomina sono etichettate da {files}: sono ipotesi, non nomi"
+
+msgid "Planning the save of {file}"
+msgstr "Pianificazione del salvataggio di {file}"
+
+msgid "planning {row}, {done} of {total}"
+msgstr "pianificazione di {row}, {done} di {total}"
+
+msgid "not a height map"
+msgstr "non è una mappa delle altezze"
+
+msgid "Set cell {col}, {row}"
+msgstr "Impostata la cella {col}, {row}"
+
+msgid "Column"
+msgstr "Colonna"
+
+msgid "lowest {min}"
+msgstr "minimo {min}"
+
+msgid "The byte the file stores for the cell's highest point, 0 to 255; its lowest follows where it was the same and never stays above it."
+msgstr "Il byte che il file memorizza per il punto più alto della cella, da 0 a 255; il suo minimo lo segue dove era uguale e non resta mai sopra di esso."

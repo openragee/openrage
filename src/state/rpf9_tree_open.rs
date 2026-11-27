@@ -107,6 +107,20 @@ pub(in crate::state) fn row_of(state: &AppState, path: &Path) -> Option<RpfEntry
     state.document(row.parent_doc_id).is_some().then_some(row)
 }
 
+/// Show every body the tree `tree` opened under the copy `to` it became, in place of the archive `from`.
+// The body's own path stays its key: every read, origin and held edit of the body is keyed by it.
+pub(in crate::state) fn follow_copy(tree: DocumentId, from: &Path, to: &Path) {
+    for (shown, row) in named().values_mut() {
+        if row.parent_doc_id != tree {
+            continue;
+        }
+        // Ids repeat across apps of one process: only a body shown under this tree's archive moves.
+        if let Ok(inner) = shown.strip_prefix(from) {
+            *shown = to.join(inner);
+        }
+    }
+}
+
 /// What a row's read gives the views.
 // One is made per open, on the load worker, and taken apart at once.
 #[allow(clippy::large_enum_variant)]

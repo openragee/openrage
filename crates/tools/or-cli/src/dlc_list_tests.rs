@@ -203,7 +203,11 @@ fn the_text_is_a_row_for_each_mounted_pack_their_count_and_then_the_notes() {
         panic!("a row, a blank line and a count: {text:?}")
     };
     assert!(row.starts_with("  0  alpha "), "{row}");
-    assert!(row.ends_with("x64/dlcpacks/alpha/dlc.rpf"), "{row}");
+    let pack = Path::new("x64")
+        .join("dlcpacks")
+        .join("alpha")
+        .join("dlc.rpf");
+    assert!(row.ends_with(&*pack.to_string_lossy()), "{row}");
     assert_eq!((blank.as_str(), count.as_str()), ("", "1 pack(s)"));
     assert_eq!(below, notes(&install, Some("alpha"), Some("story")));
     assert!(!below.is_empty());

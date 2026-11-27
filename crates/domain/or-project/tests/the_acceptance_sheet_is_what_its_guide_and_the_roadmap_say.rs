@@ -21,7 +21,10 @@ const HEAD: &str = "| Line | Kind | Row | In the game | Look for |";
 
 fn document(path: &str) -> String {
     let root: PathBuf = or_test_support::openrage_root().expect("the tests run inside the tree");
-    std::fs::read_to_string(root.join(path)).unwrap_or_else(|e| panic!("{path}: {e}"))
+    // ⚠ A checkout on Windows may hold the document with CRLF line ends, and the tests split it on `\n`.
+    std::fs::read_to_string(root.join(path))
+        .unwrap_or_else(|e| panic!("{path}: {e}"))
+        .replace("\r\n", "\n")
 }
 
 /// The rows of a Roadmap that have a heading of their own, such as `R32` and `R70a`.

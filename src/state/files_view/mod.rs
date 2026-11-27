@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
 use or_io::container::resource::{ResourceEnvelope, Rsc7};
-use or_io::container::rpf::{read_rpf9_body, Rpf9Sections, RpfEncryption, RpfEntry};
+use or_io::container::rpf::gta6_kinds::kind_label;
+use or_io::container::rpf::gta6_rpf::row::Rpf9Row;
+use or_io::container::rpf::{read_rpf9_body, Rpf9Sections, RpfEncryption, RpfEntry, RpfVersion};
 use or_io::container::RpfArchive;
 
 use super::document::{DocumentId, RpfNodeId};
@@ -40,10 +42,30 @@ pub struct RowFacts {
 
 /// What a row is, in words: a GTA VI row's kind as its table states it, else [`type_in_words`].
 pub fn kind_in_words(session: &RpfEditSession, node: &RpfSessionNode) -> String {
-    match super::explorer::gta6_kind(session, node) {
-        Some(kind) => kind.label.to_owned(),
-        None => type_in_words(node),
+    if let Some(kind) = super::explorer::gta6_kind(session, node) {
+        return kind.label.to_owned();
     }
+    let RpfNodeBacking::ArchiveFile {
+        archive_id,
+        entry_index,
+        ..
+    } = &node.backing
+    else {
+        return type_in_words(node);
+    };
+    let row = (session.archive(*archive_id)).and_then(|slot| slot.archive.rpf9_row(*entry_index));
+    stated_kind(row).unwrap_or_else(|| type_in_words(node))
+}
+
+/// The class byte of a 24-byte row that holds a nested archive.
+const ARCHIVE_CLASS: u8 = 0x00;
+
+/// The kind a GTA VI row no kind list names is shown by, as Details states it: a class or type
+/// code in hex, or no row; `None` for a row whose class says archive over a body that begins
+/// none, which is a file as the tree lists it.
+fn stated_kind(row: Option<Rpf9Row>) -> Option<String> {
+    let row = row?;
+    (row.kind != kind_label(Some(ARCHIVE_CLASS), None)).then(|| row.kind.into_owned())
 }
 
 /// What a row is, in words.
@@ -114,6 +136,15 @@ pub fn measured_bytes(session: &RpfEditSession, id: RpfNodeId) -> Option<u64> {
             Some(slot) => held_size(&slot.archive, *entry_index, held),
             None => Some(held.len() as u64),
         },
+        // ⚠ A GTA VI file's size is its row's: its entry's is 32-bit.
+        RpfNodeBacking::ArchiveFile {
+            archive_id,
+            entry_index,
+            override_bytes: None,
+        } => {
+            let row = (session.archive(*archive_id)).and_then(|s| s.archive.rpf9_row(*entry_index));
+            Some(row.map_or_else(|| session.size_for(id).unwrap_or(0), |row| row.real))
+        }
         _ if node.is_dir() => Some(0),
         _ => Some(session.size_for(id).unwrap_or(0)),
     }
@@ -155,6 +186,25 @@ fn sections_len(loose: &[u8]) -> Option<u64> {
     let (find, body) = read_rpf9_body(std::io::Cursor::new(loose), 0, u64::MAX).ok()?;
     let sections = Rpf9Sections::of(&find, &body)?;
     Some((sections.virtual_section.len() + sections.physical.len()) as u64)
+}
+
+/// A GTA VI file's sizes and cipher as its table's row states them: its entry's sizes are 32-bit
+/// and its archive's header names no cipher.
+fn take_row(facts: &mut RowFacts, row: &Rpf9Row) {
+    facts.size = Some(row.real);
+    facts.stored = Some(row.stored);
+    facts.encryption = Some(match row.ciphered {
+        true => tr!("Enciphered"),
+        false => tr!("None"),
+    });
+}
+
+/// An archive's own encryption, its table's: a GTA VI table is always enciphered, with its own cipher.
+fn archive_encryption(archive: &RpfArchive) -> &'static str {
+    match archive.version {
+        RpfVersion::Rpf9 => tr!("Enciphered"),
+        _ => encryption_label(archive.header.encryption),
+    }
 }
 
 fn encryption_label(encryption: RpfEncryption) -> &'static str {
@@ -246,6 +296,9 @@ pub fn row_facts(session: &RpfEditSession, id: RpfNodeId) -> Option<RowFacts> {
                     } else {
                         tr!("None")
                     });
+                    if let Some(row) = archive.rpf9_row(*entry_index) {
+                        take_row(&mut facts, &row);
+                    }
                 }
                 RpfEntry::Resource(r) => {
                     let version =
@@ -321,7 +374,7 @@ pub fn row_facts(session: &RpfEditSession, id: RpfNodeId) -> Option<RowFacts> {
             // ⚠ An archive's own encryption is its table's, known once it is open.
             facts.encryption = archive_id
                 .and_then(|a| session.archive(a))
-                .map(|slot| encryption_label(slot.archive.header.encryption));
+                .map(|slot| archive_encryption(&slot.archive));
         }
         _ => {}
     }
@@ -591,6 +644,8 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
+
     use or_io::container::rpf::RpfBuilder;
 
     use super::*;
@@ -764,6 +819,111 @@ mod tests {
             assert_eq!((shown, total), (expected, expected));
         }
 
+        #[test]
+        fn a_gta_vi_rows_columns_say_what_its_row_states_and_its_table_is_enciphered() {
+            let _serial = crate::ui::theme::serial();
+            let _reading = reading(&["data/named.bin"]);
+            let dir = tempfile::tempdir().expect("a scratch directory");
+            let session = tree(dir.path(), built(&[chunked("data/named.bin")]));
+            let named = row(&session, "named.bin");
+            let RpfNodeBacking::ArchiveFile {
+                archive_id,
+                entry_index,
+                ..
+            } = &session.node(named).expect("a row").backing
+            else {
+                panic!("a file of the archive");
+            };
+            let archive = &session.archive(*archive_id).expect("its archive").archive;
+            let stated = archive.rpf9_row(*entry_index).expect("its row");
+            let facts = row_facts(&session, named).expect("its columns");
+            assert_eq!(facts.kind, stated.kind);
+            assert_eq!(
+                (facts.size, facts.stored),
+                (Some(stated.real), Some(stated.stored))
+            );
+            assert_eq!(listed_bytes(&session, named), stated.real);
+            assert!(!stated.ciphered, "a new body is stored clear");
+            assert_eq!(facts.encryption, Some(tr!("None")));
+            assert_eq!(archive_encryption(archive), tr!("Enciphered"));
+            let mut gta5 = or_io::container::rpf::RpfBuilder::default();
+            gta5.insert_with("a.txt", b"a".to_vec(), false)
+                .expect("a file");
+            let gta5 = gta5.build().expect("a GTA V archive");
+            assert_eq!(archive_encryption(&gta5), tr!("None"));
+        }
+
+        /// Every file row of the build's smallest archives shows the kind, sizes and cipher its
+        /// table's row states, as Details does, a ciphered row among them.
+        #[test]
+        fn every_row_of_the_builds_smallest_archives_shows_what_its_row_states() {
+            const WHAT: &str = "a GTA VI row's columns say what its row states";
+            const ARCHIVES: usize = 16;
+            let _serial = crate::ui::theme::serial();
+            let build_root = std::env::var_os("OPENRAGE_GTA6_BUILD").map(PathBuf::from);
+            let (Some(build_root), Some(_)) = (build_root, std::env::var_os("OPENRAGE_GTA6_KEYS"))
+            else {
+                or_test_support::skip_install(
+                    WHAT,
+                    "set OPENRAGE_GTA6_BUILD and OPENRAGE_GTA6_KEYS",
+                );
+                return;
+            };
+            let mut disks: Vec<(u64, PathBuf)> = std::fs::read_dir(&build_root)
+                .expect("the build root lists")
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("rpf")))
+                .filter_map(|p| Some((std::fs::metadata(&p).ok()?.len(), p)))
+                .collect();
+            disks.sort();
+            let archive_kind = kind_label(Some(ARCHIVE_CLASS), None);
+            let (mut rows, mut ciphered) = (0usize, 0usize);
+            for (_, disk) in disks.into_iter().take(ARCHIVES) {
+                let archive = RpfArchive::open_with(&disk, Arc::new(NoOpCryptoProvider::new()))
+                    .unwrap_or_else(|e| panic!("{} opens: {e}", disk.display()));
+                let session = RpfEditSession::from_archive(archive).expect("the tree lists");
+                for id in session.all_nodes() {
+                    let Some(RpfNodeBacking::ArchiveFile {
+                        archive_id,
+                        entry_index,
+                        ..
+                    }) = session.node(id).map(|n| &n.backing)
+                    else {
+                        continue;
+                    };
+                    let archive = &session.archive(*archive_id).expect("its archive").archive;
+                    let Some(stated) = archive.rpf9_row(*entry_index) else {
+                        continue;
+                    };
+                    let facts = row_facts(&session, id).expect("its columns");
+                    let at = format!("{} row {entry_index}", disk.display());
+                    if stated.kind != archive_kind {
+                        assert_eq!(facts.kind, stated.kind, "{at}");
+                    }
+                    assert_eq!(
+                        (facts.size, facts.stored),
+                        (Some(stated.real), Some(stated.stored)),
+                        "{at}"
+                    );
+                    assert_eq!(measured_bytes(&session, id), Some(stated.real), "{at}");
+                    let shown = facts.encryption == Some(tr!("Enciphered"));
+                    assert_eq!(shown, stated.ciphered, "{at}");
+                    rows += 1;
+                    ciphered += usize::from(stated.ciphered);
+                }
+            }
+            assert!(rows > 0, "the smallest archives list file rows");
+            if ciphered == 0 {
+                or_test_support::skip_install(
+                    WHAT,
+                    format_args!(
+                        "no ciphered row among the {rows} rows of the {ARCHIVES} smallest archives"
+                    ),
+                );
+            }
+        }
+
         /// A build root's top-level archive whose root holds a nested archive past 4 GiB: the
         /// largest under 64 GiB, so its root's nested archives are each opened once.
         #[test]
@@ -814,6 +974,54 @@ mod tests {
         assert_eq!(kind_by_head(plain(), b"a = 1\n"), tr!("text"));
         assert_eq!(kind_by_head(plain(), b"\x00\x01\x02"), plain());
         assert_eq!(kind_by_head("drawable".into(), b"PSIN"), "drawable");
+    }
+
+    fn stated(kind: Cow<'static, str>, ciphered: bool) -> Rpf9Row {
+        Rpf9Row {
+            kind,
+            stored: 0x1_2345_6780,
+            real: 0x2_0000_0000,
+            ciphered,
+            row_bytes: Some(20),
+            hash: None,
+            name64: 1,
+        }
+    }
+
+    #[test]
+    fn a_gta_vi_rows_sizes_past_4_gib_and_its_cipher_are_its_rows() {
+        let mut facts = RowFacts {
+            size: Some(u64::from(u32::MAX)),
+            stored: Some(7),
+            encryption: Some(tr!("None")),
+            ..Default::default()
+        };
+        take_row(&mut facts, &stated("drawable".into(), true));
+        assert_eq!(
+            (facts.size, facts.stored, facts.encryption),
+            (
+                Some(0x2_0000_0000),
+                Some(0x1_2345_6780),
+                Some(tr!("Enciphered"))
+            )
+        );
+        take_row(&mut facts, &stated("drawable".into(), false));
+        assert_eq!(facts.encryption, Some(tr!("None")));
+    }
+
+    #[test]
+    fn a_gta_vi_row_no_list_names_is_shown_as_details_states_it() {
+        for kind in [
+            kind_label(Some(0x7F), None),
+            kind_label(None, Some(0x99)),
+            kind_label(None, None),
+        ] {
+            let shown = stated_kind(Some(stated(kind.clone(), false)));
+            assert_eq!(shown.as_deref(), Some(&*kind));
+        }
+        let archive = stated(kind_label(Some(ARCHIVE_CLASS), None), false);
+        assert_eq!(stated_kind(Some(archive)), None, "no archive, so a file");
+        assert_eq!(stated_kind(None), None);
     }
 
     #[test]

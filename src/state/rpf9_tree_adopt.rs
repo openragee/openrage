@@ -149,6 +149,9 @@ pub(super) fn become_copy(doc: &mut Document, written: Reopened, out: &Path) -> 
         slot.fs_path = Some(out.to_path_buf());
     }
     rpf.session = session;
+    if let Some(from) = &doc.path {
+        crate::state::rpf_archive_open::tree_open::follow_copy(doc.id, from, out);
+    }
     doc.path = Some(out.to_path_buf());
     if let Some(stem) = out.file_stem().and_then(|s| s.to_str()) {
         doc.name = stem.to_owned();
@@ -241,3 +244,7 @@ fn adopt(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "rpf9_tree_adopt_tests.rs"]
+mod tests;

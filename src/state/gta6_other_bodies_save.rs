@@ -8,6 +8,9 @@ use or_io::gta6::other_bodies::{Gta6HeightGrid, Gta6HeightMap, OtherBody};
 use super::document::{DocPayload, Document};
 use super::gta6_resource_save::EditedSave;
 
+#[path = "height_map_cell.rs"]
+mod cell;
+
 /// A file's bytes, made on the worker that writes them.
 pub type Write = dyn Fn() -> Result<Vec<u8>, String> + Send + Sync;
 

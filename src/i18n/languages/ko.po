@@ -17455,3 +17455,24 @@ msgstr "읽지 않음: {files}. 레이블 파일은 추측을 담고 있어 요�
 
 msgid "Natives no list names are labelled from {files}: these are guesses, not names"
 msgstr "어떤 목록도 이름을 붙이지 않은 네이티브는 {files}에서 레이블을 붙였습니다: 이름이 아니라 추측입니다"
+
+msgid "Planning the save of {file}"
+msgstr "{file} 저장 계획 중"
+
+msgid "planning {row}, {done} of {total}"
+msgstr "{row} 계획 중, {total} 중 {done}"
+
+msgid "not a height map"
+msgstr "높이 맵이 아님"
+
+msgid "Set cell {col}, {row}"
+msgstr "셀 {col}, {row} 설정"
+
+msgid "Column"
+msgstr "열"
+
+msgid "lowest {min}"
+msgstr "최저 {min}"
+
+msgid "The byte the file stores for the cell's highest point, 0 to 255; its lowest follows where it was the same and never stays above it."
+msgstr "파일이 셀의 최고점으로 저장하는 바이트(0~255). 최저점은 같았던 경우 따라가며 최고점보다 높게 남지 않습니다."

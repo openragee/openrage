@@ -429,7 +429,7 @@ fn empty_blocks_fill_every_length_but_one_to_four_and_eight() {
         }
     }
 
-    let (shortest, optimal) = deflate_to(&content, true, 0, OPTIMAL_CAP, &mut |_| true)
+    let (shortest, optimal, _) = deflate_to(&content, true, 0, OPTIMAL_CAP, &mut |_| true)
         .expect_err("nothing fits no bytes");
     let least = shortest.min(optimal);
     for len in [least, least + 5, least + 9, least + 100] {
@@ -438,10 +438,11 @@ fn empty_blocks_fill_every_length_but_one_to_four_and_eight() {
         assert_eq!(stream.len(), len);
         assert!(own <= len);
     }
-    assert_eq!(
-        deflate_to(&content, true, least - 1, OPTIMAL_CAP, &mut |_| true),
-        Err((shortest, optimal))
-    );
+    // A byte short of the first parse, a harder try may still fit, and then fills exactly.
+    match deflate_to(&content, true, least - 1, OPTIMAL_CAP, &mut |_| true) {
+        Ok((stream, own, optimal)) => assert!(stream.len() == least - 1 && own < least && optimal),
+        Err((s, o, _)) => assert!(s == shortest && o <= optimal, "{s} {o}"),
+    }
 }
 
 /// Words of a small vocabulary in a random order: text whose matches an optimal parse chooses
@@ -495,7 +496,7 @@ fn both_encoders_streams_inflate_to_the_same_bytes() {
 #[test]
 fn a_chunk_only_the_optimal_parse_fits_is_patched_and_reads_back() {
     let new = words(0x4000, 21);
-    let (shortest, ceiling) =
+    let (shortest, ceiling, _) =
         deflate_to(&new, true, 0, OPTIMAL_CAP, &mut |_| true).expect_err("nothing fits no bytes");
     assert!(
         shortest > ceiling,
@@ -875,6 +876,7 @@ fn a_chunk_past_the_optimal_cap_is_refused_without_the_optimal_parse() {
         optimal: refused.1,
         ceiling: 1000,
         cap: OPTIMAL_CAP,
+        harder: None,
     }
     .to_string();
     assert!(said.contains("not tried on a chunk past 8 MiB"), "{said}");
@@ -896,7 +898,7 @@ fn sparse_words(n: usize, seed: u32) -> Vec<u8> {
 
 /// A one-chunk row whose chunk the optimal parse alone fits, and its old content filling that ceiling.
 fn only_optimal_fits(new: &[u8]) -> (Gta6Mount, Gta6Entry, Vec<u8>) {
-    let (shortest, ceiling) =
+    let (shortest, ceiling, _) =
         deflate_to(new, true, 0, OPTIMAL_CAP, &mut |_| true).expect_err("nothing fits no bytes");
     assert!(
         shortest > ceiling,
@@ -1146,4 +1148,221 @@ fn a_file_cut_short_inside_a_row_protects_no_names_blob_over_that_row() {
         "{spans:?} over the row at {start:#x}..{:#x}",
         start + stored
     );
+}
+
+/// `new`'s first optimal stream's length, and the stream of the first harder try shorter than it.
+fn first_and_harder(new: &[u8]) -> (usize, Vec<u8>) {
+    let first = optimal_deflate(new, true).expect("the first parse").len();
+    // The plan's own bound, so the try found here is one the plan also reaches.
+    let harder =
+        harder_deflate(new, true, first - 1, HARDER_BOUND, &mut || true).unwrap_or_else(|miss| {
+            panic!(
+            "no harder try beat the first parse's {first} bytes ({miss:?}): the case needs content \
+             one deflates shorter"
+        )
+        });
+    (first, harder)
+}
+
+/// A one-chunk row of `new`'s length stored in `ceiling` bytes, its old content filling them.
+fn filled_to(new: &[u8], ceiling: usize) -> (Gta6Mount, Gta6Entry, Vec<u8>) {
+    let mut old = new.to_vec();
+    old[100..4100].fill(b'a');
+    let (stored, _, _) = deflate_to(&old, true, ceiling, OPTIMAL_CAP, &mut |_| true)
+        .expect("the old content fills the ceiling");
+    let chunk = Chunk {
+        inflated: new.len() as u32,
+        stored: ceiling as u32,
+        zlib: true,
+    };
+    let (mount, entry, file) = laid(&[(stored, chunk)]);
+    assert_eq!(mount.read_entry(Cursor::new(&file), &entry).unwrap(), old);
+    (mount, entry, file)
+}
+
+#[test]
+fn a_chunk_the_first_parse_misses_by_a_few_bytes_is_fitted_by_a_harder_try_and_reads_back() {
+    // Two parts of one text: a harder try parses them under fewer blocks or for longer.
+    let new = words(0x1C000, 101);
+    let (first, harder) = first_and_harder(&new);
+    let ceiling = harder.len();
+    assert!(
+        first - ceiling <= harder_margin(ceiling),
+        "the first parse's {first} bytes are past the margin over {ceiling}"
+    );
+    let (mount, entry, file) = filled_to(&new, ceiling);
+    let patch = BodyPatch {
+        base: 0,
+        entry: 0,
+        body: new.clone(),
+    };
+    let plan = plan_in(
+        &mount,
+        &mut Cursor::new(&file[..]),
+        &keys(),
+        &patch,
+        OPTIMAL_CAP,
+        &mut |_, _| true,
+    )
+    .expect("a harder try fits the chunk");
+    let chunk = plan.chunks[0];
+    assert!(chunk.changed && chunk.optimal, "{chunk:?}");
+    assert_eq!(
+        (chunk.new_stored as usize, chunk.ceiling as usize),
+        (ceiling, ceiling)
+    );
+    assert!(ceiling < first);
+    let mut copy = file.clone();
+    for (at, bytes) in &plan.writes {
+        copy[*at as usize..][..bytes.len()].copy_from_slice(bytes);
+    }
+    assert_eq!(copy.len(), file.len());
+    assert_eq!(mount.read_entry(Cursor::new(&copy), &entry).unwrap(), new);
+
+    // A stop asked while the harder tries run ends the plan, and it is not asked again.
+    let total = new.len() as u64;
+    let (mut stopped, mut asked_after) = (false, 0);
+    let planned = plan_in(
+        &mount,
+        &mut Cursor::new(&file[..]),
+        &keys(),
+        &patch,
+        OPTIMAL_CAP,
+        &mut |done, _| {
+            if stopped {
+                asked_after += 1;
+            }
+            // The first parse asks at its parts' starts; only the harder tries ask at the chunk's end.
+            stopped = stopped || done == total;
+            !stopped
+        },
+    );
+    assert!(
+        matches!(planned, Err(PatchRefusal::Stopped { entry: 0 })),
+        "{planned:?}"
+    );
+    assert_eq!(asked_after, 0, "a stopped plan is not asked again");
+}
+
+#[test]
+fn the_harder_tries_end_within_their_bound_and_at_a_stop() {
+    let content = words(0x4000, 102);
+    let began = Instant::now();
+    optimal_deflate(&content, true).expect("the first parse");
+    let once = began.elapsed();
+    // No stream is 10 bytes long, so only the bound ends the tries.
+    let bound = once * 2;
+    let began = Instant::now();
+    let miss = harder_deflate(&content, true, 10, bound, &mut || true).expect_err("nothing fits");
+    let took = began.elapsed();
+    assert!(
+        miss.untried.contains(&"250 rounds"),
+        "the longest try is begun past what the bound leaves: {miss:?}"
+    );
+    assert!(
+        // A scheduler stall under load is allowed for; 250 rounds alone run about 16 times `once`.
+        took < bound + once * 8 + Duration::from_secs(5),
+        "{took:?} against a bound of {bound:?}, one parse taking {once:?}"
+    );
+    assert!(miss.smallest == usize::MAX || miss.smallest > 10);
+
+    let mut asked = 0;
+    let began = Instant::now();
+    let stop = Duration::from_secs(600);
+    let miss = harder_deflate(&content, true, 10, stop, &mut || {
+        asked += 1;
+        false
+    })
+    .expect_err("stopped");
+    assert_eq!(asked, 1, "a stop is not asked again");
+    assert!(
+        miss.tried.is_empty() && miss.smallest == usize::MAX,
+        "{miss:?}"
+    );
+    assert!(miss.untried.contains(&"15 rounds with no early stop"));
+    assert!(began.elapsed() < once * 8 + Duration::from_secs(5));
+}
+
+#[test]
+fn a_chunk_within_the_margin_that_no_try_fits_is_refused_saying_what_was_tried() {
+    // Noise is stored, at 11 bytes over its own length: within the margin, past every try.
+    let content = noise(0x1000, 103);
+    let len = content.len();
+    let (deflated, optimal, harder) = deflate_to(&content, true, len, OPTIMAL_CAP, &mut |_| true)
+        .expect_err("noise deflates to no fewer bytes than it holds");
+    let harder = harder.expect("the harder tries ran within the margin");
+    assert!(
+        optimal > len && optimal - len <= harder_margin(len),
+        "{optimal}"
+    );
+    assert!(harder.untried.is_empty(), "{harder:?}");
+    assert!(harder.tried.contains(&"250 rounds"), "{harder:?}");
+    assert!(harder.smallest >= optimal);
+    let said = PatchRefusal::ChunkDoesNotFit {
+        entry: 0,
+        chunk: 0,
+        deflated,
+        optimal,
+        ceiling: len as u32,
+        cap: OPTIMAL_CAP,
+        harder: Some(harder),
+    }
+    .to_string();
+    assert!(
+        said.contains(&format!("to {optimal} by an optimal parse, the smallest after the harder tries (15 rounds with no early stop;"))
+            && said.contains("250 rounds)"),
+        "{said}"
+    );
+
+    // Past the margin the harder tries are not run.
+    let far = deflate_to(&content, true, len - 100, OPTIMAL_CAP, &mut |_| true)
+        .expect_err("noise fits no fewer bytes");
+    assert_eq!(far.2, None);
+    let cut = HarderMiss {
+        smallest: usize::MAX,
+        tried: Vec::new(),
+        untried: vec!["60 rounds", "250 rounds"],
+    };
+    let said = optimal_said(optimal, 10, OPTIMAL_CAP, &Some(cut));
+    assert!(
+        said.contains(
+            "parse, with no harder try ended, 60 rounds; 250 rounds cut by the time bound"
+        ),
+        "{said}"
+    );
+}
+
+#[test]
+fn incompressible_runs_are_cut_into_parts_of_their_own() {
+    // Six windows of noise, one alone, then letters past one part.
+    let content = [
+        letters(0x8000, 111),
+        noise(0x6000, 112),
+        letters(0x1000, 113),
+        noise(0x1000, 114),
+        letters(0x13000, 115),
+    ]
+    .concat();
+    let cuts = stored_run_cuts(&content);
+    assert_eq!(cuts, [0x8000, 0xE000, 0xE000 + OPTIMAL_PART, 0x23000]);
+    let plain = letters(0x20000, 116);
+    assert_eq!(
+        stored_run_cuts(&plain),
+        even_cuts(plain.len(), OPTIMAL_PART)
+    );
+    assert_eq!(even_cuts(0, OPTIMAL_PART), Vec::<usize>::new());
+
+    let options = optimal_options().expect("options");
+    for zlib in [true, false] {
+        let stream = parse_with(&content, zlib, options, &cuts, &mut |_| true).expect("parsed");
+        let chunk = Chunk {
+            inflated: content.len() as u32,
+            stored: stream.len() as u32,
+            zlib: true,
+        };
+        assert_eq!(
+            chunk_content(&stream, &chunk),
+            Some((zlib, content.clone()))
+        );
+    }
 }

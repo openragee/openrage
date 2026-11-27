@@ -21,12 +21,16 @@
 //!
 //! (6) Every kind holds at least one body: a kind the files' shares left with none is reserved a
 //! place, and the files cut short are walked again for those kinds alone in the time held back.
+//! (7) Every chunk (3)'s optimal parse missed is given the patch writer's harder tries, each within
+//! `HARDER_BOUND` and 240 s in all; how many they rescue, how far over each was, and the time each
+//! took are printed, and that every rescued stream fits and inflates back is asserted.
 //!
 //! Bounded: 40 bodies per kind, 8 per kind from each archive file, bodies of at most 4 MiB stored,
 //! and 300 s of walking, shared out among the archive files with 60 s held back for the kinds
 //! reserved a place, after which it reports what it reached;
 //! the census's optimal parse takes chunks of at most 256 KiB inflated, and 300 s more in all, an
-//! equal share per kind, which the walk's bound does not count: at most about ten minutes in all.
+//! equal share per kind, which the walk's bound does not count, and (7) 240 s more: at most about
+//! fourteen minutes in all.
 //!
 //! Install-gated, game-derived and slow (it walks nested archives); it skips without:
 //!   `OPENRAGE_GTA6_KEYS`   the `gtavi_magic.dat` key snapshot (never committed)
@@ -42,7 +46,9 @@ use std::time::{Duration, Instant};
 use flate2::write::{DeflateEncoder, ZlibEncoder};
 use flate2::{Compression, Decompress, FlushDecompress, Status};
 use or_io::container::rpf::gta6_chunk_table::{entry_chunks, Chunk};
-use or_io::container::rpf::gta6_patch::{optimal_deflate, OPTIMAL_CAP as WRITER_CAP};
+use or_io::container::rpf::gta6_patch::{
+    harder_deflate, harder_margin, optimal_deflate, HARDER_BOUND, OPTIMAL_CAP as WRITER_CAP,
+};
 use or_io::container::rpf::rpf9_write::write_rpf9_resource_chunks;
 use or_io::container::rpf::{
     read_rpf9_body, Gta6Class, Gta6Entry, Gta6Mount, Gta6NestedRow, GtaViKeys, Rpf9BodyKind,
@@ -92,6 +98,8 @@ const OPTIMAL_BUDGET: Duration = Duration::from_secs(300);
 const PARSE_SHARE: Duration = Duration::from_secs(
     OPTIMAL_BUDGET.as_secs() / (HEADERLESS.len() + BY_HEAD.len() + ROW24.len()) as u64,
 );
+/// The harder tries' time in all, over the chunks the first optimal parse missed.
+const HARDER_BUDGET: Duration = Duration::from_secs(240);
 /// Stored bytes of a headerless row's first chunk read to name its kind by its head.
 const PEEK: usize = 4096;
 /// The head bytes a signature reads: its first eight u64 slots.
@@ -657,6 +665,8 @@ struct Tally {
     optimal_time: Duration,
     /// Optimal streams that do not inflate back to their chunk.
     optimal_wrong: usize,
+    /// Chunks the optimal parse missed: content, framing, ceiling and the first stream's length.
+    missed: Vec<(Vec<u8>, bool, usize, usize)>,
 }
 
 #[derive(Default)]
@@ -745,6 +755,15 @@ fn headroom(t: &mut Tally, spent: &mut Duration, table: &[Chunk], pieces: &[Piec
             t.optimal_wrong += usize::from(back.as_deref() != Some(&piece.data[..]));
             t.optimal
                 .push([i64::from(c.stored), tree, stream.len() as i64]);
+            if stream.len() > c.stored as usize {
+                let missed = (
+                    piece.data.clone(),
+                    !piece.raw,
+                    c.stored as usize,
+                    stream.len(),
+                );
+                t.missed.push(missed);
+            }
         }
         t.slack.push(slack);
         if slack >= 0 {
@@ -1109,6 +1128,67 @@ fn print(kind: &str, t: &Tally) {
     }
 }
 
+/// Part (7): the patch writer's harder tries over every chunk the first optimal parse missed.
+fn harder_tries(st: &State) {
+    let missed: Vec<(&str, &(Vec<u8>, bool, usize, usize))> = (st.kinds.iter())
+        .flat_map(|(k, t)| t.missed.iter().map(move |m| (*k, m)))
+        .collect();
+    let (mut rescued, mut within, mut unrun, mut wrong) = (0, 0, 0, 0);
+    let mut spent = Duration::ZERO;
+    for (kind, (data, zlib, ceiling, first)) in &missed {
+        let (over, margin) = (first - ceiling, harder_margin(*ceiling));
+        within += usize::from(over <= margin);
+        if spent >= HARDER_BUDGET {
+            unrun += 1;
+            continue;
+        }
+        let began = Instant::now();
+        let got = harder_deflate(data, *zlib, *ceiling, HARDER_BOUND, &mut || true);
+        let took = began.elapsed();
+        spent += took;
+        let at = format!(
+            "{kind}: a {} KiB chunk {over} bytes ({:.2} %) over its {ceiling}-byte ceiling at the \
+             first parse, {} the patch writer's {margin}-byte margin,",
+            data.len() >> 10,
+            100.0 * over as f64 / *ceiling as f64,
+            if over <= margin { "within" } else { "past" }
+        );
+        match got {
+            Ok(stream) => {
+                rescued += 1;
+                let back = inflate_exact(&stream, *zlib, data.len());
+                wrong += usize::from(stream.len() > *ceiling || back.as_deref() != Some(&data[..]));
+                println!(
+                    "  {at} rescued at {} bytes in {:.1} s",
+                    stream.len(),
+                    took.as_secs_f64()
+                );
+            }
+            Err(miss) => println!(
+                "  {at} not rescued: {} bytes at the smallest after {:?}, {:?} cut by the bound, in \
+                 {:.1} s",
+                miss.smallest,
+                miss.tried,
+                miss.untried,
+                took.as_secs_f64()
+            ),
+        }
+    }
+    println!(
+        "harder tries: {rescued} of {} chunks the first optimal parse missed are rescued ({within} \
+         within the patch writer's margin, {unrun} not run past the {} s budget); {:.1} s spent, \
+         at most {} s a chunk",
+        missed.len(),
+        HARDER_BUDGET.as_secs(),
+        spent.as_secs_f64(),
+        HARDER_BOUND.as_secs()
+    );
+    assert_eq!(
+        wrong, 0,
+        "{wrong} rescued streams run past their ceiling or do not inflate back"
+    );
+}
+
 #[test]
 fn which_edits_fit_in_place_is_measured_per_kind() {
     let what = "GTA VI edits that fit in place over a build";
@@ -1192,6 +1272,7 @@ fn which_edits_fit_in_place_is_measured_per_kind() {
         PARSE_SHARE.as_secs(),
         per_64k(st.optimal_spent, inflated),
     );
+    harder_tries(&st);
     for failure in st.walk_failed.iter().take(20) {
         eprintln!("  {failure}");
     }

@@ -3,7 +3,8 @@
 //! in its first stored chunk (else its first chunk) is written to a copy and read back, or refused by
 //! name; the tally per shape is printed, with the fits only the optimal parse made, how far each
 //! encoder's stream runs past a ceiling it misses, the edits of chunks past 256 KiB the optimal parse
-//! was run over, and the slowest plan; a chunk within `OPTIMAL_CAP` is never refused untried. Each
+//! was run over, the refusals after the harder tries, and the slowest plan; a chunk within
+//! `OPTIMAL_CAP` is never refused untried. Each
 //! archive is cut to the prefix its sampled rows need, so no archive is copied whole.
 //!
 //! Install-gated and game-derived, so it skips cleanly without its env vars:
@@ -163,6 +164,8 @@ struct Tally {
     slowest: Duration,
     /// Edits of a chunk past [`LARGE`] that the optimal parse was run over.
     large_tried: usize,
+    /// Refusals after the harder tries ran, the first optimal parse missing within the margin.
+    harder_refused: usize,
 }
 
 fn refusal_name(r: &PatchRefusal) -> String {
@@ -283,9 +286,11 @@ fn a_one_byte_edit_patches_in_place_or_is_refused_by_name_per_row_shape() {
                         deflated,
                         optimal,
                         ceiling,
+                        ref harder,
                         ..
                     } = r
                     {
+                        tally.harder_refused += usize::from(harder.is_some());
                         let past =
                             |n: usize| i64::try_from(n).unwrap_or(i64::MAX) - i64::from(ceiling);
                         tally.over.push(past(deflated));
@@ -348,7 +353,8 @@ fn a_one_byte_edit_patches_in_place_or_is_refused_by_name_per_row_shape() {
             "{shape}: {} sampled, {} fit ({} only by the optimal parse), {} own-body copies \
              identical, {} unread, {} where reader and table disagree, refused {:?}, past the \
              ceiling by {:?} with the tree's deflater and {:?} with the optimal parse; {} edits of \
-             a chunk past 256 KiB given the optimal parse; slowest plan {} ms",
+             a chunk past 256 KiB given the optimal parse; {} refused after the harder tries; \
+             slowest plan {} ms",
             t.sampled,
             t.fit,
             t.fit_optimal,
@@ -359,6 +365,7 @@ fn a_one_byte_edit_patches_in_place_or_is_refused_by_name_per_row_shape() {
             sorted(&t.over),
             sorted(&t.over_optimal),
             t.large_tried,
+            t.harder_refused,
             t.slowest.as_millis()
         );
     }

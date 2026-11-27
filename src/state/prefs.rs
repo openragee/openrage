@@ -542,24 +542,7 @@ impl RecentFile {
     }
 }
 
-/// How long ago `t` was, as "3d ago"; empty for a time still to come.
-pub fn ago(t: std::time::SystemTime) -> String {
-    let Ok(dur) = t.elapsed() else {
-        return String::new();
-    };
-    let secs = dur.as_secs();
-    if secs < 60 {
-        tr!("just now").into()
-    } else if secs < 60 * 60 {
-        tr!("{minutes}m ago", minutes = secs / 60)
-    } else if secs < 60 * 60 * 24 {
-        tr!("{hours}h ago", hours = secs / 3600)
-    } else if secs < 60 * 60 * 24 * 30 {
-        tr!("{days}d ago", days = secs / 86_400)
-    } else {
-        tr!("{months}mo ago", months = secs / (86_400 * 30))
-    }
-}
+pub use super::prefs_ago::ago;
 
 /// ⚠ Entry by entry, so one that does not read is one fewer; a path alone is a file on disk remembered before 6.
 fn readable_recent_files<'de, D: serde::Deserializer<'de>>(

@@ -89,10 +89,12 @@ mod tests {
     use crate::state::opening_a_gta_vi_awc::gta_vi;
     use crate::state::rpf9_scan::{body_path, scanned_body, View};
     use crate::state::rpf_archive_open::tree_open::{leave, name, row_of};
+    use crate::state::rpf_archive_open::tree_verbs::headerless_tests::saves_per_kind::overlaid;
     use crate::state::rpf_archive_open::tree_verbs::tests::synthetic_keys;
     use crate::state::rpf_archive_open::tree_verbs::{
         chains, plan_save, write_planned, Planned, Replaced, Saved, Writes,
     };
+    use crate::state::rpf_node::ArchiveSource;
     use crate::state::rpf_session::{RpfDocument, RpfEditSession};
     use crate::state::{AppState, DocPayload, Document, RpfNodeBacking, ToastType};
 
@@ -231,11 +233,15 @@ mod tests {
         }
     }
 
-    /// Save `doc` into its row and wait for the row to hold the body it saved.
-    fn saved_into_its_row(state: &mut AppState, doc: DocumentId, node: RpfNodeId) -> Vec<u8> {
+    /// Save `doc` into its row and wait, until `deadline`, for the row to hold the body it saved.
+    fn saved_into_its_row(
+        state: &mut AppState,
+        doc: DocumentId,
+        node: RpfNodeId,
+        deadline: Instant,
+    ) -> Vec<u8> {
         state.toasts.clear();
         assert_eq!(state.save_into_tree_row(doc), Some(true));
-        let deadline = Instant::now() + Duration::from_secs(60);
         loop {
             state.poll_save_result();
             if let Some(body) = held(state, node) {
@@ -332,7 +338,8 @@ mod tests {
             file.set_chunk_payload(0, DATA, payload).expect("replaced");
         }
         d.mark_edited();
-        let body = saved_into_its_row(&mut state, doc, node);
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let body = saved_into_its_row(&mut state, doc, node, deadline);
         let plan = planned(&state, &disk, node, &keys);
         (disk, body, plan, place.entry)
     }
@@ -379,18 +386,32 @@ mod tests {
         assert!(said.contains("64 bytes over"), "{said}");
     }
 
-    /// The first stream of a few clear audio containers of the build, replaced by itself decoded
-    /// and encoded again, saves into its tree row and plans as a patched copy, or is refused by name;
-    /// each outcome is printed. Install-gated: it needs the key snapshot and the build.
+    /// The first stream of clear audio containers in the nested archives of the build's largest
+    /// archives, each nested archive opened through the tree smallest first, replaced by itself
+    /// decoded and encoded again, saved into its row and planned: Patched or the refusal by name is
+    /// printed for each, with how many were laid in their extents against how many grew past them.
+    /// Install-gated: it needs the key snapshot and the build, and with them a run that plans no
+    /// stream fails.
     #[test]
     fn a_stream_of_the_build_replaced_by_itself_re_encoded_saves_as_a_patched_copy_or_is_refused_by_name(
     ) {
         const BUILD_ENV: &str = "OPENRAGE_GTA6_BUILD";
         const WHAT: &str = "gta6 audio stream re-encoded and saved through the tree";
-        const ARCHIVES: usize = 64;
-        const CONTAINERS: usize = 3;
+        /// Streams planned before the test stops, and containers tried at most.
+        const PLANNED: usize = 3;
+        const TRIES: usize = 12;
+        /// The largest archives looked in, and the nested archives listed in each at most.
+        const ARCHIVES: usize = 6;
+        const PER_ARCHIVE: usize = 16;
         /// A container larger than this is passed over: its re-encode would take seconds.
         const CAP: u64 = 1 << 20;
+        /// No container is started past this, and every wait ends by `END`, so the test ends
+        /// within nextest's 300 s with what it found, a plan's own time past `END` included.
+        const BUDGET: Duration = Duration::from_secs(200);
+        const END: Duration = Duration::from_secs(240);
+        const WAIT: Duration = Duration::from_secs(60);
+        let started = Instant::now();
+        let wait = || (Instant::now() + WAIT).min(started + END);
         let build = (std::env::var_os(BUILD_ENV).map(PathBuf::from)).filter(|p| p.is_dir());
         let keys = (build.as_ref()).and_then(|_| crate::state::rpf9_scan::rpf9_table::keys().ok());
         let (Some(build), Some(keys)) = (build, keys) else {
@@ -416,125 +437,202 @@ mod tests {
         for pack in (std::fs::read_dir(build.join("pack")).into_iter().flatten()).flatten() {
             rpfs_in(&pack.path());
         }
-        archives.sort();
-
-        let mut said = Vec::new();
-        for (_, disk) in archives.iter().take(ARCHIVES) {
-            if said.len() >= CONTAINERS {
+        assert!(!archives.is_empty(), "{BUILD_ENV} holds no archive");
+        // ⚠ The build's audio is in nested archives of one of its largest archives, which is not
+        // the largest of all, so each of the largest is tried, its nested archives spread over sizes.
+        archives.sort_by(|a, b| b.cmp(a));
+        let over = |planned_n: usize, tries: usize| {
+            planned_n >= PLANNED || tries >= TRIES || started.elapsed() > BUDGET
+        };
+        let (mut said, mut tries, mut planned_n, mut fits, mut grows) = (Vec::new(), 0, 0, 0, 0);
+        let mut listed = 0;
+        'archives: for (_, disk) in archives.iter().take(ARCHIVES) {
+            if over(planned_n, tries) {
                 break;
             }
+            let file_name = crate::state::jobs::file_name(disk);
             let Some(mut state) = showing(disk) else {
+                said.push(format!("{file_name}: does not open as a tree"));
                 continue;
             };
-            let file_name = crate::state::jobs::file_name(disk);
-            // Clear rows of the top archive whose body starts at their row and is an audio container.
-            let rows: Vec<(RpfNodeId, u32)> = {
+            let mut nested: Vec<(u32, RpfNodeId)> = {
                 let session = session(&state);
-                let mut file = File::open(disk).expect("the archive");
                 (session.all_nodes().into_iter())
                     .filter_map(|id| {
-                        let RpfNodeBacking::ArchiveFile {
-                            archive_id,
-                            entry_index,
+                        let RpfNodeBacking::Archive {
+                            source:
+                                ArchiveSource::Nested {
+                                    parent_archive_id,
+                                    parent_entry_index,
+                                    ..
+                                },
                             ..
-                        } = &session.node(id).filter(|n| !n.is_dir())?.backing
+                        } = &session.node(id)?.backing
                         else {
                             return None;
                         };
-                        let archive = &session.archive(*archive_id)?.archive;
-                        let place = archive.rpf9_place(*entry_index)?;
-                        let row = archive.binary_entry(*entry_index)?;
-                        let small = (16..=CAP).contains(&u64::from(row.uncompressed_size));
-                        let plain =
-                            place.base == 0 && !place.ciphered && place.offset == row.file_offset;
-                        let mut head = [0u8; 4];
-                        file.seek(SeekFrom::Start(place.offset)).ok()?;
-                        file.read_exact(&mut head).ok()?;
-                        (small && plain && &head == b"ADAT").then_some((id, place.entry))
+                        let parent = &session.archive(*parent_archive_id)?.archive;
+                        let row = parent.binary_entry(*parent_entry_index)?;
+                        Some((row.uncompressed_size, id))
                     })
                     .collect()
             };
-            for (node, entry) in rows {
-                if said.len() >= CONTAINERS {
-                    break;
+            nested.sort();
+            // Spread over their sizes, the smallest first, so audio in a larger one is reached too.
+            let take = PER_ARCHIVE.min(nested.len());
+            let picked: Vec<RpfNodeId> = (0..take)
+                .map(|i| nested[i * nested.len() / take].1)
+                .collect();
+            for (number, &folder) in picked.iter().enumerate() {
+                if over(planned_n, tries) {
+                    break 'archives;
                 }
-                let what = format!("entry {entry} of {file_name}");
-                state.open_rpf_entry(DOC, node);
-                let deadline = Instant::now() + Duration::from_secs(60);
-                while state.load_receiver.is_some() || !state.pending_loads.is_empty() {
-                    state.poll_load_result();
-                    assert!(Instant::now() < deadline, "the load never ended");
+                let number = number + 1;
+                listed += 1;
+                state.request_expand(DOC, folder);
+                let deadline = wait();
+                while session(&state).needs_expansion(folder) {
+                    state.poll_expansions();
+                    assert!(
+                        Instant::now() < deadline,
+                        "nested archive {number} of {file_name} never listed"
+                    );
                     std::thread::sleep(Duration::from_millis(5));
                 }
-                let found = (state.documents.iter()).find(|d| {
-                    matches!(d.payload, DocPayload::Awc(_))
-                        && (d.path.as_deref())
-                            .and_then(|p| row_of(&state, p))
-                            .map(|r| r.entry_id)
-                            == Some(node)
-                });
-                let Some((doc, path)) = found.and_then(|d| Some((d.id, d.path.clone()?))) else {
-                    continue;
-                };
-                let Some(stream) =
-                    (state.awc_streams(doc).ok()).and_then(|rows| rows.first().map(|r| r.stream))
-                else {
-                    said.push(format!("{what}: no stream is listed"));
-                    continue;
-                };
-                let replace = (state.awc_wav(doc, stream))
-                    .and_then(|wav| state.awc_replace(doc, stream, &wav));
-                if let Err(why) = replace {
-                    said.push(format!("{what}: the replace is refused by name: {why}"));
-                    continue;
-                }
-                let (archive, offset) = scanned_body(&path).expect("a body of the archive");
-                let source = as_read(&path, archive, offset).expect("the container as read");
-                let in_extent = laid(&source, state.awc_file(doc).expect("its container"));
-                let body = saved_into_its_row(&mut state, doc, node);
-                if let Ok(laid) = &in_extent {
-                    assert_eq!(laid.len(), source.len(), "{what}: laid at its length");
-                    assert_eq!(
-                        &body, laid,
-                        "{what}: the row holds the container laid in extent"
-                    );
-                }
-                let plan = planned(&state, disk, node, &keys);
-                let line = match (plan.writes(), &in_extent) {
-                    (Writes::Patched, _) => {
-                        let dir = tempfile::tempdir().expect("a scratch directory");
-                        let out = dir.path().join("copy.rpf");
-                        let written = write_planned(disk, &out, &keys, &plan).expect("written");
-                        assert_eq!(written, Saved::Patched);
-                        assert_eq!(body_of(&out, entry, &keys), body, "{what}: read back");
-                        format!("{what}: saved as a patched copy, which reads the stream back")
+                let inner = match session(&state).node(folder).map(|n| &n.backing) {
+                    Some(RpfNodeBacking::Archive {
+                        archive_id: Some(inner),
+                        ..
+                    }) => *inner,
+                    Some(RpfNodeBacking::Archive { open_error, .. }) => {
+                        let why = open_error.as_deref().unwrap_or("no reason given");
+                        said.push(format!("nested archive {number} of {file_name}: {why}"));
+                        continue;
                     }
-                    (Writes::AsRead, _) => format!("{what}: the re-encode wrote the bytes it held"),
-                    (Writes::Rebuilt, tried) => {
-                        assert!(!plan.kept.is_empty(), "{what}: rebuilt with no reason");
-                        let refused = tried
-                            .as_ref()
-                            .err()
-                            .map_or("laid in extent", String::as_str);
-                        format!(
-                            "{what}: plans a rebuilt archive ({refused}); {}",
-                            plan.kept.join("; ")
-                        )
-                    }
+                    _ => continue,
                 };
-                said.push(line);
+                // Clear rows of the nested archive whose body starts at their row and is an
+                // audio container.
+                let rows: Vec<(RpfNodeId, u32)> = {
+                    let session = session(&state);
+                    let mut file = File::open(disk).expect("the archive");
+                    (session.all_nodes().into_iter())
+                        .filter_map(|id| {
+                            let RpfNodeBacking::ArchiveFile {
+                                archive_id,
+                                entry_index,
+                                ..
+                            } = &session.node(id).filter(|n| !n.is_dir())?.backing
+                            else {
+                                return None;
+                            };
+                            if *archive_id != inner {
+                                return None;
+                            }
+                            let archive = &session.archive(*archive_id)?.archive;
+                            let place = archive.rpf9_place(*entry_index)?;
+                            let row = archive.binary_entry(*entry_index)?;
+                            let small = (16..=CAP).contains(&u64::from(row.uncompressed_size));
+                            let starts = place.offset == place.base + row.file_offset;
+                            let mut head = [0u8; 4];
+                            file.seek(SeekFrom::Start(place.offset)).ok()?;
+                            file.read_exact(&mut head).ok()?;
+                            let clear = small && starts && !place.ciphered && &head == b"ADAT";
+                            clear.then_some((id, place.entry))
+                        })
+                        .collect()
+                };
+                for (node, entry) in rows {
+                    if over(planned_n, tries) {
+                        break 'archives;
+                    }
+                    tries += 1;
+                    let what = format!("entry {entry} of nested archive {number} of {file_name}");
+                    state.open_rpf_entry(DOC, node);
+                    let deadline = wait();
+                    while state.load_receiver.is_some() || !state.pending_loads.is_empty() {
+                        state.poll_load_result();
+                        assert!(Instant::now() < deadline, "the load never ended");
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    let opened = (state.documents.iter()).find(|d| {
+                        let row = (d.path.as_deref()).and_then(|p| row_of(&state, p));
+                        matches!(d.payload, DocPayload::Awc(_))
+                            && row.map(|r| r.entry_id) == Some(node)
+                    });
+                    let found = opened.and_then(|d| Some((d.id, d.path.clone()?)));
+                    let Some((doc, path)) = found else {
+                        said.push(format!("{what}: the tree opened no audio container"));
+                        continue;
+                    };
+                    let streams = state.awc_streams(doc).ok();
+                    let Some(stream) = streams.and_then(|rows| rows.first().map(|r| r.stream))
+                    else {
+                        said.push(format!("{what}: no stream is listed"));
+                        continue;
+                    };
+                    let replace = (state.awc_wav(doc, stream))
+                        .and_then(|wav| state.awc_replace(doc, stream, &wav));
+                    if let Err(why) = replace {
+                        said.push(format!("{what}: the replace is refused by name: {why}"));
+                        continue;
+                    }
+                    let (archive, offset) = scanned_body(&path).expect("a body of the archive");
+                    let source = as_read(&path, archive, offset).expect("the container as read");
+                    let in_extent = laid(&source, state.awc_file(doc).expect("its container"));
+                    match &in_extent {
+                        Ok(_) => fits += 1,
+                        Err(_) => grows += 1,
+                    }
+                    let body = saved_into_its_row(&mut state, doc, node, wait());
+                    if let Ok(laid) = &in_extent {
+                        assert_eq!(laid.len(), source.len(), "{what}: laid at its length");
+                        assert_eq!(
+                            &body, laid,
+                            "{what}: the row holds the container laid in extent"
+                        );
+                    }
+                    let plan = planned(&state, disk, node, &keys);
+                    planned_n += 1;
+                    // ⚠ The archive is gigabytes, so the patched copy is not written: the plan's own
+                    // bytes laid over the archive read the edit back.
+                    let line = match (plan.writes(), &in_extent) {
+                        (Writes::Patched, _) => {
+                            let read = overlaid(disk, &keys, &plan, offset, &body);
+                            if let Err(why) = read {
+                                panic!("{what}: Patched, but {why}");
+                            }
+                            format!("{what}: Patched, and the plan's bytes over the archive read the edit back")
+                        }
+                        (Writes::AsRead, _) => {
+                            format!("{what}: the re-encode wrote the bytes it held")
+                        }
+                        (Writes::Rebuilt, tried) => {
+                            assert!(!plan.kept.is_empty(), "{what}: rebuilt with no reason");
+                            let refused =
+                                (tried.as_ref().err()).map_or("laid in extent", String::as_str);
+                            format!(
+                                "{what}: plans a rebuilt archive ({refused}); {}",
+                                plan.kept.join("; ")
+                            )
+                        }
+                    };
+                    said.push(line);
+                }
             }
         }
         for line in &said {
             println!("{line}");
         }
-        if said.is_empty() {
-            or_test_support::skip_install(
-                WHAT,
-                format_args!(
-                    "no clear audio container of at most {CAP} bytes at the top of {ARCHIVES} archives"
-                ),
-            );
-        }
+        println!(
+            "{} streams re-encoded, {fits} laid in their extents and {grows} grown past them; \
+             {planned_n} planned of {tries} tried in {listed} nested archives",
+            fits + grows
+        );
+        assert!(
+            planned_n > 0,
+            "no stream of the build's audio reached a plan: {}",
+            said.join("; ")
+        );
     }
 }

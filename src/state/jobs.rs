@@ -242,6 +242,7 @@ impl AppState {
         .chain(self.awc_opus_job())
         .chain(super::gta6_install_scan::job())
         .chain(super::ttpf_document::calibration::job())
+        .chain(super::rpf_archive_open::tree_verbs::plan_job::jobs())
         .collect()
     }
 
@@ -281,6 +282,8 @@ impl AppState {
             JobKind::Load => self.cancel_loads(),
             JobKind::Save => {
                 self.cancel_save();
+                // ⚠ A GTA VI tree's save being planned says its end once its worker sees the stop.
+                super::rpf_archive_open::tree_verbs::plan_job::stop();
                 false
             }
             JobKind::Conversion => {

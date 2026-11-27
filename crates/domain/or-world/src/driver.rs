@@ -196,6 +196,8 @@ impl Driver {
             self.held_bytes -= was.bytes;
         }
         self.held_bytes += bytes;
+        // A body in hand ends what an earlier read refused: an edit session can hold a map the reader could not give.
+        self.refused.remove(&map);
         self.unstream(map);
     }
 

@@ -294,3 +294,28 @@ fn a_driver_can_be_handed_to_a_thread_of_its_own() {
     sendable::<Selected>();
     sendable::<Streamed>();
 }
+
+#[test]
+fn a_map_the_reader_refused_is_taken_from_an_edit_session_that_holds_it() {
+    let opened = open();
+    let near = opened.id(fake::NEAR);
+    let mut driver = opened.driver();
+    let none = Switched::default();
+    let view = view(&driver, fake::NEAR_EYE);
+    driver.want(&view, &noon(), &none, None);
+    driver.give(near, Err(WorldError::NoSuchMap(near)));
+    assert_eq!(driver.settle(&view).unread.len(), 1);
+
+    let edits = opened.title.edits();
+    let place = EditPlace {
+        install: &opened.install,
+        index: &opened.index,
+        folder: None,
+    };
+    let mut session = edits.open(&place).expect("the fake store opens");
+    let op = fake::move_node(&*session, fake::NEAR, 0, fake::MOVED_TO);
+    session.apply(&op).expect("the move applies");
+    let streamed = driver.stream(&view, &noon(), &none, Some(&*session), usize::MAX);
+    assert!(streamed.unread.is_empty(), "{:?}", streamed.unread);
+    assert!(maps(&streamed).contains(&near));
+}

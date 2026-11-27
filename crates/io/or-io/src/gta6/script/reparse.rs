@@ -1733,8 +1733,7 @@ impl<'a> Parser<'a> {
         let cond = self.binary(2, d)?;
         // `cache ??= made`: a delegate made once and kept.
         if self.eat("??=")? {
-            self.expr(d)?;
-            return Ok(unread("??="));
+            return Ok(Sk::Op("??=", vec![cond, self.expr(d)?]));
         }
         if self.eat("??")? {
             return Ok(Sk::Op("??", vec![cond, self.expr(d)?]));
@@ -1983,6 +1982,77 @@ const ELEMENTS: u64 = 4096;
 
 /// The mark of `new T[] { a, b }`: the type, then the elements in their order.
 const ELEMENTS_OF: &str = "new[]{}";
+
+/// The value every arm of a chain of tests holds against constants and the constants of each arm, in the order the tests are made; `None` where the arms are not the cases of one value.
+fn switched(arms: &[tree::Arm]) -> Option<(&Expr, Vec<Vec<i64>>)> {
+    let mut subject: Option<(&Expr, &Kind)> = None;
+    let mut values: Vec<Vec<i64>> = Vec::with_capacity(arms.len());
+    for arm in arms {
+        let mut of = Vec::new();
+        let mut open = vec![&arm.test];
+        while let Some(test) = open.pop() {
+            let (at, l, r) = match bare(test) {
+                Expr::Binary {
+                    op: BinOp::LogicalOr,
+                    l,
+                    r,
+                    ..
+                } => {
+                    open.push(&**r);
+                    open.push(&**l);
+                    continue;
+                }
+                Expr::Binary {
+                    op: BinOp::Eq,
+                    at,
+                    l,
+                    r,
+                } => (at, &**l, &**r),
+                _ => return None,
+            };
+            let wide = match at {
+                Kind::I32 | Kind::U32 => false,
+                Kind::I64 | Kind::U64 => true,
+                _ => return None,
+            };
+            if subject.is_some_and(|(held, kind)| kind != at || held != l) {
+                return None;
+            }
+            subject = Some((l, at));
+            // A reading of 32 bits keeps what a comparison of 32 bits sees.
+            let mut constant = r;
+            loop {
+                match constant {
+                    Expr::Sugar { e, .. }
+                    | Expr::Cast {
+                        to: Scalar::I64 | Scalar::U64,
+                        e,
+                    } => constant = &**e,
+                    Expr::Cast {
+                        to: Scalar::I32 | Scalar::U32,
+                        e,
+                    } if !wide => constant = &**e,
+                    _ => break,
+                }
+            }
+            let Expr::Const(c) = constant else {
+                return None;
+            };
+            if c.kind.is_float() {
+                return None;
+            }
+            of.push(match (wide, at) {
+                (true, _) => c.bits as i64,
+                (false, Kind::U32) => i64::from(c.bits as u32),
+                (false, _) => i64::from(c.bits as u32 as i32),
+            });
+        }
+        values.push(of);
+    }
+    let (value, _) = subject?;
+    // A `switch` reads its value once and the tests read it once each.
+    (!calls(value)).then_some((value, values))
+}
 
 /// The call that fills the variables the statements before it only made zero, where `parts` are those and it: `F(out T x)`.
 fn filled(parts: &[Stmt]) -> Option<&Stmt> {
@@ -3704,8 +3774,34 @@ impl Held<'_> {
             tree::Sugar::Try { .. } | tree::Sugar::Throw(_) if on(Pass::Try) => {
                 self.old_sugar(sugar, out, d)?;
             }
-            tree::Sugar::SwitchOn { .. } if on(Pass::SwitchOn) => {
-                out.push(unread_node("a switch on a chain of tests"));
+            tree::Sugar::SwitchOn { arms, default } if on(Pass::SwitchOn) => {
+                let Some((value, labels)) = switched(arms) else {
+                    return self.lowered(sugar, out, d);
+                };
+                // Each arm is left by a `break`: in the tests it stands for, no arm runs into the next.
+                let closed = |body: &[tree::Stmt]| -> Result<Vec<Node>, ReparseError> {
+                    let mut nodes = self.nodes(body, d)?;
+                    if falls(body) {
+                        nodes.push(Node::held("break", Vec::new(), Vec::new()));
+                    }
+                    Ok(nodes)
+                };
+                let mut all = Vec::with_capacity(arms.len() + 1);
+                for (arm, labels) in arms.iter().zip(labels) {
+                    let labels = labels
+                        .into_iter()
+                        .map(|label| Sk::Num(label as u64, Lit::Int));
+                    all.push(Node::held(
+                        "case",
+                        labels.collect(),
+                        vec![closed(&arm.body)?],
+                    ));
+                }
+                if !default.is_empty() {
+                    let label = vec![Sk::Name("default".to_owned())];
+                    all.push(Node::held("case", label, vec![closed(default)?]));
+                }
+                out.push(Node::held("switch", vec![self.sk(value, d)?], vec![all]));
             }
             tree::Sugar::Event { seed, round, again } if on(Pass::Events) => {
                 let Some(read) = closures::subscription(seed, round, again) else {
@@ -3717,7 +3813,13 @@ impl Held<'_> {
                 let stated = assign(place.clone(), binary(mark, place, handler));
                 out.push(Node::held("", vec![stated], Vec::new()));
             }
-            tree::Sugar::Cached { .. } if on(Pass::Lambdas) => out.push(unread_node("??=")),
+            tree::Sugar::Cached {
+                test, made, kept, ..
+            } if on(Pass::Lambdas) => {
+                if !self.cached(test, made, kept, out, d)? {
+                    self.lowered(sugar, out, d)?;
+                }
+            }
             _ => self.lowered(sugar, out, d)?,
         }
         Ok(())
@@ -3779,6 +3881,61 @@ impl Held<'_> {
             None => self.simples(parts, out, d)?,
         }
         Ok(())
+    }
+
+    /// `x = cache ??= target.Name` among the statements both arms run, for a delegate made on first use and kept in a global; whether it was stated.
+    fn cached(
+        &self,
+        test: &Expr,
+        made: &[tree::Stmt],
+        kept: &[tree::Stmt],
+        out: &mut Vec<Node>,
+        d: u32,
+    ) -> Result<bool, ReparseError> {
+        if !self.on(Pass::Delegates) {
+            return Ok(false);
+        }
+        let Some(read) = closures::kept_delegate(test, made, kept) else {
+            return Ok(false);
+        };
+        let Expr::FunctionRef { program, at } = bare(read.function) else {
+            return Ok(false);
+        };
+        if *program != self.head.program {
+            return Ok(false);
+        }
+        let mut simples: Vec<&Stmt> = Vec::with_capacity(kept.len());
+        for stmt in kept {
+            let tree::Stmt::Simple(simple) = stmt else {
+                return Ok(false);
+            };
+            simples.push(simple);
+        }
+        // What takes the delegate is the assignment of the cache to a variable, or nothing.
+        let taker = match read.take.map(|at| (at, simples.get(at))) {
+            Some((at, Some(Stmt::Assign { target, .. }))) => Some((at, *target)),
+            Some(_) => return Ok(false),
+            None => None,
+        };
+        let name = self.function(*program, *at);
+        let delegate = match is_zero(read.target) {
+            true => Sk::Name(name),
+            false => member(self.sk(under_wide(read.target), d)?, &name),
+        };
+        let keeps = Sk::Op("??=", vec![Sk::Name(self.var(read.cache)), delegate]);
+        if taker.is_none() {
+            out.push(Node::held("", vec![keeps.clone()], Vec::new()));
+        }
+        for (n, stmt) in simples.into_iter().enumerate() {
+            match taker {
+                Some((at, target)) if at == n => {
+                    let stated = assign(Sk::Name(self.var(target)), keeps.clone());
+                    out.push(Node::held("", vec![stated], Vec::new()));
+                }
+                _ => self.simples(std::slice::from_ref(stmt), out, d)?,
+            }
+        }
+        Ok(true)
     }
 
     /// `x = new T[] { a, b }`: an array made and every element of it set, in order; `None` where it is written as its parts.
@@ -3933,11 +4090,15 @@ impl Held<'_> {
         Ok(Some(Node::held("", vec![stated], Vec::new())))
     }
 
-    /// `base.f_10 = value`: the one store a field group is, through a variable; a store of whole cells, or through a field, is a form not held yet.
+    /// `base.f_10 = value`: the one store a field group is, through a variable or a field read as one; `None` where it reads as the statement it is.
+    // ⚠ Whole cells through a field read as a reference are a form not held yet.
     fn field_store(&self, parts: &[Stmt], d: u32) -> Result<Option<Node>, ReparseError> {
-        let named = || Some(unread_node("a field stored by its name"));
         let [store] = parts else {
             return Ok(None);
+        };
+        let through = |addr: &Expr| {
+            let field = |kind: &ExprSugar| matches!(kind, ExprSugar::Field { .. });
+            matches!(addr, Expr::Sugar { kind, .. } if field(kind))
         };
         let (kind, addr, offset, value) = match store {
             Stmt::Store {
@@ -3946,18 +4107,18 @@ impl Held<'_> {
                 offset,
                 value,
             } => (kind, addr, offset, value),
-            Stmt::StoreBytes { offset, .. } if *offset != 0 => return Ok(named()),
+            Stmt::StoreBytes { addr, offset, .. } if *offset != 0 && through(addr) => {
+                return Ok(Some(unread_node("a field stored by its name")));
+            }
             _ => return Ok(None),
         };
         if *offset == 0 {
             return Ok(None);
         }
         let base = match addr {
-            Expr::Var(base) => *base,
-            Expr::Sugar {
-                kind: ExprSugar::Field { .. },
-                ..
-            } => return Ok(named()),
+            Expr::Var(base) => Sk::Name(self.var(*base)),
+            // What a field read as one refers to: the store is written through the same text as a load is.
+            addr if through(addr) => self.sk(addr, d)?,
             _ => return Ok(None),
         };
         let value = match kind {
@@ -3966,7 +4127,7 @@ impl Held<'_> {
             StoreKind::I32 => self.stored(Scalar::I32, value, d)?,
             StoreKind::U64 | StoreKind::Ref => self.sk(value, d)?,
         };
-        let place = Sk::Op(".f", vec![Sk::Name(self.var(base)), num(*offset)]);
+        let place = Sk::Op(".f", vec![base, num(*offset)]);
         Ok(Some(Node::held("", vec![assign(place, value)], Vec::new())))
     }
 

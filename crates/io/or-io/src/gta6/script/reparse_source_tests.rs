@@ -750,3 +750,184 @@ fn an_events_loop_reads_as_the_handler_added_to_its_place_or_taken_from_it() {
         Ok(false)
     );
 }
+
+/// What the source level writes of `f`, and whether that reads back as it.
+fn round_trip(f: &tree::Function) -> (String, Result<(), ReparseError>) {
+    let names = Names::default();
+    let project = crate::gta6::script::Project::empty();
+    let cx = crate::gta6::script::Context::new(&names, project, Options::default());
+    let mut text = String::new();
+    print::function_in(&mut text, f, &cx);
+    let read = agrees_source(f, &text, cx.options, false);
+    (text, read)
+}
+
+/// Asserts that what the source level writes of `f` holds `line` and reads back, and that the text with `line` changed to `other` does not.
+fn reads_back_alone(f: &tree::Function, line: &str, other: &str) {
+    let (text, read) = round_trip(f);
+    assert!(text.contains(line), "{text}");
+    assert_eq!(read, Ok(()), "{text}");
+    let changed = text.replace(line, other);
+    let read = agrees_source(f, &changed, Options::default(), false);
+    assert!(
+        matches!(read, Err(ReparseError::Differs { .. })),
+        "{read:?}\n{changed}"
+    );
+}
+
+#[test]
+fn a_field_stored_by_its_name_reads_as_the_store_through_a_variable_or_a_field() {
+    let owner = TypeKey::of(&a_type()).expect("a key");
+    let stored = |store: Stmt, vars: &[(Var, Width, Kind)]| {
+        let mut f = function(vec![construct(Sugar::Group {
+            kind: Group::Field { owner },
+            parts: vec![store],
+        })]);
+        for (var, width, kind) in vars {
+            let mut info = VarInfo::new(*width);
+            info.kind = kind.clone();
+            f.head.vars.insert(*var, info);
+        }
+        f
+    };
+    let through = || {
+        let held = Expr::Load {
+            ty: Scalar::U64,
+            addr: boxed(p(0)),
+            offset: 0x18,
+        };
+        Expr::sugar(ExprSugar::Field { owner }, held)
+    };
+    // Whole cells at a field of an object, of several cells and of one.
+    let cells = |bytes: u32, value: Expr| Stmt::StoreBytes {
+        addr: local(1),
+        offset: 0x10,
+        bytes,
+        value,
+    };
+    let wide = stored(cells(16, local(2)), &[two_cells(2), an_object(1)]);
+    reads_back_alone(&wide, "local_1.f_10 = local_2;", "local_1.f_18 = local_2;");
+    let one = stored(cells(8, p(1)), &[an_object(1)]);
+    reads_back_alone(&one, "local_1.f_10 = p1;", "local_1.f_10 = p0;");
+    // Through a field read as a reference.
+    let store = |kind: StoreKind, value: Expr| Stmt::Store {
+        kind,
+        addr: through(),
+        offset: 0x10,
+        value,
+    };
+    let whole = stored(store(StoreKind::U64, p(1)), &[]);
+    reads_back_alone(&whole, "p0.f_18.f_10 = p1;", "p0.f_18.f_18 = p1;");
+    reads_back_alone(&whole, "p0.f_18.f_10 = p1;", "p0.f_20.f_10 = p1;");
+    let narrow = stored(store(StoreKind::I32, int(3)), &[]);
+    reads_back_alone(&narrow, "p0.f_18.f_10 = 3;", "p0.f_18.f_10 = 4;");
+}
+
+#[test]
+fn a_delegate_kept_in_a_global_reads_as_the_cache_given_it_where_it_holds_none() {
+    use crate::gta6::script::passes::closures;
+    let own = 0x1122_3344;
+    let global = |offset: u32| Var::Global {
+        program: own,
+        offset,
+        statics: false,
+    };
+    // A delegate type of the runtime: the bit of a builtin above its index.
+    let delegate = VmType {
+        name: "Delegate".to_owned(),
+        byte_size: 48,
+        id: 0x8000_0002,
+        flags: 0x2000,
+    };
+    let bind = |object: Var, target: Expr, function: Expr| {
+        Stmt::Eval(Expr::Call {
+            callee: Callee::Builtin {
+                path: "Delegate.Ctor".to_owned(),
+                ty: 2,
+                method: 0,
+            },
+            args: vec![Expr::Var(object), target, function],
+            returns: Some(0),
+        })
+    };
+    let (join, made) = (Var::Stack { at: 0x50, index: 0 }, Var::Local(1));
+    let holder = Expr::cast(Scalar::U64, Expr::Var(global(0x60)));
+    let bound = Expr::FunctionRef {
+        program: own,
+        at: 0x400,
+    };
+    // `if (cache != 0) { join = cache; } else { d = holder.function; cache = d; join = d; }`
+    let body = vec![
+        tree::Stmt::If {
+            cond: Expr::binary(
+                BinOp::Ne,
+                Expr::cast(Scalar::U64, Expr::Var(global(0x68))),
+                int(0),
+            ),
+            then: vec![simple(set(join, Expr::Var(global(0x68))))],
+            els: vec![
+                simple(set(made, Expr::NewObject(delegate))),
+                simple(bind(made, holder, bound)),
+                simple(set(global(0x68), Expr::Var(made))),
+                simple(set(join, Expr::Var(made))),
+            ],
+        },
+        used(Expr::Var(join)),
+    ];
+    let mut f = function(body);
+    let names = Names::default();
+    let project = crate::gta6::script::Project::empty();
+    let cx = crate::gta6::script::Context::new(&names, project, Options::default());
+    let found = closures::rewrite(&mut f, &cx);
+    assert_eq!(found.cached, 1, "{:?}", f.body);
+    let line = "= Global_68 ??= Global_60.func_000400;";
+    reads_back_alone(&f, line, "= Global_68 ??= Global_60.func_000408;");
+    reads_back_alone(&f, line, "= Global_70 ??= Global_60.func_000400;");
+    reads_back_alone(&f, line, "= Global_68 ??= func_000400;");
+}
+
+#[test]
+fn a_chain_of_tests_of_one_value_against_constants_reads_as_the_switch_it_is_written_as() {
+    let is = |value: i32| Expr::Binary {
+        op: BinOp::Eq,
+        at: Kind::I32,
+        l: boxed(Expr::cast(Scalar::I32, p(0))),
+        r: boxed(int(value)),
+    };
+    let either = |l: Expr, r: Expr| Expr::Binary {
+        op: BinOp::LogicalOr,
+        at: Kind::Bool,
+        l: boxed(l),
+        r: boxed(r),
+    };
+    let chain = |default: Vec<tree::Stmt>| {
+        function(vec![construct(Sugar::SwitchOn {
+            arms: vec![
+                Arm {
+                    test: either(is(1), is(-2)),
+                    body: vec![used(int(7))],
+                },
+                Arm {
+                    test: is(5),
+                    body: vec![tree::Stmt::Return(Some(int(9)))],
+                },
+            ],
+            default,
+        })])
+    };
+    let whole = chain(vec![used(int(8))]);
+    let (text, read) = round_trip(&whole);
+    assert!(text.contains("switch ("), "{text}");
+    assert_eq!(read, Ok(()), "{text}");
+    reads_back_alone(&whole, "case -2:", "case -3:");
+    reads_back_alone(&whole, "case 5:", "case 6:");
+    reads_back_alone(&whole, "DEMO.USE(8);", "DEMO.USE(7);");
+    // A body that would run off its end is left by a `break`, and one that returns is not.
+    reads_back_alone(&whole, "return 9;", "return 9;\n            break;");
+    // With no default there is no case of it.
+    let bare = chain(Vec::new());
+    let (text, read) = round_trip(&bare);
+    assert!(!text.contains("default:"), "{text}");
+    assert_eq!(read, Ok(()), "{text}");
+    reads_back_alone(&bare, "case 1:", "case 1:\n        case 4:");
+}

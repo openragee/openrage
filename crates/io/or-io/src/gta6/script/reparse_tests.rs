@@ -1119,7 +1119,7 @@ fn a_form_not_read_back_yet_is_counted_by_name_and_not_compared() {
         Some("an object written with its fields")
     );
     let cached = "    local_0 = Global_28 ??= Global_20.func_000100;\n";
-    assert_eq!(unread_of(one(), cached).as_deref(), Some("??="));
+    assert_eq!(source_says(one(), cached), Ok(false));
     let tested = "    local_0 = p0 is type_0123456789ABCDEF;\n";
     assert_eq!(unread_of(one(), tested).as_deref(), Some("is"));
     // A label of a case by its text is not held; one by its number is, and is no assignment.

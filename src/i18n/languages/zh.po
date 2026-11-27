@@ -17190,6 +17190,9 @@ msgstr "{folder} 是 {title}。其归档从各自的表打开，作为树中的�
 msgid "the decompiler stopped on a fault in this program"
 msgstr "反编译器在此程序中因故障而停止"
 
+msgid "the decompile was stopped"
+msgstr "反编译已停止"
+
 msgid "This is a compiled GTA VI script that does not decompile, so it is shown as its bytes: {e}"
 msgstr "这是一个无法反编译的 GTA VI 已编译脚本，因此显示为其字节：{e}"
 
@@ -17299,14 +17302,14 @@ msgstr "结构化语句"
 msgid "Source with classes"
 msgstr "带类的源代码"
 
-msgid "Decompiling, {seconds} s so far; functions to write: {functions}"
-msgstr "正在反编译，已用 {seconds} 秒；待写出的函数：{functions}"
+msgid "Decompiling, {seconds} s so far; functions written: {done} of {functions}"
+msgstr "正在反编译，已用 {seconds} 秒；已写出的函数：{done} / {functions}"
 
-msgid "Stop waiting"
-msgstr "停止等待"
+msgid "Stop decompiling"
+msgstr "停止反编译"
 
-msgid "A decompile cannot be stopped part-way: this stops waiting for it, the script keeps the source it has, and what the decompile writes is dropped when it ends"
-msgstr "反编译无法中途停止：此操作只是不再等待它，脚本保留现有的源代码，反编译写出的内容会在其结束时丢弃"
+msgid "The decompile stops after the function it is writing, and the script keeps the source it has"
+msgstr "反编译在写完当前函数后停止，脚本保留现有的源代码"
 
 msgid "{held} of {all} functions are decompiled. This program is large, so its source holds only the ones picked: click a function in the outline to add it"
 msgstr "{all} 个函数中已反编译 {held} 个。此程序较大，因此其源代码只包含已选的函数：在大纲中单击一个函数即可添加"

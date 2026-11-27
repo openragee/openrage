@@ -12,6 +12,7 @@
 //! stated at `simple`, `called` and `floor_of_object` below.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use super::cfg::{self, Block, BlockId, Cfg, Terminator};
 use super::decode::{self, DisasmError, Insn};
@@ -140,8 +141,48 @@ fn starts(program: u32, project: &Project) -> BTreeSet<u32> {
     starts
 }
 
+/// How many functions a decompile on another thread has written, and the flag that asks it to stop.
+#[derive(Debug, Default)]
+pub struct Progress {
+    done: AtomicUsize,
+    stop: AtomicBool,
+}
+
+impl Progress {
+    /// The functions written so far.
+    pub fn done(&self) -> usize {
+        self.done.load(Ordering::Relaxed)
+    }
+
+    /// Asks the decompile to stop once the function it is writing is written.
+    pub fn stop(&self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+
+    pub fn stopped(&self) -> bool {
+        self.stop.load(Ordering::Relaxed)
+    }
+}
+
+/// Counts one more function written, where a progress is kept.
+fn written(progress: Option<&Progress>) {
+    if let Some(progress) = progress {
+        progress.done.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 /// Writes the functions `rows` of a program read, by the level and the passes asked; one that does not lift is written with no body and the reason.
 pub fn functions(program: &Program, rows: &[FunctionRow], cx: &Context<'_>) -> Output {
+    functions_in(program, rows, cx, None)
+}
+
+/// [`functions`], counting each function written in `progress` and stopping before the next once it is asked to; what a stopped decompile writes holds the functions written by then.
+pub fn functions_in(
+    program: &Program,
+    rows: &[FunctionRow],
+    cx: &Context<'_>,
+    progress: Option<&Progress>,
+) -> Output {
     let imports = program
         .imports
         .iter()
@@ -157,6 +198,9 @@ pub fn functions(program: &Program, rows: &[FunctionRow], cx: &Context<'_>) -> O
     // One for the program: a slot looked up for one function is not looked up again for the next.
     let slots = Slots::new(cx.project);
     for row in rows {
+        if progress.is_some_and(Progress::stopped) {
+            break;
+        }
         stats.functions += 1;
         let lifted = match function_with(program, &slots, row) {
             Ok(mut lifted) => {
@@ -173,6 +217,7 @@ pub fn functions(program: &Program, rows: &[FunctionRow], cx: &Context<'_>) -> O
                     head,
                     body: Vec::new(),
                 });
+                written(progress);
                 continue;
             }
         };
@@ -184,6 +229,7 @@ pub fn functions(program: &Program, rows: &[FunctionRow], cx: &Context<'_>) -> O
             true => super::blocks_in(lifted.function, cx, &mut stats),
             false => cfg::flat(lifted.function),
         });
+        written(progress);
     }
     let done = super::passes::async_await::joined(done, cx);
     let mut unit = super::passes::classes::unit(program.program, imports, done, cx);

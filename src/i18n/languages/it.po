@@ -17190,6 +17190,9 @@ msgstr "{folder} è {title}. I suoi archivi si aprono dalle loro tabelle come ca
 msgid "the decompiler stopped on a fault in this program"
 msgstr "il decompilatore si è fermato per un errore in questo programma"
 
+msgid "the decompile was stopped"
+msgstr "la decompilazione è stata interrotta"
+
 msgid "This is a compiled GTA VI script that does not decompile, so it is shown as its bytes: {e}"
 msgstr "Questo è uno script compilato di GTA VI che non si decompila, quindi viene mostrato come i suoi byte: {e}"
 
@@ -17299,14 +17302,14 @@ msgstr "Istruzioni strutturate"
 msgid "Source with classes"
 msgstr "Sorgente con classi"
 
-msgid "Decompiling, {seconds} s so far; functions to write: {functions}"
-msgstr "Decompilazione in corso, {seconds} s finora; funzioni da scrivere: {functions}"
+msgid "Decompiling, {seconds} s so far; functions written: {done} of {functions}"
+msgstr "Decompilazione in corso, {seconds} s finora; funzioni scritte: {done} di {functions}"
 
-msgid "Stop waiting"
-msgstr "Smetti di attendere"
+msgid "Stop decompiling"
+msgstr "Interrompi la decompilazione"
 
-msgid "A decompile cannot be stopped part-way: this stops waiting for it, the script keeps the source it has, and what the decompile writes is dropped when it ends"
-msgstr "Una decompilazione non può essere fermata a metà: questo smette di attenderla, lo script conserva il sorgente che ha, e ciò che la decompilazione scrive viene scartato quando termina"
+msgid "The decompile stops after the function it is writing, and the script keeps the source it has"
+msgstr "La decompilazione si ferma dopo la funzione che sta scrivendo, e lo script mantiene il sorgente che ha"
 
 msgid "{held} of {all} functions are decompiled. This program is large, so its source holds only the ones picked: click a function in the outline to add it"
 msgstr "{held} funzioni su {all} sono decompilate. Questo programma è grande, quindi il suo sorgente contiene solo quelle scelte: fai clic su una funzione nella struttura per aggiungerla"

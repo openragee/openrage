@@ -17190,6 +17190,9 @@ msgstr "{folder}은(는) {title}입니다. 이 아카이브는 테이블에서 �
 msgid "the decompiler stopped on a fault in this program"
 msgstr "이 프로그램에서 디컴파일러가 오류로 중단되었습니다"
 
+msgid "the decompile was stopped"
+msgstr "디컴파일을 중지했습니다"
+
 msgid "This is a compiled GTA VI script that does not decompile, so it is shown as its bytes: {e}"
 msgstr "디컴파일되지 않는 컴파일된 GTA VI 스크립트이므로 바이트로 표시됩니다: {e}"
 
@@ -17299,14 +17302,14 @@ msgstr "구조화된 문"
 msgid "Source with classes"
 msgstr "클래스가 있는 소스"
 
-msgid "Decompiling, {seconds} s so far; functions to write: {functions}"
-msgstr "디컴파일하는 중, {seconds}초 경과. 기록할 함수: {functions}"
+msgid "Decompiling, {seconds} s so far; functions written: {done} of {functions}"
+msgstr "디컴파일하는 중, {seconds}초 경과. 기록한 함수: {functions}개 중 {done}개"
 
-msgid "Stop waiting"
-msgstr "기다리지 않기"
+msgid "Stop decompiling"
+msgstr "디컴파일 중지"
 
-msgid "A decompile cannot be stopped part-way: this stops waiting for it, the script keeps the source it has, and what the decompile writes is dropped when it ends"
-msgstr "디컴파일은 도중에 멈출 수 없습니다. 이 버튼은 기다리기만 그만두며, 스크립트는 현재 소스를 유지하고, 디컴파일이 기록한 내용은 끝날 때 버려집니다"
+msgid "The decompile stops after the function it is writing, and the script keeps the source it has"
+msgstr "쓰고 있는 함수 다음에 디컴파일을 멈추며, 스크립트는 지금의 소스를 그대로 유지합니다"
 
 msgid "{held} of {all} functions are decompiled. This program is large, so its source holds only the ones picked: click a function in the outline to add it"
 msgstr "함수 {all}개 중 {held}개가 디컴파일되었습니다. 이 프로그램은 크기 때문에 소스에는 선택한 함수만 들어 있습니다. 개요에서 함수를 클릭하면 추가됩니다"

@@ -6,6 +6,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
+use or_io::gta6::script::lift::Progress;
+
 use super::{set_level, Ask, Gta6ScriptDocument};
 use crate::state::{AppState, DocPayload, DocumentId, DocumentKind, RpfEntryBinding};
 use crate::ui::panel_state::PanelState;
@@ -21,6 +23,8 @@ pub struct Job {
     /// The function whose head the caret goes to once the source lands.
     pub focus: Option<u32>,
     pub started: Instant,
+    /// How many functions the thread has written, and the flag that stops it.
+    pub progress: Arc<Progress>,
     /// Where the thread leaves what it made.
     // ⚠ The thread holds it weakly: a job dropped frees what the thread makes as soon as it is made.
     slot: Arc<Mutex<Option<Done>>>,
@@ -79,10 +83,10 @@ impl AppState {
         self.panels.peek::<Jobs>()?.0.get(&doc)
     }
 
-    /// Stop waiting for the decompile in flight for `doc`: what its thread makes is dropped.
-    // ⚠ The thread itself runs to its end: a decompile takes no stop part-way.
+    /// Stop the decompile in flight for `doc` once the function it is writing is written: what its thread makes is dropped.
     pub(crate) fn drop_gta6_script_job(&mut self, doc: DocumentId) {
-        if self.gta6_script_job(doc).is_some() {
+        if let Some(job) = self.gta6_script_job(doc) {
+            job.progress.stop();
             self.panels.get::<Jobs>().0.remove(&doc);
         }
     }
@@ -96,8 +100,10 @@ impl AppState {
         let script = Arc::clone(script);
         let slot: Arc<Mutex<Option<Done>>> = Arc::new(Mutex::new(None));
         let (weak, asked) = (Arc::downgrade(&slot), ask.clone());
+        let progress = Arc::new(Progress::default());
+        let counted = Arc::clone(&progress);
         let work = move || {
-            let done = script.again(&asked);
+            let done = script.again(&asked, &counted);
             if let Some(slot) = weak.upgrade() {
                 *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(done);
             }
@@ -110,6 +116,7 @@ impl AppState {
             ask,
             focus,
             started: Instant::now(),
+            progress,
             slot,
         };
         self.panels.get::<Jobs>().0.insert(doc, job);

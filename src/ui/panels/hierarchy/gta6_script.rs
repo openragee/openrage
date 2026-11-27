@@ -251,6 +251,7 @@ fn draw_level(
 ) {
     if let Some(job) = state.gta6_script_job(doc_id) {
         let seconds = job.started.elapsed().as_secs();
+        let done = job.progress.done();
         let functions = match &job.ask.picked {
             Some(picked) => picked.len(),
             None => doc.program.functions.len(),
@@ -261,13 +262,14 @@ fn draw_level(
         ui.horizontal(|ui| {
             ui.spinner();
             ui.label(tr!(
-                "Decompiling, {seconds} s so far; functions to write: {functions}",
+                "Decompiling, {seconds} s so far; functions written: {done} of {functions}",
                 seconds = seconds,
+                done = done,
                 functions = functions
             ));
-            stop = (ui.button(tr!("Stop waiting")))
+            stop = (ui.button(tr!("Stop decompiling")))
                 .on_hover_text(tr!(
-                    "A decompile cannot be stopped part-way: this stops waiting for it, the script keeps the source it has, and what the decompile writes is dropped when it ends"
+                    "The decompile stops after the function it is writing, and the script keeps the source it has"
                 ))
                 .clicked();
         });

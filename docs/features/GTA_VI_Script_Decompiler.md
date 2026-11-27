@@ -217,7 +217,9 @@ Files tree, decompiled on the load worker, or from a deciphered file. It is deco
 `project.json` beside the file, else the one in the names folder, else alone, and the inspector
 says which. A program with more than a mebibyte of code opens with its `main` alone decompiled:
 picking another function in the outline decompiles it, and the inspector offers every function.
-The text editor shows the
+A decompile asked again, at another level or with more functions, runs on a thread of its own:
+the inspector counts the functions written, and **Stop decompiling** stops it after the one it is
+writing, the script keeping the source it had. The text editor shows the
 source with highlighting, **Go to definition** and **Find references** follow the name under the
 caret within the script, the outline lists its classes and functions, and the inspector states
 the program's facts, the lists that named things, the level, and the instructions of the function

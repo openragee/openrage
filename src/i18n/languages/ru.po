@@ -17341,6 +17341,9 @@ msgstr "{folder} — это {title}. Её архивы открываются п
 msgid "the decompiler stopped on a fault in this program"
 msgstr "декомпилятор остановился из-за сбоя в этой программе"
 
+msgid "the decompile was stopped"
+msgstr "декомпиляция остановлена"
+
 msgid "This is a compiled GTA VI script that does not decompile, so it is shown as its bytes: {e}"
 msgstr "Это скомпилированный скрипт GTA VI, который не декомпилируется, поэтому он показан как байты: {e}"
 
@@ -17455,14 +17458,14 @@ msgstr "Структурированные операторы"
 msgid "Source with classes"
 msgstr "Исходный код с классами"
 
-msgid "Decompiling, {seconds} s so far; functions to write: {functions}"
-msgstr "Декомпиляция, прошло {seconds} с; функций к записи: {functions}"
+msgid "Decompiling, {seconds} s so far; functions written: {done} of {functions}"
+msgstr "Декомпиляция, прошло {seconds} с; записано функций: {done} из {functions}"
 
-msgid "Stop waiting"
-msgstr "Не ждать"
+msgid "Stop decompiling"
+msgstr "Остановить декомпиляцию"
 
-msgid "A decompile cannot be stopped part-way: this stops waiting for it, the script keeps the source it has, and what the decompile writes is dropped when it ends"
-msgstr "Декомпиляцию нельзя остановить на полпути: это прекращает её ожидание, скрипт сохраняет имеющийся исходный код, а то, что запишет декомпиляция, отбрасывается по её завершении"
+msgid "The decompile stops after the function it is writing, and the script keeps the source it has"
+msgstr "Декомпиляция остановится после функции, которую записывает, а скрипт сохранит имеющийся исходный текст"
 
 msgid "{held} of {all} functions are decompiled. This program is large, so its source holds only the ones picked: click a function in the outline to add it"
 msgstr "Декомпилировано функций: {held} из {all}. Эта программа велика, поэтому её исходный код содержит только выбранные: щёлкните функцию в структуре, чтобы добавить её"

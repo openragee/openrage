@@ -10,6 +10,7 @@ use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
+use or_io::gta6::script::lift::Progress;
 use or_io::gta6::script::program::{FunctionRow, Program};
 use or_io::gta6::script::{lift, Context, Level, Options, Stats};
 
@@ -233,9 +234,15 @@ impl Gta6ScriptDocument {
     }
 
     /// The decompile of the same bytes as `ask` asks, on the calling thread: a worker's work.
-    pub fn again(&self, ask: &Ask) -> Result<Gta6ScriptDocument, String> {
+    pub fn again(&self, ask: &Ask, progress: &Progress) -> Result<Gta6ScriptDocument, String> {
         let held = (Arc::clone(&self.program), self.stamp.clone());
-        written(held, &self.bytes, ask, self.beside.as_deref())
+        written(
+            held,
+            &self.bytes,
+            ask,
+            self.beside.as_deref(),
+            Some(progress),
+        )
     }
 }
 
@@ -394,6 +401,7 @@ fn written(
     bytes: &Arc<[u8]>,
     ask: &Ask,
     beside: Option<&Path>,
+    progress: Option<&Progress>,
 ) -> Result<Gta6ScriptDocument, String> {
     let folder = names_dir();
     let mut supplied = lists::supplied(folder.as_deref());
@@ -415,7 +423,10 @@ fn written(
             .copied()
             .collect(),
     };
-    let output = guarded(|| lift::functions(&program, &rows, &cx))?;
+    let output = guarded(|| lift::functions_in(&program, &rows, &cx, progress))?;
+    if progress.is_some_and(Progress::stopped) {
+        return Err(tr!("the decompile was stopped").to_string());
+    }
     let mut source: String = output.files.into_iter().map(|file| file.text).collect();
     // The offsets asked that start a function: what the source holds, and what a later ask adds to.
     let picked: Option<BTreeSet<u32>> =
@@ -469,7 +480,7 @@ fn opened(program: Program, bytes: &[u8], level: Level) -> DocPayload {
     let ask = first_ask(&program, level);
     let held: Arc<[u8]> = Arc::from(bytes);
     let folder = beside();
-    match written((Arc::new(program), None), &held, &ask, folder.as_deref()) {
+    match written((Arc::new(program), None), &held, &ask, folder.as_deref(), None) {
         Ok(script) => DocPayload::Gta6Script(Arc::new(script)),
         Err(e) => DocPayload::Hex(HexDocument {
             bytes: bytes.to_vec(),

@@ -351,7 +351,7 @@ fn a_source_holds_the_functions_asked_and_says_what_stood_beside_the_program() {
         picked: Some(BTreeSet::from([0x40])),
     };
     let held = (Arc::new(Program::default()), None);
-    let script = written(held, &none, &ask, None).expect("an empty program decompiles");
+    let script = written(held, &none, &ask, None, None).expect("an empty program decompiles");
     // No function starts at the offset asked: the source holds none, and is not the whole program's.
     assert_eq!(script.picked, Some(BTreeSet::new()));
     assert_eq!(script.level, Level::Structured);
@@ -365,7 +365,7 @@ fn a_source_holds_the_functions_asked_and_says_what_stood_beside_the_program() {
         level: Level::Structured,
         picked: None,
     };
-    let again = script.again(&whole).expect("it decompiles again");
+    let again = (script.again(&whole, &Progress::default())).expect("it decompiles again");
     assert!(again.picked.is_none());
 }
 

@@ -17190,6 +17190,9 @@ msgstr "{folder}は{title}です。そのアーカイブはテーブルから開
 msgid "the decompiler stopped on a fault in this program"
 msgstr "このプログラムでデコンパイラが障害により停止しました"
 
+msgid "the decompile was stopped"
+msgstr "デコンパイルを止めました"
+
 msgid "This is a compiled GTA VI script that does not decompile, so it is shown as its bytes: {e}"
 msgstr "これはデコンパイルできないコンパイル済みのGTA VIスクリプトのため、バイト列として表示されます：{e}"
 
@@ -17299,14 +17302,14 @@ msgstr "構造化されたステートメント"
 msgid "Source with classes"
 msgstr "クラスを含むソース"
 
-msgid "Decompiling, {seconds} s so far; functions to write: {functions}"
-msgstr "デコンパイル中、経過 {seconds} 秒。書き出す関数：{functions}"
+msgid "Decompiling, {seconds} s so far; functions written: {done} of {functions}"
+msgstr "デコンパイル中、経過 {seconds} 秒。書き出した関数：{functions} 個中 {done} 個"
 
-msgid "Stop waiting"
-msgstr "待つのをやめる"
+msgid "Stop decompiling"
+msgstr "デコンパイルを止める"
 
-msgid "A decompile cannot be stopped part-way: this stops waiting for it, the script keeps the source it has, and what the decompile writes is dropped when it ends"
-msgstr "デコンパイルは途中で止められません。これは完了を待つのをやめるだけで、スクリプトは今のソースを保ち、デコンパイルが書き出した内容は終了時に破棄されます"
+msgid "The decompile stops after the function it is writing, and the script keeps the source it has"
+msgstr "書き出し中の関数の後でデコンパイルを止めます。スクリプトは今のソースのままです"
 
 msgid "{held} of {all} functions are decompiled. This program is large, so its source holds only the ones picked: click a function in the outline to add it"
 msgstr "{all} 個の関数のうち {held} 個がデコンパイルされています。このプログラムは大きいため、ソースには選択した関数だけが含まれます。アウトラインで関数をクリックすると追加されます"

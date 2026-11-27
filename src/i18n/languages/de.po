@@ -17190,6 +17190,9 @@ msgstr "{folder} ist {title}. Seine Archive öffnen sich über ihre Tabellen als
 msgid "the decompiler stopped on a fault in this program"
 msgstr "der Decompiler ist bei diesem Programm auf einen Fehler gestoßen und hat angehalten"
 
+msgid "the decompile was stopped"
+msgstr "die Dekompilierung wurde angehalten"
+
 msgid "This is a compiled GTA VI script that does not decompile, so it is shown as its bytes: {e}"
 msgstr "Dies ist ein kompiliertes GTA VI-Skript, das sich nicht dekompilieren lässt, daher wird es als seine Bytes angezeigt: {e}"
 
@@ -17299,14 +17302,14 @@ msgstr "Strukturierte Anweisungen"
 msgid "Source with classes"
 msgstr "Quelltext mit Klassen"
 
-msgid "Decompiling, {seconds} s so far; functions to write: {functions}"
-msgstr "Wird dekompiliert, bisher {seconds} s; zu schreibende Funktionen: {functions}"
+msgid "Decompiling, {seconds} s so far; functions written: {done} of {functions}"
+msgstr "Wird dekompiliert, bisher {seconds} s; geschriebene Funktionen: {done} von {functions}"
 
-msgid "Stop waiting"
-msgstr "Nicht mehr warten"
+msgid "Stop decompiling"
+msgstr "Dekompilieren anhalten"
 
-msgid "A decompile cannot be stopped part-way: this stops waiting for it, the script keeps the source it has, and what the decompile writes is dropped when it ends"
-msgstr "Eine Dekompilierung lässt sich nicht mittendrin anhalten: Hiermit wird nicht länger auf sie gewartet, das Skript behält seinen Quelltext, und was die Dekompilierung schreibt, wird verworfen, sobald sie endet"
+msgid "The decompile stops after the function it is writing, and the script keeps the source it has"
+msgstr "Die Dekompilierung hält nach der Funktion an, die sie gerade schreibt, und das Skript behält seinen bisherigen Quelltext"
 
 msgid "{held} of {all} functions are decompiled. This program is large, so its source holds only the ones picked: click a function in the outline to add it"
 msgstr "{held} von {all} Funktionen sind dekompiliert. Dieses Programm ist groß, daher enthält sein Quelltext nur die ausgewählten: Auf eine Funktion in der Gliederung klicken, um sie hinzuzufügen"

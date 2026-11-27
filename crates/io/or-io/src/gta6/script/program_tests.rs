@@ -1079,3 +1079,21 @@ fn the_function_the_header_names_is_counted_though_no_entry_instruction_starts_i
     assert_eq!(starts, [0, 5]);
     assert_eq!(program.mark(5), Some(Marked::Main));
 }
+
+#[test]
+fn a_decompile_counts_the_functions_it_writes_and_stops_before_the_next_once_asked() {
+    use crate::gta6::script::lift::{functions_in, Progress};
+    use crate::gta6::script::{Context, Names};
+    let program = Program::read(&small().build()).expect("the program reads");
+    let row = *program.functions.first().expect("it has a function");
+    let rows = [row; 3];
+    let names = Names::default();
+    let cx = Context::baseline(&names);
+    let progress = Progress::default();
+    let written = functions_in(&program, &rows, &cx, Some(&progress));
+    assert_eq!((progress.done(), written.stats.functions), (3, 3));
+    let stopped = Progress::default();
+    stopped.stop();
+    let written = functions_in(&program, &rows, &cx, Some(&stopped));
+    assert_eq!((stopped.done(), written.stats.functions), (0, 0));
+}

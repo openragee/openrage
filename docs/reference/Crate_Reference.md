@@ -254,15 +254,20 @@ that keeps it with every member it states (`parts_from_its_declaration`,
 Before, the first saved every record without the member and said nothing, and the second stopped on
 the writer's words. A table gives a class the name the index of names has for its hash, which with
 no snapshot installed is `hash_XXXXXXXX` for every class of a variation but its root, so the two
-are held together by that hash and never by the name. No sampled `.ymt` of either install whose
-table states a class of the family states one otherwise than declared: 0 of 95 on Legacy and 0 of
-97 on Enhanced (the install suite below, 2026-11-27).
+are held together by that hash and never by the name. Where a table parts from the declaration on
+two classes the refusal names the one whose name hashes lower, in every process
+(`a_ped_variation_that_parts_on_two_classes_is_refused_by_the_one_whose_name_hashes_lower`), and
+only a GTA V type table is held to the declaration, never an RBF's tags or a GTA VI document's
+tables (`only_a_gta_v_type_table_is_judged`). No `.ymt` of either install whose table states a class
+of the family states one otherwise than declared, so the refusal meets no file the game ships: 0 of
+1864 on Legacy and 0 of 1877 on Enhanced, every `.ymt` counted and not a sample (the install suite
+below, 2026-11-27).
 
 On both installs, one type file in fifty takes an archetype added as a copy and removed again, one
-map in fifty its last entity removed and put back, the first interior of one type file in ten a
-room, a portal and an attachment added as copies and removed again, and one `.ymt` in twenty, where
-it is a ped variation, a drawable added as a copy, one built there, and both removed again. Each
-step is saved, read back equal and saved again to the same bytes, in a process that installed the
+map in fifty its last entity removed and put back and an entity built there and removed again, the
+first interior of one type file in ten a room, a portal and an attachment added as copies and
+removed again, and one `.ymt` in twenty, where it is a ped variation, a drawable added as a copy,
+one built there, and both removed again. Each step is saved, read back equal and saved again to the same bytes, in a process that installed the
 staged snapshot as the app does and in one that installed none
 (`a_sample_of_an_installs_typed_files_takes_a_shape_edit_with_and_without_the_staged_snapshot`
 in `crates/domain/or-world/tests/a_shape_edit_of_an_install_saves_the_same_with_and_without_a_snapshot.rs`,
@@ -272,10 +277,12 @@ slow tier, 2026-11-27):
 |---|---|---|---|---|
 | Legacy | archetype | 56 | 56 saved | 56 saved, to the same bytes |
 | Legacy | entity | 336, and 52 more with none to take | 336 removals saved; 280 put back, 56 refused | 336 removals saved, to the same bytes; 336 put back, 280 to the same bytes |
+| Legacy | built entity | 296, and 92 more that hold no entity of the class built | 296 saved | 296 saved, to the same bytes |
 | Legacy | interior | 47, and 230 more type files with none | 47 saved | 47 saved, to the same bytes |
 | Legacy | drawable | 94, and 120 more `.ymt` that hold none | 94 saved | 94 saved, to the same bytes |
 | Enhanced | archetype | 58 | 58 saved | 58 saved, to the same bytes |
 | Enhanced | entity | 352, and 48 more with none to take | 352 removals saved; 291 put back, 61 refused | 352 removals saved, to the same bytes; 292 put back, 291 to the same bytes, and 60 refused |
+| Enhanced | built entity | 314, and 86 more that hold no entity of the class built | 314 saved | 314 saved, to the same bytes |
 | Enhanced | interior | 44, and 244 more type files with none | 44 saved | 44 saved, to the same bytes |
 | Enhanced | drawable | 96, and 118 more `.ymt` that hold none | 96 saved | 96 saved, to the same bytes |
 
@@ -295,7 +302,9 @@ same suite with that order put back, 2026-11-27). An edit taken back before the 
 as an undo does it, saves the bytes of the file as read, in every file of the sample. The suite
 also holds each sampled file to what `first_member_missing` rests on, that a tree as it was read
 lacks no member its own table states, which
-`every_staged_tree_lacks_no_member_its_own_type_table_states` holds of every staged document.
+`every_staged_tree_lacks_no_member_its_own_type_table_states` holds of every staged document and
+`a_file_as_read_lacks_no_member_its_own_table_states_and_a_copy_from_a_narrower_class_does` of the
+files built by hand.
 
 ⚠ **Left for the owner to rule: whether a snapshot may lay out any class of a document that carries
 its own table.** The refusals in the table are of one kind. A map saved without the last entity of
@@ -305,11 +314,14 @@ snapshot refuses it. A process that installed one lays the record out by the sna
 instead, as it did before this change, with a zero signature, which no shipped file carries
 (`a_copy_of_a_class_an_rbm_file_neither_states_nor_names_is_laid_out_by_the_snapshot_and_refused_with_none`):
 on Legacy the 56 are saved so, and on Enhanced 1 is and 60 are refused for a member the snapshot's
-class lacks. Those 56 of the 935 lines of the Legacy measure and 61 of the 960 of the Enhanced one
+class lacks. Those 56 of the 1323 lines of the Legacy measure and 61 of the 1360 of the Enhanced one
 are every line on which the two processes part (the same suite, 2026-11-27). The rule that closes
 it is that a document with a type table is laid out with no snapshot at all, which is
 `type_tables::extend` in place of `type_tables::layered`: the two processes then agree on every
-line, and a developer's machine loses the saves above, which no user's machine makes.
+line, and a developer's machine loses the saves above, which no user's machine makes. The same
+question stands for a root built from nothing, which has no table at all: a class no code declares,
+an interior's say, is laid out there by the snapshot and refused with none
+(`an_interior_built_in_a_type_file_built_from_nothing_is_laid_out_by_the_snapshot_and_refused_with_none`).
 `crates/io/or-io/src/meta/typed/interior.rs` types the four records of an interior as members of
 `CMloArchetypeDef`: `CMloRoomDef`, `CMloPortalDef`, `CMloEntitySet` and `CMloTimeCycleModifier`, each
 with the members the installs state for it

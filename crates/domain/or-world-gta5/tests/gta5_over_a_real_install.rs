@@ -12,8 +12,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use glam::Vec3;
+use or_depends::world_forest::read;
 use or_depends::world_index::refresh;
-use or_depends::MountedWorld;
+use or_depends::{MountedWorld, WorldCollision};
 use or_io::container::rpf::crypto::{extract_keys, Gta5RetailCryptoProvider, RpfCryptoProvider};
 use or_job::{Cancel, Progress};
 use or_title::vfs::{build_mounted_game_with, DlcCutoff, MountOptions};
@@ -202,6 +203,24 @@ fn the_rules_of_the_kit_that_take_no_built_scene_hold_over_a_real_install() {
         _ => None,
     });
     let (held_row, held_eye, switch) = held.expect("a map only a request lets in");
+    // What `or_depends` says by itself over a mount of its own: the highest ground of a fixed
+    // camera's column, and how many entities the child map places.
+    let game = mounted(&root, &exe);
+    let source = MountedWorld::new(&game, &root);
+    let linked = index.title::<Linked>().expect("a GTA V link");
+    let column = CAMERAS[2];
+    let slope = std::f32::consts::FRAC_PI_4;
+    let top = WorldCollision::new(&linked.world, &source, 0)
+        .highest_ground(column.x, column.y, slope)
+        .ground
+        .map(|ground| ground.hit.position.z)
+        .expect("ground under the camera");
+    let places = u32::try_from(child.name)
+        .ok()
+        .and_then(|hash| linked.world.map(hash))
+        .and_then(|map| read::map(&linked.world, &source, map).ok())
+        .map(|read| read.placed.len())
+        .expect("the child map reads");
     let scene = Scene {
         weather: u64::from(or_io::string_hash(b"EXTRASUNNY")),
         nowhere: Vec3::new(1.0e6, 1.0e6, 0.0),
@@ -232,10 +251,10 @@ fn the_rules_of_the_kit_that_take_no_built_scene_hold_over_a_real_install() {
             lights: 0,
             occluders: 0,
         },
-        placed: (child.name, 0),
+        placed: (child.name, places),
         ground: Grounded {
-            at: near,
-            height: 0.0,
+            at: Vec3::new(column.x, column.y, top + 5.0),
+            height: top,
         },
     };
     let fixture = Fixture {
@@ -256,6 +275,7 @@ fn the_rules_of_the_kit_that_take_no_built_scene_hold_over_a_real_install() {
         Rule::Lit,
         Rule::ChildNamesParent,
         Rule::HeldMap,
+        Rule::Caps,
     ];
     rules.extend(timed.map(|_| Rule::TimedMap));
     let broken: Vec<String> = (rules.iter())
@@ -268,10 +288,12 @@ fn the_rules_of_the_kit_that_take_no_built_scene_hold_over_a_real_install() {
         })
         .collect();
     println!(
-        "{}: {} rules of the kit asked, a map by the clock among them: {}",
+        "{}: {} rules of the kit asked, a map by the clock among them: {}; the ground under ({}, {}) stands at {top}, and the child map places {places}",
         id.0,
         rules.len(),
-        timed.is_some()
+        timed.is_some(),
+        column.x,
+        column.y
     );
     assert!(broken.is_empty(), "{}", broken.join("\n"));
 }
@@ -321,20 +343,25 @@ fn a_level_of_a_real_install_keeps_an_index_of_its_own_and_a_second_start_reads_
     );
 }
 
-/// The packs the DLC list of the install at `root` names, in its order.
-fn packs_listed(root: &Path, exe: &Path) -> Vec<String> {
+/// The install at `root` mounted with every pack, with the keys of `exe`.
+fn mounted(root: &Path, exe: &Path) -> or_title::MountedGame {
     let keys = extract_keys(exe, &|_| {}).expect("the keys of the executable");
     let crypto: Arc<dyn RpfCryptoProvider> =
         Arc::new(Gta5RetailCryptoProvider::new(Arc::new(keys)));
     let install = GtaInstall {
         root: root.to_path_buf(),
     };
-    let game = build_mounted_game_with(
+    build_mounted_game_with(
         &install,
         crypto,
         DlcCutoff::All,
         MountOptions::install_only(),
     )
-    .expect("the install mounts");
+    .expect("the install mounts")
+}
+
+/// The packs the DLC list of the install at `root` names, in its order.
+fn packs_listed(root: &Path, exe: &Path) -> Vec<String> {
+    let game = mounted(root, exe);
     game.listed.iter().map(|pack| pack.name.clone()).collect()
 }

@@ -46,6 +46,9 @@ pub const DRAWN: [&str; 7] = [
     "event_prop",
 ];
 
+/// How far each level of a drawable of [`drawable_bytes`] draws, in metres.
+pub const LOD_DISTANCES: [f32; 4] = [20.0, 60.0, 180.0, 540.0];
+
 /// The weather every check is made under.
 pub fn weather() -> u64 {
     u64::from(hash("CLEAR"))
@@ -101,6 +104,7 @@ pub fn drawable_bytes(name: &str, levels: usize) -> Vec<u8> {
         })),
         ..Default::default()
     };
+    drawable.lod_group.lod_distances = LOD_DISTANCES;
     for lod in drawable.lod_group.lods.iter_mut().take(levels) {
         *lod = RmcLod {
             models: vec![Box::new(GrmModel {

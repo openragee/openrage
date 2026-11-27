@@ -758,3 +758,61 @@ fn a_refusal_given_after_a_body_leaves_the_body_in_the_forest() {
     assert!(streamed.unread.is_empty());
     assert_eq!(maps(&streamed), [near]);
 }
+
+#[test]
+fn a_parent_several_wanted_maps_name_is_wanted_as_the_parent_of_the_first_in_the_indexs_order() {
+    let opened = open();
+    let span = (Vec3::splat(-10.0), Vec3::splat(10.0));
+    let row = |name: u64, boxes: Option<MapBox>, parents: &[u32]| MapRow {
+        name,
+        label: format!("{name}"),
+        boxes,
+        parents: parents.iter().map(|at| MapId(*at)).collect(),
+        gate: Gate::Always,
+        archive: 0,
+    };
+    let own = Some(MapBox {
+        streaming: span,
+        entities: span,
+    });
+    // Rows 1, 2 and 3 name row 0, which streams by no box of its own; row 4 names row 3 and
+    // then row 5, and row 5 names row 6; row 7 names rows 8 and 9, which both name row 10.
+    let rows = vec![
+        row(10, None, &[]),
+        row(11, own, &[0]),
+        row(12, own, &[0]),
+        row(13, own, &[0]),
+        row(14, own, &[3, 5]),
+        row(15, None, &[6]),
+        row(16, None, &[]),
+        row(17, own, &[8, 9]),
+        row(18, None, &[10]),
+        row(19, None, &[10]),
+        row(20, None, &[]),
+    ];
+    let index = Arc::new(Index::new(rows).expect("rows that link"));
+    let mut driver = Driver::new(Arc::clone(&opened.install), index);
+    driver.policy.streams_in = |_, _| true;
+    let view = view(&driver, Vec3::ZERO);
+    driver.want(&view, &noon(), &Switched::default(), None);
+    let whys: Vec<(MapId, Why)> = (driver.wanted.iter())
+        .map(|(map, (why, _))| (*map, *why))
+        .collect();
+    assert_eq!(
+        whys,
+        [
+            (MapId(0), Why::ParentOf(MapId(1))),
+            (MapId(1), Why::Own),
+            (MapId(2), Why::Own),
+            (MapId(3), Why::Own),
+            (MapId(4), Why::Own),
+            (MapId(5), Why::ParentOf(MapId(4))),
+            (MapId(6), Why::ParentOf(MapId(5))),
+            (MapId(7), Why::Own),
+            (MapId(8), Why::ParentOf(MapId(7))),
+            (MapId(9), Why::ParentOf(MapId(7))),
+            // Of a map's parents the first is followed first.
+            (MapId(10), Why::ParentOf(MapId(8))),
+        ]
+    );
+}

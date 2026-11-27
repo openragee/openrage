@@ -17,7 +17,8 @@ use or_world::contract::{Keys, Opening, Worker, WorldInstall, WorldSpec, WorldTi
 use or_world::driver::{Driver, Why};
 use or_world::kept::{self, Report, Verdict};
 use or_world::model::{Gate, Index, MapId, Moment, Switched};
-use or_world::slots::{Choices, OptionId, OptionValue};
+use or_world::sentence::Sentence;
+use or_world::slots::{Choices, OptionId, OptionKind, OptionValue};
 use or_world::streaming::NodeState;
 
 use super::world::flag_value;
@@ -353,8 +354,11 @@ pub(super) fn select_lines(opened: &Opened, eye: Vec3, moment: &Moment) -> Vec<S
     lines
 }
 
-/// The options `args` set with `--option <id>=<value>`: `on` and `off` for a toggle, a number for a choice, and any other text for a name.
-fn options_of(args: &[String]) -> Result<Vec<(OptionId, OptionValue)>, String> {
+/// The options `args` set with `--option <id>=<value>`, each read as its kind among `kinds` takes it: `on` or `off` for a toggle, the number of a choice or its label in any case, and the text as it stands for a name.
+fn options_of(
+    args: &[String],
+    kinds: &[OptionKind],
+) -> Result<Vec<(OptionId, OptionValue)>, String> {
     let mut options = Vec::new();
     let mut words = args.iter();
     while let Some(word) = words.next() {
@@ -363,15 +367,31 @@ fn options_of(args: &[String]) -> Result<Vec<(OptionId, OptionValue)>, String> {
         }
         let set = words.next().ok_or("`--option` takes <id>=<value>")?;
         let (id, value) = (set.split_once('='))
-            .and_then(|(id, value)| Some((id.parse().ok()?, value)))
+            .and_then(|(id, value)| Some((id.parse::<u32>().ok()?, value)))
             .ok_or_else(|| format!("`--option` takes <id>=<value>, not `{set}`"))?;
-        let value = match (value, value.parse()) {
-            ("on", _) => OptionValue::On(true),
-            ("off", _) => OptionValue::On(false),
-            (_, Ok(choice)) => OptionValue::Choice(choice),
-            (name, Err(_)) => OptionValue::Named(name.to_string()),
+        let kind = (kinds.iter().find(|kind| kind.id.0 == id))
+            .ok_or_else(|| format!("the title has no option {id}"))?;
+        // ⚠ By the option's kind, never by what the text looks like: a name may be all digits.
+        let value = match (&kind.choices, value) {
+            (Choices::Toggle, "on") => OptionValue::On(true),
+            (Choices::Toggle, "off") => OptionValue::On(false),
+            (Choices::Toggle, other) => {
+                return Err(format!("option {id} is `on` or `off`, not `{other}`"))
+            }
+            (Choices::Named, name) => OptionValue::Named(name.to_string()),
+            (Choices::OneOf(of), word) => {
+                let labelled =
+                    |(_, label): &&(u32, Sentence)| label.key().eq_ignore_ascii_case(word);
+                let choice = (word
+                    .parse()
+                    .ok()
+                    .filter(|n| of.iter().any(|(id, _)| id == n)))
+                .or_else(|| of.iter().find(labelled).map(|(id, _)| *id))
+                .ok_or_else(|| format!("option {id} has no choice `{word}`"))?;
+                OptionValue::Choice(choice)
+            }
         };
-        options.push((OptionId(id), value));
+        options.push((kind.id, value));
     }
     Ok(options)
 }
@@ -385,7 +405,12 @@ fn moment_of(args: &[String]) -> Result<Moment, String> {
         None => 12,
     };
     let weather = match flag_value(args, "--weather") {
-        Some(word) => (word.parse().ok())
+        // In tens, or in sixteens after `0x`, as a hash is written.
+        Some(word) => (word.strip_prefix("0x").or_else(|| word.strip_prefix("0X")))
+            .map_or_else(
+                || word.parse().ok(),
+                |hex| u64::from_str_radix(hex, 16).ok(),
+            )
             .ok_or_else(|| format!("--weather is the title's number of a weather, not `{word}`"))?,
         None => 0,
     };
@@ -409,7 +434,7 @@ fn said(verb: &str, args: &[String]) -> Result<Vec<String>, String> {
     let (entry, game) = or_worlds::of_install(&root)
         .ok_or("no title of this build opens a world of that install")?;
     let world = WorldSpec {
-        options: options_of(args)?,
+        options: options_of(args, &entry.title.options())?,
         ..WorldSpec::of(game, &root)
     };
     let config =

@@ -140,3 +140,55 @@ impl WorldTitle for Gta5Title {
         Ok(Arc::new(Gta5World::over(game, world.install.clone())))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use or_world::contract::Layer;
+
+    use super::*;
+
+    fn with(options: Vec<(OptionId, OptionValue)>) -> WorldSpec {
+        WorldSpec {
+            options,
+            ..WorldSpec::of(LEGACY, Path::new("an install"))
+        }
+    }
+
+    #[test]
+    fn an_option_reaches_the_mount_as_the_cutoff_and_the_mode_it_names() {
+        let stated = |options| mount_of(&with(options)).map_err(|e| e.to_string());
+        assert_eq!(
+            stated(Vec::new()),
+            Ok((DlcCutoff::All, MountOptions::install_only()))
+        );
+        let level = (LEVEL, OptionValue::Named(" mpheist ".to_owned()));
+        for (choice, mode) in [(STORY, MapMode::Story), (MULTIPLAYER, MapMode::Multiplayer)] {
+            let options = vec![level.clone(), (MODE, OptionValue::Choice(choice))];
+            let expected = MountOptions {
+                mode: Some(mode),
+                ..MountOptions::install_only()
+            };
+            assert_eq!(
+                stated(options),
+                Ok((DlcCutoff::Level("mpheist".to_owned()), expected))
+            );
+        }
+        assert!(stated(vec![(LEVEL, OptionValue::Named("  ".to_owned()))]).is_err());
+    }
+
+    #[test]
+    fn the_overlay_folder_as_a_layer_has_the_mount_read_the_overlay_first_in_the_mode_asked() {
+        let mut world = with(vec![(MODE, OptionValue::Choice(MULTIPLAYER))]);
+        world.layers = vec![Layer {
+            path: overlay_root(&world.install),
+        }];
+        let (_, options) = mount_of(&world).expect("the one layer a mount reads");
+        assert!(options.reads_the_overlay());
+        assert_eq!(options.mode, Some(MapMode::Multiplayer));
+        world.layers.clear();
+        let (_, options) = mount_of(&world).expect("no layer");
+        assert!(!options.reads_the_overlay());
+    }
+}

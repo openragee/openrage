@@ -121,6 +121,17 @@ impl MapBody for Body {
             };
             let m = &placed.to_world.matrix3;
             let t = placed.to_world.translation;
+            // ⚠ A box has no archetype to state a span, so its node's radius is 0: its sphere is
+            // the one about the cube of side 1 as the entity places it, half the cube's diagonal.
+            let radius = match boxed {
+                0 => node.radius.max(0.0),
+                _ => {
+                    let squared = m.x_axis.length_squared()
+                        + m.y_axis.length_squared()
+                        + m.z_axis.length_squared();
+                    squared.sqrt() / 2.0
+                }
+            };
             out.push(Instance {
                 node: draw.node,
                 model,
@@ -129,7 +140,7 @@ impl MapBody for Body {
                     [m.x_axis.y, m.y_axis.y, m.z_axis.y, t.y],
                     [m.x_axis.z, m.y_axis.z, m.z_axis.z, t.z],
                 ],
-                sphere: [t.x, t.y, t.z, node.radius.max(0.0)],
+                sphere: [t.x, t.y, t.z, radius],
                 fade: signed_fade(draw.fade, draw.yields),
                 words: &[placed.archetype, node.level as u32 | boxed],
             });

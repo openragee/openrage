@@ -30,8 +30,8 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
         });
 }
 
-/// The title read by scan whose remembered folder holds the tab on screen: no install of it is
-/// ever the open one, and its files are still that game's.
+/// The title read by scan whose remembered folder holds the tab on screen: with no game active,
+/// its files are still that game's.
 fn scanned_title_of_the_tab(state: &AppState) -> Option<Game> {
     let path = state.active_document()?.path.as_deref()?;
     Game::all().find(|&game| {
@@ -99,7 +99,7 @@ fn draw_installs_found(ui: &mut egui::Ui, state: &mut AppState) {
         let current = state.prefs.active_game == Some(game) && open_root.as_ref() == Some(&root);
         let row = ui
             .add_enabled(
-                game.profile().is_supported(),
+                game.profile().is_supported() || crate::state::gta_vi::read_by_scan(game),
                 egui::Button::selectable(current, format!("{}   {}", game.label(), root.display())),
             )
             .on_disabled_hover_text(game.profile().description());

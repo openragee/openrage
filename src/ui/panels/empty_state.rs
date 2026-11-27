@@ -95,11 +95,7 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
             None => {
                 for (game, root) in installs_offered(state) {
                     if ui.button(tr!("Open {game}", game = game.label())).clicked() {
-                        if crate::state::gta_vi::read_by_scan(game) {
-                            state.open_folder(root);
-                        } else {
-                            state.request_game_switch(game, root);
-                        }
+                        state.request_game_switch(game, root);
                     }
                 }
             }

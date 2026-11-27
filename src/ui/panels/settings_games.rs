@@ -30,7 +30,8 @@ pub fn draw_games_page(ui: &mut egui::Ui, state: &mut AppState) {
             .selected_text(selected_text)
             .show_ui(ui, |ui| {
                 for game in Game::all() {
-                    let supported = game.profile().is_supported();
+                    let supported =
+                        game.profile().is_supported() || crate::state::gta_vi::read_by_scan(game);
                     let row = ui.add_enabled(
                         supported,
                         egui::Button::selectable(current == Some(game), game.label()),
@@ -141,7 +142,7 @@ fn draw_game_row(ui: &mut egui::Ui, state: &mut AppState, game: Game) {
                 };
                 let open = ui.button(label).on_hover_text(game.profile().description());
                 if open.clicked() {
-                    state.open_folder(dir.clone());
+                    state.open_title_folder(game, dir.clone());
                 }
             }
             if supported && !is_active && path.is_some() && ui.button(tr!("Set active")).clicked() {

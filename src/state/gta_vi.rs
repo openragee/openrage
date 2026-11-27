@@ -133,6 +133,10 @@ pub(super) fn refused_install(game: Game, root: &Path) -> Option<String> {
             title = title.label(),
         ));
     }
+    // A title read by scan opens as its own install; picked as another title it is still refused.
+    if title == game && read_by_scan(title) {
+        return None;
+    }
     Some(tr!(
         "{folder} is {title}, which OpenRage does not support yet, so it was not opened as an install: {why}.",
         folder = root.display(),
@@ -148,12 +152,13 @@ pub(super) fn holds_unsupported(game: Game, root: &Path) -> bool {
 }
 
 impl super::AppState {
-    /// Remember `root` as the folder of `game`, a title OpenRage cannot open as an install yet, and
-    /// open it as a plain folder; a folder that holds another title is refused. The title is also
-    /// made the active install — the user picked it from the start page, so what they open next is
-    /// what they look at, and features keyed off `active_game` (platform letter, folder notes,
-    /// name scans) all follow their choice.
+    /// Open `root` as `game`, a title that is not supported: one read by scan opens as the active
+    /// install, any other is remembered, made active and opened as a plain folder; a folder that
+    /// holds another title is refused.
     pub fn open_title_folder(&mut self, game: Game, root: PathBuf) {
+        if read_by_scan(game) {
+            return self.request_game_switch(game, root);
+        }
         self.set_game_install_folder(game, Some(root.clone()));
         if self.prefs.game_paths.get(game) == Some(&root) {
             self.prefs.active_game = Some(game);
@@ -554,14 +559,13 @@ mod tests {
         let (_scratch, dir) = gta_vi_folder();
         let mut state = AppState::from_prefs(Prefs::default());
         state.documents.clear();
-        let before = state.prefs.active_game;
         state.open_title_folder(Game::GtaVI, dir.clone());
         assert_eq!(state.prefs.game_paths.get(Game::GtaVI), Some(&dir));
-        assert_eq!(state.prefs.active_game, before);
+        assert_eq!(state.prefs.active_game, Some(Game::GtaVI));
         let kinds: Vec<_> = (state.documents.iter())
             .map(|d| (d.kind, d.path.clone()))
             .collect();
-        assert_eq!(kinds, [(DocumentKind::Folder, Some(dir.clone()))]);
+        assert_eq!(kinds, [(DocumentKind::GameRoot, Some(dir.clone()))]);
 
         for draw in [
             crate::ui::panels::game_picker::draw_start_page,

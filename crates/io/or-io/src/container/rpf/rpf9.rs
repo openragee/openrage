@@ -39,6 +39,10 @@ pub struct Rpf9Header {
     pub part_b_offset: u32,
     /// Eight bytes that differ in every archive measured; what they are is not known.
     pub per_archive: [u8; 8],
+    /// The build-platform letter the header states at `0x19`: `z` on the Xbox Series builds
+    /// measured, `p` on PlayStation 5, and so on by the public rage.re prefix table. It is the
+    /// first letter the archive's `#dr`/`#td` extensions resolve to.
+    pub platform: u8,
     /// The header as read, including every word whose role is not known.
     pub raw: [u8; RPF9_HEADER_SIZE],
 }
@@ -84,6 +88,7 @@ impl Rpf9Header {
             index_width: raw[0x2C],
             part_b_offset: LE::read_u32(&raw[0x30..]),
             per_archive,
+            platform: raw[0x19],
             raw,
         })
     }
@@ -91,20 +96,22 @@ impl Rpf9Header {
     /// The first rule this header breaks of those every RPF9 header measured holds.
     pub fn broken_rule(&self) -> Option<String> {
         let raw = &self.raw;
-        for (at, want) in [
-            (0x18, 0),
-            (0x19, 0x7A),
-            (0x1B, 0),
-            (0x2D, 0x0F),
-            (0x2E, 0x09),
-            (0x2F, 0),
-        ] {
+        for (at, want) in [(0x18, 0), (0x1B, 0), (0x2D, 0x0F), (0x2E, 0x09), (0x2F, 0)] {
             if raw[at] != want {
                 return Some(format!(
                     "byte {at:#04X} is {:#04X}, where every header measured holds {want:#04X}",
                     raw[at]
                 ));
             }
+        }
+        // 0x19 is the build-platform letter (`z` on Xbox Series, `p` on PS5, …), not a constant.
+        // It must still be one of RAGE's platform letters, so a stray byte is refused.
+        const RAGE_LETTERS: &[u8] = b"ywxdzcopasnvi";
+        if !RAGE_LETTERS.contains(&self.platform) {
+            return Some(format!(
+                "byte 0x19 is {:#04X}, which is no RAGE platform letter",
+                self.platform
+            ));
         }
         if raw[0x34..].iter().any(|b| *b != 0) {
             return Some("bytes 0x34 to 0x3F are not zero".into());
@@ -251,8 +258,15 @@ mod tests {
         assert_eq!(header.entry_count, ENTRIES);
         assert_eq!(header.index_width, WIDTH);
         assert_eq!(header.per_archive, PER_ARCHIVE);
+        assert_eq!(header.platform, 0x7A, "the Xbox Series letter `z` at 0x19");
         assert_eq!(header.raw[..], bytes[..RPF9_HEADER_SIZE]);
         assert_eq!(&header.raw[..4], b"9FPR");
+
+        // A PlayStation 5 build states `p` at 0x19, and it reads rather than being refused.
+        let mut ps5 = archive();
+        ps5[0x19] = b'p';
+        let header = Rpf9Header::parse(&ps5).expect("a PS5 RPF9 head reads");
+        assert_eq!(header.platform, b'p');
     }
 
     #[test]
@@ -263,7 +277,8 @@ mod tests {
         type Break = Box<dyn Fn(&mut Vec<u8>)>;
         let breaks: Vec<(Break, &str)> = vec![
             (Box::new(byte_at(0x18, 1)), "0x18"),
-            (Box::new(byte_at(0x19, b'y')), "0x19"),
+            // 0x19 is the platform letter now; a byte that is no RAGE letter is what's refused.
+            (Box::new(byte_at(0x19, 0xFF)), "0x19"),
             (Box::new(byte_at(0x1B, 1)), "0x1B"),
             (Box::new(byte_at(0x2D, 0x0E)), "0x2D"),
             (Box::new(byte_at(0x2E, 0x08)), "0x2E"),

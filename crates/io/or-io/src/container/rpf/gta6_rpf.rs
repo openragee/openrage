@@ -296,8 +296,9 @@ pub(super) fn read(input: &Input) -> Result<(Toc, Rpf9State)> {
         xcompress: false,
         // The table's cipher is this module's own; no provider is asked for it.
         encryption: RpfEncryption::None,
-        // RPF9's header is not decoded for a platform byte; the install settles its letter.
-        platform: None,
+        // RPF9 states its build-platform letter at header byte 0x19 (`z` on Xbox Series, `p` on
+        // PS5); the plaintext header is the head of the decrypted table bytes.
+        platform: mount.archive.toc.bytes.get(0x19).copied(),
     };
     let toc = Toc {
         header,

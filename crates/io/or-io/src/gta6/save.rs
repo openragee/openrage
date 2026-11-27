@@ -137,35 +137,52 @@ pub fn parse_key(key: &str) -> Option<u32> {
 /// back: `audio`, `musicLevel`, `camera`, `fov`, `subtitles`, and the rest a Rockstar settings
 /// file holds. The hash is the [`key_hash`] of the name on the right, so both forms round-trip.
 ///
-/// Not every key the save holds is in this table — the brute reached 25 of 219 unique hashes in
+/// Not every key the save holds is in this table — the brute reached 36 of 219 unique hashes in
 /// a real `SettingsProfileSettings` record. Adding a candidate here is cheap: compute its hash
 /// and, if the hash matches one the save states, commit the pair.
+///
+/// The two universal fields `versionMajor` and `versionMinor` are the first two keys every record
+/// carries: `versionMajor` is 6 in every block observed; `versionMinor` tracks `$v` (the float at
+/// the top of each block) as its integer part, so `audio` has `$v = 2.0` and `versionMinor = 2`,
+/// `controls` has `$v = 5.0` and `versionMinor = 5`.
 pub const KNOWN_SETTINGS_FIELD_NAMES: &[(u32, &str)] = &[
     (0x00ba555f, "closedCaptions"),
+    (0x1141d443, "versionMajor"),
+    (0x112b5803, "versionMinor"),
     (0x17d82a47, "display"),
+    (0x1abb5826, "objective"),
     (0x2202fbe1, "autoLevel"),
     (0x23683a0d, "controls"),
     (0x25584db6, "camera"),
     (0x2af4b66c, "colorblindMode"),
     (0x3300c23e, "musicLevel"),
     (0x3301e662, "vibration"),
+    (0x3588d43d, "playerStatus"),
     (0x4b62d3b2, "language"),
+    (0x525fbf2c, "radarSize"),
+    (0x557759b4, "invertLook"),
     (0x6293d9ce, "autoSave"),
     (0x6a510681, "fov"),
+    (0x6b34fe60, "general"),
     (0x75953d64, "radarMode"),
     (0x8372d0df, "radioStation"),
     (0x8f12d59c, "thirdPerson"),
     (0x944fa9d9, "hud"),
     (0x9c002b5e, "cinematic"),
+    (0x9c7d4584, "vehiclefov"),
     (0xa5341017, "targeting"),
     (0xb80c6ae8, "audio"),
+    (0xb8462278, "navigation"),
     (0xbf1a0b77, "aimMode"),
     (0xc63c7f4b, "dialogueLevel"),
     (0xc7fbada1, "compassMode"),
     (0xc89952df, "subtitles"),
     (0xcb20b040, "accessibility"),
+    (0xe608de7b, "clock"),
     (0xe76cda01, "firstPerson"),
+    (0xe8c91000, "controllerSettings"),
     (0xee190b4e, "sfxLevel"),
+    (0xf1a2e99b, "gps"),
 ];
 
 /// The known name a save's `$0x%08x` key stands for; `None` for a key no name has been matched

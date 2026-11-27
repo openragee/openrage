@@ -91302,6 +91302,8 @@ fh_shl_01_hd_6_50_64
 fh_shl_01_hd_7_50_65
 fh_shl_01_hd_8_50_65
 fh_shl_01_hd_9_50_65
+fh_shl_01_house4_burning_navmesh[212][309]
+fh_shl_01_house4_burning_navmesh[212][310]
 fh_shl_01_house4_burning_slod2_children
 fh_shl_01_house4_burning_slod2_children0
 fh_shl_01_house4_burning_slod3_children
@@ -91314,6 +91316,8 @@ fh_shl_01_house4_burning_slod_children1
 fh_shl_01_house4_repair_slod_children
 fh_shl_01_house4_repair_slod_children0
 fh_shl_01_house4_repair_slod_children1
+fh_shl_01_house4_repairing_navmesh[212][309]
+fh_shl_01_house4_repairing_navmesh[212][310]
 fh_shl_01_house4_slod2_children
 fh_shl_01_house4_slod2_children0
 fh_shl_01_house4_slod3_children
@@ -94122,6 +94126,7 @@ fh_shl_06_hunter_store_closed_lod
 fh_shl_06_hunter_store_closed_slod
 fh_shl_06_hunter_store_open_0
 fh_shl_06_hunter_store_open_lod
+fh_shl_06_hunter_store_open_navmesh[234][313]
 fh_shl_06_hunter_store_open_slod
 fh_shl_06_instances_0
 fh_shl_06_instances_1
@@ -97641,6 +97646,7 @@ fi_lod_slod4_children
 fi_lod_slod4_children0
 fien.awc
 fightchallenge
+finalchapterwindowtoss_navmesh[247][306]
 finalecontinue
 finalecredits
 finch.awc
@@ -192578,6 +192584,26 @@ lo_slv_01_cutout_board_02_slod_children
 lo_slv_01_cutout_board_02_slod_children0
 lo_slv_01_dodo_pavilion_curtains_slod_children
 lo_slv_01_dodo_pavilion_curtains_slod_children0
+lo_slv_01_dodo_pavilion_navmesh[222][274]
+lo_slv_01_dodo_pavilion_navmesh[222][275]
+lo_slv_01_dodo_pavilion_navmesh[222][276]
+lo_slv_01_dodo_pavilion_navmesh[222][277]
+lo_slv_01_dodo_pavilion_navmesh[222][278]
+lo_slv_01_dodo_pavilion_navmesh[223][274]
+lo_slv_01_dodo_pavilion_navmesh[223][275]
+lo_slv_01_dodo_pavilion_navmesh[223][276]
+lo_slv_01_dodo_pavilion_navmesh[223][277]
+lo_slv_01_dodo_pavilion_navmesh[223][278]
+lo_slv_01_dodo_pavilion_navmesh[224][274]
+lo_slv_01_dodo_pavilion_navmesh[224][275]
+lo_slv_01_dodo_pavilion_navmesh[224][276]
+lo_slv_01_dodo_pavilion_navmesh[224][277]
+lo_slv_01_dodo_pavilion_navmesh[224][278]
+lo_slv_01_dodo_pavilion_navmesh[225][274]
+lo_slv_01_dodo_pavilion_navmesh[225][275]
+lo_slv_01_dodo_pavilion_navmesh[225][276]
+lo_slv_01_dodo_pavilion_navmesh[225][277]
+lo_slv_01_dodo_pavilion_navmesh[225][278]
 lo_slv_01_dodo_pavilion_sign_slod_children
 lo_slv_01_dodo_pavilion_sign_slod_children0
 lo_slv_01_dodo_pavilion_slod_children
@@ -198117,6 +198143,7 @@ ma_mar_03_mangrovenest_dtl_slod_children0
 ma_mar_03_mangrovenest_dtl_slod_children1
 ma_mar_03_mission_shed_boards_slod_children
 ma_mar_03_mission_shed_boards_slod_children0
+ma_mar_03_mr_mangrove_grd_col_mission_navmesh[223][226]
 ma_mar_03_occl
 ma_mar_03_old_bridge_scum_01_slod_children
 ma_mar_03_old_bridge_scum_02_slod_children
@@ -207254,6 +207281,7 @@ modshop_tw10_07d_sg10573
 modshop_tw4_30_sg14917
 mojabi_ghost.awc
 money_for_nothing.awc
+money_kidnap_navmesh[226][248]
 money_throw
 moneycardealershipintro
 moneyescort
@@ -369537,6 +369565,10 @@ raining_blood.awc
 ramv.awc
 rancher_interior_bounds
 rat.awc
+raulshouseboat_coverregion[260][284]
+raulshouseboat_coverregion[260][285]
+raulshouseboat_navmesh[260][284]
+raulshouseboat_navmesh[260][285]
 raven.awc
 reactionsolver
 reactlook

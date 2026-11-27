@@ -5,15 +5,17 @@
 //! where every statement of the expansion is found in its place, and holds them all, so that
 //! `tree::desugar` gives back the code it replaced.
 //!
-//! ⚠ An enumerator held in place, made by one script function and advanced by another, stays a
-//! loop: nothing in the project proves the two are the pair a `foreach` calls. A `try` is made
-//! of the regions a front end states beside a function, by [`protected`], and never by [`run`].
+//! ⚠ An enumerator held in place, made by one script function and advanced by another, is a
+//! `foreach` only where the project proves the advance a method of a value type that, like the
+//! make, touches the enumerator alone (`enumerators`). A `try` is made of the regions a front end
+//! states beside a function, by [`protected`], and never by [`run`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
+use crate::gta6::script::class::Role;
 use crate::gta6::script::ir::{
-    self, BinOp, Callee, Expr, Head, Kind, Scalar, TypeKey, Var, VarInfo, Width,
+    self, BinOp, Callee, Expr, FunctionKey, Head, Kind, Scalar, TypeKey, Var, VarInfo, Width,
 };
 use crate::gta6::script::tree::{self, Stmt, Sugar};
 use crate::gta6::script::{Context, Pass, Stats};
@@ -21,6 +23,10 @@ use crate::gta6::script::{Context, Pass, Stats};
 #[path = "sugar_statements_guards.rs"]
 mod guards;
 
+#[path = "sugar_statements_enumerators.rs"]
+mod enumerators;
+
+pub use enumerators::enumerated;
 pub use guards::protected;
 
 /// The names this file's rewrites are switched by.
@@ -46,6 +52,8 @@ pub struct Found {
     pub arrays: usize,
     /// Enumerator loops read as `foreach`, their disposal hidden.
     pub enumerators: usize,
+    /// Loops over an enumerator held in place read as `foreach`.
+    pub held: usize,
     /// Loops with the head of one of those that a safety condition left as they were.
     pub refused: usize,
     /// Those of `arrays` whose element was read in place, and is now an item made for it.
@@ -162,6 +170,18 @@ fn loops(
                 }
                 None => found.refused += 1,
             }
+        } else if let Some(shape) = enumerators::shape(list.as_slice(), at, scope.head.program) {
+            let made = match enumerators::proved(list.as_slice(), at, &shape, scope) {
+                true => enumerators::fold(list, at),
+                false => None,
+            };
+            match made {
+                Some(first) => {
+                    at = first;
+                    found.held += 1;
+                }
+                None => found.refused += 1,
+            }
         }
         at += 1;
     }
@@ -226,27 +246,47 @@ struct Scope<'a> {
     head: &'a Head,
     cx: Context<'a>,
     uses: BTreeMap<Var, Use>,
-    /// The variables whose address is taken.
+    /// The variables an address of which is taken and not only read through at once.
     addressed: Vec<Var>,
+    /// Each taking of an address, by the variable taken.
+    addresses: BTreeMap<Var, Vec<(u32, enumerators::Taken)>>,
     /// The uses of each variable that the loops [`array_loop`] takes it is the index of make, all together.
     indexed: BTreeMap<Var, Use>,
+    /// The loops over an enumerator held in place that each variable is the enumerator of.
+    enumerated: BTreeMap<Var, usize>,
+    /// The make, the advance and the read of the item that those loops take, by the value type the advance is a method of.
+    pairs: BTreeMap<TypeKey, BTreeSet<(FunctionKey, FunctionKey, enumerators::Read)>>,
 }
 
 impl<'a> Scope<'a> {
     fn of(head: &'a Head, body: &[Stmt], cx: &Context<'a>) -> Scope<'a> {
         let uses = used(body);
-        let addressed = (uses.iter().filter(|(_, uses)| uses.addressed))
+        let addresses = enumerators::addresses(body, head);
+        // ⚠ An address only ever loaded through changes nothing it points at.
+        let addressed = (addresses.iter())
+            .filter(|(_, takings)| {
+                (takings.iter()).any(|(_, taken)| *taken != enumerators::Taken::Loaded)
+            })
             .map(|(var, _)| *var)
             .collect();
         let mut indexed: BTreeMap<Var, Use> = BTreeMap::new();
+        let mut enumerated: BTreeMap<Var, usize> = BTreeMap::new();
+        let mut pairs: BTreeMap<_, BTreeSet<_>> = BTreeMap::new();
         let mut work = vec![body];
         while let Some(list) = work.pop() {
-            for stmt in list {
+            for (at, stmt) in list.iter().enumerate() {
                 if let Some(read) = array_loop(stmt) {
                     // Set by the head and stepped; read by the test, the step and the body's reads.
                     let only = indexed.entry(read.index).or_default();
                     only.assigned += 2;
                     only.read += 2 + read.index_reads;
+                }
+                if let Some(shape) = enumerators::shape(list, at, head.program) {
+                    *enumerated.entry(shape.held()).or_default() += 1;
+                    let ty = enumerators::owner(cx.project, shape.advance(), &[Role::Method]);
+                    if let Some(ty) = ty {
+                        pairs.entry(ty).or_default().insert(shape.pair());
+                    }
                 }
                 work.extend(nested(stmt));
             }
@@ -256,7 +296,10 @@ impl<'a> Scope<'a> {
             cx: *cx,
             uses,
             addressed,
+            addresses,
             indexed,
+            enumerated,
+            pairs,
         }
     }
 

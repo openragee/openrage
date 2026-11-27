@@ -1094,3 +1094,26 @@ fn a_loop_over_an_array_in_a_field_is_a_foreach_where_nothing_in_it_stores_or_ca
         assert_eq!((found.arrays, found.refused), (0, 1), "{why}");
     }
 }
+
+#[test]
+fn an_item_only_ever_read_through_its_address_is_still_the_item_a_foreach_takes() {
+    let item = Expr::AddrOf {
+        var: Var::Local(6),
+        cell: 0,
+    };
+    let through = Expr::Load {
+        ty: Scalar::I32,
+        addr: Box::new(item.clone()),
+        offset: 4,
+    };
+    let was = vec![counted(vec![eval(call(vec![through]))])];
+    let (is, found) = read(was.clone(), &Names::default());
+    assert_eq!((found.arrays, found.refused), (1, 0));
+    assert_eq!(cfg::lower_body(is), cfg::lower_body(was));
+
+    // Handed on, the address may be written through: the item is no longer the element.
+    let was = vec![counted(vec![eval(call(vec![item]))])];
+    let (is, found) = read(was.clone(), &Names::default());
+    assert_eq!(is, was);
+    assert_eq!((found.arrays, found.refused), (0, 1));
+}

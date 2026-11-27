@@ -137,7 +137,7 @@ pub fn parse_key(key: &str) -> Option<u32> {
 /// back: `audio`, `musicLevel`, `camera`, `fov`, `subtitles`, and the rest a Rockstar settings
 /// file holds. The hash is the [`key_hash`] of the name on the right, so both forms round-trip.
 ///
-/// Not every key the save holds is in this table — the brute reached 36 of 219 unique hashes in
+/// Not every key the save holds is in this table — the brute reached 52 of 219 unique hashes in
 /// a real `SettingsProfileSettings` record. Adding a candidate here is cheap: compute its hash
 /// and, if the hash matches one the save states, commit the pair.
 ///
@@ -147,10 +147,12 @@ pub fn parse_key(key: &str) -> Option<u32> {
 /// `controls` has `$v = 5.0` and `versionMinor = 5`.
 pub const KNOWN_SETTINGS_FIELD_NAMES: &[(u32, &str)] = &[
     (0x00ba555f, "closedCaptions"),
+    (0x112c08e2, "gpsAudio"),
     (0x1141d443, "versionMajor"),
     (0x112b5803, "versionMinor"),
     (0x17d82a47, "display"),
     (0x1abb5826, "objective"),
+    (0x203e2854, "ragdoll"),
     (0x2202fbe1, "autoLevel"),
     (0x23683a0d, "controls"),
     (0x25584db6, "camera"),
@@ -158,12 +160,18 @@ pub const KNOWN_SETTINGS_FIELD_NAMES: &[(u32, &str)] = &[
     (0x3300c23e, "musicLevel"),
     (0x3301e662, "vibration"),
     (0x3588d43d, "playerStatus"),
+    (0x490691e6, "cameraBob"),
     (0x4b62d3b2, "language"),
     (0x525fbf2c, "radarSize"),
     (0x557759b4, "invertLook"),
+    (0x55c189fe, "lookAcceleration"),
+    (0x5af09c6e, "clockvisibility_client"),
     (0x6293d9ce, "autoSave"),
+    (0x65b0928e, "vibrationSettings"),
+    (0x68e02bfa, "mapMenu"),
     (0x6a510681, "fov"),
     (0x6b34fe60, "general"),
+    (0x74aecfec, "help"),
     (0x75953d64, "radarMode"),
     (0x8372d0df, "radioStation"),
     (0x8f12d59c, "thirdPerson"),
@@ -174,15 +182,23 @@ pub const KNOWN_SETTINGS_FIELD_NAMES: &[(u32, &str)] = &[
     (0xb80c6ae8, "audio"),
     (0xb8462278, "navigation"),
     (0xbf1a0b77, "aimMode"),
+    (0xc44990e6, "headBob"),
     (0xc63c7f4b, "dialogueLevel"),
     (0xc7fbada1, "compassMode"),
     (0xc89952df, "subtitles"),
+    (0xcb0db478, "motionBlurStrength"),
     (0xcb20b040, "accessibility"),
+    (0xd7019faa, "voiceSettings"),
+    (0xd7cb96b5, "prompts"),
     (0xe608de7b, "clock"),
     (0xe76cda01, "firstPerson"),
     (0xe8c91000, "controllerSettings"),
     (0xee190b4e, "sfxLevel"),
     (0xf1a2e99b, "gps"),
+    (0xf2d39db9, "screenNarration"),
+    (0xf6642366, "invertMap"),
+    (0xf8175bd0, "subtitlesSpeaker"),
+    (0xf9713d90, "aimAcceleration"),
 ];
 
 /// The known name a save's `$0x%08x` key stands for; `None` for a key no name has been matched

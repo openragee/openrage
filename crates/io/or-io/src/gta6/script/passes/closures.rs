@@ -5,8 +5,7 @@
 //!
 //! Works on the structured form and moves no statement: a construct holds the statements it was
 //! read from. [`sole`], [`inline`] and [`inlinable`] say which bodies may be written where they
-//! are bound, [`kept_delegate`] and [`subscription`] what a construct says in the source, and
-//! [`private_caches`] which kept delegates nothing can tell from one made afresh.
+//! are bound, and [`kept_delegate`] and [`subscription`] what a construct says in the source.
 //!
 //! ⚠ `Pass::LocalFunctions` switches nothing. A local function that captures takes its variables
 //! through an address, as any `ref` argument does, so none is proved.
@@ -36,7 +35,9 @@ const ROUND: usize = 8;
 /// The statements before an event's loop that are read for the copy of the object it works on.
 const COPIES: usize = 4;
 /// The most simple statements a body holds to be written as a block where it is bound.
-const BLOCK: usize = 6;
+// The source wrote every lambda where it is bound, whatever its length: the bound only keeps a
+// body of thousands of statements its own method.
+const BLOCK: usize = 2048;
 
 /// What the rewrites made of one function.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -234,11 +235,11 @@ pub fn inline(body: &tree::Function) -> Option<Inline<'_>> {
 
 /// The functions of its own program that `binder` binds as a lambda where the body may be written in place: at one place, to a holder in a global or to a closure object made outside every loop.
 // ⚠ A closure object made in a loop is another object each round: a body written in place
-// would read the one variable that holds the last of them. A label may close a loop no
+// would read the one variable that holds the last of them. A jump back may close a loop no
 // statement shows, so a function that holds one gives none.
 pub fn inlinable(binder: &tree::Function) -> BTreeSet<u32> {
     let program = binder.head.program;
-    if tree::counts(&binder.body).labels != 0 {
+    if !forward_only(&binder.body) {
         return BTreeSet::new();
     }
     let mut looped: BTreeSet<Var> = BTreeSet::new();
@@ -306,6 +307,59 @@ pub fn inlinable(binder: &tree::Function) -> BTreeSet<u32> {
         .collect()
 }
 
+/// Whether every jump of `body` goes to a label that stands after it, and no source construct holds a jump or a label.
+// Without a jump back only a loop runs a statement twice in one call: control otherwise goes on
+// through the statements in the order they stand, skipping some at most. A jump to a label no
+// statement shows, such as an `await`'s, is no jump this can place.
+fn forward_only(body: &[Stmt]) -> bool {
+    let mut passed: BTreeSet<tree::Label> = BTreeSet::new();
+    let mut ahead: BTreeSet<tree::Label> = BTreeSet::new();
+    // An explicit stack of the lists still being read, in the order they stand.
+    let mut work: Vec<std::slice::Iter<'_, Stmt>> = vec![body.iter()];
+    while let Some(list) = work.last_mut() {
+        let Some(stmt) = list.next() else {
+            work.pop();
+            continue;
+        };
+        match stmt {
+            Stmt::Label(label) => {
+                if !passed.insert(*label) {
+                    return false;
+                }
+                ahead.remove(label);
+            }
+            Stmt::Goto(label) => {
+                if passed.contains(label) {
+                    return false;
+                }
+                ahead.insert(*label);
+            }
+            Stmt::If { then, els, .. } => {
+                work.push(els.iter());
+                work.push(then.iter());
+            }
+            Stmt::While { body, .. } | Stmt::DoWhile { body, .. } | Stmt::For { body, .. } => {
+                work.push(body.iter());
+            }
+            Stmt::Switch { cases, .. } => {
+                work.extend(cases.iter().rev().map(|case| case.body.iter()));
+            }
+            Stmt::Sugar(_) => {
+                let held = tree::counts(std::slice::from_ref(stmt));
+                if held.gotos != 0 || held.labels != 0 {
+                    return false;
+                }
+            }
+            Stmt::Simple(_)
+            | Stmt::Break
+            | Stmt::Continue
+            | Stmt::Return(_)
+            | Stmt::Unreachable => {}
+        }
+    }
+    ahead.is_empty()
+}
+
 /// What the construct of a delegate kept in a global says in the source.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Kept<'a> {
@@ -331,74 +385,6 @@ pub fn kept_delegate<'a>(test: &Expr, making: &'a [Stmt], kept: &'a [Stmt]) -> O
         function: bound.function,
         take,
     })
-}
-
-/// The globals of one program that only keep a delegate: every mention of each is in the construct of a delegate kept there, all of them bind one function to one holder, and that holder is assigned once at most.
-// ⚠ Read over one program: a mention of the global in another program is not seen, and no
-// table of the project says there is none.
-pub fn private_caches(functions: &[tree::Function]) -> BTreeSet<Var> {
-    let mut mentions: BTreeMap<Var, u32> = BTreeMap::new();
-    let mut assigned: BTreeMap<Var, u32> = BTreeMap::new();
-    let mut addressed: BTreeSet<Var> = BTreeSet::new();
-    let mut within: BTreeMap<Var, u32> = BTreeMap::new();
-    // What each cache's constructs bind, `None` once two of them differ.
-    let mut bound: BTreeMap<Var, Option<(Var, u32, u32)>> = BTreeMap::new();
-    for f in functions {
-        let uses = Uses::of(&f.body);
-        for (var, times) in &uses.mentions {
-            if is_global(*var) {
-                *mentions.entry(*var).or_default() += *times;
-            }
-        }
-        for (var, times) in &uses.assigned {
-            if is_global(*var) {
-                *assigned.entry(*var).or_default() += *times;
-            }
-        }
-        addressed.extend(uses.addressed.iter().copied().filter(|var| is_global(*var)));
-        tree::each_sugar(&f.body, &mut |sugar| {
-            let Sugar::Cached {
-                test, made, kept, ..
-            } = sugar
-            else {
-                return;
-            };
-            let Some(read) = kept_delegate(test, made, kept) else {
-                return;
-            };
-            let binding = match (bare(read.target), bare(read.function)) {
-                (Expr::Var(holder), Expr::FunctionRef { program, at }) => {
-                    Some((*holder, *program, *at))
-                }
-                _ => None,
-            };
-            let mut inner = Uses::of(made);
-            inner.read(test);
-            let arm = Uses::of(kept);
-            let times = [&inner, &arm]
-                .into_iter()
-                .filter_map(|part| part.mentions.get(&read.cache))
-                .sum::<u32>();
-            *within.entry(read.cache).or_default() += times;
-            bound
-                .entry(read.cache)
-                .and_modify(|held| {
-                    if *held != binding {
-                        *held = None;
-                    }
-                })
-                .or_insert(binding);
-        });
-    }
-    bound
-        .into_iter()
-        .filter_map(|(cache, held)| {
-            let (holder, ..) = held?;
-            let whole = mentions.get(&cache) == within.get(&cache) && !addressed.contains(&cache);
-            let once = assigned.get(&holder).copied().unwrap_or(0) <= 1;
-            (whole && once && !addressed.contains(&holder)).then_some(cache)
-        })
-        .collect()
 }
 
 /// What the construct of an event's loop says in the source: `place += handler`, or `-=`.

@@ -1,5 +1,5 @@
 //! Lambdas written where they are bound: which bodies a function binds in place, and the writer
-//! of one function that writes them there.
+//! of one function that writes them there; and the method group a delegate of no lambda reads as.
 
 use super::*;
 
@@ -161,6 +161,7 @@ pub(crate) fn bound_in_place(
                         parts,
                     } = &**sugar
                     else {
+                        work.extend(written_bodies(sugar));
                         continue;
                     };
                     let Some((held, at)) = bound_lambda(parts, binder.head.program) else {
@@ -179,3 +180,66 @@ pub(crate) fn bound_in_place(
     }
     found
 }
+
+/// The bodies of a construct that every form of it writes as statements: written as itself where its pass is on, as the statements it stands for where it is not.
+// ⚠ None of what is left out where a construct is written as itself: an `await`'s suspension,
+// the arms of a kept delegate, the exit of a `using`, and what is hidden; nor the handlers of a
+// `try`, which the statements it stands for drop.
+fn written_bodies(sugar: &tree::Sugar) -> Vec<&[tree::Stmt]> {
+    match sugar {
+        tree::Sugar::Foreach { body, after, .. } => vec![body.as_slice(), after.as_slice()],
+        tree::Sugar::Guarded { body, .. } => vec![body.as_slice()],
+        tree::Sugar::Try { body, finally, .. } => vec![body.as_slice(), finally.as_slice()],
+        tree::Sugar::SwitchOn { arms, default } => {
+            let mut all: Vec<&[tree::Stmt]> = arms.iter().map(|arm| arm.body.as_slice()).collect();
+            all.push(default.as_slice());
+            all
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Whether evaluating `e` calls or makes anything.
+fn effects(e: &Expr) -> bool {
+    let mut found = false;
+    e.walk(&mut |node| {
+        found |= matches!(
+            node,
+            Expr::Call { .. } | Expr::NewObject(_) | Expr::NewArray { .. }
+        );
+    });
+    found
+}
+
+impl Writer<'_> {
+    /// The method group a delegate made of `function` and bound to `bound` reads as: `x.Name` for a slot of what it is bound to; a function of another program alone where it is bound to nothing.
+    // `None` for a function of this program, which the delegate's own form writes, and for
+    // anything else. ⚠ The code reads a slot's receiver once for the target and once for the
+    // slot, and the group once: the two must be one value, read with nothing called.
+    pub(super) fn method_group(&mut self, bound: &Expr, function: &Expr) -> Option<String> {
+        if !(self.sharp && self.options.on(Pass::Delegates)) {
+            return None;
+        }
+        match underneath(function) {
+            Expr::VirtualFunctionRef { receiver, ty, slot } => {
+                let held = underneath(bound);
+                if held != underneath(receiver) || is_zero(held) || effects(held) {
+                    return None;
+                }
+                let named = TypeKey::of(ty).and_then(|key| self.method_name(key, *slot));
+                let name = named.map_or_else(|| format!("Method_{slot}"), str::to_owned);
+                Some(format!("{}.{name}", self.expr(bits(bound), POSTFIX)))
+            }
+            // ⚠ Another program's function bound to an object is no member of it: `x.func_X`
+            // would read as this program's function of that offset, so the delegate stays a `new`.
+            Expr::FunctionRef { program, at } if *program != self.head.program => {
+                is_zero(bound).then(|| self.function_ref(*program, *at))
+            }
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "print_lambda_tests.rs"]
+mod tests;

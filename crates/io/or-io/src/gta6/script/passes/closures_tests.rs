@@ -10,6 +10,7 @@ const CLASS: u32 = 0x22;
 
 fn head() -> Head {
     Head {
+        value_types: Default::default(),
         program: PROGRAM,
         at: 0x40,
         name: "func_000040".to_owned(),
@@ -1101,56 +1102,6 @@ fn arms_that_differ_by_more_than_the_delegate_stay_a_test() {
     }
 }
 
-#[test]
-fn a_cache_is_private_only_where_its_program_names_it_in_its_constructs_alone() {
-    let read = |body: Vec<Stmt>| {
-        let (body, _) = rewritten(body, &[Pass::Lambdas]);
-        tree::Function { head: head(), body }
-    };
-    let alone = read(kept_form(0x68, 0x400));
-    let written = {
-        let mut body = kept_form(0x70, 0x500);
-        body.push(assign(global(0x70), Expr::Const(Const::i32(0))));
-        read(body)
-    };
-    // Two delegates kept in one global, each of another function.
-    let rebound = {
-        let mut body = kept_form(0x78, 0x600);
-        body.extend(kept_form(0x78, 0x700));
-        read(body)
-    };
-    let kept_in = |f: &tree::Function| {
-        let mut count = 0;
-        tree::each_sugar(&f.body, &mut |sugar| {
-            count += usize::from(matches!(sugar, Sugar::Cached { .. }));
-        });
-        count
-    };
-    assert_eq!(
-        [&alone, &written, &rebound].map(kept_in),
-        [1, 1, 2],
-        "each is a construct: what tells them apart is who else names the global"
-    );
-    let functions = [alone.clone(), written, rebound];
-    assert_eq!(private_caches(&functions), BTreeSet::from([global(0x68)]));
-
-    // A holder assigned twice is not the one object every delegate was bound to.
-    let holder_made = || assign(global(HOLDER), Expr::NewObject(class(GENERATED | CLASS)));
-    let remade = tree::Function {
-        head: head(),
-        body: vec![holder_made(), holder_made()],
-    };
-    assert_eq!(private_caches(&[alone.clone(), remade]), BTreeSet::new());
-    let once = tree::Function {
-        head: head(),
-        body: vec![holder_made()],
-    };
-    assert_eq!(
-        private_caches(&[alone, once]),
-        BTreeSet::from([global(0x68)])
-    );
-}
-
 /// A function of two parameters, the first its closure object, with the body given.
 fn lambda_body(returns: Returns, body: Vec<Stmt>) -> tree::Function {
     let head = Head { returns, ..head() };
@@ -1176,6 +1127,13 @@ fn a_body_of_one_value_or_a_few_statements_is_written_where_it_is_bound() {
     ended.push(Stmt::Return(None));
     let block = lambda_body(Returns::Void, ended);
     assert_eq!(inline(&block), Some(Inline::Block(&few)));
+
+    // The source wrote a long lambda where it is bound as it did a short one.
+    let many: Vec<Stmt> = (0..40)
+        .map(|n| eval(call(0x100 + n, vec![captured(), var(P1)])))
+        .collect();
+    let long = lambda_body(Returns::Void, many.clone());
+    assert_eq!(inline(&long), Some(Inline::Block(&many)));
 
     // ⚠ A value that names a variable of the body's own frame keeps the block that declares it.
     let scratch = Expr::AddrOf {
@@ -1244,19 +1202,55 @@ fn a_body_may_be_written_in_place_where_it_is_bound_once_outside_every_loop() {
         cond: var(P1),
         body: closure(c, GENERATED | CLASS),
     }];
-    let labelled = {
+    let label = tree::Label::At(0x90);
+    // `label: c = new C(); .. goto label;` makes the object again each time it jumps back.
+    let jumped_back = {
+        let mut body = vec![Stmt::Label(label)];
+        body.extend(closure(c, GENERATED | CLASS));
+        body.push(Stmt::If {
+            cond: var(P1),
+            then: vec![Stmt::Goto(label)],
+            els: Vec::new(),
+        });
+        body
+    };
+    let nowhere = {
         let mut body = closure(c, GENERATED | CLASS);
-        body.push(Stmt::Label(tree::Label::At(0x90)));
+        body.push(Stmt::Goto(tree::Label::At(0x94)));
+        body
+    };
+    let in_construct = {
+        let mut body = closure(c, GENERATED | CLASS);
+        body.push(Stmt::Sugar(Box::new(Sugar::Hidden(vec![
+            Stmt::Label(label),
+            Stmt::Goto(label),
+        ]))));
         body
     };
     let cases: Vec<(&str, Vec<Stmt>)> = vec![
         ("bound at two places", twice),
         ("a closure object made each round of a loop", looped),
-        ("a label, which may close a loop", labelled),
+        ("a jump back, which closes a loop", jumped_back),
+        ("a jump to a label no statement shows", nowhere),
+        ("a jump inside a construct", in_construct),
     ];
     for (what, body) in cases {
         assert_eq!(bound(body), BTreeSet::new(), "{what}");
     }
+
+    // A jump forward over the binding, or out of an arm to after it, closes no loop.
+    let forward = {
+        let mut body = vec![Stmt::If {
+            cond: var(P1),
+            then: vec![Stmt::Goto(label)],
+            els: Vec::new(),
+        }];
+        body.extend(closure(c, GENERATED | CLASS));
+        body.push(Stmt::Label(label));
+        body.push(eval(call(0x100, vec![var(P1)])));
+        body
+    };
+    assert_eq!(bound(forward), BTreeSet::from([0x300]));
 }
 
 /// What the source level writes of `body` once this pass has read it, with the passes of `off` switched off.

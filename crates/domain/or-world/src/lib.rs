@@ -65,6 +65,19 @@ pub use validate::Problem;
 
 pub mod transform;
 
+// The world core, which names no game: what every title's world sits behind.
+pub mod caps;
+pub mod contract;
+pub mod driver;
+pub mod fake;
+pub mod kept;
+pub mod kit;
+pub mod model;
+pub mod policy;
+pub mod pose;
+pub mod sentence;
+pub mod slots;
+
 /// Whether a value tree is one of the two world roots.
 pub fn is_world_root(inst: &or_io::meta::MetaInstance) -> bool {
     field::is_type(inst, keys::types::C_MAP_DATA) || field::is_type(inst, keys::types::C_MAP_TYPES)

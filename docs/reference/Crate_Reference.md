@@ -1664,6 +1664,57 @@ is a judgement over the same set and no query: which pieces of the bounds under
 the oriented box of a placed object are the object's own, as data a person edits
 (`crates/domain/or-world/src/collision/association.rs`).
 
+**The world core.** The modules of `or-world` listed here name no game and are what every title's
+world sits behind ([R71a](../direction/Roadmap.md#r71a-the-world-contract-the-conformance-kit-and-the-fake-title),
+[Unified_World_Plan.md](../direction/Unified_World_Plan.md#the-contract)); the rest of the crate is
+still GTA V's model, which moves to its adapter in R71n.
+
+- `contract` is what a title answers. A `WorldTitle` opens a `WorldSpec` (a game by the id its
+  profile registers, an install, the options chosen at open, read-only layers) into a
+  `WorldInstall`, which states its `WorldCaps`, its `StreamPolicy` and its `Extras` and hands out a
+  `WorldIndexer`, a `MapReader`, a `ModelReader` and a `WorldLook`. An `EditTitle` opens an
+  `EditSession` the same way, over an opened world. ⚠ Every reader is handed the linked `Index`
+  its ids are rows of: a `MapId` is made by a link and never stored, and what it stands for is the
+  title's, which the title's link leaves on the index (`Index::with_title`).
+- `model` is the read model: the rows of an `Index` (`MapRow`, with the `Gate` that lets a map
+  in by the clock, the weather, a switch or a request), what a `MapBody` states beside its nodes
+  (`Light`, `Occluders`, `InteriorPlaced`), `Instances` as fixed columns with a block of the
+  title's own words an instance, and a `Model` and a `Texture` as plain data. An index refuses
+  rows where a name is borne twice or a parent is no row (`IndexFault`).
+- `caps` is `WorldCaps`, the capabilities as data; `policy` is `StreamPolicy`, whose defaults a
+  title overrides (how many children a parent waits for, the rule that streams a map in, the
+  scale and the fade band of each level, the budget of bodies held); `slots` is what a title lets
+  a person choose at open and switch while open and the layers, rules, panel sections and streamed
+  extras it adds, each shown by a `Sentence`.
+- `driver` is `Driver`, the synchronous machine around `Forest` of
+  `crates/domain/or-world/src/streaming.rs`: `want` gives the maps a view wants whose body is to
+  be read, `give` takes a body, `settle` puts the bodies in the forest and brings in the interiors
+  within their instance's distance, `stream` does the three on the caller's thread, and `select`
+  gives the instances, each body laid out once. An edit session is asked for a map's body before
+  the reader (`an_edit_session_is_asked_before_the_reader_and_its_body_taken_once`), and a held
+  map is read once (`a_held_map_is_read_once`).
+- `kept` is the one kept file of an index: a head (the title, the world, the version of the
+  title's rules, a stamp for each input), a section of rows for each archive, one section derived
+  across them, and a link after every load. `kept::refresh` reads again only an archive whose
+  stamp changed (`a_changed_stamp_reads_that_archive_again_and_leaves_the_others`) and refuses a
+  file of other rules whole (`a_kept_file_of_another_rules_version_is_refused`). Nothing of GTA V
+  or GTA VI is kept by it yet: their own kept files stand until R71n and R71b.
+- `sentence` is `Sentence`, the key of a text a title shows a person, made by `sentence!` alone;
+  the language gate reads the core and every adapter crate for that macro
+  (`a_sentence_a_world_adapter_names_that_no_catalog_holds_fails_the_gate`).
+- `kit` is the conformance kit: `conformance_kit!` writes one test for each `Rule` over a
+  `Fixture`, each under the rule's name, so a title that breaks a rule fails the test of that
+  name. `fake` is the title that proves the core with no game, a public module no registry lists,
+  and each `Fault` of it breaks one rule and no other
+  (`each_broken_fake_breaks_the_rule_it_was_built_to_break_and_no_other`).
+- `pose` is the camera line of a script, read and written.
+
+`crates/domain/or-world/tests/the_core_names_no_game.rs` holds the core to naming no game, no
+title's crate and no file extension of a game outside two ledgers that only shrink, and holds an
+adapter crate to depending on no other adapter, on no tool, on neither the renderer nor the app.
+⚠ It reads text: a module of GTA V's model that states neither a game nor an extension is found
+only where a shared module leans on one that does.
+
 - `create` makes a map, an entity, a type file and a base archetype from nothing,
   with no donor and no snapshot, over the typed roots: the file is a PSO, RBM is
   refused for the signature word no tool derives, and a guid, the content flags
@@ -2562,8 +2613,12 @@ translates.
 
 The scan that finds the calls (`src/i18n/used.rs`) reads every `.rs` file under
 `src/` as the compiler reads a literal, tests included, so a sentence a test
-asks for needs its entry too. The macros check at compile time that a text and
-its names agree. The control inventory and the figure gates
+asks for needs its entry too. It reads `crates/domain/or-world/src` and the
+`src` of every world adapter crate beside it as well (`source_folders`), for
+`or_world::sentence!`, the key a title names a sentence by: a crate below the
+app cannot call `tr!`, so it returns the key and the app shows it through
+`crate::i18n::tr` (`a_sentence_a_world_adapter_names_that_no_catalog_holds_fails_the_gate`).
+The macros check at compile time that a text and its names agree. The control inventory and the figure gates
 (`src/ui/the_task_screens_draw_as_they_did_before_the_table.rs` among them)
 pin English, so a language never changes what they read.
 

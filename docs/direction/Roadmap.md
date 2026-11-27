@@ -10713,8 +10713,8 @@ world; [R71c](#r71c-one-world-session-one-frame-host-and-panels-by-capability) m
 [R71f](#r71f-the-render-profile-and-the-programs-of-gta-v-legacy), [R71g](#r71g-the-programs-of-gta-v-enhanced) and [R71h](#r71h-the-programs-of-gta-vi-over-a-world) run each game's own programs; [R71n](#r71n-the-gta-v-files-moved-into-the-adapter) moves GTA V's
 files into its adapter; [R71i](#r71i-one-edit-stack-for-every-title) is the one edit stack and [R71j](#r71j-the-world-tools-built-once) the tools the screen rows
 of [R70](#r70-the-gta-v-world-editor) are built on; [R71k](#r71k-red-dead-redemption-2) is RDR2, and [R71l](#r71l-leftovers-and-the-ledger-of-what-was-deleted) ends with
-every ledger empty or ruled on. A part's Done when is its check, and its brief says the rest. No
-part is started.
+every ledger empty or ruled on. A part's Done when is its check, and its brief says the rest.
+R71a is built, and no other part is started.
 
 ### R71a The world contract the conformance kit and the fake title
 
@@ -10728,8 +10728,26 @@ conformance kit, a macro in the manner of `declared_gates!` that writes the same
 adapter; a fake title, so that the core is proven with no game; and architecture tests with ledgers
 ([brief](Unified_World_Plan.md#the-contract-the-kit-and-the-fake-title-r71a)).
 
-**Where it stands.** Not started. What the two titles' drivers share today, and the code each part
-of the contract is drawn from, are in [the plan](Unified_World_Plan.md#the-contract).
+**Where it stands.** Built in `or-world`, with no game named in what was added; [the crate
+reference](../reference/Crate_Reference.md#domain-crates) describes each module under "The world
+core". The fake title passes the kit (`crates/domain/or-world/tests/the_fake_title_passes_the_kit.rs`,
+the row's own check among its tests), and a fault of the fake for each rule fails by that rule's
+name (`each_broken_fake_breaks_the_rule_it_was_built_to_break_and_no_other`). The driver is held
+by `a_held_map_is_read_once` and its neighbours, the kept file by
+`a_changed_stamp_reads_that_archive_again_and_leaves_the_others`, the language gate by
+`a_sentence_a_world_adapter_names_that_no_catalog_holds_fails_the_gate`, and the architecture by
+`the_core_names_no_game_outside_its_ledger` and `no_adapter_crate_depends_on_another_or_above_itself`.
+`with_exact_children` is gone: the forest takes `Children` from the policy.
+
+Left for the rows that follow: the world thread and reader pool around the driver
+([R71b](#r71b-the-gta-vi-world-behind-the-contract)), the render profile
+([R71f](#r71f-the-render-profile-and-the-programs-of-gta-v-legacy)), the kit's second tier over an
+install on disk, and the World panel's own `Pose`, which stands beside the core's until
+[R71c](#r71c-one-world-session-one-frame-host-and-panels-by-capability). No title's index is kept
+by the core's file yet. The built contract departs from [the plan's
+outline](Unified_World_Plan.md#the-contract) in three ways the plan is still to be mended for: a
+game is an id and no `Game`, every reader is handed the linked index, and a body is laid out from
+its entities and its lists together.
 
 **Depends on.** Nothing. It edits two files the local branches of R70 change, by a few lines, and
 lands before them.

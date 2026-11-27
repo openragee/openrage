@@ -1675,7 +1675,17 @@ still GTA V's model, which moves to its adapter in R71n.
   `WorldIndexer`, a `MapReader`, a `ModelReader` and a `WorldLook`. An `EditTitle` opens an
   `EditSession` the same way, over an opened world. ⚠ Every reader is handed the linked `Index`
   its ids are rows of: a `MapId` is made by a link and never stored, and what it stands for is the
-  title's, which the title's link leaves on the index (`Index::with_title`).
+  title's, which the title's link leaves on the index (`Index::with_title`). ⚠ An interior's
+  body is made from the body that places it, which is an edit session's after an apply, so a
+  title reads where the instance stands from the body it is handed (a `MapBody` is `Any`) and
+  never from the map as the install holds it
+  (`an_interior_follows_its_instance_when_an_edit_moves_it`). ⚠ A title opens a world it owns,
+  and an install made over values a caller lends is driven for as long as they are lent, with no
+  copy of them: `Driver` and `EditPlace` carry that lifetime
+  (`a_world_that_is_lent_is_streamed_and_selected_with_no_copy_of_it`). ⚠ Nothing of a title is
+  called once a node: a body says what draws every node of it in one call (`MapBody::draws`), asked
+  again only where the moment or the body changed
+  (`a_body_says_what_draws_its_nodes_once_a_moment_and_never_once_a_node`).
 - `model` is the read model: the rows of an `Index` (`MapRow`, with the `Gate` that lets a map
   in by the clock, the weather, a switch or a request), what a `MapBody` states beside its nodes
   (`Light`, `Occluders`, `InteriorPlaced`), `Instances` as fixed columns with a block of the
@@ -1688,32 +1698,56 @@ still GTA V's model, which moves to its adapter in R71n.
   extras it adds, each shown by a `Sentence`.
 - `driver` is `Driver`, the synchronous machine around `Forest` of
   `crates/domain/or-world/src/streaming.rs`: `want` gives the maps a view wants whose body is to
-  be read, `give` takes a body, `settle` puts the bodies in the forest and brings in the interiors
-  within their instance's distance, `stream` does the three on the caller's thread, and `select`
-  gives the instances, each body laid out once. An edit session is asked for a map's body before
-  the reader (`an_edit_session_is_asked_before_the_reader_and_its_body_taken_once`), and a held
-  map is read once (`a_held_map_is_read_once`).
+  be read, `give` takes a body, `settle` puts the bodies in the forest and lists the interiors
+  within their instance's distance whose body it waits for, which `give_interior` takes, `stream`
+  does all of it on the caller's thread, and `select` gives the instances, each body laid out
+  once. ⚠ A `settle` reads nothing, so a world thread hands every read, an interior's too, to its
+  workers (`a_world_that_is_owned_is_read_on_worker_threads_and_never_on_the_drivers`). An edit
+  session is asked for a map's body before the reader
+  (`an_edit_session_is_asked_before_the_reader_and_its_body_taken_once`), a read that comes in
+  after an apply took its map does not take the place of the session's body
+  (`a_body_read_before_an_apply_does_not_take_the_place_of_the_sessions`), and a held map is read
+  once (`a_held_map_is_read_once`). ⚠ A map's nodes leave the forest the moment its
+  body is replaced or let go of, and come back at the next `settle`: a body is never laid out
+  over the nodes of another (`a_body_given_after_its_map_left_the_view_stands_in_no_forest`).
 - `kept` is the one kept file of an index: a head (the title, the world, the version of the
   title's rules, a stamp for each input), a section of rows for each archive, one section derived
   across them, and a link after every load. `kept::refresh` reads again only an archive whose
   stamp changed (`a_changed_stamp_reads_that_archive_again_and_leaves_the_others`) and refuses a
-  file of other rules whole (`a_kept_file_of_another_rules_version_is_refused`). Nothing of GTA V
-  or GTA VI is kept by it yet: their own kept files stand until R71n and R71b.
-- `sentence` is `Sentence`, the key of a text a title shows a person, made by `sentence!` alone;
-  the language gate reads the core and every adapter crate for that macro
+  file of other rules whole (`a_kept_file_of_another_rules_version_is_refused`). ⚠ An archive
+  with no stamp is read at every open (`an_archive_with_no_stamp_is_read_at_every_open`), and
+  what else the index reads derives the section across archives again when it changes or bears
+  no stamp. The file is named by `WorldSpec::identity`, in which a path is written quoted, so
+  that no install's name reads as another world's layer. It is written beside itself under a
+  name of its writer's own and moved over the file that stood, so two writers at once leave a
+  whole file of one of them (`two_writers_at_once_leave_a_whole_file_of_one_of_them`). Nothing of GTA V or GTA VI is kept by
+  it yet: their own kept files stand until R71n and R71b.
+- `sentence` is `Sentence`, the key of a text a title shows a person, made by `sentence!` alone
+  (`the_key_of_a_sentence_is_made_by_its_macro_alone`); the language gate reads the core and
+  every adapter crate for that macro
   (`a_sentence_a_world_adapter_names_that_no_catalog_holds_fails_the_gate`).
 - `kit` is the conformance kit: `conformance_kit!` writes one test for each `Rule` over a
   `Fixture`, each under the rule's name, so a title that breaks a rule fails the test of that
-  name. `fake` is the title that proves the core with no game, a public module no registry lists,
-  and each `Fault` of it breaks one rule and no other
-  (`each_broken_fake_breaks_the_rule_it_was_built_to_break_and_no_other`).
+  name. Each test keeps the world's index in a folder `tempfile` makes and removes, so a crate
+  that calls the macro lists `tempfile` among its dev-dependencies. `fake` is the title that
+  proves the core with no game, a public module no registry lists, and each `Fault` of it breaks
+  one rule and no other (`each_broken_fake_breaks_the_rule_it_was_built_to_break_and_no_other`).
 - `pose` is the camera line of a script, read and written.
 
 `crates/domain/or-world/tests/the_core_names_no_game.rs` holds the core to naming no game, no
-title's crate and no file extension of a game outside two ledgers that only shrink, and holds an
-adapter crate to depending on no other adapter, on no tool, on neither the renderer nor the app.
+title's crate and no file extension of a game outside two ledgers that only shrink, to holding no
+static outside them, and to depending on no crate of its own layer or above
+(`the_core_depends_on_no_crate_of_its_own_layer_or_above`); and it holds an adapter crate to
+depending on no other adapter, on no crate of the runtime, on no tool and not on the app.
 ⚠ It reads text: a module of GTA V's model that states neither a game nor an extension is found
-only where a shared module leans on one that does.
+only where a shared module leans on one that does. A name is read as the compiler reads it and
+not as it is laid out: a path broken before its `::`, a string carried over a line's end and
+the literals `concat!` joins state it all the same, and a dependency under another name is the
+package it names.
+
+What [R71a](../direction/Roadmap.md#r71a-the-world-contract-the-conformance-kit-and-the-fake-title)'s row leaves to this document, as the row stated it. The driver is held by the tests of `crates/domain/or-world/src/driver_tests.rs`: a held map is read once (`a_held_map_is_read_once`), an edit session is asked before the reader, an interior stands about its instance where an edit put it (`an_interior_follows_its_instance_when_an_edit_moves_it`), a body that comes in after its map left the view stands in no forest (`a_body_given_after_its_map_left_the_view_stands_in_no_forest`), and a body says what draws its nodes in one call and never once a node (`a_body_says_what_draws_its_nodes_once_a_moment_and_never_once_a_node`). Two worlds the fake title is not stand behind the contract in `crates/domain/or-world/tests/a_world_lent_and_a_world_read_on_threads.rs`: one whose install borrows the world it reads, and one whose bodies and interiors are read on worker threads while the driver's thread reads nothing. The kept file is held by `a_changed_stamp_reads_that_archive_again_and_leaves_the_others`, `an_archive_with_no_stamp_is_read_at_every_open`, `what_else_the_index_reads_derives_across_again_when_it_changes_or_bears_no_stamp` and `two_writers_at_once_leave_a_whole_file_of_one_of_them`; the language gate by `a_sentence_a_world_adapter_names_that_no_catalog_holds_fails_the_gate`; and the architecture by `the_core_names_no_game_outside_its_ledger`, `the_core_depends_on_no_crate_of_its_own_layer_or_above` and `no_adapter_crate_depends_on_another_or_above_itself`. `with_exact_children` is gone: the forest takes `Children` from the policy.
+
+Left for the rows that follow: the world thread and reader pool around the driver ([R71b](../direction/Roadmap.md#r71b-the-gta-vi-world-behind-the-contract)), the render profile ([R71f](../direction/Roadmap.md#r71f-the-render-profile-and-the-programs-of-gta-v-legacy)), the kit's second tier over an install on disk, the architecture tests of the frame host and of the app's world modules, and the World panel's own `Pose`, which stands beside the core's until [R71c](../direction/Roadmap.md#r71c-one-world-session-one-frame-host-and-panels-by-capability). No title's index is kept by the core's file yet. A map an edit session holds is put in the forest afresh at each apply, so a far model at its root fades in again where the camera stands still, which [R71i](../direction/Roadmap.md#r71i-one-edit-stack-for-every-title) meets first. The built contract departs from [the plan's outline](../direction/Unified_World_Plan.md#the-contract), which is still to be mended for it: among the departures, a game is an id and no `Game`, every reader is handed the linked index, a body is laid out from its entities and its lists together and says what draws its nodes in one call, an interior is a body of its own that the map reader makes from the body that places it and that a settle waits for and does not read, and an install may be lent to its driver.
 
 - `create` makes a map, an entity, a type file and a base archetype from nothing,
   with no donor and no snapshot, over the typed roots: the file is a PSO, RBM is

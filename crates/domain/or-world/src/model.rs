@@ -538,14 +538,16 @@ pub enum TextureFormat {
 }
 
 impl TextureFormat {
-    /// The bytes of a level `width` by `height` pixels.
+    /// The bytes of a level `width` by `height` pixels; the most a count holds where they are more.
     pub fn level_bytes(self, width: u32, height: u32) -> usize {
-        let blocks = (width.div_ceil(4) as usize) * (height.div_ceil(4) as usize);
-        match self {
-            Self::Rgba8 => width as usize * height as usize * 4,
-            Self::Bc1 | Self::Bc4 => blocks * 8,
-            Self::Bc3 | Self::Bc5 | Self::Bc7 => blocks * 16,
-        }
+        let (wide, high, each) = match self {
+            Self::Rgba8 => (width, height, 4),
+            Self::Bc1 | Self::Bc4 => (width.div_ceil(4), height.div_ceil(4), 8),
+            Self::Bc3 | Self::Bc5 | Self::Bc7 => (width.div_ceil(4), height.div_ceil(4), 16),
+        };
+        (u128::from(wide) * u128::from(high) * each)
+            .try_into()
+            .unwrap_or(usize::MAX)
     }
 }
 
@@ -599,4 +601,149 @@ pub struct PlacementRow {
 pub fn skipped_of<'a>(drawn: &Drawn<'a>, list: &ListDraw) -> &'a [u32] {
     let Range { start, end } = list.skipped.clone();
     drawn.skipped.get(start..end).unwrap_or(&[])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(name: u64, parents: &[u32]) -> MapRow {
+        MapRow {
+            name,
+            label: format!("{name}"),
+            boxes: None,
+            parents: parents.iter().copied().map(MapId).collect(),
+            gate: Gate::Always,
+            archive: 0,
+        }
+    }
+
+    #[test]
+    fn rows_that_are_no_index_are_refused_with_why() {
+        let index = Index::new(vec![row(7, &[1]), row(9, &[])]).expect("two rows that link");
+        assert_eq!((index.named(9), index.named(8)), (Some(MapId(1)), None));
+        assert_eq!(
+            Index::new(vec![row(7, &[]), row(7, &[])]).err(),
+            Some(IndexFault::NameTwice(7))
+        );
+        assert_eq!(
+            Index::new(vec![row(7, &[2]), row(9, &[])]).err(),
+            Some(IndexFault::ParentPastTheLast { map: 7 })
+        );
+        assert_eq!(
+            Index::new(vec![row(7, &[]), row(9, &[1])]).err(),
+            Some(IndexFault::OwnParent(9))
+        );
+    }
+
+    #[test]
+    fn a_gate_by_the_weather_lets_a_map_in_under_the_weathers_it_names_alone() {
+        let (map, none) = (MapId(0), Switched::default());
+        let at = |hour: f32, weather: u64| Moment { hour, weather };
+        let rain = Gate::When {
+            hours: EVERY_HOUR,
+            weathers: vec![3, 5],
+        };
+        assert!(rain.admits(map, &at(12.0, 3), &none) && rain.admits(map, &at(12.0, 5), &none));
+        assert!(!rain.admits(map, &at(12.0, 4), &none));
+        let evening = Gate::When {
+            hours: 1 << 23,
+            weathers: Vec::new(),
+        };
+        // Under any weather where it names none, and an hour past the day's end is the day's next.
+        assert!(
+            evening.admits(map, &at(23.5, 4), &none) && evening.admits(map, &at(47.9, 9), &none)
+        );
+        assert!(
+            !evening.admits(map, &at(22.99, 4), &none) && !evening.admits(map, &at(24.0, 4), &none)
+        );
+        let mut asked = Switched::default();
+        asked.requested.insert(map);
+        assert!(
+            rain.admits(map, &at(12.0, 4), &asked),
+            "a request by name passes any gate"
+        );
+    }
+
+    #[test]
+    fn an_interior_key_is_no_map_key_and_no_two_interiors_share_one() {
+        let keys = [
+            interior_key(MapId(0), 0),
+            interior_key(MapId(0), 1),
+            interior_key(MapId(1), 0),
+            interior_key(MapId(1 << 31), 0),
+            interior_key(MapId(u32::MAX), MOST_KEYED - 1),
+            interior_key(MapId(u32::MAX - 1), MOST_KEYED - 1),
+            interior_key(MapId(u32::MAX), MOST_KEYED - 2),
+        ];
+        for (at, key) in keys.iter().enumerate() {
+            assert!(is_interior_key(*key) && MapId::of_key(*key).is_none());
+            assert!(!keys[at + 1..].contains(key), "{key:#x} is borne twice");
+        }
+        let map = MapId(u32::MAX);
+        assert_eq!(MapId::of_key(map.key()), Some(map));
+        assert!(!is_interior_key(map.key()));
+    }
+
+    #[test]
+    fn a_level_no_memory_holds_is_of_more_bytes_than_any_level_read() {
+        assert_eq!(TextureFormat::Rgba8.level_bytes(4, 2), 32);
+        assert_eq!(TextureFormat::Bc1.level_bytes(5, 4), 16);
+        assert_eq!(TextureFormat::Bc7.level_bytes(1, 1), 16);
+        // A width and a height a file states and holds no pixels of must not wrap to a size it does hold.
+        for format in [TextureFormat::Rgba8, TextureFormat::Bc7] {
+            assert_eq!(format.level_bytes(u32::MAX, u32::MAX), usize::MAX);
+        }
+    }
+
+    #[test]
+    fn instances_list_each_model_once_and_each_instance_names_its_own() {
+        let mut instances = Instances::of_width(1);
+        let at = |x: f32| Vec3::new(x, 2.0, 3.0);
+        for (node, model, x) in [(0, 7, 1.0), (1, 9, 4.0), (2, 7, 5.0)] {
+            instances.push(Instance {
+                node: (0, node),
+                model: AssetKey(model),
+                rows: rows_at(at(x)),
+                sphere: [x, 2.0, 3.0, 1.0],
+                fade: signed_fade(0.5, node == 1),
+                words: &[node],
+            });
+        }
+        assert_eq!(instances.models, [AssetKey(7), AssetKey(9)]);
+        assert_eq!(instances.model, [0, 1, 0]);
+        let models: Vec<_> = (0..4).map(|at| instances.model_of(at)).collect();
+        assert_eq!(
+            models,
+            [
+                Some(AssetKey(7)),
+                Some(AssetKey(9)),
+                Some(AssetKey(7)),
+                None
+            ]
+        );
+        assert_eq!(instances.position(2), Some(at(5.0)));
+        assert_eq!(instances.fade, [0.5, -0.5, 0.5]);
+        assert_eq!((instances.len(), &instances.words[..]), (3, &[0, 1, 2][..]));
+    }
+
+    #[test]
+    fn a_list_is_handed_the_instances_left_out_of_it_and_no_other_lists() {
+        let list = |skipped| ListDraw {
+            node: (0, 0),
+            fade: 1.0,
+            yields: false,
+            skipped,
+        };
+        let drawn = Drawn {
+            key: 0,
+            nodes: &[],
+            lists: &[],
+            skipped: &[4, 8, 15, 16],
+        };
+        assert_eq!(skipped_of(&drawn, &list(1..3)), [8, 15]);
+        assert_eq!(skipped_of(&drawn, &list(3..3)), [0u32; 0]);
+        // A range past what the selection left out names nothing, and is no panic.
+        assert_eq!(skipped_of(&drawn, &list(3..9)), [0u32; 0]);
+    }
 }

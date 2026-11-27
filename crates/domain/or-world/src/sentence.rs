@@ -10,8 +10,10 @@ pub struct Sentence(&'static str);
 
 impl Sentence {
     /// The key of `text`; called by [`sentence!`](crate::sentence), which the language gate reads.
+    // ⚠ Under a name nothing else bears: the gate finds a key made by hand by this name, under
+    // whatever name the type was imported and however the call is laid out.
     #[doc(hidden)]
-    pub const fn of(text: &'static str) -> Self {
+    pub const fn keyed_by_the_macro(text: &'static str) -> Self {
         Self(text)
     }
 
@@ -25,6 +27,6 @@ impl Sentence {
 #[macro_export]
 macro_rules! sentence {
     ($text:literal) => {
-        $crate::sentence::Sentence::of($text)
+        $crate::sentence::Sentence::keyed_by_the_macro($text)
     };
 }

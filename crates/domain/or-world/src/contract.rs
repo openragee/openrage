@@ -86,16 +86,17 @@ impl WorldSpec {
         (self.options.iter()).find_map(|(at, value)| (*at == id).then_some(value))
     }
 
-    /// The world as one line: two worlds that differ in anything differ in it.
+    /// The world as a text of lines: two worlds that differ in anything but the order of their options differ in it.
+    // ⚠ A path is written quoted and escaped: a line break in one starts no line of the text.
     pub fn identity(&self) -> String {
         let mut options = self.options.clone();
         options.sort();
-        let mut out = format!("{}\n{}", self.game.0, self.install.display());
+        let mut out = format!("{}\n{:?}", self.game.0, self.install);
         for (id, value) in options {
             out.push_str(&format!("\n{}={value:?}", id.0));
         }
         for layer in &self.layers {
-            out.push_str(&format!("\n+{}", layer.path.display()));
+            out.push_str(&format!("\n+{:?}", layer.path));
         }
         out
     }
@@ -137,7 +138,7 @@ pub trait WorldTitle: Sync {
     ) -> Result<Arc<dyn WorldInstall>, WorldError>;
 }
 
-/// One world, opened.
+/// One world, opened; a title's is its own, and one made over values a caller lends is driven for as long as they are lent.
 pub trait WorldInstall: Send + Sync {
     fn caps(&self) -> WorldCaps;
     fn policy(&self) -> StreamPolicy;
@@ -201,22 +202,25 @@ pub trait MapReader: Sync {
         map: MapId,
         worker: &mut Worker,
     ) -> Result<Arc<dyn MapBody>, WorldError>;
-    /// The body of the interior `placed` of `map`, its nodes placed in the world.
+    /// The body of the interior `placed` of `map`, its nodes placed in the world by its instance in `body`.
+    // ⚠ `body` is the map's as it stands, an edit session's where an apply changed it: where the
+    // instance stands is read from it and never from the map as the install holds it.
     fn interior(
         &self,
         index: &Index,
         map: MapId,
+        body: &dyn MapBody,
         placed: &InteriorPlaced,
         worker: &mut Worker,
     ) -> Result<Arc<dyn MapBody>, WorldError>;
 }
 
-/// A map body, the title's own type, read once.
-pub trait MapBody: Send + Sync {
+/// A map body, the title's own type, read once; a title finds its own type in one it is handed back through `Any`.
+pub trait MapBody: Any + Send + Sync {
     /// Its nodes, a parent named by [`MapId::key`] or by [`crate::model::interior_key`].
     fn nodes(&self) -> &[Node];
-    /// What draws node `node` at `at`.
-    fn draws(&self, node: u32, at: &Moment) -> Draws;
+    /// What draws each of its nodes at `at`, pushed in the nodes' order: asked once a body where the moment or the body changed, never once a node.
+    fn draws(&self, at: &Moment, out: &mut Vec<Draws>);
     fn lights(&self) -> &[Light];
     fn occluders(&self) -> &Occluders;
     fn interiors(&self) -> &[InteriorPlaced];
@@ -327,10 +331,10 @@ pub enum EditError {
     World(#[from] WorldError),
 }
 
-/// Where an edit store is opened: over an opened world, and a folder where the store is one.
+/// Where an edit store is opened: over an opened world, lent for `'w`, and a folder where the store is one.
 #[derive(Clone, Copy)]
-pub struct EditPlace<'a> {
-    pub install: &'a Arc<dyn WorldInstall>,
+pub struct EditPlace<'a, 'w> {
+    pub install: &'a Arc<dyn WorldInstall + 'w>,
     /// The index the session's map ids are rows of.
     pub index: &'a Arc<Index>,
     pub folder: Option<&'a Path>,
@@ -339,7 +343,8 @@ pub struct EditPlace<'a> {
 /// A title's edit store, opened as a world is.
 pub trait EditTitle: Sync {
     fn operations(&self) -> Vec<OperationKind>;
-    fn open(&self, place: &EditPlace<'_>) -> Result<Box<dyn EditSession>, EditError>;
+    /// A session over the world of `place`, which it may hold for as long as that world is lent.
+    fn open<'w>(&self, place: &EditPlace<'_, 'w>) -> Result<Box<dyn EditSession + 'w>, EditError>;
 }
 
 /// An open edit store: what was applied is held, and written at a flush.
@@ -353,4 +358,34 @@ pub trait EditSession: Send {
     fn flush(&mut self) -> Result<Vec<Written>, EditError>;
     /// What `at` stood as before any edit; `None` where the store has no comparison, put-back or merge.
     fn base(&self, at: &Address) -> Option<Base>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_worker_keeps_its_state_between_reads_and_makes_another_for_another_kind() {
+        let mut worker = Worker::new();
+        worker.state::<Vec<u32>>().push(7);
+        worker.state::<Vec<u32>>().push(9);
+        assert_eq!(*worker.state::<Vec<u32>>(), [7, 9]);
+        assert_eq!(*worker.state::<String>(), "");
+        assert!(
+            worker.state::<Vec<u32>>().is_empty(),
+            "a worker holds one kind"
+        );
+    }
+
+    #[test]
+    fn a_world_answers_the_option_it_was_set_and_no_other() {
+        let mut world = WorldSpec::of(GameId("a-game"), "an-install");
+        assert_eq!(world.option(OptionId(2)), None);
+        world.options = vec![
+            (OptionId(1), OptionValue::On(true)),
+            (OptionId(2), OptionValue::Choice(5)),
+        ];
+        assert_eq!(world.option(OptionId(2)), Some(&OptionValue::Choice(5)));
+        assert_eq!(world.option(OptionId(3)), None);
+    }
 }

@@ -89,6 +89,7 @@ mod tests {
         assert_eq!(Pose::read(&pose.line()), Ok(pose));
         let bare = Pose { fov: None, ..pose };
         assert_eq!(Pose::read("12.5 -340.25 71 271.5 -12.25"), Ok(bare));
+        assert_eq!(Pose::read(&bare.line()), Ok(bare));
     }
 
     #[test]

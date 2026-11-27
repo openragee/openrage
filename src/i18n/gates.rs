@@ -157,6 +157,66 @@ fn a_sentence_a_world_adapter_names_that_no_catalog_holds_fails_the_gate() {
     );
 }
 
+/// Where the source the gate walks under `root` makes the key of a sentence by hand, each as a file and a line: the scan reads the macro's literal, so such a key is a text no catalog was asked for.
+fn keys_made_by_hand(root: &std::path::Path) -> Vec<String> {
+    let by_hand = by_hand();
+    let macro_itself = root.join("crates/domain/or-world/src/sentence.rs");
+    let mut found = Vec::new();
+    for file in (used::source_folders(root).iter()).flat_map(|folder| used::rust_files(folder)) {
+        if file == macro_itself {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file).expect("a file reads");
+        let under = file.strip_prefix(root).unwrap_or(&file);
+        let under = under.to_string_lossy().replace('\\', "/");
+        let lines = text.lines().enumerate();
+        found.extend(
+            lines
+                .filter(|(_, line)| line.contains(by_hand))
+                .map(|(at, _)| format!("{under}:{}", at + 1)),
+        );
+    }
+    found
+}
+
+/// The call that makes a key, by its name alone: an import may rename the type and a line may break before the name.
+// Written in two halves so that this file does not hold what it looks for.
+fn by_hand() -> &'static str {
+    concat!("keyed_by_", "the_macro(")
+}
+
+#[test]
+fn the_key_of_a_sentence_is_made_by_its_macro_alone() {
+    let by_hand = by_hand();
+    let root = tempfile::tempdir().expect("a scratch folder");
+    for (file, line) in [
+        ("src/main.rs", "fn main() {}".to_owned()),
+        (
+            "crates/domain/or-world/src/sentence.rs",
+            format!("        $crate::sentence::Sentence::{by_hand}$text)"),
+        ),
+        (
+            "crates/domain/or-world-testopolis/src/lib.rs",
+            format!(
+                "\npub const A: Sentence = or_world::sentence::Sentence::{by_hand}\"By hand\");\nuse or_world::sentence::Sentence as Key;\npub const B: Key = Key::\n    {by_hand}\"Under another name\");"
+            ),
+        ),
+    ] {
+        let path = root.path().join(file);
+        std::fs::create_dir_all(path.parent().expect("a folder")).expect("a folder is made");
+        std::fs::write(path, line).expect("a file is written");
+    }
+    assert_eq!(
+        keys_made_by_hand(root.path()),
+        [
+            "crates/domain/or-world-testopolis/src/lib.rs:2",
+            "crates/domain/or-world-testopolis/src/lib.rs:5"
+        ]
+    );
+    let tree = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    assert_eq!(keys_made_by_hand(tree), [] as [String; 0]);
+}
+
 #[test]
 fn a_translation_keeps_every_argument_of_its_text_under_its_own_name() {
     let mut faults = Vec::new();

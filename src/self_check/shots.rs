@@ -11,10 +11,13 @@ use std::time::{Duration, Instant};
 
 mod compare;
 mod drag;
+mod dumps;
 mod keys;
 mod lost_device;
 mod perf;
 mod png;
+#[cfg(test)]
+mod reference_tests;
 mod script;
 mod waits;
 mod watched;
@@ -343,6 +346,12 @@ impl Shell {
             Step::ModelPasses => self.bridge.rebuild_model_passes(),
             Step::Compare(step) => {
                 if let Err(why) = compare::run(step, out) {
+                    println!("FAILED  {why}");
+                    self.failed.push(why);
+                }
+            }
+            Step::CompareDump(step) => {
+                if let Err(why) = dumps::run(step, out) {
                     println!("FAILED  {why}");
                     self.failed.push(why);
                 }

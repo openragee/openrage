@@ -86,14 +86,24 @@ pub(super) enum Step {
     World(super::world::WorldStep),
     /// A shot measured against a reference image.
     Compare(super::compare::Compare),
+    /// A `world dump` held to a reference dump, over the fields two runs of one build hold alike.
+    CompareDump(super::dumps::CompareDump),
     /// What this many frames of the open GTA VI model cost at rest, and as many with the camera turned once round it, written as JSON to this file beside the shots; with `true`, every pass drawn every frame, whatever moved.
     ModelPerf(usize, String, bool),
     /// Build the passes of the open GTA VI model again from nothing, its maps decoded already.
     ModelPasses,
 }
 
-/// Every step with its line number and text, or the first line that is wrong.
+/// Every step with its line number and text, or the first line that is wrong; a `${NAME}` in a line is the environment variable of that name.
 pub(super) fn parse(text: &str) -> Result<Vec<(usize, String, Step)>, String> {
+    parse_with(text, &|name| std::env::var(name).ok())
+}
+
+/// [`parse`], a `${NAME}` being what `variable` gives for the name.
+pub(super) fn parse_with(
+    text: &str,
+    variable: &dyn Fn(&str) -> Option<String>,
+) -> Result<Vec<(usize, String, Step)>, String> {
     let mut steps = Vec::new();
     for (index, raw) in text.lines().enumerate() {
         let line = raw.trim();
@@ -101,10 +111,35 @@ pub(super) fn parse(text: &str) -> Result<Vec<(usize, String, Step)>, String> {
             continue;
         }
         let number = index + 1;
-        let step = parse_step(line).map_err(|why| format!("line {number}: {why}: `{line}`"))?;
-        steps.push((number, line.to_string(), step));
+        let wrong = |why: String| format!("line {number}: {why}: `{line}`");
+        let line = expand(line, variable).map_err(wrong)?;
+        let step = parse_step(&line).map_err(wrong)?;
+        steps.push((number, line, step));
     }
     Ok(steps)
+}
+
+/// `line` with each `${NAME}` replaced by what `variable` gives for the name.
+// ⚠ A name that is not set, or set to nothing, is refused: a path made of nothing would name the root.
+fn expand(line: &str, variable: &dyn Fn(&str) -> Option<String>) -> Result<String, String> {
+    let (mut out, mut rest) = (String::new(), line);
+    while let Some((before, after)) = rest.split_once("${") {
+        let (name, after) = after.split_once('}').ok_or("a `${` is closed by no `}`")?;
+        let named = !name.is_empty()
+            && (name.chars()).all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+        if !named {
+            return Err(format!(
+                "`${{{name}}}` names no environment variable: use capitals, digits and '_'"
+            ));
+        }
+        let value = (variable(name).filter(|value| !value.is_empty()))
+            .ok_or_else(|| format!("the environment variable `{name}` is not set"))?;
+        out.push_str(before);
+        out.push_str(&value);
+        rest = after;
+    }
+    out.push_str(rest);
+    Ok(out)
 }
 
 fn parse_step(line: &str) -> Result<Step, String> {
@@ -334,6 +369,7 @@ fn parse_step(line: &str) -> Result<Step, String> {
         }
         "world" => super::world::parse(rest).map(Step::World),
         "compare" => super::compare::parse(rest).map(Step::Compare),
+        "comparedump" => super::dumps::parse(rest).map(Step::CompareDump),
         "model" => {
             let (frames, name, in_full) = match args[..] {
                 ["passes"] => return Ok(Step::ModelPasses),
@@ -678,7 +714,7 @@ mod tests {
         use super::super::world::WorldStep;
 
         let script = "world clean on\nworld hour 9\nworld camera 1 2 3 45 -10\nworld settle 30\n\
-                      shot city\ncompare city C:\\ref frames\\city.png 2";
+                      shot city\ncompare city C:\\ref frames\\city.png 2 0.5";
         let steps: Vec<Step> = (parse(script).expect("valid").into_iter())
             .map(|(_, _, step)| step)
             .collect();
@@ -696,10 +732,39 @@ mod tests {
                 shot: "city".into(),
                 reference: PathBuf::from("C:\\ref frames\\city.png"),
                 tolerance: 2.0,
+                share: 0.5,
             })
         );
         let wrong = parse("shot a\nworld hour 24").expect_err("no such hour");
         assert!(wrong.starts_with("line 2:"), "{wrong}");
+    }
+
+    #[test]
+    fn a_variable_in_a_line_is_the_environment_s_and_one_not_set_is_refused_by_its_line() {
+        let set = |name: &str| match name {
+            "FOLDER" => Some("C:\\a b".to_string()),
+            "EMPTY" => Some(String::new()),
+            _ => None,
+        };
+        let steps = parse_with("# ${NOT_READ}\nopen ${FOLDER}\\x.ydr\nshot a", &set).expect("set");
+        assert_eq!(steps[0].2, Step::Open(PathBuf::from("C:\\a b\\x.ydr")));
+        assert_eq!(
+            steps[0].1, "open C:\\a b\\x.ydr",
+            "the line is said as it runs"
+        );
+        for (bad, says) in [
+            ("shot a\nopen ${ELSEWHERE}\\x.ydr", "ELSEWHERE"),
+            ("shot a\nopen ${EMPTY}\\x.ydr", "EMPTY"),
+            ("shot a\nopen ${FOLDER\\x.ydr", "closed"),
+            ("shot a\nopen ${folder}\\x.ydr", "capitals"),
+            ("shot a\nopen ${}\\x.ydr", "capitals"),
+        ] {
+            let wrong = parse_with(bad, &set).expect_err("refused");
+            assert!(
+                wrong.starts_with("line 2:") && wrong.contains(says),
+                "{wrong}"
+            );
+        }
     }
 
     #[test]

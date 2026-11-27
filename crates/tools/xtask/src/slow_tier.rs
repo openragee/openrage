@@ -54,6 +54,10 @@ const ALWAYS_SLOW: &[&str] = &[
     "or-io-verify::rdr2_world_census",
 ];
 
+/// Modules of the app that are slow whatever a run timed them at, for the same reason.
+const ALWAYS_SLOW_OF_THE_APP: &[&str] =
+    &["state::gta6_world::worldview::reference::of_the_install"];
+
 const BEGIN: &str = "# slow-tier:begin";
 const END: &str = "# slow-tier:end";
 
@@ -112,8 +116,10 @@ fn slow_modules(tests: &[Timed], budget: f64) -> BTreeSet<(String, String)> {
         slow.insert((binary.to_string(), module.to_string()));
     }
     for test in tests {
-        if ALWAYS_SLOW.contains(&test.binary.as_str()) {
-            slow.insert((test.binary.clone(), module_of(&test.name).to_string()));
+        let module = module_of(&test.name);
+        let of_the_app = test.binary == APP && ALWAYS_SLOW_OF_THE_APP.contains(&module);
+        if ALWAYS_SLOW.contains(&test.binary.as_str()) || of_the_app {
+            slow.insert((test.binary.clone(), module.to_string()));
         }
     }
     slow
@@ -355,6 +361,30 @@ mod tests {
         let config = include_str!("../../../../.config/nextest.toml");
         for binary in ALWAYS_SLOW {
             assert!(SlowTier::parse(config).whole(binary), "{binary}");
+        }
+    }
+
+    #[test]
+    fn a_module_of_the_app_that_walks_an_install_is_slow_though_a_run_timed_it_at_a_skip() {
+        let mut tests: Vec<Timed> = (ALWAYS_SLOW_OF_THE_APP.iter())
+            .map(|module| timed(APP, &format!("{module}::a_walk_of_the_install"), 0.01))
+            .collect();
+        tests.push(timed(APP, "state::units::one", 1.0));
+        let slow = slow_modules(&tests, 100.0);
+        let walks: Vec<(String, String)> = (ALWAYS_SLOW_OF_THE_APP.iter())
+            .map(|module| (APP.to_string(), module.to_string()))
+            .collect();
+        assert_eq!(
+            slow.into_iter().collect::<Vec<_>>(),
+            walks,
+            "the app's other modules stay, and the walk of an install is slow all the same"
+        );
+        // ⚠ The block of `.config/nextest.toml` in the tree states it, as it states the binaries.
+        let config = include_str!("../../../../.config/nextest.toml");
+        let stated = SlowTier::parse(config);
+        for module in ALWAYS_SLOW_OF_THE_APP {
+            let skipped = format!("{module}::");
+            assert!(stated.modules(APP).contains(&skipped), "{module}");
         }
     }
 

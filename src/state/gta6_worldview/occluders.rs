@@ -136,6 +136,14 @@ impl Occluders {
         changed
     }
 
+    /// How many occluder maps are wanted and neither read nor found not to read.
+    #[cfg(test)]
+    pub(super) fn waiting(&self) -> usize {
+        (self.wanted.keys())
+            .filter(|name| !self.loaded.contains_key(name) && !self.failed.contains(name))
+            .count()
+    }
+
     /// The occluders of every map loaded; the same list until one comes or goes.
     pub(super) fn held(&self) -> Arc<[Arc<MapOccluders>]> {
         Arc::clone(&self.held)

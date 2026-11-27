@@ -1,0 +1,33 @@
+# Holds a run of gta6_world_reference.shots to a reference: an earlier run of it, in another folder.
+#
+#   OPENRAGE_WORLD_REFERENCE=<the reference's folder> \
+#       just shots scripts/shots/gta6_world_reference_compare.shots <the folder of the run to judge>
+#
+# It draws nothing: each line measures a shot or a dump the run wrote against the reference's of
+# the same name, and a reference that is not there fails. The two bounds of a shot, the mean
+# difference in levels of 255 and the share of pixels more than 16 levels apart in percent, were
+# set from two runs of one build: docs/guides/Development_Workflow.md says what they measured.
+compare city-noon ${OPENRAGE_WORLD_REFERENCE}/city-noon.png 0.75 1.80
+comparedump city-noon.json ${OPENRAGE_WORLD_REFERENCE}/city-noon.json
+compare city-dusk ${OPENRAGE_WORLD_REFERENCE}/city-dusk.png 0.30 0.60
+comparedump city-dusk.json ${OPENRAGE_WORLD_REFERENCE}/city-dusk.json
+compare city-night ${OPENRAGE_WORLD_REFERENCE}/city-night.png 0.80 0.60
+comparedump city-night.json ${OPENRAGE_WORLD_REFERENCE}/city-night.json
+compare interior-noon ${OPENRAGE_WORLD_REFERENCE}/interior-noon.png 0.10 0.10
+comparedump interior-noon.json ${OPENRAGE_WORLD_REFERENCE}/interior-noon.json
+compare interior-night ${OPENRAGE_WORLD_REFERENCE}/interior-night.png 0.25 0.10
+comparedump interior-night.json ${OPENRAGE_WORLD_REFERENCE}/interior-night.json
+compare country-noon ${OPENRAGE_WORLD_REFERENCE}/country-noon.png 2.45 6.55
+comparedump country-noon.json ${OPENRAGE_WORLD_REFERENCE}/country-noon.json
+compare country-dusk ${OPENRAGE_WORLD_REFERENCE}/country-dusk.png 1.00 2.35
+comparedump country-dusk.json ${OPENRAGE_WORLD_REFERENCE}/country-dusk.json
+compare country-night ${OPENRAGE_WORLD_REFERENCE}/country-night.png 1.55 1.20
+comparedump country-night.json ${OPENRAGE_WORLD_REFERENCE}/country-night.json
+compare sea-noon ${OPENRAGE_WORLD_REFERENCE}/sea-noon.png 1.00 1.40
+comparedump sea-noon.json ${OPENRAGE_WORLD_REFERENCE}/sea-noon.json
+compare height-noon ${OPENRAGE_WORLD_REFERENCE}/height-noon.png 4.05 10.70
+comparedump height-noon.json ${OPENRAGE_WORLD_REFERENCE}/height-noon.json
+compare height-every-mode ${OPENRAGE_WORLD_REFERENCE}/height-every-mode.png 4.05 10.70
+comparedump height-every-mode.json ${OPENRAGE_WORLD_REFERENCE}/height-every-mode.json
+compare height-rain-dusk ${OPENRAGE_WORLD_REFERENCE}/height-rain-dusk.png 1.70 3.20
+comparedump height-rain-dusk.json ${OPENRAGE_WORLD_REFERENCE}/height-rain-dusk.json

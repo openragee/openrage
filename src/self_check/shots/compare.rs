@@ -1,8 +1,8 @@
-//! The `compare` step: how far a shot is from a reference image, as two numbers and an image of
-//! the difference saved beside the shot.
+//! The `compare` step: how far a shot is from a reference image, as two numbers, each held to a
+//! bound of its own, and an image of the difference saved beside the shot.
 //!
-//! ⚠ A reference that is not there fails nothing: the shot is then a candidate for it, and the
-//! step never writes one, so no run is ever measured against a frame it made itself.
+//! ⚠ A reference that is not there fails the run, and the step never writes one, so no run is
+//! ever measured against a frame it made itself or passes for want of one.
 
 use std::path::{Path, PathBuf};
 
@@ -21,28 +21,36 @@ pub(super) struct Compare {
     pub reference: PathBuf,
     /// The largest mean difference that passes, in levels of 255.
     pub tolerance: f32,
+    /// The largest share of the pixels with a channel more than [`PAST`] levels away that passes, in percent.
+    pub share: f32,
 }
 
-/// The comparison the words after `compare` name: a shot, a reference image, a tolerance.
+/// The comparison the words after `compare` name: a shot, a reference image, and the two bounds.
 pub(super) fn parse(rest: &str) -> Result<Compare, String> {
+    const NEEDS: &str = "needs a shot's name, a reference image, the largest mean difference \
+                         and the largest share of pixels past 16 levels, in percent";
     let (shot, after) = split_word(rest);
-    // The reference is a path, which may hold spaces: the tolerance is the last word.
-    let (reference, tolerance) = after
+    // The reference is a path, which may hold spaces: the bounds are the last two words.
+    let (before, share) = after.rsplit_once(char::is_whitespace).ok_or(NEEDS)?;
+    let (reference, tolerance) = (before.trim_end())
         .rsplit_once(char::is_whitespace)
-        .ok_or("needs a shot's name, a reference image and a tolerance")?;
+        .ok_or(NEEDS)?;
     let reference = reference.trim_end();
     if reference.is_empty() {
         return Err("needs a reference image".into());
     }
+    // ⚠ A mean alone lets a small region that is wholly wrong through: a line with one bound is refused.
     let tolerance = (tolerance.parse::<f32>().ok())
         .filter(|t| (0.0..=255.0).contains(t))
-        .ok_or_else(|| {
-            format!("`{tolerance}` is not a tolerance: a mean difference from 0 to 255")
-        })?;
+        .ok_or_else(|| format!("`{tolerance}` is not a mean difference from 0 to 255: {NEEDS}"))?;
+    let share = (share.parse::<f32>().ok())
+        .filter(|s| (0.0..=100.0).contains(s))
+        .ok_or_else(|| format!("`{share}` is not a share of the pixels from 0 to 100"))?;
     Ok(Compare {
         shot: file_stem(shot)?,
         reference: PathBuf::from(reference),
         tolerance,
+        share,
     })
 }
 
@@ -88,7 +96,7 @@ pub(super) fn difference(shot: &RgbaImage, reference: &RgbaImage) -> Result<Diff
     })
 }
 
-/// Measure the shot `compare` names in `out` against its reference and save their difference beside it: an error over the tolerance, and nothing to do with no reference.
+/// Measure the shot `compare` names in `out` against its reference and save their difference beside it: an error over either bound, and with no reference.
 pub(super) fn run(compare: &Compare, out: &Path) -> Result<(), String> {
     let shot = out.join(format!("{}.png", compare.shot));
     if !shot.is_file() {
@@ -98,12 +106,11 @@ pub(super) fn run(compare: &Compare, out: &Path) -> Result<(), String> {
         ));
     }
     if !compare.reference.is_file() {
-        println!(
-            "candidate  {}  (no reference at {})",
-            shot.display(),
+        return Err(format!(
+            "{}: no reference at {}",
+            compare.shot,
             compare.reference.display()
-        );
-        return Ok(());
+        ));
     }
     let open = |path: &Path| {
         image::open(path)
@@ -126,6 +133,9 @@ pub(super) fn run(compare: &Compare, out: &Path) -> Result<(), String> {
             "{measured}; over the tolerance {}",
             compare.tolerance
         ));
+    }
+    if found.past * 100.0 > f64::from(compare.share) {
+        return Err(format!("{measured}; over the share {} %", compare.share));
     }
     Ok(())
 }
@@ -189,49 +199,65 @@ mod tests {
     }
 
     #[test]
-    fn the_step_names_a_shot_a_reference_and_a_tolerance() {
+    fn the_step_names_a_shot_a_reference_and_its_two_bounds() {
         assert_eq!(
-            parse("01-city C:\\a b\\ref 1.png 2.5"),
+            parse("01-city C:\\a b\\ref 1.png 2.5 0.75"),
             Ok(Compare {
                 shot: "01-city".into(),
                 reference: PathBuf::from("C:\\a b\\ref 1.png"),
                 tolerance: 2.5,
+                share: 0.75,
             })
         );
-        assert_eq!(parse("a b.png 0").map(|c| c.tolerance), Ok(0.0));
+        assert_eq!(
+            parse("a b.png 0 0").map(|c| (c.tolerance, c.share)),
+            Ok((0.0, 0.0))
+        );
         for bad in [
             "",
             "a",
             "a b.png",
-            "a b.png much",
-            "a b.png -1",
-            "a b.png 256",
-            "a b.png NaN",
-            "../a b.png 1",
+            // ⚠ One bound is the mean alone, which is what let a wrong region through.
+            "a b.png 2",
+            "a C:\\a b\\ref.png 2",
+            "a b.png much 1",
+            "a b.png 1 much",
+            "a b.png -1 1",
+            "a b.png 256 1",
+            "a b.png 1 -1",
+            "a b.png 1 101",
+            "a b.png NaN 1",
+            "a b.png 1 NaN",
+            "../a b.png 1 1",
         ] {
             assert!(parse(bad).is_err(), "`compare {bad}` should be refused");
         }
     }
 
+    fn step(reference: &Path, tolerance: f32, share: f32) -> Compare {
+        Compare {
+            shot: "scene".into(),
+            reference: reference.to_path_buf(),
+            tolerance,
+            share,
+        }
+    }
+
     #[test]
-    fn a_shot_over_its_tolerance_fails_and_one_with_no_reference_is_a_candidate() {
+    fn a_shot_over_its_tolerance_fails_and_so_does_one_with_no_reference() {
         let folder = tempfile::tempdir().expect("a scratch folder");
         let reference = folder.path().join("reference.png");
-        let step = |tolerance| Compare {
-            shot: "scene".into(),
-            reference: reference.clone(),
-            tolerance,
-        };
+        let step = |tolerance| step(&reference, tolerance, 100.0);
         let no_shot = run(&step(255.0), folder.path()).expect_err("no shot yet");
         assert!(no_shot.contains("scene"), "{no_shot}");
 
         let off = 10;
         let shot = flat(8, 8, [GREY[0] + off, GREY[1], GREY[2], 255]);
         shot.save(folder.path().join("scene.png")).expect("a shot");
-        assert_eq!(
-            run(&step(0.0), folder.path()),
-            Ok(()),
-            "with no reference the shot is a candidate and nothing fails"
+        let missing = run(&step(255.0), folder.path()).expect_err("no reference");
+        assert!(
+            missing.contains("scene") && missing.contains("no reference"),
+            "with no reference the widest bounds still fail: {missing}"
         );
         assert!(!reference.exists(), "the step never writes a reference");
         assert!(!folder.path().join("scene.diff.png").exists());
@@ -247,5 +273,30 @@ mod tests {
         );
         let saved = image::open(folder.path().join("scene.diff.png")).expect("the difference");
         assert_eq!(saved.to_rgba8(), flat(8, 8, [off, 0, 0, 255]));
+    }
+
+    #[test]
+    fn a_small_region_that_is_wholly_wrong_passes_the_mean_and_fails_the_share() {
+        let folder = tempfile::tempdir().expect("a scratch folder");
+        let reference = folder.path().join("reference.png");
+        let (side, wrong) = (100, 10);
+        flat(side, side, GREY)
+            .save(&reference)
+            .expect("a reference");
+        let mut shot = flat(side, side, GREY);
+        for (x, y) in (0..wrong).flat_map(|x| (0..wrong).map(move |y| (x, y))) {
+            shot.put_pixel(x, y, Rgba([255, 255, 255, 255]));
+        }
+        shot.save(folder.path().join("scene.png")).expect("a shot");
+        // A hundredth of the pixels is white: 155 levels of each channel there, and none elsewhere.
+        let share = 100.0 * (wrong * wrong) as f32 / (side * side) as f32;
+        let mean = f32::from(255 - GREY[0]) * share / 100.0;
+        assert_eq!(
+            run(&step(&reference, mean + 0.01, share + 0.01), folder.path()),
+            Ok(())
+        );
+        let over = run(&step(&reference, mean + 0.01, share - 0.01), folder.path())
+            .expect_err("over the share, under the mean");
+        assert!(over.contains("scene") && over.contains("share"), "{over}");
     }
 }

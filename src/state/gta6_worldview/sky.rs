@@ -601,6 +601,13 @@ fn sky_radiance(moment: &Moment, height: f32) -> Radiance {
     last
 }
 
+/// Whether a table of the sky's radiance is being worked out or waits to be.
+#[cfg(test)]
+pub(super) fn radiance_pending() -> bool {
+    let work = WORK.lock().unwrap_or_else(|p| p.into_inner());
+    work.0.is_some() || work.1.is_some()
+}
+
 /// Work out the tables asked for, one after another, until none is.
 fn work_through() {
     loop {

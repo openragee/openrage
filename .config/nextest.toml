@@ -55,6 +55,7 @@ not (
       | test(/^state::every_write_asks_the_jobs_reading_it::/)
       | test(/^state::fix_all_safe_and_the_optimiser_in_the_app::/)
       | test(/^state::gltf_in_and_out_from_the_app::/)
+      | test(/^state::gta6_world::worldview::reference::of_the_install::/)
       | test(/^state::maps_and_a_budget_in_the_app::/)
       | test(/^state::no_save_replaces_a_file_a_job_reads::/)
       | test(/^state::nothing_draws_over_what_it_belongs_to::/)
@@ -538,6 +539,13 @@ slow-timeout = { period = "60s", terminate-after = 15 }
 
 [profile.all.junit]
 path = "junit.xml"
+
+# The digests of the GTA VI world build the install's index afresh, then read models, textures and maps of it and
+# select at each camera of the reference script: TIMED beside building lanes, so it is held to ninety. It stands
+# before the app's own limit, which a test takes from the first override that names it.
+[[profile.all.overrides]]
+filter = 'test(the_world_reads_as_its_reference_says)'
+slow-timeout = { period = "60s", terminate-after = 90 }
 
 # The app's tests are short: the slowest of a whole-suite run under load took 114 s, and one test once sat idle for
 # 39 minutes, which held a gate and said nothing of which test it was. One still running at 300 s is terminated.

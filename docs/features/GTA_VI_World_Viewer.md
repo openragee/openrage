@@ -272,6 +272,20 @@ which meters no frame, without waiting for the exposure; and until the world's t
 every model it was told of) and measures
 the frame against a reference image ([screenshots](../guides/Development_Workflow.md#screenshots)).
 
+`scripts/shots/gta6_world_reference.shots` is such a script kept in the tree: a city block, an
+interior, open country, the sea and a view from height, at noon, dusk and night, in the base game
+and with every mode on, clear and in the rain, each stop settled and converged, then shot and
+dumped. A run of it before a change is that change's reference, and
+`scripts/shots/gta6_world_reference_compare.shots` holds a run after the change to it: each shot by
+its mean difference and by the share of its pixels more than 16 levels apart, each dump field by
+field over the fields two runs hold alike. The frames are lit by the game's passes only where
+`OPENRAGE_GAME_PACK` names a baked pack. What a dump holds nothing of (the vertices, the materials, the textures, the index's rows,
+the lights, the occluders and the day's values) is held by digests the suite
+`the_world_reads_as_its_reference_says` takes of the install. No frame of a game and no digest of
+one is kept in the tree; [the reference of the GTA VI World
+screen](../guides/Development_Workflow.md#the-reference-of-the-gta-vi-world-screen) has the
+commands, the bounds and what each of the three can and cannot catch.
+
 ## Limits
 
 - A far stand-in's card is baked from its species' own model, not read from the game's own atlas,

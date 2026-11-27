@@ -31,7 +31,7 @@ mod sizing;
 
 use sizing::{counts, learn, sized, Learned, Reached, Sizes, Slots, AMBIGUOUS, TOO_MANY};
 #[cfg(test)]
-use sizing::{elements, Elements};
+use sizing::{elements, too_deep, Elements};
 
 /// The most rounds in which a program's functions that failed for want of a count are lifted again, each with what the rounds before it learned.
 const ROUNDS: usize = 4;
@@ -107,8 +107,27 @@ fn function_counted(
             what: "its exception regions are not lifted".to_owned(),
         });
     }
-    let insns = decode::function_in(program, slots.project, row)?;
+    let insns = decoded(program, slots.project, row)?;
     counted(program, slots, row, &insns)
+}
+
+/// A function's instructions; where the last byte of the code ends it and its last instruction goes on to the next, that instruction meets the end of the bytecode.
+// Nothing lies past the code to run, so control that gets there falls off the bytecode: the
+// step a listing writes as a `throw`. Control that runs on into another function is not this.
+fn decoded(
+    program: &Program,
+    project: &Project,
+    row: &FunctionRow,
+) -> Result<Vec<Insn>, DisasmError> {
+    let mut insns = decode::function_in(program, project, row)?;
+    let ends = row.end as usize >= program.code.len();
+    if let (true, Some(last)) = (ends, insns.last_mut()) {
+        let stops = |op: &Op| op.leaves() || matches!(op, Op::Branch { .. });
+        if !last.ops.iter().any(stops) {
+            last.ops.push(Op::Unreachable);
+        }
+    }
+    Ok(insns)
 }
 
 /// Lifts a function's decoded instructions, with the value types they name and the counts its slot calls were sized with.
@@ -132,7 +151,7 @@ fn retried(
     row: &FunctionRow,
     last: &mut Counts,
 ) -> Option<Result<(Lifted, Counts), LiftError>> {
-    let insns = match decode::function_in(program, slots.project, row) {
+    let insns = match decoded(program, slots.project, row) {
         Ok(insns) => insns,
         Err(why) => return Some(Err(why.into())),
     };
@@ -393,8 +412,9 @@ pub fn functions_in(
         stats.incomplete += 1;
         written(progress);
     }
-    let done = super::passes::async_await::joined(done, cx);
+    let (done, steps) = super::passes::async_await::joined_steps(done, cx);
     let mut unit = super::passes::classes::unit(program.program, imports, done, cx);
+    super::machines_hidden(&mut unit, &steps, cx);
     unit.front = Some(super::print::PROGRAM);
     let files = super::emit::unit(&unit, cx, &stats);
     Output { files, stats }

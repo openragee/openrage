@@ -26,6 +26,9 @@ const BASES: usize = 64;
 /// The cells the walk that holds a choice of element cells to the compiler's rules may keep at once; past them the rules are not asked.
 const MARKS: usize = 1 << 22;
 
+/// The times the walk of [`too_deep`] may visit each instruction of the function before it says nothing.
+const VISITS: usize = 4;
+
 /// What the walk from the entry found of each instruction.
 pub(super) struct Reached {
     /// The cells on the stack before the instruction; `None` for one the entry does not reach.
@@ -244,8 +247,7 @@ fn open_at(insns: &[Insn], i: usize, sizes: &Sizes) -> Option<Choice> {
         } => Some((callee, *args)),
         _ => None,
     })?;
-    // A value read out of an array is a cell at the least; a function may yield none.
-    let cells = u32::from(matches!(callee, Callee::Intrinsic { .. }));
+    let cells = least(callee);
     let mut sites = vec![(insn.at, args)];
     if let Some((slot, _)) = insn.ops.iter().find_map(slot_of) {
         for other in insns {
@@ -259,6 +261,93 @@ fn open_at(insns: &[Insn], i: usize, sizes: &Sizes) -> Option<Choice> {
         }
     }
     Some(Choice { sites, cells })
+}
+
+/// The fewest cells a call whose result no table states is tried at.
+// A value read out of an array is a cell at the least; a function may yield none.
+fn least(callee: &Callee) -> u32 {
+    u32::from(matches!(callee, Callee::Intrinsic { .. }))
+}
+
+/// Whether the counts of `sizes`, with every call they leave open at its least, already leave cells at a return on some way to it: then so does every count above them.
+// A call whose count is not stated only adds cells, and every other step takes and leaves as many
+// whatever is chosen, so the cells along one way only grow with each count. Where two ways meet,
+// a choice that balances brings as many by both: the most either brings is no more than it.
+// `false` says nothing: the walk was cut, or met a jump or a call it cannot count.
+pub(super) fn too_deep(insns: &[Insn], sizes: &Sizes, spent: &mut u64) -> bool {
+    let index = |to: u32| insns.binary_search_by_key(&to, |insn| insn.at).ok();
+    // The fewest cells each instruction can find, for the instructions the walk reached.
+    let mut fewest: Vec<Option<u64>> = vec![None; insns.len()];
+    let Some(entry) = fewest.first_mut() else {
+        return false;
+    };
+    *entry = Some(0);
+    let mut work = vec![0usize];
+    let mut visits = insns.len().saturating_mul(VISITS);
+    while let Some(i) = work.pop() {
+        let (Some(insn), Some(Some(found))) = (insns.get(i), fewest.get(i).copied()) else {
+            continue;
+        };
+        visits = match visits.checked_sub(1) {
+            Some(left) => left,
+            None => return false,
+        };
+        *spent = spent.saturating_add(1);
+        let mut cells = found;
+        let mut next: Vec<usize> = Vec::new();
+        let mut falls = true;
+        for op in &insn.ops {
+            let (pops, pushes) = match op {
+                Op::Unsized {
+                    callee,
+                    args,
+                    returns,
+                } => match (args.zip(*returns), sizes.get(&insn.at), args) {
+                    (Some(stated), _, _) => stated,
+                    (None, Some(chosen), _) => *chosen,
+                    (None, None, Some(args)) => (*args, least(callee)),
+                    (None, None, None) => return false,
+                },
+                _ => op.stack(),
+            };
+            // A way that balances takes no cell it does not have: it holds at least as many as this takes.
+            cells = cells
+                .saturating_sub(u64::from(pops))
+                .saturating_add(u64::from(pushes));
+            match op {
+                Op::Return { .. } if cells > 0 => return true,
+                Op::Jump { to } | Op::Branch { to } => match index(*to) {
+                    Some(to) => next.push(to),
+                    None => return false,
+                },
+                Op::Switch { cases, default } => {
+                    for to in cases.iter().map(|(_, to)| to).chain([default]) {
+                        match index(*to) {
+                            Some(to) => next.push(to),
+                            None => return false,
+                        }
+                    }
+                }
+                _ => {}
+            }
+            if op.leaves() {
+                falls = false;
+                break;
+            }
+        }
+        if falls && i + 1 < insns.len() {
+            next.push(i + 1);
+        }
+        for to in next {
+            if let Some(held) = fewest.get_mut(to) {
+                if held.is_none_or(|had| cells > had) {
+                    *held = Some(cells);
+                    work.push(to);
+                }
+            }
+        }
+    }
+    false
 }
 
 /// The walk of a function under the one choice of result cells, for the calls that state none, that lets the cells balance.
@@ -339,7 +428,10 @@ pub(super) fn sized(
                 for (at, args) in &last.sites {
                     sizes.insert(*at, (*args, last.cells));
                 }
-                break;
+                // ⚠ Only ever turns counts down: this one, and every one above it, which adds more cells still.
+                if !too_deep(insns, &sizes, &mut spent) {
+                    break;
+                }
             }
             for (at, _) in &last.sites {
                 sizes.remove(at);
@@ -543,7 +635,9 @@ pub(super) fn elements(insns: &[Insn], sizes: &Sizes, strict: bool, spent: &mut 
         let mut lowest = (stack.len(), Mark::default());
         let mut next: Vec<usize> = Vec::new();
         let mut falls = true;
-        for op in &insn.ops {
+        // The raises left of a run whose ends were held already.
+        let mut raised = 0usize;
+        for (k, op) in insn.ops.iter().enumerate() {
             let len = stack.len();
             let whole =
                 |at: Option<usize>| at.and_then(|at| stack.get(at)).is_none_or(|m| m.part == 0);
@@ -560,11 +654,22 @@ pub(super) fn elements(insns: &[Insn], sizes: &Sizes, strict: bool, spent: &mut 
                 Op::Sink { depth } if !(whole(under(1)) && whole(under(*depth))) => {
                     return Elements::Broken;
                 }
+                // A run of raises from one depth lifts the cells it passes over as one block, the
+                // deepest first: what it moves is whole where the block starts and ends between two values.
+                Op::Raise { .. } if raised > 0 => raised -= 1,
                 Op::Raise { depth } => {
+                    let run = insn.ops.iter().skip(k).take_while(|same| *same == op);
+                    let run = run.count();
+                    // A run as long as its depth turns the cells round and is no block.
+                    let span = match run < *depth as usize {
+                        true => run,
+                        false => 1,
+                    };
                     let from = under(*depth);
-                    if !whole(from) || !whole(from.map(|from| from + 1)) {
+                    if !whole(from) || !whole(from.map(|from| from + span)) {
                         return Elements::Broken;
                     }
+                    raised = span - 1;
                 }
                 Op::AddrOfTop { cells } => match under(*cells) {
                     None if strict => return Elements::Short,

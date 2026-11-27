@@ -1378,3 +1378,130 @@ fn a_program_lifts_a_function_its_calls_left_open_with_what_its_other_functions_
         .collect();
     assert_eq!(results, vec![Some(2), Some(2)]);
 }
+
+/// A value of one zero cell made under the two cells on top, as the decoder writes `alloc_value`, and its address above it.
+fn made_under_two() -> Vec<Op> {
+    let zeroed = Op::Push {
+        e: Expr::ZeroSlots(1),
+        cells: 1,
+    };
+    let raise = Op::Raise { depth: 4 };
+    vec![zeroed, Op::AddrOfTop { cells: 1 }, raise.clone(), raise]
+}
+
+#[test]
+fn a_run_of_raises_lifts_an_element_whole_over_a_value_made_under_it() {
+    let read = || Op::Unsized {
+        callee: operation("array_get_value"),
+        args: Some(2),
+        returns: None,
+    };
+    // An element read, a value made under it, and the address with the element handed to a call.
+    let steps = || {
+        vec![
+            vec![push(p(0)), push(p(1)), read()],
+            made_under_two(),
+            vec![call(3, 0)],
+            vec![Op::Drop { cells: 1 }],
+            done(),
+        ]
+    };
+    let f = lifted(steps()).expect("the function lifts");
+    let element = operated("array_get_value", vec![p(0), p(1)], 2);
+    assert_eq!(block(&f, 0).stmts.first(), Some(&set(v(0, 0), element)));
+
+    // ⚠ The two raises move the element's two cells as one block: of three, they move two and leave one.
+    let insns = code(steps());
+    let mut spent = 0;
+    let mut sizes = Sizes::new();
+    sizes.insert(at(0), (2, 2));
+    assert_eq!(elements(&insns, &sizes, true, &mut spent), Elements::Hold);
+    sizes.insert(at(0), (2, 3));
+    assert_eq!(elements(&insns, &sizes, true, &mut spent), Elements::Broken);
+}
+
+#[test]
+fn a_count_that_leaves_cells_at_a_return_is_turned_down_with_every_count_above_it() {
+    // Four slots of four types, none of whose results anything takes: every count but none
+    // leaves cells at the return, and the products of the counts are past what the search walks.
+    let steps = vec![
+        vec![push(p(0)), slot_call(0xD1)],
+        vec![push(p(0)), slot_call(0xD2)],
+        vec![push(p(0)), slot_call(0xD3)],
+        vec![push(p(0)), slot_call(0xD4)],
+        done(),
+    ];
+    let f = lifted(steps).expect("the function lifts");
+    let yields_none = |stmt: &&Stmt| {
+        matches!(
+            stmt,
+            Stmt::Eval(Expr::Call {
+                returns: Some(0),
+                ..
+            })
+        )
+    };
+    assert_eq!(block(&f, 0).stmts.iter().filter(yields_none).count(), 4);
+
+    // The walk itself: a count above none leaves a cell at the return, by either way to it.
+    let mut spent = 0;
+    let alone = code(vec![vec![push(p(0)), slot_call(0xD1)], done()]);
+    assert!(!too_deep(&alone, &Sizes::new(), &mut spent));
+    assert!(too_deep(
+        &alone,
+        &Sizes::from([(at(0), (1, 1))]),
+        &mut spent
+    ));
+    let met = code(vec![
+        vec![push(p(0)), Op::Branch { to: at(2) }],
+        vec![push(p(0)), slot_call(0xD1), Op::Jump { to: at(2) }],
+        done(),
+    ]);
+    assert!(!too_deep(&met, &Sizes::new(), &mut spent));
+    assert!(too_deep(&met, &Sizes::from([(at(1), (1, 1))]), &mut spent));
+    // A jump the walk cannot follow proves nothing.
+    let lost = code(vec![
+        vec![push(p(0)), slot_call(0xD1)],
+        vec![Op::Jump { to: 0x9999 }],
+    ]);
+    assert!(!too_deep(
+        &lost,
+        &Sizes::from([(at(0), (1, 1))]),
+        &mut spent
+    ));
+    assert!(spent > 0);
+}
+
+#[test]
+fn a_function_that_runs_past_the_last_byte_of_the_code_falls_off_the_bytecode() {
+    let nop = || encoded("nop", &[]);
+    let row = FunctionRow {
+        at: 0,
+        end: 4,
+        params: 0,
+        locals: 4,
+        returns: 0,
+    };
+    let last = Program {
+        program: 0x1122_3344,
+        code: [nop(), nop()].concat(),
+        functions: vec![row],
+        ..Program::default()
+    };
+    let ran = function(&last, &row).expect("the function lifts");
+    let blocks = &ran.function.cfg.blocks;
+    let fallen = blocks.iter().filter(|b| b.term == Terminator::Unreachable);
+    assert_eq!(fallen.count(), 1);
+
+    // ⚠ Code after it would run next: running on into it is no end of the bytecode.
+    let followed = Program {
+        code: [nop(), nop(), encoded("return", &[])].concat(),
+        ..last.clone()
+    };
+    let refused = function(&followed, &row);
+    let off = "control runs off the end of the function";
+    assert!(
+        matches!(&refused, Err(LiftError::Stack { what, .. }) if what.as_str() == off),
+        "{refused:?}"
+    );
+}

@@ -34,6 +34,8 @@ use or_io::{literal_string_hash, string_hash};
 #[path = "gta6_names_rules.rs"]
 mod rules;
 use rules::{NESTED_CAP, SIBLING_CAP};
+#[path = "gta6_names_cross.rs"]
+mod cross;
 
 const USAGE: &str = "\
 usage: openrage-cli hashes mine <install-folder | archive.rpf> --out <file> [--names <dir>] [--keys <snapshot>] [--exe <exe>] [--listings <dir>] [--range <count>] [--max-bodies <n>|unlimited] [--max-total <n>|unlimited] [--archive <n>]...
@@ -47,6 +49,14 @@ usage: openrage-cli hashes mine <install-folder | archive.rpf> --out <file> [--n
   --max-total <n>    read at most <n> bodies of the whole install in each walk (default unlimited)
   --archive <n>      read the bodies of the n-th archive only, as the report numbers them; give it
                      again for more. Every archive's table is still read for its unnamed rows
+  -h, --help         print this text";
+
+const CROSS_USAGE: &str = "usage: openrage-cli hashes cross <install-folder | archive.rpf> --out <file> [--names <dir>] [--keys <snapshot>] [--exe <exe>]
+  Names the entries no name resolves from the parts of the names known: every stem of a known
+  name with every frequent ending, number and word, hashed on every thread. Only the tables are
+  read, no body. Writes the names it finds to <file> as 0xHASH<TAB>name rows after the rows it
+  holds, and merges them into the names table of the configuration folder, which every verb and
+  the explorer read with no setting. No archive is written.
   -h, --help         print this text";
 
 const MIN_CANDIDATE: usize = 3;
@@ -1339,24 +1349,86 @@ fn mine(options: &Options) -> Result<Vec<String>, String> {
     Ok(lines)
 }
 
+/// `hashes cross`: reads every table of the install for its unnamed entries and names them by the cross products.
+fn cross_names(options: &Options) -> Result<Vec<String>, String> {
+    let keys = crate::gta6_keys::load(options.keys.as_deref(), options.exe.as_deref())?;
+    let resolver = load_resolver(options.names.as_deref());
+    let unwritten = |e: std::io::Error| format!("{}: {e}", options.out.display());
+    let kept = match std::fs::read_to_string(&options.out) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(unwritten(e)),
+    };
+    let archives = archives(&options.install);
+    if archives.is_empty() {
+        return Err(format!("no .rpf in {}", options.install.display()));
+    }
+    let mut miner = Miner::new();
+    miner.keep_rows(&kept);
+    let mut refused = 0;
+    for path in &archives {
+        walk_archive(path, &keys, &mut refused, &mut |_, mount, _, at| {
+            let entries = &mount.archive.entries;
+            miner.place(at, entries);
+            miner.add_table(entries, &resolver);
+        });
+    }
+    let config = or_title::config::config_dir();
+    let vocabulary = config
+        .as_ref()
+        .map(|c| Vocabulary::load(&vocabulary_file(c)));
+    let extra: Vec<String> = (vocabulary.iter())
+        .flat_map(|v| v.names().map(str::to_string))
+        .collect();
+    let mut lines = vec![format!(
+        "hashes cross: {} tables read, {refused} refused; {} entries unresolved",
+        miner.tables,
+        miner.entry.len()
+    )];
+    lines.extend(miner.cross(extra));
+    let rows = miner.take_rows();
+    write_rows(&options.out, &kept, &rows).map_err(unwritten)?;
+    lines.push(format!(
+        "  written       {}: {} of {} unresolved names found, after the rows it held; no archive is written",
+        options.out.display(),
+        miner.found64.len(),
+        miner.entry.len()
+    ));
+    if let Some(config) = &config {
+        merge_into_config(&miner, config);
+        lines.push(format!(
+            "  merged        {}: what every verb and the metadata reader read with no setting",
+            ragepar_names::mined_table(config).display()
+        ));
+    }
+    Ok(lines)
+}
+
 pub(crate) fn run(args: &[String]) -> ExitCode {
-    let Some(("mine", rest)) = args.split_first().map(|(verb, rest)| (verb.as_str(), rest)) else {
+    let split = args.split_first().map(|(verb, rest)| (verb.as_str(), rest));
+    let Some((verb @ ("mine" | "cross"), rest)) = split else {
         eprintln!("{USAGE}");
         return ExitCode::from(2);
     };
+    let usage = if verb == "cross" { CROSS_USAGE } else { USAGE };
     if rest.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!("{USAGE}");
+        println!("{usage}");
         return ExitCode::SUCCESS;
     }
     let options = match parse(rest) {
         Ok(options) => options,
         Err(e) => {
             eprintln!("Error: {e}");
-            eprintln!("{USAGE}");
+            eprintln!("{usage}");
             return ExitCode::from(2);
         }
     };
-    match mine(&options) {
+    let ran = if verb == "cross" {
+        cross_names(&options)
+    } else {
+        mine(&options)
+    };
+    match ran {
         Ok(lines) => {
             lines.iter().for_each(|line| println!("{line}"));
             ExitCode::SUCCESS

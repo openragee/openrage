@@ -318,7 +318,7 @@ pub fn run(args: &[String]) -> ExitCode {
         }
         "hash" => names::run_hash(rest),
         "names" => with_cli_tracing(|| names::run_names(rest)),
-        "hashes" if rest.first().is_some_and(|w| w == "mine") => {
+        "hashes" if rest.first().is_some_and(|w| w == "mine" || w == "cross") => {
             with_cli_tracing(|| gta6_names_mine::run(rest))
         }
         "serve" => serve::run(rest),

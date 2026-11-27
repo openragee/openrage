@@ -54,7 +54,9 @@ RPF7 archives, whose entry names are text, and its metadata files.
                       configuration folder
 
 `hashes mine` writes names found for the unresolved hashes, from the install's strings, the
-executable's and rules over the names known, to <file>; `hashes mine --help` says more.";
+executable's and rules over the names known, to <file>; `hashes mine --help` says more.
+`hashes cross <install> --out <file>` names them from the parts of the names known, reading no
+body; `hashes cross --help` says more.";
 
 /// The environment variable naming a folder of lifted listings, as the decompiler's tests read it.
 const LISTINGS_ENV: &str = "OPENRAGE_LIFTED_LISTINGS";

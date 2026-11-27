@@ -189,8 +189,12 @@ fn the_recipe_builds_a_resource_and_the_command_names_the_lines_about_its_files(
     assert_eq!(distances, [101.0]);
 
     let printed = run_step("acceptance", work.path());
-    assert!(
-        printed.starts_with(&format!("{}: 3 file(s) of 3 kind(s)\n", text(&resource))),
+    let (folder, _) = printed
+        .split_once(": 3 file(s) of 3 kind(s)\n")
+        .unwrap_or_else(|| panic!("the command counts what the build wrote: {printed}"));
+    assert_eq!(
+        Path::new(folder),
+        resource.as_path(),
         "the command reads the resource the build wrote: {printed}"
     );
     let sheet = Sheet::shipped().unwrap();
@@ -236,7 +240,11 @@ fn the_build_of_the_recipe_says_which_kinds_nobody_saw_loading_as_the_sheet_read
     let work = tempfile::tempdir().unwrap();
     the_sample(work.path());
     let said = run_step("build", work.path());
-    let resource = work.path().join("acceptance/build/or_acceptance");
+    let resource = work
+        .path()
+        .join("acceptance")
+        .join("build")
+        .join("or_acceptance");
 
     // The recipe makes its project for Legacy, so the build is read for that edition alone.
     let kinds: BTreeSet<String> = kinds_in(&resource).unwrap().into_keys().collect();
@@ -313,7 +321,7 @@ fn a_clothing_pack_project(dir: &Path, name: &str) -> PathBuf {
 fn the_build_of_a_clothing_pack_says_that_nobody_saw_a_story_pack_loading_from_either_build_verb() {
     let work = tempfile::tempdir().unwrap();
     let project = a_clothing_pack_project(work.path(), "demo");
-    let folder = work.path().join("build/demo");
+    let folder = work.path().join("build").join("demo");
     let to_check = format!(
         "  to check: openrage-cli project acceptance \"{}\" lists what to look for",
         text(&folder)

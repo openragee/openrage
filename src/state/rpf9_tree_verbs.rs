@@ -2,8 +2,8 @@
 //! OpenRage reopens, and the tree's edits save to a new file, as a patched copy whose table is
 //! byte-identical when every edit is a body that fits its entry's chunks, else through the GTA VI
 //! writer as a rebuilt archive, which the game refuses because only its maker can sign the table.
-//! Which of the two is planned on a worker before anything is written, and a question before the
-//! save dialog says it.
+//! Which of the two is planned on a worker before anything is written, as a job the list shows and
+//! stops, and a question before the save dialog says it.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::File;
@@ -13,15 +13,19 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use or_io::container::rpf::gta6_container_write::Rpf9NewBody;
 use or_io::container::rpf::{
-    gta6_patch::plan_patch_with, read_rpf9_body, write_planned_copy, write_rpf9_resource, BodyForm,
-    BodyPatch, Gta6Class, Gta6Mount, GtaViKeys, PatchPlan, PatchRefusal, Rpf9ArchiveWriter,
-    Rpf9Sections, RpfEntry, RpfVersion, RPF9_MAGIC, RPF9_SLOT,
+    gta6_patch::OPTIMAL_CAP, read_rpf9_body, write_planned_copy, write_rpf9_resource, BodyForm,
+    Gta6Class, Gta6Mount, GtaViKeys, PatchPlan, Rpf9ArchiveWriter, Rpf9Sections, RpfEntry,
+    RpfVersion, RPF9_MAGIC, RPF9_SLOT,
 };
 use or_io::container::RpfArchive;
+
+pub(crate) use plan_job::plan_save;
+use plan_job::{plan_save_with, Tick, Unplanned};
 
 use crate::platform::file_dialogs;
 use crate::state::document::{ArchiveId, DocumentId, RpfNodeId};
 use crate::state::extract_job::{plan, ExtractItem, TypeFilter};
+use crate::state::jobs::{JobKind, Outcome, Then};
 use crate::state::rpf_node::{ArchiveSource, RpfNodeBacking};
 use crate::state::rpf_session::RpfEditSession;
 use crate::state::{AppState, DocPayload};
@@ -35,7 +39,7 @@ type Ended = (
     DocumentId,
     u64,
     PathBuf,
-    Result<(Saved, Option<adopt::Reopened>), String>,
+    Result<(Saved, Option<adopt::Reopened>), Unplanned>,
 );
 
 /// How a copy of a GTA VI archive was written.
@@ -150,15 +154,6 @@ pub(crate) fn planned_title(planned: &Planned) -> &'static str {
     }
 }
 
-/// How far `got` bytes are from the `want` a row or a chunk states.
-fn off_by(got: u64, want: u64) -> String {
-    if got > want {
-        tr_n!("{count} byte over", "{count} bytes over", got - want)
-    } else {
-        tr_n!("{count} byte short", "{count} bytes short", want - got)
-    }
-}
-
 /// What a save of the archive `file` planned as `planned` writes and why, as its question says it.
 pub(crate) fn planned_said(file: &str, planned: &Planned) -> String {
     match planned.writes() {
@@ -189,88 +184,6 @@ pub(crate) fn planned_said(file: &str, planned: &Planned) -> String {
         rows = rows
     );
     format!("{said} {why}")
-}
-
-/// The largest changed chunk an app save runs the optimal parse over.
-// ponytail: a save's plan has no stop and no progress yet, and the parse takes about two minutes per
-// 8 MiB chunk; raise this to `gta6_patch::OPTIMAL_CAP` once the plan reports and stops.
-const SAVE_OPTIMAL_CAP: usize = 256 << 10;
-
-/// Plan `replaced` into the archive at `source`, reading only: a patched copy when each body fits
-/// its entry's chunks and `kept` names no other edit, else a rebuild by `writer`, with each row that
-/// keeps it from being patched named with the refusal and by how many bytes.
-pub(crate) fn plan_save(
-    source: &Path,
-    keys: &GtaViKeys,
-    replaced: &[Replaced],
-    mut kept: Vec<String>,
-    writer: Rpf9ArchiveWriter,
-) -> Result<Planned, String> {
-    let mut file = File::open(source).map_err(|e| format!("{}: {e}", source.display()))?;
-    let mut patches = Vec::new();
-    for row in replaced {
-        let Some(&entry) = row.at.chain.last() else {
-            kept.push(tr!("{name} has no body of its own", name = row.name));
-            continue;
-        };
-        // A headerless row states no real size, so its length is left to the plan's chunks.
-        let body = if row.at.headerless {
-            let Some(body) = stored_body(&row.body) else {
-                let why = tr!(
-                    "{name} does not read as a resource from its start",
-                    name = row.name
-                );
-                kept.push(why);
-                continue;
-            };
-            body
-        } else {
-            row.body.clone()
-        };
-        let size = body.len() as u64;
-        if !row.at.headerless && row.at.real != Some(size) {
-            let real = (row.at.real).map_or_else(|| "?".to_owned(), |real| real.to_string());
-            let why = tr!(
-                "{name} is {size} bytes, not the {real} its row states",
-                name = row.name,
-                size = size,
-                real = real
-            );
-            let by =
-                (row.at.real).map_or_else(String::new, |real| format!(", {}", off_by(size, real)));
-            kept.push(format!("{why}{by}"));
-            continue;
-        }
-        let patch = BodyPatch {
-            base: row.at.base,
-            entry,
-            body,
-        };
-        match plan_patch_with(&mut file, keys, &patch, SAVE_OPTIMAL_CAP, &mut |_, _| true) {
-            Ok(plan) => patches.push(plan),
-            Err(why) => {
-                let by = match &why {
-                    PatchRefusal::ChunkDoesNotFit {
-                        deflated,
-                        optimal,
-                        ceiling,
-                        ..
-                    } => {
-                        let best = (*deflated).min(*optimal) as u64;
-                        format!(", {}", off_by(best, u64::from(*ceiling)))
-                    }
-                    PatchRefusal::Length { got, want, .. } => format!(", {}", off_by(*got, *want)),
-                    _ => String::new(),
-                };
-                kept.push(format!("{}: {why}{by}", row.name));
-            }
-        }
-    }
-    Ok(Planned {
-        patches,
-        kept,
-        writer,
-    })
 }
 
 /// Write what `planned` says into the new file `out`, and no other file.
@@ -333,7 +246,7 @@ struct Plan {
 // whose question has not been asked, the plan whose question waits on its answer (one at a time, a
 // later plan taking its place), and the plan whose dialog picked the file the save writes.
 static ENDED: Mutex<Vec<Ended>> = Mutex::new(Vec::new());
-static PLANNED: Mutex<Vec<(DocumentId, Result<Plan, String>)>> = Mutex::new(Vec::new());
+static PLANNED: Mutex<Vec<(DocumentId, Result<Plan, Unplanned>)>> = Mutex::new(Vec::new());
 static ASKED: Mutex<Option<Plan>> = Mutex::new(None);
 static HELD: Mutex<Option<Plan>> = Mutex::new(None);
 
@@ -688,20 +601,33 @@ pub(crate) fn write_plan(
     Ok((plan.tables_changed > 0, plan.bodies_changed > 0))
 }
 
-/// Plan the archive at `source` with `edits` made, reading only, then write it into the new file
-/// `out` as planned.
+/// Plan the archive at `source` with `edits` made as a job the list shows, reading only, then write
+/// it into the new file `out` as planned.
 fn write_tree(
     source: &Path,
     edits: &[Edit],
     out: &Path,
     keys: &GtaViKeys,
-) -> Result<Saved, String> {
-    write_planned(source, out, keys, &plan_tree(source, edits, keys)?)
+) -> Result<Saved, Unplanned> {
+    let planned = plan_job::tracked(source, |tick| plan_tree_with(source, edits, keys, tick))?;
+    Ok(write_planned(source, out, keys, &planned)?)
 }
 
 /// Plan the archive at `source` with `edits` made, reading only: a patched copy where every edit is
 /// a body that fits its entry's chunks, else rebuilt.
+#[cfg(test)]
 fn plan_tree(source: &Path, edits: &[Edit], keys: &GtaViKeys) -> Result<Planned, String> {
+    plan_tree_with(source, edits, keys, &mut |_, _, _| true)
+}
+
+/// A tree's save planned as `plan_tree` says, with the optimal parse run over every changed chunk up
+/// to `OPTIMAL_CAP`, telling `tick` the row in hand and the bytes planned; `false` from it stops it.
+fn plan_tree_with(
+    source: &Path,
+    edits: &[Edit],
+    keys: &GtaViKeys,
+    tick: Tick<'_>,
+) -> Result<Planned, String> {
     let wanted: BTreeSet<u64> = (edits.iter())
         .filter_map(|edit| match edit {
             Edit::Replace { at, .. } | Edit::Rename { at, .. } | Edit::Remove { at, .. } => {
@@ -751,7 +677,7 @@ fn plan_tree(source: &Path, edits: &[Edit], keys: &GtaViKeys) -> Result<Planned,
             }
         }
     }
-    plan_save(source, keys, &replaced, kept, writer)
+    plan_save_with(source, keys, &replaced, kept, writer, OPTIMAL_CAP, tick)
 }
 
 impl AppState {
@@ -816,8 +742,10 @@ impl AppState {
         let out = out.to_path_buf();
         std::thread::spawn(move || {
             let said = match held {
-                Some(plan) => write_planned(&source, &out, &plan.keys, &plan.planned),
-                None => keys().and_then(|keys| write_tree(&source, &edits, &out, &keys)),
+                Some(plan) => write_planned(&source, &out, &plan.keys, &plan.planned)
+                    .map_err(Unplanned::Refused),
+                None => (keys().map_err(Unplanned::Refused))
+                    .and_then(|keys| write_tree(&source, &edits, &out, &keys)),
             };
             let said = said.map(|saved| (saved, adopt::reopened(&out, crypto, &listed)));
             lock(&ENDED).push((doc_id, at, out, said));
@@ -849,9 +777,11 @@ impl AppState {
         let at = doc.history.at();
         let edits = tree_edits(&rpf.session);
         std::thread::spawn(move || {
-            let plan = edits.and_then(|edits| {
+            let plan = edits.map_err(Unplanned::from).and_then(|edits| {
                 let keys = keys()?;
-                let planned = plan_tree(&source, &edits, &keys)?;
+                let planned = plan_job::tracked(&source, |tick| {
+                    plan_tree_with(&source, &edits, &keys, tick)
+                })?;
                 Ok(Plan {
                     doc_id,
                     at,
@@ -914,7 +844,14 @@ impl AppState {
         for (doc_id, plan) in arrived {
             let plan = match plan {
                 Ok(plan) => plan,
-                Err(why) => {
+                // A stopped plan asks nothing, since nothing was written.
+                Err(Unplanned::Stopped) => {
+                    let then = Outcome::Stopped(Then::Nothing);
+                    self.jobs
+                        .record(JobKind::Save, then, tr!("Nothing was written"));
+                    continue;
+                }
+                Err(Unplanned::Refused(why)) => {
                     self.show_error_toast(tr!(
                         "Cannot save into a copy of the archive: {reason}",
                         reason = why
@@ -947,7 +884,13 @@ impl AppState {
             let file = crate::state::jobs::file_name(&out);
             let (saved, copy) = match said {
                 Ok(saved) => saved,
-                Err(why) => {
+                Err(Unplanned::Stopped) => {
+                    let then = Outcome::Stopped(Then::Nothing);
+                    self.jobs
+                        .record(JobKind::Save, then, tr!("Nothing was written"));
+                    continue;
+                }
+                Err(Unplanned::Refused(why)) => {
                     self.show_error_toast(tr!(
                         "Cannot save into a copy of the archive: {reason}",
                         reason = why
@@ -1001,10 +944,13 @@ impl AppState {
 #[path = "rpf9_tree_adopt.rs"]
 mod adopt;
 
+#[path = "rpf9_tree_plan_job.rs"]
+pub(crate) mod plan_job;
+
 #[cfg(test)]
 #[path = "rpf9_tree_verbs_tests.rs"]
 pub(crate) mod tests;
 
 #[cfg(test)]
 #[path = "rpf9_tree_headerless_tests.rs"]
-mod headerless_tests;
+pub(crate) mod headerless_tests;

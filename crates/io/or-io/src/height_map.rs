@@ -224,6 +224,24 @@ impl HeightMap {
             (self.bounds_max[1] - self.bounds_min[1]) / f32::from(self.num_rows.max(1)),
         ]
     }
+
+    /// Sets the cell at `col`, `row` to the maximum `height`: its minimum follows where it was equal and never stays above it.
+    pub fn set_cell(&mut self, col: u16, row: u16, height: u8) -> Result<()> {
+        let at = usize::from(row) * usize::from(self.num_cols) + usize::from(col);
+        if col >= self.num_cols || row >= self.num_rows || at >= self.max.len().min(self.min.len())
+        {
+            return Err(refuse(format!(
+                "cell {col}, {row} is outside the {}x{} grid",
+                self.num_cols, self.num_rows
+            )));
+        }
+        // One array (a grid whose two halves are one) keeps both halves equal.
+        if self.min[at] == self.max[at] || self.min[at] > height {
+            self.min[at] = height;
+        }
+        self.max[at] = height;
+        Ok(())
+    }
 }
 
 fn refuse(why: String) -> IoError {
@@ -275,6 +293,35 @@ mod tests {
         let bytes = map.save().expect("saves");
         assert_eq!(bytes.len(), 44 + 24 + 2);
         assert_eq!(HeightMap::open(&bytes).expect("reopens"), map);
+    }
+
+    #[test]
+    fn a_cell_set_moves_its_minimum_only_where_it_was_equal_or_above_and_reopens_equal() {
+        let mut map = grid();
+        // Cell 1, 0 holds 9 over 1: the minimum stays. Cell 0, 2 holds 5 over 0: 0 is below 3.
+        map.set_cell(1, 0, 4).expect("sets");
+        map.set_cell(0, 2, 3).expect("sets");
+        // Cell 1, 2 holds 6 over 3: the new maximum 2 is below it, so the minimum comes down.
+        map.set_cell(1, 2, 2).expect("sets");
+        assert_eq!(map.max, [0, 4, 0, 7, 0, 0, 0, 0, 3, 2, 0, 0]);
+        assert_eq!(map.min, [0, 1, 0, 2, 0, 0, 0, 0, 0, 2, 0, 0]);
+        let mut one = HeightMap {
+            min: grid().max,
+            ..grid()
+        };
+        one.set_cell(3, 0, 200).expect("sets");
+        assert_eq!(
+            (one.max[3], one.min[3]),
+            (200, 200),
+            "equal halves stay equal"
+        );
+        let bytes = map.save().expect("saves");
+        assert_eq!(bytes.len(), grid().save().expect("saves").len());
+        assert_eq!(HeightMap::open(&bytes).expect("reopens"), map);
+        for (col, row) in [(4, 0), (0, 3)] {
+            let error = map.set_cell(col, row, 1).unwrap_err().to_string();
+            assert!(error.contains("outside the 4x3 grid"), "{error}");
+        }
     }
 
     #[test]

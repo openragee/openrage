@@ -151,7 +151,7 @@ fn loose_rbm() -> Vec<u8> {
 }
 
 /// An archive of `entries`, built from nothing as `dir/source.rpf`.
-fn archive_of(dir: &Path, entries: Vec<(String, Rpf9NewBody)>) -> PathBuf {
+pub(crate) fn archive_of(dir: &Path, entries: Vec<(String, Rpf9NewBody)>) -> PathBuf {
     let key = Rpf9IndexKey {
         key_id: KEY_ID,
         iv: [0x33; 16],
@@ -227,7 +227,7 @@ pub(crate) fn files(session: &RpfEditSession) -> Vec<RpfNodeId> {
 }
 
 /// The file row whose body is `body`.
-fn row_holding(session: &RpfEditSession, body: &[u8]) -> RpfNodeId {
+pub(crate) fn row_holding(session: &RpfEditSession, body: &[u8]) -> RpfNodeId {
     (files(session).into_iter())
         .find(|&id| session.bytes_for(id).is_some_and(|b| b.as_slice() == body))
         .expect("a row holds the body")
@@ -485,7 +485,7 @@ fn noise(len: usize) -> Vec<u8> {
 }
 
 /// The names of the files in `dir`, sorted.
-fn listed(dir: &Path) -> Vec<String> {
+pub(crate) fn listed(dir: &Path) -> Vec<String> {
     let mut out: Vec<String> = (std::fs::read_dir(dir).expect("the folder lists"))
         .map(|e| {
             e.expect("an entry")
@@ -582,6 +582,10 @@ fn saved_through_the_dialog(state: &mut AppState, out: &Path) -> (String, String
     };
     let folder = out.parent().expect("a folder");
     assert_eq!(listed(folder).len(), 1, "asking writes nothing");
+    assert!(
+        plan_job::jobs().is_empty(),
+        "a plan that ended leaves the job list"
+    );
     file_dialogs::answer_next(out.to_path_buf());
     state.answer_planned_save(true);
     assert_eq!(state.planned_save_question(), None, "answered");

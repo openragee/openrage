@@ -344,4 +344,4 @@ fn a_real_text_tables_first_text_changed_at_its_length_saves_as_a_patched_copy()
 }
 
 #[path = "gta6_app_saves_per_kind_tests.rs"]
-mod saves_per_kind;
+pub(crate) mod saves_per_kind;

@@ -38,6 +38,7 @@ mod gta6_meta_ids;
 mod gta6_move;
 mod gta6_particles;
 pub(crate) mod gta6_text;
+mod height_map_cell;
 mod hex;
 mod material;
 mod move_network;
@@ -448,6 +449,7 @@ pub(crate) mod rows {
         _selection: Option<u64>,
     ) {
         draw_height_map(ui, state, doc_id);
+        super::height_map_cell::draw(ui, state, doc_id);
     }
 
     pub(crate) fn distant_lights(

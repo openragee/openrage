@@ -7,6 +7,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::num::NonZeroU64;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use flate2::{
     Compress, Compression, Decompress, DecompressError, FlushCompress, FlushDecompress, Status,
@@ -32,6 +33,10 @@ const OPTIMAL_STALL: u64 = 3;
 const OPTIMAL_PART: usize = 64 * 1024;
 /// The largest chunk the optimal parse is run over: a save waits minutes for one this long.
 pub const OPTIMAL_CAP: usize = 8 << 20;
+/// The time the harder tries take at most over one chunk, past which the rest are not begun.
+pub const HARDER_BOUND: Duration = Duration::from_secs(20);
+/// The window the harder tries judge a run incompressible by: one whose fast deflate is no shorter.
+const RUN_WINDOW: usize = 4096;
 
 /// A new inflated body for row `entry` of the table of the archive whose header is at offset `base`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,25 +117,60 @@ pub enum PatchRefusal {
     #[error(
         "chunk {chunk} of entry {entry} deflates at best to {deflated} bytes by the tree's deflater \
          {}: a stream may not run past it",
-        optimal_said(*.optimal, *.ceiling, *.cap)
+        optimal_said(*.optimal, *.ceiling, *.cap, .harder)
     )]
     ChunkDoesNotFit {
         entry: u32,
         chunk: usize,
         /// The shortest stream of the tree's deflater at any level.
         deflated: usize,
-        /// The optimal parse's stream; `usize::MAX` when the chunk is past `cap` and it was not tried.
+        /// The optimal parse's shortest stream, harder tries included; `usize::MAX` when the chunk is past `cap`.
         optimal: usize,
         ceiling: u32,
         /// The largest chunk the plan ran the optimal parse over.
         cap: usize,
+        /// What the harder tries reached, where the first optimal parse missed within [`harder_margin`].
+        harder: Option<HarderMiss>,
     },
     #[error("planning entry {entry} was stopped before it ended, and nothing was written")]
     Stopped { entry: u32 },
 }
 
-fn optimal_said(optimal: usize, ceiling: u32, cap: usize) -> String {
-    if optimal == usize::MAX {
+/// What the harder tries reached over a chunk none of them fitted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HarderMiss {
+    /// The shortest stream a harder try made; `usize::MAX` when none ended.
+    pub smallest: usize,
+    /// The tries that ended, in the order they ran.
+    pub tried: Vec<&'static str>,
+    /// The tries the time bound or a stop cut short or left unbegun.
+    pub untried: Vec<&'static str>,
+}
+
+/// How far past `ceiling` a chunk's first optimal stream may run to be given the harder tries: 1 %, at least 16 bytes.
+// A first estimate: the fit census's part (7) prints how far over each chunk it rescues was.
+pub fn harder_margin(ceiling: usize) -> usize {
+    (ceiling / 100).max(16)
+}
+
+fn optimal_said(optimal: usize, ceiling: u32, cap: usize, harder: &Option<HarderMiss>) -> String {
+    if let Some(h) = harder {
+        let tried = match h.tried.is_empty() {
+            true => "with no harder try ended".to_owned(),
+            false => format!(
+                "the smallest after the harder tries ({})",
+                h.tried.join("; ")
+            ),
+        };
+        let left = match h.untried.is_empty() {
+            true => String::new(),
+            false => format!(", {} cut by the time bound or a stop", h.untried.join("; ")),
+        };
+        format!(
+            "and to {optimal} by an optimal parse, {tried}{left}, and neither fits its {ceiling}-byte \
+             stored size"
+        )
+    } else if optimal == usize::MAX {
         let cap = if cap.is_multiple_of(1 << 20) {
             format!("{} MiB", cap >> 20)
         } else {
@@ -464,13 +504,16 @@ fn plan_in<R: Read + Seek>(
                     return Err(PatchRefusal::Stopped { entry: e });
                 }
                 let (stream, deflated, optimal) =
-                    fitted.map_err(|(deflated, optimal)| PatchRefusal::ChunkDoesNotFit {
-                        entry: e,
-                        chunk: i,
-                        deflated,
-                        optimal,
-                        ceiling: chunk.stored,
-                        cap,
+                    fitted.map_err(|(deflated, optimal, harder)| {
+                        PatchRefusal::ChunkDoesNotFit {
+                            entry: e,
+                            chunk: i,
+                            deflated,
+                            optimal,
+                            ceiling: chunk.stored,
+                            cap,
+                            harder,
+                        }
                     })?;
                 new_stored = deflated as u32;
                 by_optimal = optimal;
@@ -726,23 +769,25 @@ fn inflate_head(
 
 /// `content` deflated (zlib-framed when `zlib`) to a stream filled to exactly `len` bytes: the
 /// shortest fitting level of the tree's deflater, else the optimal parse's stream on a chunk of at most
-/// `cap` bytes.
+/// `cap` bytes, else, where that misses by at most [`harder_margin`], the first harder try's.
 /// `Ok` holds the filled stream, its own length and whether the optimal parse made it; `Err` holds
-/// the shortest length of the tree's deflater and the optimal parse's. `go` is asked between levels
-/// and parts with the bytes parsed; once it says stop, the result is to be discarded.
+/// the shortest length of the tree's deflater, the optimal parse's, and what the harder tries
+/// reached where they ran. `go` is asked between levels and parts with the bytes parsed, and with
+/// the chunk's length during the harder tries; once it says stop, the result is to be discarded.
 // The optimal parse is far slower than any level, so it runs only for a chunk no level fits.
+#[allow(clippy::type_complexity)]
 fn deflate_to(
     content: &[u8],
     zlib: bool,
     len: usize,
     cap: usize,
     go: &mut dyn FnMut(usize) -> bool,
-) -> Result<(Vec<u8>, usize, bool), (usize, usize)> {
+) -> Result<(Vec<u8>, usize, bool), (usize, usize, Option<HarderMiss>)> {
     // A stream fills `len` exactly when it is no longer, so only the shortest level is kept.
     let mut best: Option<Vec<u8>> = None;
     for level in 0..=9 {
         if !go(0) {
-            return Err((usize::MAX, usize::MAX));
+            return Err((usize::MAX, usize::MAX, None));
         }
         if let Some(s) = deflate(content, level, zlib) {
             if best.as_ref().is_none_or(|b| s.len() < b.len()) {
@@ -755,14 +800,155 @@ fn deflate_to(
         return Ok((out, shortest, false));
     }
     if content.len() > cap {
-        return Err((shortest, usize::MAX));
+        return Err((shortest, usize::MAX, None));
     }
-    let optimal = optimal_parse(content, zlib, go);
-    let optimal_len = optimal.as_ref().map_or(usize::MAX, Vec::len);
-    match optimal.and_then(|s| fill(&s, zlib, len)) {
-        Some(out) => Ok((out, optimal_len, true)),
-        None => Err((shortest, optimal_len)),
+    let began = Instant::now();
+    let Some(optimal) = optimal_parse(content, zlib, go) else {
+        return Err((shortest, usize::MAX, None));
+    };
+    if let Some(out) = fill(&optimal, zlib, len) {
+        return Ok((out, optimal.len(), true));
     }
+    // The first harder try costs at least the parse just run, so one past the bound cannot end.
+    if optimal.len().saturating_sub(len) > harder_margin(len) || began.elapsed() >= HARDER_BOUND {
+        return Err((shortest, optimal.len(), None));
+    }
+    match harder_deflate(content, zlib, len, HARDER_BOUND, &mut || go(content.len())) {
+        Ok(stream) => match fill(&stream, zlib, len) {
+            Some(out) => Ok((out, stream.len(), true)),
+            None => Err((shortest, optimal.len(), None)),
+        },
+        Err(miss) => Err((shortest, optimal.len().min(miss.smallest), Some(miss))),
+    }
+}
+
+/// A harder try: its rounds, its block-split limit and where its parts end; `None` takes the
+/// shortest try's so far.
+type Try = (&'static str, u64, Option<(u16, Vec<usize>)>);
+
+/// `content` deflated by optimal parses of rising cost until a stream of at most `ceiling` bytes, returned unfilled; each part asks `go`, and none begins past `bound`.
+// A try is not begun when its time, judged from the first try's by its rounds, would pass the bound.
+pub fn harder_deflate(
+    content: &[u8],
+    zlib: bool,
+    ceiling: usize,
+    bound: Duration,
+    go: &mut dyn FnMut() -> bool,
+) -> Result<Vec<u8>, HarderMiss> {
+    let began = Instant::now();
+    let splits = zopfli::Options::default().maximum_block_splits;
+    let even = even_cuts(content.len(), OPTIMAL_PART);
+    let tries: [Try; 8] = [
+        (
+            "15 rounds with no early stop",
+            OPTIMAL_ROUNDS,
+            Some((splits, even.clone())),
+        ),
+        (
+            "no limit on block splits",
+            OPTIMAL_ROUNDS,
+            Some((0, even.clone())),
+        ),
+        ("one block a part", OPTIMAL_ROUNDS, Some((1, even.clone()))),
+        (
+            "at most 5 blocks a part",
+            OPTIMAL_ROUNDS,
+            Some((5, even.clone())),
+        ),
+        (
+            "parts of 256 KiB",
+            OPTIMAL_ROUNDS,
+            Some((splits, even_cuts(content.len(), 4 * OPTIMAL_PART))),
+        ),
+        (
+            "incompressible runs stored apart",
+            OPTIMAL_ROUNDS,
+            Some((splits, stored_run_cuts(content))),
+        ),
+        ("60 rounds", 60, None),
+        ("250 rounds", 250, None),
+    ];
+    let mut miss = HarderMiss {
+        smallest: usize::MAX,
+        tried: Vec::new(),
+        untried: Vec::new(),
+    };
+    let mut shortest = (splits, even);
+    let mut ran: Vec<(u64, u16, Vec<usize>)> = Vec::new();
+    let (mut first, mut stopped) = (None::<Duration>, false);
+    for (what, rounds, setting) in tries {
+        let (splits, ends) = setting.unwrap_or_else(|| shortest.clone());
+        // A try whose parse another already ran would make its stream again.
+        if ran.contains(&(rounds, splits, ends.clone())) {
+            continue;
+        }
+        let left = bound.saturating_sub(began.elapsed());
+        let judged = first.map_or(Duration::ZERO, |t| {
+            t.mul_f64(rounds as f64 / OPTIMAL_ROUNDS as f64)
+        });
+        let Some(options) = parse_options(rounds, u64::MAX, splits) else {
+            continue;
+        };
+        if stopped || left.is_zero() || judged > left {
+            miss.untried.push(what);
+            continue;
+        }
+        let at = Instant::now();
+        let stream = parse_with(content, zlib, options, &ends, &mut |_| {
+            stopped = stopped || !go();
+            !stopped && began.elapsed() < bound
+        });
+        if first.is_none() {
+            first = Some(at.elapsed());
+        }
+        ran.push((rounds, splits, ends.clone()));
+        let Some(stream) = stream else {
+            miss.untried.push(what);
+            continue;
+        };
+        miss.tried.push(what);
+        if stream.len() <= ceiling {
+            return Ok(stream);
+        }
+        if stream.len() < miss.smallest {
+            miss.smallest = stream.len();
+            shortest = (splits, ends);
+        }
+    }
+    Err(miss)
+}
+
+/// Where parts of `part` bytes end over `len` bytes, the last part short.
+fn even_cuts(len: usize, part: usize) -> Vec<usize> {
+    (1..=len.div_ceil(part))
+        .map(|i| (i * part).min(len))
+        .collect()
+}
+
+/// Where parts end that give each run of two or more incompressible [`RUN_WINDOW`]s a part of its
+/// own, which the optimal parse then stores raw where that is shorter; the rest in [`OPTIMAL_PART`]s.
+fn stored_run_cuts(content: &[u8]) -> Vec<usize> {
+    let flat: Vec<bool> = (content.chunks(RUN_WINDOW))
+        .map(|w| deflate(w, 1, false).is_none_or(|s| s.len() >= w.len()))
+        .collect();
+    let mut edges = vec![0, content.len()];
+    let mut i = 0;
+    while i < flat.len() {
+        let j = (i..flat.len())
+            .find(|&k| flat[k] != flat[i])
+            .unwrap_or(flat.len());
+        if flat[i] && j - i >= 2 {
+            edges.extend([i * RUN_WINDOW, (j * RUN_WINDOW).min(content.len())]);
+        }
+        i = j;
+    }
+    edges.sort_unstable();
+    edges.dedup();
+    let parted = |w: &[usize]| {
+        let from = w[0];
+        (even_cuts(w[1] - from, OPTIMAL_PART).into_iter()).map(move |end| from + end)
+    };
+    edges.windows(2).flat_map(parted).collect()
 }
 
 /// `stream` filled to exactly `len` bytes: led by empty blocks, past its zlib head when `zlib`, where
@@ -782,25 +968,46 @@ pub fn optimal_deflate(content: &[u8], zlib: bool) -> Option<Vec<u8>> {
 }
 
 fn optimal_options() -> Option<zopfli::Options> {
+    parse_options(
+        OPTIMAL_ROUNDS,
+        OPTIMAL_STALL,
+        zopfli::Options::default().maximum_block_splits,
+    )
+}
+
+/// The optimal parse's settings: its rounds, the rounds in a row with no gain that end it, and the
+/// blocks a part is split into at most (0 for no limit).
+fn parse_options(rounds: u64, stall: u64, splits: u16) -> Option<zopfli::Options> {
     Some(zopfli::Options {
-        iteration_count: NonZeroU64::new(OPTIMAL_ROUNDS)?,
-        iterations_without_improvement: NonZeroU64::new(OPTIMAL_STALL)?,
-        ..zopfli::Options::default()
+        iteration_count: NonZeroU64::new(rounds)?,
+        iterations_without_improvement: NonZeroU64::new(stall)?,
+        maximum_block_splits: splits,
     })
 }
 
 /// [`optimal_deflate`] one [`OPTIMAL_PART`] at a time, each part's window the bytes before it, so the
 /// parts join as one stream; `None` once `go`, asked after each part with the bytes parsed, says stop.
 fn optimal_parse(content: &[u8], zlib: bool, go: &mut dyn FnMut(usize) -> bool) -> Option<Vec<u8>> {
-    let options = optimal_options()?;
+    let ends = even_cuts(content.len(), OPTIMAL_PART);
+    parse_with(content, zlib, optimal_options()?, &ends, go)
+}
+
+/// [`optimal_parse`] under `options`, its parts ending at `ends`, the last of which is the content's end.
+fn parse_with(
+    content: &[u8],
+    zlib: bool,
+    options: zopfli::Options,
+    ends: &[usize],
+    go: &mut dyn FnMut(usize) -> bool,
+) -> Option<Vec<u8>> {
     let dynamic = zopfli::BlockType::Dynamic;
     let mut out = Vec::with_capacity(content.len() / 2 + 64);
     if zlib {
         let encoder = zopfli::ZlibEncoder::new(options, dynamic, &mut out).ok()?;
-        in_parts(encoder, content, go)?.finish().ok()?;
+        in_parts(encoder, content, ends, go)?.finish().ok()?;
     } else {
         let encoder = zopfli::DeflateEncoder::new(options, dynamic, &mut out);
-        in_parts(encoder, content, go)?.finish().ok()?;
+        in_parts(encoder, content, ends, go)?.finish().ok()?;
     }
     Some(out)
 }
@@ -809,16 +1016,19 @@ fn optimal_parse(content: &[u8], zlib: bool, go: &mut dyn FnMut(usize) -> bool) 
 fn in_parts<W: Write>(
     mut encoder: W,
     content: &[u8],
+    ends: &[usize],
     go: &mut dyn FnMut(usize) -> bool,
 ) -> Option<W> {
-    for (i, part) in content.chunks(OPTIMAL_PART).enumerate() {
-        encoder.write_all(part).ok()?;
-        if !go(i * OPTIMAL_PART) {
+    let mut from = 0;
+    for &end in ends {
+        encoder.write_all(content.get(from..end)?).ok()?;
+        if !go(from) {
             // Dropping an encoder parses the part it holds, so a stopped one is forgotten: it leaks
             // at most one part and its window.
             std::mem::forget(encoder);
             return None;
         }
+        from = end;
     }
     Some(encoder)
 }

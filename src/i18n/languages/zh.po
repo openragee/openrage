@@ -17455,3 +17455,24 @@ msgstr "未读取：{files}。标签文件存放的是猜测，仅在要求时�
 
 msgid "Natives no list names are labelled from {files}: these are guesses, not names"
 msgstr "没有列表命名的原生函数按 {files} 加了标签：这些是猜测，不是名称"
+
+msgid "Planning the save of {file}"
+msgstr "正在规划 {file} 的保存"
+
+msgid "planning {row}, {done} of {total}"
+msgstr "正在规划 {row}，{total} 中的 {done}"
+
+msgid "not a height map"
+msgstr "不是高度图"
+
+msgid "Set cell {col}, {row}"
+msgstr "已设置单元格 {col}, {row}"
+
+msgid "Column"
+msgstr "列"
+
+msgid "lowest {min}"
+msgstr "最低 {min}"
+
+msgid "The byte the file stores for the cell's highest point, 0 to 255; its lowest follows where it was the same and never stays above it."
+msgstr "文件为该单元格最高点存储的字节，0 到 255；最低点在原本相同处随之改变，且从不高于最高点。"

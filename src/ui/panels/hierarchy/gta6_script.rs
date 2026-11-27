@@ -256,20 +256,36 @@ fn draw_level(
             Some(picked) => picked.len(),
             None => doc.program.functions.len(),
         };
+        let building = job.building.as_ref().filter(|building| !building.built());
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(150));
         let mut stop = false;
         ui.horizontal(|ui| {
             ui.spinner();
+            let Some(building) = building else {
+                ui.label(tr!(
+                    "Decompiling, {seconds} s so far; functions written: {done} of {functions}",
+                    seconds = seconds,
+                    done = done,
+                    functions = functions
+                ));
+                stop = (ui.button(tr!("Stop decompiling")))
+                    .on_hover_text(tr!(
+                        "The decompile stops after the function it is writing, and the script keeps the source it has"
+                    ))
+                    .clicked();
+                return;
+            };
             ui.label(tr!(
-                "Decompiling, {seconds} s so far; functions written: {done} of {functions}",
+                "Building the project, {seconds} s so far: {found} programs found, {read} of {all} reads of them done",
                 seconds = seconds,
-                done = done,
-                functions = functions
+                found = building.found(),
+                read = building.read(),
+                all = building.all()
             ));
-            stop = (ui.button(tr!("Stop decompiling")))
+            stop = (ui.button(tr!("Stop building the project")))
                 .on_hover_text(tr!(
-                    "The decompile stops after the function it is writing, and the script keeps the source it has"
+                    "The build stops after the program it is reading; no project is written, and the script keeps the source it has"
                 ))
                 .clicked();
         });
@@ -329,6 +345,33 @@ fn draw_picked(
     }
 }
 
+/// Each names list read, in the order read, with what it named that no list before it did.
+fn counted(read: &crate::state::gta6_script::Read) -> String {
+    let each = (read.named.iter()).map(|(label, new)| format!("{label} ({new})"));
+    each.collect::<Vec<String>>().join(", ")
+}
+
+/// The way to build a project of the archive a script decompiled alone was read from.
+fn draw_build(
+    ui: &mut egui::Ui,
+    state: &mut AppState,
+    doc_id: DocumentId,
+    doc: &Gta6ScriptDocument,
+) {
+    if doc.read.project.is_some() || doc.archive.is_none() {
+        return;
+    }
+    let idle = state.gta6_script_job(doc_id).is_none();
+    let build = ui
+        .add_enabled(idle, egui::Button::new(tr!("Build project from this archive")))
+        .on_hover_text(tr!(
+            "Reads every program of this archive on a thread of its own, writes what they state of each other as project.json in the names folder, in place of the one there, and decompiles this script again with it. An archive of many programs takes minutes"
+        ));
+    if build.clicked() {
+        state.build_gta6_project(doc_id);
+    }
+}
+
 /// What named things in the source, what was refused, and whether a project stood beside the program.
 fn draw_read(ui: &mut egui::Ui, doc: &Gta6ScriptDocument) {
     let dim = |text: String| egui::RichText::new(text).color(theme::TEXT_SECONDARY);
@@ -345,7 +388,10 @@ fn draw_read(ui: &mut egui::Ui, doc: &Gta6ScriptDocument) {
         ),
     };
     let names = match read.lists.is_empty() {
-        false => tr!("Names are read from {lists}", lists = read.lists.join(", ")),
+        false => tr!(
+            "Names are read from {lists}, each with how many hashes, cells, indices, functions or words it named that no list before it did",
+            lists = counted(read)
+        ),
         true => tr!(
             "No names list was supplied, so a type, a field or a method is shown by its hash or its offset"
         )
@@ -368,6 +414,12 @@ fn draw_read(ui: &mut egui::Ui, doc: &Gta6ScriptDocument) {
             "Not read from the names folder: {files}",
             files = read.refused.join("; ")
         ));
+    }
+    if !read.candidates.is_empty() {
+        ui.label(dim(tr!(
+            "Passed over in the names folder, as a file whose name holds candidate holds guesses and not names: {files}",
+            files = read.candidates.join(", ")
+        )));
     }
     ui.label(dim(project));
     if let Some(why) = &read.project_refused {
@@ -408,6 +460,7 @@ fn draw_facts(ui: &mut egui::Ui, state: &mut AppState, doc_id: DocumentId, selec
     }
     ui.separator();
     draw_read(ui, &doc);
+    draw_build(ui, state, doc_id, &doc);
     let open = ui.button(tr!("Open names folder")).on_hover_text(tr!(
         "Put names lists, natives lists and a project.json in this folder, then open the script again: OpenRage ships none. Each file is read as a names list where it reads as one, else as a natives list; a file whose name starts with natives, or that holds JSON, is tried as a natives list first"
     ));
@@ -529,6 +582,44 @@ mod tests {
             "{centre}"
         );
         assert!(centre.contains("demo_broken.txt: not a row"), "{centre}");
+    }
+
+    #[test]
+    fn a_script_of_an_archive_decompiled_alone_offers_a_project_built_of_the_archive() {
+        let _serial = crate::ui::theme::serial();
+        let mut state = AppState::default();
+        let id = state.new_empty_document(DocumentKind::Text);
+        let painted = |state: &mut AppState, doc: Gta6ScriptDocument| {
+            let d = state.document_mut(id).expect("the document");
+            d.payload = DocPayload::Gta6Script(Arc::new(doc));
+            d.kind = DocumentKind::Gta6Script;
+            let output = egui::Context::default().run_ui(Default::default(), |ui| {
+                draw_facts(ui, state, id, None);
+            });
+            format!("{:?}", output.shapes)
+        };
+        // Read from a file of its own: there is no archive to build from.
+        let alone = Gta6ScriptDocument::of(Program::default(), SOURCE, Level::Source);
+        let centre = painted(&mut state, alone.clone());
+        assert!(!centre.contains("Build project"), "{centre}");
+
+        let mut of_archive = alone;
+        of_archive.archive = Some("demo_archive.rpf".into());
+        of_archive.read.lists = vec!["demo_names.tsv".to_owned()];
+        of_archive.read.named = vec![("demo_names.tsv".to_owned(), 7)];
+        of_archive.read.candidates = vec!["demo-candidates.tsv".to_owned()];
+        let centre = painted(&mut state, of_archive.clone());
+        assert!(
+            centre.contains("Build project from this archive"),
+            "{centre}"
+        );
+        assert!(centre.contains("demo_names.tsv (7)"), "{centre}");
+        assert!(centre.contains("demo-candidates.tsv"), "{centre}");
+
+        // Decompiled with a project already: nothing to build.
+        of_archive.read.project = Some("demo/project.json".into());
+        let centre = painted(&mut state, of_archive);
+        assert!(!centre.contains("Build project"), "{centre}");
     }
 
     #[test]

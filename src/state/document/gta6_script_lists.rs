@@ -27,9 +27,17 @@ pub struct Supplied {
     pub natives: Vec<String>,
     /// Each file no reader took, with the reason of the reader tried first.
     pub refused: Vec<String>,
+    /// Each names list in the order read, with how many hashes, cells, indices, functions or words it named that no list before it did.
+    pub named: Vec<(String, usize)>,
+    /// The files passed over for the guesses their names say they hold.
+    pub candidates: Vec<String>,
 }
 
-/// The lists of the folder `dir`, in the order of their names: each file is a names list where it reads as one, else a natives list.
+/// What a file's name holds, in any case, that makes it a file of guesses the folder never reads.
+// ⚠ A guessed row of a 32-bit hash proves itself as a true one does: only the file's name tells them apart.
+const CANDIDATES: &str = "candidate";
+
+/// The lists of the folder `dir`, in the order of their names, those whose every row proves itself first: each file is a names list where it reads as one, else a natives list.
 // ⚠ The same files are names lists here and on the command line, which reads this folder too. The
 // natives list in use is the one naming most of the hashes the names lists give handlers'
 // addresses: a compiled program states an address, so with no such hash no natives list names anything.
@@ -43,6 +51,8 @@ pub fn supplied(dir: Option<&Path>) -> Supplied {
         .filter(|path| path.is_file())
         .collect();
     files.sort();
+    // Each file's text, with whether every row of it proves itself by its hash.
+    let mut held: Vec<(String, Result<String, String>, bool)> = Vec::new();
     for path in files {
         let label =
             (path.file_name()).map_or_else(String::new, |n| n.to_string_lossy().into_owned());
@@ -50,13 +60,23 @@ pub fn supplied(dir: Option<&Path>) -> Supplied {
         if label == PROJECT_FILE || label.starts_with('.') {
             continue;
         }
+        if label.to_ascii_lowercase().contains(CANDIDATES) {
+            out.candidates.push(label);
+            continue;
+        }
         let text = std::fs::read(&path)
             .map_err(|e| e.to_string())
             .and_then(|bytes| String::from_utf8(bytes).map_err(|e| e.to_string()));
+        let proved = text.as_ref().is_ok_and(|text| proves_alone(&label, text));
+        held.push((label, text, proved));
+    }
+    // ⚠ Of a proof and a label on trust for one hash, the list read second is refused: the proof goes first.
+    let (proofs, others): (Vec<_>, Vec<_>) = held.into_iter().partition(|(_, _, proved)| *proved);
+    for (label, text, _) in proofs.into_iter().chain(others) {
         let read = text.and_then(|text| taken(&mut out.names, &label, &text));
         match read {
-            Ok(Some(list)) => lists.push(list),
-            Ok(None) => {}
+            Ok(Took::Natives(list)) => lists.push(list),
+            Ok(Took::Names(new)) => out.named.push((label, new)),
             Err(why) => {
                 tracing::warn!(list = %label, "{why}");
                 out.refused.push(format!("{label}: {why}"));
@@ -69,32 +89,64 @@ pub fn supplied(dir: Option<&Path>) -> Supplied {
     out
 }
 
+/// What one file of the folder was taken as.
+enum Took {
+    Natives(NativeDb),
+    /// A names list, with how many hashes, cells, indices, functions or words it named that no list before it did.
+    Names(usize),
+}
+
+/// Whether a file is tried as a natives list first: by its name, or by the JSON it holds.
+fn natives_first(label: &str, text: &str) -> bool {
+    let json = text.trim_start_matches('\u{feff}').trim_start();
+    label.to_ascii_lowercase().starts_with("natives") || json.starts_with('{')
+}
+
+/// Whether `text`, read alone as a names list, reads whole and every row of it proves itself by its hash.
+// ⚠ A row taken on trust and a word are evidence of nothing: a list holding either is no proof.
+fn proves_alone(label: &str, text: &str) -> bool {
+    if natives_first(label, text) {
+        return false;
+    }
+    let mut alone = Names::default();
+    if alone.read_list(label, text).is_err() {
+        return false;
+    }
+    let words = alone.candidates.iter().sum::<usize>();
+    alone
+        .rows
+        .iter()
+        .all(|(proved, trusted)| *proved > 0 && *trusted == 0)
+        && words == 0
+}
+
 /// Reads one file of the folder: into `names` as a names list, else returned as the natives list it is.
 // ⚠ A names list refused part-way has named things already, so it is read into a copy that is kept only whole.
 // A natives list written as `0xHASH NAME` lines reads as a names list too: a name that starts
 // with `natives` says which it is meant as, and JSON is never a names list.
-fn taken(names: &mut Names, label: &str, text: &str) -> Result<Option<NativeDb>, String> {
+fn taken(names: &mut Names, label: &str, text: &str) -> Result<Took, String> {
     let as_names = |names: &mut Names| {
         let mut tried = names.clone();
         let read = tried.read_list(label, text).map_err(|e| e.to_string());
-        read.map(|_| *names = tried)
+        read.map(|new| {
+            *names = tried;
+            Took::Names(new)
+        })
     };
     let as_natives = || NativeDb::parse(label, text.as_bytes()).map_err(|e| e.to_string());
-    let json = text.trim_start_matches('\u{feff}').trim_start();
-    let natives_first = label.to_ascii_lowercase().starts_with("natives") || json.starts_with('{');
-    if natives_first {
+    if natives_first(label, text) {
         return match as_natives() {
-            Ok(list) => Ok(Some(list)),
-            Err(why) => as_names(names).map(|()| None).map_err(|_| why),
+            Ok(list) => Ok(Took::Natives(list)),
+            Err(why) => as_names(names).map_err(|_| why),
         };
     }
     match as_names(names) {
-        Ok(()) => Ok(None),
-        Err(why) => as_natives().map(Some).map_err(|_| why),
+        Ok(took) => Ok(took),
+        Err(why) => as_natives().map(Took::Natives).map_err(|_| why),
     }
 }
 
-/// Names each field and method record of `program` that a list names by the hash the record holds.
+/// Names each field and method record of `program` that a list names by the hash the record holds, and each entry function a list's text proves.
 pub fn bind(names: &mut Names, program: &Program) {
     for ty in &program.types {
         for field in &ty.fields {
@@ -107,6 +159,7 @@ pub fn bind(names: &mut Names, program: &Program) {
             names.bind_method(method.name, TypeKey(owner.name), slot);
         }
     }
+    names.bind_entries(program.program, &program.entries);
 }
 
 /// A project file as it was when read: another file under its name is another project.

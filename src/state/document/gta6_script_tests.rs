@@ -489,10 +489,17 @@ fn a_function_picked_in_a_large_script_is_asked_with_the_picks_before_it() {
     state.pick_gta6_function(id, 0x40);
     let one = Some(BTreeSet::from([0x40]));
     assert_eq!(asked(&state, id), Some((one, Some(0x40))));
-    // Still in flight: the next pick keeps the one before it.
+    let first = Arc::clone(
+        &state
+            .gta6_script_job(id)
+            .expect("the first pick's job")
+            .progress,
+    );
+    // Still in flight: the next pick keeps the one before it, and the job it replaces is stopped.
     state.pick_gta6_function(id, 0x80);
     let two = Some(BTreeSet::from([0x40, 0x80]));
     assert_eq!(asked(&state, id), Some((two, Some(0x80))));
+    assert!(first.stopped());
     state.drop_gta6_script_job(id);
 
     // A source that holds every function has nothing to pick.
@@ -500,4 +507,78 @@ fn a_function_picked_in_a_large_script_is_asked_with_the_picks_before_it() {
     let whole = a_script_in(&mut state, whole);
     state.pick_gta6_function(whole, 0x40);
     assert_eq!(asked(&state, whole), None);
+}
+
+/// A row of a names list whose hash is the 32-bit hash of its name in lower case.
+fn proved_row(name: &str) -> String {
+    let hash = or_io::hash::literal_string_hash(name.to_ascii_lowercase().as_bytes());
+    format!("0x{hash:08X}\t{name}\n")
+}
+
+#[test]
+fn the_names_folder_reads_a_proof_before_a_label_and_never_a_file_of_candidates() {
+    let folder = tempfile::tempdir().expect("a scratch folder");
+    let write = |name: &str, text: &str| {
+        std::fs::write(folder.path().join(name), text).expect("a list is written");
+    };
+    let hash = or_io::hash::literal_string_hash(b"demoalpha");
+    // First by its name, the label would leave the proof of the same hash refused.
+    write(
+        "a_label.tsv",
+        &format!("program_hash\tname\n0x{hash:08X}\tdemo_label\n"),
+    );
+    write("b_proved.tsv", &proved_row("demoalpha"));
+    write("demo-candidates.tsv", &proved_row("demobeta"));
+    let read = lists::supplied(Some(folder.path()));
+    assert_eq!(read.names.lists, ["b_proved.tsv"]);
+    assert_eq!(read.names.program(u64::from(hash)), Some("demoalpha"));
+    assert_eq!(read.named, [("b_proved.tsv".to_owned(), 1)]);
+    assert_eq!(read.candidates, ["demo-candidates.tsv"]);
+    assert_eq!(read.refused.len(), 1, "{:?}", read.refused);
+    assert!(read.refused[0].starts_with("a_label.tsv: "));
+    let beta = or_io::hash::literal_string_hash(b"demobeta");
+    assert_eq!(read.names.program(u64::from(beta)), None);
+}
+
+#[test]
+fn a_project_is_built_only_for_a_script_of_an_archive_and_a_pick_waits_for_it() {
+    let mut state = AppState::default();
+    let row = |at: u32| FunctionRow {
+        at,
+        end: at + 4,
+        ..FunctionRow::default()
+    };
+    let program = Program {
+        functions: vec![row(0x40)],
+        ..Program::default()
+    };
+    let large = Gta6ScriptDocument {
+        picked: Some(BTreeSet::new()),
+        ..Gta6ScriptDocument::of(program, "", Level::Source)
+    };
+    // A program of a file of its own has no archive to build from.
+    let alone = a_script_in(&mut state, large.clone());
+    state.build_gta6_project(alone);
+    assert!(state.gta6_script_job(alone).is_none());
+
+    // The file is no archive, so the build fails on its thread; here only its job is looked at.
+    let folder = tempfile::tempdir().expect("a scratch folder");
+    let archive = folder.path().join("demo_archive.rpf");
+    std::fs::write(&archive, [0u8; 16]).expect("written");
+    let of_archive = Gta6ScriptDocument {
+        archive: Some(archive),
+        ..large
+    };
+    let id = a_script_in(&mut state, of_archive);
+    state.build_gta6_project(id);
+    let job = state.gta6_script_job(id).expect("the build's job");
+    let building = Arc::clone(job.building.as_ref().expect("a job that builds"));
+    assert!(!building.built());
+    // A pick while the project is built is no new job.
+    state.pick_gta6_function(id, 0x40);
+    let job = state.gta6_script_job(id).expect("the build's job, still");
+    assert!(job.building.is_some() && job.focus.is_none());
+    let progress = Arc::clone(&job.progress);
+    state.drop_gta6_script_job(id);
+    assert!(progress.stopped());
 }

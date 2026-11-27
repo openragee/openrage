@@ -17,6 +17,8 @@ use or_io::gta6::script::{lift, Context, Level, Options, Stats};
 use super::{DocPayload, DocumentId, HexDocument};
 use crate::state::AppState;
 
+#[path = "gta6_script_build.rs"]
+mod build;
 #[path = "gta6_script_jobs.rs"]
 mod jobs;
 #[path = "gta6_script_lists.rs"]
@@ -130,6 +132,10 @@ pub struct Read {
     pub lists: Vec<String>,
     /// The files of the folder no reader took, each with the reason.
     pub refused: Vec<String>,
+    /// Each names list in the order read, with how many hashes, cells, indices, functions or words it named that no list before it did.
+    pub named: Vec<(String, usize)>,
+    /// The files of the folder passed over for the guesses their names say they hold.
+    pub candidates: Vec<String>,
     /// The file of the project the source was written with; `None` for a program decompiled alone.
     pub project: Option<PathBuf>,
     /// The project file that was found and not read, with the reason.
@@ -149,6 +155,8 @@ pub struct Gta6ScriptDocument {
     pub read: Read,
     /// The offsets of the functions the source holds, for a program too large to decompile whole at open; `None` where it holds every function.
     pub picked: Option<BTreeSet<u32>>,
+    /// The GTA VI archive the program was read from, which a project can be built from; `None` for a program read from a file of its own.
+    pub archive: Option<PathBuf>,
     // ponytail: held beside the program read from them, since a project found later starts
     // functions the program read alone does not; drop them once a `Program` takes a project.
     bytes: Arc<[u8]>,
@@ -173,6 +181,7 @@ impl Gta6ScriptDocument {
             stats: Stats::default(),
             read: Read::default(),
             picked: None,
+            archive: None,
             bytes: Arc::from(Vec::new()),
             beside: None,
             stamp: None,
@@ -439,6 +448,8 @@ fn written(
         natives_lists: supplied.natives,
         lists: supplied.names.lists.clone(),
         refused: supplied.refused,
+        named: supplied.named,
+        candidates: supplied.candidates,
         project: stamp.as_ref().map(|stamp| stamp.file.clone()),
         project_refused: found.refused.clone(),
     };
@@ -446,6 +457,10 @@ fn written(
         stats: output.stats,
         read,
         picked,
+        // A program of an archive is read under a path of the archive's own, whose folder is the archive.
+        archive: beside
+            .filter(|at| build::is_archive(at))
+            .map(Path::to_path_buf),
         bytes: Arc::clone(bytes),
         beside: beside.map(Path::to_path_buf),
         stamp,

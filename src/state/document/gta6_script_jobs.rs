@@ -8,7 +8,8 @@ use std::time::Instant;
 
 use or_io::gta6::script::lift::Progress;
 
-use super::{set_level, Ask, Gta6ScriptDocument};
+use super::build::{self, Building};
+use super::{names_dir, set_level, Ask, Gta6ScriptDocument};
 use crate::state::{AppState, DocPayload, DocumentId, DocumentKind, RpfEntryBinding};
 use crate::ui::panel_state::PanelState;
 use crate::ui::panels::selection_ids::DOC_ROOT_SEL;
@@ -25,6 +26,8 @@ pub struct Job {
     pub started: Instant,
     /// How many functions the thread has written, and the flag that stops it.
     pub progress: Arc<Progress>,
+    /// How far the project the decompile waits for is built, where the job builds one first.
+    pub building: Option<Arc<Building>>,
     /// Where the thread leaves what it made.
     // ⚠ The thread holds it weakly: a job dropped frees what the thread makes as soon as it is made.
     slot: Arc<Mutex<Option<Done>>>,
@@ -92,34 +95,81 @@ impl AppState {
     }
 
     /// Decompile the script `doc` holds again as `ask` asks, on a thread of its own; the caret goes to the function at `focus` once the source lands.
-    // The decompile already in flight for `doc` is dropped with its job.
+    // The decompile already in flight for `doc` is dropped with its job, and stopped.
     pub(crate) fn redo_gta6_script(&mut self, doc: DocumentId, ask: Ask, focus: Option<u32>) {
         let Some(DocPayload::Gta6Script(script)) = self.document(doc).map(|d| &d.payload) else {
             return;
         };
         let script = Arc::clone(script);
+        let asked = ask.clone();
+        let started = self.start_gta6_job(doc, ask, focus, None, move |progress| {
+            script.again(&asked, progress)
+        });
+        if let Err(e) = started {
+            self.show_error_toast(tr!("The script was not decompiled: {e}", e = e));
+        }
+    }
+
+    /// Build a project of every program of the archive the script `doc` was read from into the names folder, on a thread of its own, then decompile the script again with it.
+    // ⚠ The project written takes the place of the names folder's: a script opened after it is decompiled with it.
+    pub(crate) fn build_gta6_project(&mut self, doc: DocumentId) {
+        let Some(DocPayload::Gta6Script(script)) = self.document(doc).map(|d| &d.payload) else {
+            return;
+        };
+        let (Some(archive), Some(folder)) = (script.archive.clone(), names_dir()) else {
+            return;
+        };
+        let script = Arc::clone(script);
+        let ask = script.ask();
+        let asked = ask.clone();
+        let building = Arc::new(Building::default());
+        let stage = Arc::clone(&building);
+        let work = move |progress: &Progress| {
+            let built = super::guarded(|| build::build(&archive, &folder, &stage, progress));
+            match built {
+                Ok(Ok(_)) => script.again(&asked, progress),
+                Ok(Err(e)) | Err(e) => Err(tr!("the project was not built: {e}", e = e)),
+            }
+        };
+        if let Err(e) = self.start_gta6_job(doc, ask, None, Some(building), work) {
+            self.show_error_toast(tr!("The script was not decompiled: {e}", e = e));
+        }
+    }
+
+    /// Run `work` on a thread of its own as the job of `doc`, in place of the job in flight for it, which is stopped.
+    fn start_gta6_job(
+        &mut self,
+        doc: DocumentId,
+        ask: Ask,
+        focus: Option<u32>,
+        building: Option<Arc<Building>>,
+        work: impl FnOnce(&Progress) -> Done + Send + 'static,
+    ) -> std::io::Result<()> {
         let slot: Arc<Mutex<Option<Done>>> = Arc::new(Mutex::new(None));
-        let (weak, asked) = (Arc::downgrade(&slot), ask.clone());
+        let weak = Arc::downgrade(&slot);
         let progress = Arc::new(Progress::default());
         let counted = Arc::clone(&progress);
-        let work = move || {
-            let done = script.again(&asked, &counted);
+        let run = move || {
+            let done = work(&counted);
             if let Some(slot) = weak.upgrade() {
                 *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(done);
             }
         };
         let thread = std::thread::Builder::new().name("gta6-script".to_owned());
-        if let Err(e) = thread.spawn(work) {
-            return self.show_error_toast(tr!("The script was not decompiled: {e}", e = e));
-        }
+        thread.spawn(run)?;
         let job = Job {
             ask,
             focus,
             started: Instant::now(),
             progress,
+            building,
             slot,
         };
-        self.panels.get::<Jobs>().0.insert(doc, job);
+        // What the job it replaces makes lands nowhere, so its thread is not left to finish it.
+        if let Some(replaced) = self.panels.get::<Jobs>().0.insert(doc, job) {
+            replaced.progress.stop();
+        }
+        Ok(())
     }
 
     /// Add the function at `at` to those the source of the large script `doc` holds; nothing where the source holds every function, or this one.
@@ -128,6 +178,13 @@ impl AppState {
             return;
         };
         let (held, known) = (script.ask(), script.program.function(at).is_some());
+        // ⚠ A project being built is minutes of work a pick would throw away: the pick waits for it.
+        let building = self
+            .gta6_script_job(doc)
+            .and_then(|job| job.building.as_ref());
+        if building.is_some_and(|building| !building.built()) {
+            return;
+        }
         // ⚠ A decompile in flight is asked again with its own picks: two clicks in a row keep both.
         let mut ask = self
             .gta6_script_job(doc)
@@ -138,7 +195,7 @@ impl AppState {
         }
     }
 
-    /// Land each decompile that is done, and drop the job of a script that is closed.
+    /// Land each decompile that is done, and drop and stop the job of a script that is closed.
     pub(crate) fn poll_gta6_scripts(&mut self) {
         let jobs = self.panels.peek::<Jobs>();
         if jobs.is_none_or(|jobs| jobs.0.is_empty()) {
@@ -151,7 +208,9 @@ impl AppState {
                 Some(DocPayload::Gta6Script(_))
             );
             if !open {
-                self.panels.get::<Jobs>().0.remove(&doc);
+                if let Some(gone) = self.panels.get::<Jobs>().0.remove(&doc) {
+                    gone.progress.stop();
+                }
                 continue;
             }
             let Some(job) = self.gta6_script_job(doc) else {

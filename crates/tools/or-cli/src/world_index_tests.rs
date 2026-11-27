@@ -424,3 +424,14 @@ fn the_install_is_the_first_argument_or_the_value_of_game_whichever_verb_reads_i
         assert_eq!(at, Ok(Vec3::new(1.0, 2.0, 3.0)), "{args:?}");
     }
 }
+
+#[test]
+fn a_flag_the_index_does_not_know_is_refused_before_anything_is_mounted() {
+    for flag in ["--levle", "--mode"] {
+        let refused = open(&strings(&["no-such-install", flag, "mpheist"])).unwrap_err();
+        assert_eq!(refused, format!("`{flag}` is no flag of this verb"));
+    }
+    // A flag it knows goes on to the install, which is not there.
+    let missing = open(&strings(&["no-such-install", "--level=mpheist", "--fresh"])).unwrap_err();
+    assert!(!missing.contains("is no flag"), "{missing}");
+}

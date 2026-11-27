@@ -1027,3 +1027,59 @@ fn an_entity_set_whose_two_arrays_differ_is_listed_with_what_each_entity_has_and
     apply(&folder, &applied.inverse).unwrap();
     assert!(files(&folder) == before, "the document is as it was typed");
 }
+
+/// The class of an entity follows its archetype: an interior of the pack is placed by an instance alone, and holds no interior.
+#[test]
+fn an_interior_the_pack_declares_is_placed_by_no_plain_entity_and_holds_no_interior() {
+    let pose = PoseData {
+        position: [10.0, 10.0, 3.0],
+        rotation: [0.0, 0.0, 0.0, 1.0],
+        scale_xy: 1.0,
+        scale_z: 1.0,
+    };
+    let on_the_yard = |archetype: &str| Operation::AddEntity {
+        source: YARD.into(),
+        expects: None,
+        archetype: archetype.into(),
+        pose,
+        donor: None,
+    };
+    let said = refusal(&[], &on_the_yard("villa"));
+    assert!(
+        said.contains("`villa` is an interior a type file of the pack declares"),
+        "{said}"
+    );
+    let inside = Operation::AddInteriorEntity {
+        source: VILLA_TYPES.into(),
+        expects: None,
+        archetype: 0,
+        archetype_name: "villa".into(),
+        pose,
+        donor: None,
+        room: Some(1),
+    };
+    let said = refusal(&[], &inside);
+    assert!(said.contains("an interior holds no interior"), "{said}");
+
+    // What is no interior is added as it was.
+    let scratch = tempfile::tempdir().unwrap();
+    let folder = pack(scratch.path());
+    let added = apply(&folder, &on_the_yard("prop_table")).unwrap();
+    assert_eq!(added.added, Some(1));
+}
+
+/// A room is found by its name, so two names apart only by the white space around them are one.
+#[test]
+fn a_room_is_refused_a_name_another_has_but_for_the_white_space_around_it() {
+    for name in [" hall", "hall ", "hall\t", "HALL"] {
+        let named = RoomMembers {
+            name: Some(name.to_string()),
+            ..RoomMembers::default()
+        };
+        let said = refusal(&[], &set_room(3, named));
+        assert!(
+            said.contains("already holds a room of that name"),
+            "{name:?}: {said}"
+        );
+    }
+}

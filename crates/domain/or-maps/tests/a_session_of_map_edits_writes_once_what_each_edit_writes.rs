@@ -1073,6 +1073,54 @@ fn a_source_changed_on_disk_under_a_session_is_named_and_read_again_or_kept_over
     );
 }
 
+/// A source whose XML went from the disk is written again once it is kept, and one whose folder went stays named until it is read again.
+#[test]
+fn a_source_gone_from_the_disk_and_kept_is_written_and_a_folder_gone_stops_no_other_source() {
+    let scratch = tempfile::tempdir().unwrap();
+    let folder = pack(scratch.path());
+    let mut session = Session::open(&folder).unwrap();
+    session.apply(&place(YARD, 0, [60.0, 61.0, 1.0])).unwrap();
+    session
+        .apply(&place(HARBOUR, 1, [420.0, -66.5, 12.25]))
+        .unwrap();
+    let xml = folder.join(YARD).join("metadata.xml");
+    std::fs::remove_file(&xml).unwrap();
+    assert_eq!(session.changed_on_disk(), [YARD]);
+    let refused = session.flush().unwrap_err();
+    assert!(
+        matches!(&refused, Error::Changed { at } if at == YARD),
+        "{refused:?}"
+    );
+    session.keep_over_the_disk(YARD);
+    assert_eq!(session.changed_on_disk(), Vec::<String>::new());
+    let written: Vec<String> = (session.flush().unwrap().into_iter())
+        .map(|written| written.source)
+        .collect();
+    assert_eq!(written, [HARBOUR, YARD]);
+    assert_eq!(read_entity(&folder.join(YARD), 0).unwrap().position.x, 60.0);
+
+    // The whole folder gone: there is nothing to keep it over, and reading it again lets the others be written.
+    session.apply(&place(YARD, 0, [61.0, 61.0, 1.0])).unwrap();
+    session
+        .apply(&place(HARBOUR, 1, [421.0, -66.5, 12.25]))
+        .unwrap();
+    std::fs::remove_dir_all(folder.join(YARD)).unwrap();
+    session.keep_over_the_disk(YARD);
+    assert_eq!(session.changed_on_disk(), [YARD]);
+    let refused = session.flush().unwrap_err();
+    assert!(
+        matches!(&refused, Error::Changed { at } if at == YARD),
+        "{refused:?}"
+    );
+    session.read_again(YARD);
+    let [written] = session.flush().unwrap().try_into().unwrap();
+    assert_eq!(written.source, HARBOUR);
+    assert_eq!(
+        read_entity(&folder.join(HARBOUR), 1).unwrap().position.x,
+        421.0
+    );
+}
+
 /// An import adds a source to a pack a session is open over: the session edits it once it has read the map sets again.
 #[test]
 fn a_session_reads_the_map_sets_again_and_edits_a_source_added_since_it_opened() {

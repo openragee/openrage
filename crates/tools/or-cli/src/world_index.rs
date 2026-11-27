@@ -80,6 +80,16 @@ fn open(args: &[String]) -> Result<(WorldIndex, Report, PathBuf, PathBuf), Strin
     if let Some(flag) = (args.last()).filter(|arg| VALUED_FLAGS.contains(&arg.as_str())) {
         return Err(format!("`{flag}` takes a value"));
     }
+    // ⚠ A flag these verbs do not know is refused, as their siblings refuse one: `--levle`, passed over, is every pack too.
+    let known = |arg: &str| {
+        let joined = arg.split_once('=');
+        VALUED_FLAGS.contains(&arg)
+            || joined.is_some_and(|(flag, _)| VALUED_FLAGS.contains(&flag))
+            || matches!(arg, "--fresh" | "--json")
+    };
+    if let Some(flag) = (args.iter()).find(|arg| arg.starts_with("--") && !known(arg)) {
+        return Err(format!("`{flag}` is no flag of this verb"));
+    }
     let (game, _) = install_of(args, VALUED_FLAGS)?;
     let game = game.as_str();
     let level = flag_value(args, "--level");

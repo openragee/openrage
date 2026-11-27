@@ -990,7 +990,27 @@ pub struct Applied {
 }
 
 /// The local box and the stream distance of an archetype, by the hash of its name.
-pub(crate) type Boxes = BTreeMap<u32, (Vec3, Vec3, f32)>;
+#[derive(Default)]
+pub(crate) struct Boxes {
+    boxes: BTreeMap<u32, (Vec3, Vec3, f32)>,
+    /// The archetypes among them that are declared as interiors.
+    interiors: BTreeSet<u32>,
+}
+
+impl Boxes {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn get(&self, hash: &u32) -> Option<&(Vec3, Vec3, f32)> {
+        self.boxes.get(hash)
+    }
+
+    /// Whether a type file declares the archetype `hash` as an interior.
+    fn is_interior(&self, hash: u32) -> bool {
+        self.interiors.contains(&hash)
+    }
+}
 
 /// What an operation reads besides the file it edits.
 #[derive(Default)]
@@ -1547,19 +1567,46 @@ fn change_map(
             if placed.is_empty() {
                 return Err("an entity places an archetype, and none is named".to_string());
             }
+            // ⚠ The class of the record follows the archetype: every reader of a map tells an interior by it.
+            let (hash, shown) = (placed.hash, placed.shown());
+            let interior = context.boxes.is_interior(hash);
+            let declared = context.boxes.get(&hash).is_some();
+            let fits = |entity: &CEntityDefAny| match entity.as_mlo_instance() {
+                Some(_) => interior || (!declared && entity.archetype_name.hash == hash),
+                None => !interior,
+            };
+            let unfit = || {
+                if interior {
+                    format!(
+                        "`{}` is an interior a type file of the pack declares, and an interior instance cannot be built from nothing yet: name a `donor` that is an interior instance",
+                        shown
+                    )
+                } else {
+                    format!(
+                        "the entity copied is an interior instance, and `{}` is not its interior nor one the pack declares: name a `donor` that is no interior",
+                        shown
+                    )
+                }
+            };
             let added = if map.entities.is_empty() {
                 if let (None, Some(at)) = (&context.entity, donor) {
                     entity_at(map, at.index)?;
+                }
+                if interior {
+                    return Err(unfit());
                 }
                 map.entities
                     .push(first_entity(placed, pose, context.entity.as_ref())?);
                 0
             } else {
                 let copied = match (&context.entity, donor) {
-                    (Some(entity), _) => entity.clone(),
-                    (None, Some(at)) => entity_at(map, at.index)?.clone(),
-                    (None, None) => map.entities[0].clone(),
+                    (Some(entity), _) => Some(entity).filter(|entity| fits(entity)),
+                    (None, Some(at)) => {
+                        Some(entity_at(map, at.index)?).filter(|entity| fits(entity))
+                    }
+                    (None, None) => map.entities.iter().find(|entity| fits(entity)),
                 };
+                let copied = copied.ok_or_else(unfit)?.clone();
                 edit::add_entity(map, &copied, placed, pose)?
             };
             grow(map);
@@ -2091,11 +2138,21 @@ fn refused(operation: &Operation, why: String) -> Error {
 fn declare(boxes: &mut Boxes, types: &CMapTypes) {
     let corner = |v: or_io::decl::Vec3| Vec3::new(v.x, v.y, v.z);
     for archetype in &types.archetypes {
-        boxes.entry(archetype.name.hash).or_insert((
-            corner(archetype.bb_min),
-            corner(archetype.bb_max),
-            archetype.lod_dist,
-        ));
+        // The first declaration of a name stands, its kind with its box.
+        if boxes.boxes.contains_key(&archetype.name.hash) {
+            continue;
+        }
+        if matches!(archetype, CBaseArchetypeDefAny::CMloArchetypeDef(_)) {
+            boxes.interiors.insert(archetype.name.hash);
+        }
+        boxes.boxes.insert(
+            archetype.name.hash,
+            (
+                corner(archetype.bb_min),
+                corner(archetype.bb_max),
+                archetype.lod_dist,
+            ),
+        );
     }
 }
 

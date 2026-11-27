@@ -931,3 +931,57 @@ fn a_chain_of_tests_of_one_value_against_constants_reads_as_the_switch_it_is_wri
     assert_eq!(read, Ok(()), "{text}");
     reads_back_alone(&bare, "case 1:", "case 1:\n        case 4:");
 }
+
+#[test]
+fn a_foreach_reads_as_its_item_and_what_is_gone_through_and_as_its_loop_where_the_item_is_declared_elsewhere(
+) {
+    // An enumerator taken from a collection, asked each round and read first in it.
+    let over = |before: Vec<tree::Stmt>| {
+        let mut body = before;
+        body.push(construct(Sugar::Foreach {
+            setup: vec![set(Var::Local(1), native("GET", vec![p(1)]))],
+            cond: native("NEXT", vec![local(1)]),
+            item: Box::new(set(Var::Local(2), native("CURRENT", vec![local(1)]))),
+            body: vec![used(local(2))],
+            step: None,
+            after: vec![used(p(0))],
+        }));
+        function(body)
+    };
+    let declared = over(Vec::new());
+    reads_back_alone(&declared, "in p1)", "in p0)");
+    reads_back_alone(&declared, "DEMO.USE(local_2);", "DEMO.USE(local_1);");
+    reads_back_alone(&declared, "DEMO.USE(p0);", "DEMO.USE(p1);");
+    let (text, _) = round_trip(&declared);
+    assert!(text.contains("foreach ("), "{text}");
+    // An item named before the loop is declared there: the loop stays the loop it stands for.
+    let elsewhere = over(vec![used(local(2))]);
+    let (text, read) = round_trip(&elsewhere);
+    assert!(
+        !text.contains("foreach") && text.contains("while ("),
+        "{text}"
+    );
+    assert_eq!(read, Ok(()), "{text}");
+    reads_back_alone(
+        &elsewhere,
+        "local_2 = DEMO.CURRENT(local_1);",
+        "local_2 = DEMO.CURRENT(p0);",
+    );
+    // An index stepped over an array goes through the array.
+    let element = intrinsic("array_get_ref", vec![p(1), local(1)]);
+    let stepped = function(vec![construct(Sugar::Foreach {
+        setup: vec![set(Var::Local(1), int(0))],
+        cond: op(BinOp::Lt, local(1), intrinsic("array_len", vec![p(1)])),
+        item: Box::new(set(Var::Local(2), element)),
+        body: vec![used(local(2))],
+        step: Some(Box::new(set(
+            Var::Local(1),
+            op(BinOp::Add, local(1), int(1)),
+        ))),
+        after: Vec::new(),
+    })]);
+    let (text, read) = round_trip(&stepped);
+    assert!(text.contains("foreach ("), "{text}");
+    assert_eq!(read, Ok(()), "{text}");
+    reads_back_alone(&stepped, "in p1)", "in p0)");
+}

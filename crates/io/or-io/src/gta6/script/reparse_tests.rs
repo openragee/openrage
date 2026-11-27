@@ -1127,18 +1127,18 @@ fn a_form_not_read_back_yet_is_counted_by_name_and_not_compared() {
     assert_eq!(unread_of(one(), by_text).as_deref(), Some("goto case"));
     assert_eq!(source_says(one(), "    goto case 3;\n"), Ok(false));
     // What the function holds of a form not held yet stops the comparison just as well.
-    let foreach = || {
-        vec![construct(Sugar::Foreach {
-            setup: vec![set(Var::Local(1), native("GET", vec![p(1)]))],
-            cond: native("NEXT", vec![local(1)]),
-            item: Box::new(set(Var::Local(2), native("CURRENT", vec![local(1)]))),
-            body: vec![used(local(2))],
-            step: None,
-            after: Vec::new(),
-        })]
+    let boxed_pair = || {
+        let boxed = |e: Expr| intrinsic("box<int>", vec![e]);
+        vec![used(builtin(
+            "System.Object.Equals",
+            vec![boxed(p(0)), boxed(p(1))],
+        ))]
     };
-    let written = "    foreach (Cell local_2 in p1)\n    {\n        DEMO.USE(local_2);\n    }\n";
-    assert_eq!(unread_of(foreach(), written).as_deref(), Some("foreach"));
+    let written = "    DEMO.USE(p0 == p1);\n";
+    assert_eq!(
+        unread_of(boxed_pair(), written).as_deref(),
+        Some("a boxed value compared or converted")
+    );
     // A form read and a statement that differs before it is a difference, not a form unread.
     let before = format!("    local_0 = p1;\n{lambda}");
     let two = || {

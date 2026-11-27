@@ -3504,6 +3504,11 @@ impl Placer<'_> {
     }
 }
 
+/// The assignments of `body` the source level declares their target at.
+pub(super) fn declared_at(body: &[tree::Stmt], head: &Head) -> HashSet<*const Stmt> {
+    placement(body, false, Some(head)).sites
+}
+
 /// Finds where each variable of `body` is declared.
 // A variable is declared at its first assignment when that is its first mention and the block it
 // stands in holds every other; else at the top, where a read before any assignment finds zero.

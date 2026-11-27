@@ -7,6 +7,7 @@
 //! ⚠ What that form leaves out is not checked: a cast dropped where it counted reads the same.
 
 use std::cell::Cell;
+use std::collections::HashSet;
 use std::fmt;
 
 use super::decode::TYPE_TOKEN;
@@ -14,8 +15,9 @@ use super::ir::{
     BinOp, Callee, Const, Expr, ExprSugar, Head, Kind, Scalar, Stmt, StoreKind, UnOp, Var,
 };
 use super::names::Names;
+use super::passes::sugar_statements::enumerated;
 use super::passes::{async_await, closures};
-use super::print::{callee_name, cells_of, reads_through};
+use super::print::{callee_name, cells_of, declared_at, reads_through};
 use super::tree;
 use super::{Level, Options, Pass};
 
@@ -79,6 +81,7 @@ pub fn agrees_within(f: &tree::Function, text: &str, limit: usize) -> Result<(),
                 left: Cell::new(limit),
                 limit,
                 sharp: None,
+                sites: HashSet::new(),
                 this: None,
             };
             compare(&held.nodes(&f.body, 0)?, &body)
@@ -111,6 +114,7 @@ pub fn agrees_source_within(
         limit,
         sharp: Some(options),
         this: receiver.then_some(Var::Param(0)),
+        sites: declared_at(&f.body, &f.head),
     };
     let this = receiver.then(|| held.var(Var::Param(0)));
     let mut read_back = None;
@@ -2054,6 +2058,56 @@ fn switched(arms: &[tree::Arm]) -> Option<(&Expr, Vec<Vec<i64>>)> {
     (!calls(value)).then_some((value, values))
 }
 
+/// The array an indexed `foreach` goes through: the one its item is the element of, at the index its one setup statement starts at zero and its step steps.
+fn indexed<'e>(setup: &[Stmt], item: &'e Stmt, step: &Stmt) -> Option<&'e Expr> {
+    let [Stmt::Assign {
+        target: index,
+        value: start,
+    }] = setup
+    else {
+        return None;
+    };
+    let (
+        Stmt::Assign { value, .. },
+        Stmt::Assign {
+            target: stepped, ..
+        },
+    ) = (item, step)
+    else {
+        return None;
+    };
+    let Expr::Call {
+        callee: Callee::Intrinsic { name, .. },
+        args,
+        ..
+    } = bare(under_wide(value))
+    else {
+        return None;
+    };
+    let [array, at] = args.as_slice() else {
+        return None;
+    };
+    // The index under its readings as an integer, which a reading as a float is none of.
+    let mut read = at;
+    while let Expr::Cast { to, e } = read {
+        if to.kind().is_float() {
+            break;
+        }
+        read = &**e;
+    }
+    let reads = name.starts_with("array_get_") && *read == Expr::Var(*index);
+    (reads && index == stepped && is_zero(start)).then_some(array)
+}
+
+/// Whether `taken` gives the variable `asked` is, and no other, what a call on a receiver yields: an enumerator taken from what is gone through.
+fn takes(taken: &Stmt, asked: Option<&Expr>) -> bool {
+    let own = matches!(
+        (taken, asked),
+        (Stmt::Assign { target, .. }, Some(Expr::Var(var))) if target == var
+    );
+    own && assigned_receiver(taken).is_some()
+}
+
 /// The call that fills the variables the statements before it only made zero, where `parts` are those and it: `F(out T x)`.
 fn filled(parts: &[Stmt]) -> Option<&Stmt> {
     let (call, zeroed) = parts.split_last()?;
@@ -2341,6 +2395,10 @@ struct Held<'a> {
     sharp: Option<Options>,
     /// The parameter `this` stands for, where the text is a method's.
     this: Option<Var>,
+    /// The assignments the source level declares their target at.
+    // ⚠ The printer's own placement, read from the same function: what is held against the
+    // text is the loop a `foreach` is, never where its item is declared.
+    sites: HashSet<*const Stmt>,
 }
 
 impl Held<'_> {
@@ -3761,8 +3819,55 @@ impl Held<'_> {
                     out.push(Node::held("yield", Vec::new(), Vec::new()));
                 }
             },
-            // Whether its item is declared by it is where the printer places declarations.
-            tree::Sugar::Foreach { .. } if on(Pass::Foreach) => out.push(unread_node("foreach")),
+            tree::Sugar::Foreach {
+                setup,
+                cond,
+                item,
+                body,
+                step,
+                after,
+            } => {
+                let asked = receiver(cond);
+                let held = enumerated(setup, cond);
+                let (shown, source): (&[Stmt], _) = match (step.as_deref(), setup.split_last()) {
+                    // An index stepped over an array: the array is what is gone through, and nothing else is shown.
+                    (Some(step), _) => (&[], indexed(setup, item, step)),
+                    // A struct enumerator: what it is made from is what is gone through.
+                    (None, _) if held.is_some() => held
+                        .map_or((setup.as_slice(), None), |(rest, source)| {
+                            (rest, Some(source))
+                        }),
+                    // The collection is what the enumerator is taken from, else what each round asks.
+                    (None, Some((taken, rest))) if takes(taken, asked) => {
+                        (rest, assigned_receiver(taken))
+                    }
+                    (None, _) => (setup.as_slice(), asked),
+                };
+                let declares = self.sites.contains(&std::ptr::from_ref::<Stmt>(item));
+                match (on(Pass::Foreach) && declares, &**item, source) {
+                    (true, Stmt::Assign { target, .. }, Some(source)) => {
+                        self.simples(shown, out, d)?;
+                        let head = vec![Sk::Name(self.var(*target)), self.sk(source, d)?];
+                        out.push(Node::held("foreach", head, vec![self.nodes(body, d)?]));
+                    }
+                    // An item declared elsewhere leaves the loop the construct stands for.
+                    _ => {
+                        self.simples(setup, out, d)?;
+                        let mut round = Vec::new();
+                        self.simples(std::slice::from_ref::<Stmt>(item), &mut round, d)?;
+                        round.extend(self.nodes(body, d)?);
+                        let cond = truth(self.sk(cond, d)?);
+                        out.push(match step.as_deref() {
+                            Some(step) => {
+                                let head = vec![none(), cond, self.simple(step, d)?];
+                                Node::held("for", head, vec![round])
+                            }
+                            None => Node::held("while", vec![cond], vec![round]),
+                        });
+                    }
+                }
+                out.extend(self.nodes(after, d)?);
+            }
             tree::Sugar::Guarded {
                 kind: tree::Guard::Using,
                 ..

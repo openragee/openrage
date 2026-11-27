@@ -51,6 +51,7 @@ fn made() -> Expr {
 
 fn function(body: Vec<tree::Stmt>) -> tree::Function {
     let head = Head {
+        value_types: Default::default(),
         program: PROGRAM,
         at: AT,
         name: "func_000040".to_owned(),
@@ -428,4 +429,137 @@ fn an_address_used_only_to_reach_its_own_cell_reaches_no_local_after_it() {
     ];
     let f = function(body);
     assert_eq!(read(f.clone(), &project, Options::default()).body, f.body);
+}
+
+#[test]
+fn a_local_past_what_a_function_handed_an_address_reaches_is_a_base() {
+    use crate::gta6::script::project::reach::{Reach, UNBOUNDED};
+    let handed = tree::Stmt::Simple(ir::Stmt::Eval(Expr::Call {
+        callee: ir::Callee::Local {
+            at: 0x80,
+            name: "func_000080".to_owned(),
+        },
+        args: vec![Expr::AddrOf {
+            var: Var::Local(0),
+            cell: 0,
+        }],
+        returns: Some(0),
+    }));
+    let body = || {
+        vec![
+            handed.clone(),
+            set(Var::Local(2), made()),
+            set(Var::Local(3), load(Scalar::I32, local(2), 0x10)),
+        ]
+    };
+    let reaching = |bytes: u32| {
+        let mut project = project();
+        let cells = BTreeMap::from([(
+            0,
+            Reach {
+                bytes,
+                dies: true,
+                ..Reach::default()
+            },
+        )]);
+        project.reach.insert(FunctionKey::new(PROGRAM, 0x80), cells);
+        project
+    };
+    // The function touches the cell it is handed and the one after: `local_2` is apart.
+    let done = read(function(body()), &reaching(16), Options::default());
+    let wanted = set(Var::Local(3), of(MADE, load(Scalar::I32, local(2), 0x10)));
+    assert_eq!(done.body[2], wanted);
+    assert_eq!(tree::desugar(done.body), body());
+    // One that touches three cells, one nothing bounds, and one the project holds no reach of.
+    for project in [reaching(24), reaching(UNBOUNDED), project()] {
+        let done = read(function(body()), &project, Options::default());
+        assert_eq!(done.body, body());
+    }
+    // An address the function keeps past the call, however few bytes it touches.
+    let mut kept = reaching(16);
+    let callee = kept.reach.get_mut(&FunctionKey::new(PROGRAM, 0x80));
+    if let Some(cell) = callee.and_then(|cells| cells.get_mut(&0)) {
+        cell.dies = false;
+    }
+    let done = read(function(body()), &kept, Options::default());
+    assert_eq!(done.body, body());
+    // An address of a parameter nothing bounds may reach the parameters after it.
+    let mut info = VarInfo::new(ir::Width::Cell);
+    info.kind = Kind::Object(MADE.to_string());
+    let lower = Expr::AddrOf {
+        var: Var::Param(0),
+        cell: 0,
+    };
+    let mut f = function(vec![
+        set(Var::Local(0), lower),
+        set(Var::Local(3), load(Scalar::I32, param(1), 0x10)),
+    ]);
+    f.head.vars.insert(Var::Param(1), info);
+    assert_eq!(read(f.clone(), &project(), Options::default()).body, f.body);
+}
+
+#[test]
+fn a_parameter_only_the_projects_signature_types_is_no_base() {
+    use crate::gta6::script::project::{Param, Signature};
+    let one = |kind: Kind| Param { kind, cells: 1 };
+    let mut project = project();
+    let signature = Signature {
+        params: vec![one(Kind::Object(MADE.to_string())), one(Kind::Unknown)],
+        returns: 0,
+        result: Kind::Unknown,
+    };
+    project
+        .signatures
+        .insert(FunctionKey::new(PROGRAM, AT), signature);
+    // ⚠ What a call passes is a kind the kinds pass weighs with the function's own code, and
+    // leaves a reference of no type where that code argues otherwise: the head's kind is the
+    // proof, never the signature's alone.
+    let reads = || vec![set(Var::Local(0), load(Scalar::I32, param(0), 0x10))];
+    for kind in [Kind::Unknown, Kind::Pointer] {
+        let mut f = function(reads());
+        let mut info = VarInfo::new(ir::Width::Cell);
+        info.kind = kind;
+        f.head.vars.insert(Var::Param(0), info);
+        assert_eq!(read(f, &project, Options::default()).body, reads());
+    }
+    assert_eq!(
+        read(function(reads()), &project, Options::default()).body,
+        reads()
+    );
+}
+
+#[test]
+fn a_zero_stored_whole_to_a_field_the_layouts_prove_a_reference_is_null() {
+    let zero = |kind: Kind| Expr::Const(Const { bits: 0, kind });
+    let clears = |offset: u32, value: Expr| ir::Stmt::Store {
+        kind: StoreKind::U64,
+        addr: local(0),
+        offset,
+        value,
+    };
+    let mut project = project();
+    project
+        .fields
+        .insert(BASE, vec![typed(8, 8, Kind::Pointer)]);
+    project
+        .fields
+        .insert(MADE, vec![typed(0x10, 8, Kind::Unknown)]);
+    let body = || {
+        vec![
+            set(Var::Local(0), made()),
+            tree::Stmt::Simple(clears(8, zero(Kind::U64))),
+            // A field of no proved kind keeps its number.
+            tree::Stmt::Simple(clears(0x10, zero(Kind::U64))),
+        ]
+    };
+    let done = read(function(body()), &project, Options::default());
+    let wanted = vec![
+        set(Var::Local(0), made()),
+        group(BASE, clears(8, zero(Kind::Pointer))),
+        group(MADE, clears(0x10, zero(Kind::U64))),
+    ];
+    assert_eq!(done.body, wanted);
+    // Switched off, the zero is the number it was read as.
+    let off = Options::default().without(Pass::Fields);
+    assert_eq!(read(function(body()), &project, off).body, body());
 }

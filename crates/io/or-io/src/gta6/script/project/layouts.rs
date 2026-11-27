@@ -6,22 +6,31 @@
 //! type's rows are evidence, one for each width and kind seen at an offset, until [`settle`]
 //! makes one field of the rows that agree, under the base type that holds it. A field's kind is
 //! the one every access of it in every program agrees on, and none where two disagree. One byte
-//! whose every store is a truth and whose every load is only tested for zero is a `bool`.
+//! whose every store is a truth and whose every load is only tested for zero or kept in a `bool`
+//! is a `bool`. A reference field is of the most derived type every call on it is made as, where
+//! every object a store seen puts in it derives from that type: a store through a base of no
+//! known type is never seen, so a store only rules a type out.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{FieldFacts, Project, TypeFacts, MAX_BASES};
+use super::{reach, signatures, FieldFacts, Project, TypeFacts, MAX_BASES};
 use crate::gta6::script::cfg;
 use crate::gta6::script::ir::{
     BinOp, Callee, Expr, FunctionKey, Head, Kind, Scalar, Stmt, StoreKind, TypeKey, UnOp, Var,
 };
+use crate::gta6::script::print::cells_of;
 use crate::gta6::script::program::{Program, TypeRow};
 
-/// The rows of each type's fields and the truths of its bytes, before they are settled.
-pub type Rows = (
-    BTreeMap<TypeKey, Vec<FieldFacts>>,
-    BTreeMap<(TypeKey, u32), bool>,
-);
+/// The rows of each type's fields, the truths of its bytes and the objects stored in its references, before they are settled.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Rows {
+    pub fields: BTreeMap<TypeKey, Vec<FieldFacts>>,
+    pub truths: BTreeMap<(TypeKey, u32), bool>,
+    /// The script types of the objects stored at each offset, by the type the store went through.
+    // ⚠ Kept apart from the rows: a type a call is made as lies above the field's type, and the
+    // type of an object stored lies below it.
+    pub made: BTreeMap<(TypeKey, u32), BTreeSet<TypeKey>>,
+}
 
 /// The bytes of an object's header: its fields start after them.
 const HEADER: u32 = 8;
@@ -144,20 +153,20 @@ pub fn of_program(project: &mut Project, program: &Program) {
     }
 }
 
-/// How a function sets its variables and whose address it takes.
+/// How a function sets its variables and what the addresses it takes may reach.
 #[derive(Default)]
 struct Sets {
     /// Each variable assigned by name: the one type of the objects made into it, `None` where it is given anything else.
     made: BTreeMap<Var, Option<TypeKey>>,
-    addressed: BTreeSet<Var>,
+    frame: Frame,
 }
 
 impl Sets {
     // ⚠ An address the function only loads or stores its own cell through reaches no other
     // variable: such a store is an assignment of the variable, and no address taken.
-    fn of(f: &cfg::Function) -> Sets {
+    fn of(f: &cfg::Function, project: Option<&Project>) -> Sets {
         let mut sets = Sets::default();
-        let mut taken: BTreeMap<Var, (u32, u32)> = BTreeMap::new();
+        let mut reached = Reached::default();
         for block in &f.cfg.blocks {
             for stmt in &block.stmts {
                 match stmt {
@@ -172,19 +181,15 @@ impl Sets {
                     }
                 }
                 if let Some(var) = own_cell_store(stmt) {
-                    taken.entry(var).or_default().1 += 1;
                     sets.give(var, None);
                 }
-                stmt.each_expr(&mut |top| addresses(top, &mut taken));
+                reached.stmt(stmt, &f.head, project);
             }
             if let Some(e) = block.term.expr() {
-                addresses(e, &mut taken);
+                reached.expr(e, &f.head, project);
             }
         }
-        sets.addressed = (taken.into_iter())
-            .filter(|(_, (all, own))| all > own)
-            .map(|(var, _)| var)
-            .collect();
+        sets.frame = reached.finish();
         sets
     }
 
@@ -195,25 +200,14 @@ impl Sets {
         }
     }
 
-    /// The lowest local whose address the function takes.
-    fn lowest(&self) -> Option<u32> {
-        let locals = self.addressed.iter().filter_map(|var| match var {
-            Var::Local(n) => Some(*n),
-            _ => None,
-        });
-        locals.min()
-    }
-
     /// The variables that hold an object of one known type wherever they are read.
-    // ⚠ A variable whose address is taken, and a local at or after one whose address is, may be
-    // written through that address: what is assigned to it by name then proves nothing.
+    // ⚠ A variable an address the function takes may reach may be written through that address:
+    // what is assigned to it by name then proves nothing.
     fn bases(&self, receiver: Option<TypeKey>) -> BTreeMap<Var, TypeKey> {
-        let lowest = self.lowest();
         let mut bases = BTreeMap::new();
         for (var, ty) in &self.made {
             let reached = match var {
-                Var::Local(n) => lowest.is_some_and(|low| *n >= low),
-                Var::Value { .. } | Var::Stack { .. } => self.addressed.contains(var),
+                Var::Local(_) | Var::Value { .. } | Var::Stack { .. } => self.frame.reaches(*var),
                 // A caller sets a parameter, and any code a global.
                 Var::Param(_) | Var::Global { .. } => true,
             };
@@ -224,7 +218,7 @@ impl Sets {
         // The receiver is its type's object only while the function leaves it as it was passed.
         let receiver = receiver.filter(|_| {
             let this = Var::Param(0);
-            !self.made.contains_key(&this) && !self.addressed.contains(&this)
+            !self.made.contains_key(&this) && !self.frame.reaches(this)
         });
         if let Some(owner) = receiver {
             bases.insert(Var::Param(0), owner);
@@ -233,17 +227,185 @@ impl Sets {
     }
 }
 
-/// Counts each address of a variable `top` takes, and each load through one that stays in the variable's own cell.
-fn addresses(top: &Expr, taken: &mut BTreeMap<Var, (u32, u32)>) {
-    top.walk(&mut |e| match e {
-        Expr::AddrOf { var, .. } => taken.entry(*var).or_default().0 += 1,
-        Expr::Load { ty, addr, offset } => {
-            if let Some(var) = own_cell(addr, *offset, ty.bytes()) {
-                taken.entry(var).or_default().1 += 1;
+/// The addresses one function takes, as they are read: each variable's, and how far each may reach.
+#[derive(Default)]
+pub(crate) struct Reached {
+    /// Each variable whose address is taken: how often, and how often only to reach its own cell or to be handed to a function whose reach the project bounds.
+    taken: BTreeMap<Var, (u32, u32)>,
+    /// Each address handed to such a function: the variable, the cell of it the address is of, and the cells from there the function may touch.
+    spans: Vec<(Var, u32, u32)>,
+}
+
+impl Reached {
+    /// Notes the addresses a statement takes, and a store through a variable's own address.
+    pub(crate) fn stmt(&mut self, s: &Stmt, head: &Head, project: Option<&Project>) {
+        self.own_store(s);
+        s.each_expr(&mut |top| self.expr(top, head, project));
+    }
+
+    /// Notes a store, a clear or a step that reaches a variable's own cell through its address, and no other.
+    pub(crate) fn own_store(&mut self, s: &Stmt) {
+        if let Some(var) = own_cell_store(s) {
+            self.taken.entry(var).or_default().1 += 1;
+        }
+    }
+
+    /// Notes the addresses `top` takes; `project` is a settled project, whose reach table bounds an address handed whole to a function, or `None`, where any address handed on may reach anything.
+    pub(crate) fn expr(&mut self, top: &Expr, head: &Head, project: Option<&Project>) {
+        let Reached { taken, spans } = self;
+        let mut handed: BTreeMap<*const Expr, u32> = BTreeMap::new();
+        top.walk(&mut |e| match e {
+            Expr::Call { callee, args, .. } => {
+                if let Some(project) = project {
+                    handed.extend(handed_on(project, head, callee, args));
+                }
+            }
+            Expr::AddrOf { var, cell } => {
+                let held = taken.entry(*var).or_default();
+                held.0 += 1;
+                if let Some(bytes) = handed.get(&std::ptr::from_ref(e)) {
+                    held.1 += 1;
+                    spans.push((*var, *cell, bytes.div_ceil(8)));
+                }
+            }
+            Expr::Load { ty, addr, offset } => {
+                if let Some(var) = own_cell(addr, *offset, ty.bytes()) {
+                    taken.entry(var).or_default().1 += 1;
+                }
+            }
+            _ => {}
+        });
+    }
+
+    /// What the addresses noted may reach.
+    pub(crate) fn finish(self) -> Frame {
+        let mut frame = Frame::default();
+        let low = |held: Option<u32>, n: u32| Some(held.map_or(n, |low| low.min(n)));
+        for (var, (all, accounted)) in &self.taken {
+            if all <= accounted {
+                continue;
+            }
+            match *var {
+                Var::Local(n) => frame.locals = low(frame.locals, n),
+                Var::Param(n) => frame.params = low(frame.params, n),
+                Var::Value { .. } | Var::Stack { .. } => {
+                    frame.others.insert(*var);
+                }
+                Var::Global { .. } => {}
             }
         }
-        _ => {}
-    });
+        let (mut locals, mut params) = (Vec::new(), Vec::new());
+        for (var, cell, cells) in self.spans {
+            let span = |n: u32| {
+                let first = u64::from(n) + u64::from(cell);
+                (first, first + u64::from(cells))
+            };
+            match var {
+                _ if cells == 0 => {}
+                Var::Local(n) => locals.push(span(n)),
+                Var::Param(n) => params.push(span(n)),
+                Var::Value { .. } | Var::Stack { .. } => {
+                    frame.others.insert(var);
+                }
+                Var::Global { .. } => {}
+            }
+        }
+        frame.local_spans = merged(locals);
+        frame.param_spans = merged(params);
+        frame
+    }
+}
+
+/// The cells of a function's frame its addresses may reach.
+#[derive(Default)]
+pub(crate) struct Frame {
+    /// The lowest local, and the lowest parameter, an address that may reach anything from it is taken of.
+    locals: Option<u32>,
+    params: Option<u32>,
+    /// The temporaries an address of which is taken other than to reach their own cell.
+    others: BTreeSet<Var>,
+    /// The cells, first and past the last, a bounded address may touch, apart and by rising cell.
+    local_spans: Vec<(u64, u64)>,
+    param_spans: Vec<(u64, u64)>,
+}
+
+impl Frame {
+    /// Whether an address the function takes may reach `var`, so that it may change otherwise than by its name.
+    pub(crate) fn reaches(&self, var: Var) -> bool {
+        match var {
+            Var::Local(n) => {
+                self.locals.is_some_and(|low| n >= low) || within(&self.local_spans, n)
+            }
+            Var::Param(n) => {
+                self.params.is_some_and(|low| n >= low) || within(&self.param_spans, n)
+            }
+            Var::Value { .. } | Var::Stack { .. } => self.others.contains(&var),
+            Var::Global { .. } => true,
+        }
+    }
+}
+
+/// `spans` by rising first cell, each overlapping or touching run made one.
+fn merged(mut spans: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
+    spans.sort_unstable();
+    let mut out: Vec<(u64, u64)> = Vec::with_capacity(spans.len());
+    for (first, end) in spans {
+        match out.last_mut() {
+            Some(last) if first <= last.1 => last.1 = last.1.max(end),
+            _ => out.push((first, end)),
+        }
+    }
+    out
+}
+
+/// Whether cell `n` lies in one of `spans`, which are apart and by rising first cell.
+fn within(spans: &[(u64, u64)], n: u32) -> bool {
+    let n = u64::from(n);
+    let at = spans.partition_point(|(first, _)| *first <= n);
+    (at.checked_sub(1).and_then(|at| spans.get(at))).is_some_and(|(_, end)| *end > n)
+}
+
+/// Each argument of a call that is an address handed whole to a function of a program, with the bytes from it the function may touch, where the project bounds them.
+// ⚠ An argument is placed at its cell of the callee's parameters only while every argument before
+// it states its cells; past one that does not, no address is bounded.
+fn handed_on(
+    project: &Project,
+    head: &Head,
+    callee: &Callee,
+    args: &[Expr],
+) -> Vec<(*const Expr, u32)> {
+    let Some(to) = signatures::key_of(head.program, callee) else {
+        return Vec::new();
+    };
+    let mut handed = Vec::new();
+    let mut at = Some(0u32);
+    for arg in args {
+        let Some(cell) = at else {
+            break;
+        };
+        // ⚠ Only an address nothing keeps past the call: one kept may be written through later.
+        if let Expr::AddrOf { .. } = arg {
+            let bytes = project
+                .reach(to, cell)
+                .filter(|bytes| *bytes != reach::UNBOUNDED);
+            let dies = project.address_dies(to, cell) == Some(true);
+            if let (Some(bytes), true) = (bytes, dies) {
+                handed.push((std::ptr::from_ref(arg), bytes));
+            }
+        }
+        at = cells_of(arg, head).and_then(|cells| cell.checked_add(cells));
+    }
+    handed
+}
+
+/// The script type `kind` refers to an object of, where the project holds that type and it is no value type.
+pub(crate) fn object_of(project: &Project, kind: &Kind) -> Option<TypeKey> {
+    let Kind::Object(name) = kind else {
+        return None;
+    };
+    let key = TypeKey::of_name(name).filter(|key| key.builtin().is_none() && !waits(*key))?;
+    let facts = project.types.get(&key)?;
+    (!facts.is_value()).then_some(key)
 }
 
 /// The variable whose own cell an access of `bytes` bytes at `offset` through `addr` reaches, where `addr` is its address and the access stays in that cell.
@@ -291,6 +453,15 @@ fn is_zero(e: &Expr) -> bool {
     matches!(e, Expr::Const(c) if c.bits == 0)
 }
 
+/// `e` under the casts around it.
+fn uncast(e: &Expr) -> &Expr {
+    let mut e = e;
+    while let Expr::Cast { e: inner, .. } = e {
+        e = &**inner;
+    }
+    e
+}
+
 /// One reading of a function for the fields its accesses show.
 struct Seen<'a> {
     bases: &'a BTreeMap<Var, TypeKey>,
@@ -298,8 +469,10 @@ struct Seen<'a> {
     rows: Vec<(TypeKey, FieldFacts)>,
     /// Each byte accessed through a base, and whether every such access was of a truth.
     truths: Vec<((TypeKey, u32), bool)>,
-    /// The loads that stand where only whether they are zero is read.
+    /// The loads that stand where only whether they are zero is read, or that a `bool` keeps.
     tested: BTreeSet<*const Expr>,
+    /// Each reference field stored an object of a script type through a base: the base's type, the offset, the object's type.
+    made: Vec<(TypeKey, u32, TypeKey)>,
 }
 
 impl Seen<'_> {
@@ -461,17 +634,51 @@ impl Seen<'_> {
         self.row(addr, *offset, 4, sign);
     }
 
-    /// What a reference stored is: an object of the script type it is made of or that the variable it comes from holds, else a reference and no more.
-    // ⚠ The object's own type, which may lie below the type the field is declared as: [`settle`]
-    // keeps the most derived of the types seen, and none where two lie on no one line.
-    fn stored(&self, value: &Expr) -> Kind {
+    /// The script type of the object a reference stored is made as, or that the variable it comes from holds.
+    // ⚠ Evidence against a type only: a store through a base of no proved type is never seen, so
+    // what the stores seen hold names no type the field is, nor an array or a string it holds.
+    fn stored(&self, value: &Expr) -> Option<TypeKey> {
         let script = match value {
             Expr::NewObject(ty) => TypeKey::of(ty),
             Expr::Var(var) => self.bases.get(var).copied(),
             _ => None,
         };
-        let script = script.filter(|key| key.builtin().is_none() && !waits(*key));
-        script.map_or(Kind::Pointer, |key| Kind::Object(key.to_string()))
+        script.filter(|key| key.builtin().is_none() && !waits(*key))
+    }
+
+    /// The sign a value stored in four bytes says the field's are: that of an integer variable the kinds pass gives one.
+    // ⚠ Never that of an expression: a cast to the other sign stores the same bits, and the stored
+    // value's outer cast may be gone. A variable's own kind is what it is read as everywhere.
+    fn sign(&self, value: &Expr) -> Kind {
+        let Expr::Var(var) = value else {
+            return Kind::Unknown;
+        };
+        match self.head.vars.get(var).map(|info| &info.kind) {
+            Some(Kind::I32) => Kind::I32,
+            Some(Kind::U32) => Kind::U32,
+            _ => Kind::Unknown,
+        }
+    }
+
+    /// Notes that a reference field at `offset` from `addr` is stored an object of the script type `ty`, where that is a field of a base of known type.
+    fn made_as(&mut self, addr: &Expr, offset: u32, ty: TypeKey) {
+        if let Some((key, offset)) = self.place(addr, offset) {
+            if offset >= HEADER {
+                self.made.push((key, offset, ty));
+            }
+        }
+    }
+
+    /// Notes a load a variable the kinds pass gives a `bool` keeps whole as one read only for whether it is zero.
+    fn kept(&mut self, stmt: &Stmt) {
+        let Stmt::Assign { target, value } = stmt else {
+            return;
+        };
+        let truth = (self.head.vars.get(target)).is_some_and(|info| info.kind == Kind::Bool);
+        let value = uncast(value);
+        if let (true, Expr::Load { .. }) = (truth, value) {
+            self.tested.insert(std::ptr::from_ref(value));
+        }
     }
 
     /// Whether a value stored in four bytes is a float by its own form.
@@ -498,10 +705,16 @@ impl Seen<'_> {
                     self.truth(addr, *offset, self.is_truth(value));
                 }
                 let held = match kind {
-                    StoreKind::Ref => self.stored(value),
+                    StoreKind::Ref => {
+                        if let Some(ty) = self.stored(value) {
+                            self.made_as(addr, *offset, ty);
+                        }
+                        Kind::Pointer
+                    }
                     // Eight zero bytes clear a reference as well as a number.
                     StoreKind::U64 if !zero => Kind::U64,
                     StoreKind::I32 if self.is_float(value) => Kind::F32,
+                    StoreKind::I32 => self.sign(value),
                     _ => Kind::Unknown,
                 };
                 self.field(addr, *offset, kind.bytes(), held);
@@ -520,11 +733,9 @@ impl Seen<'_> {
             Stmt::ZeroBytes { addr, bytes } => self.field(addr, 0, *bytes, whole(*bytes)),
             // One up or down is arithmetic, which is listed signed.
             Stmt::StepI32 { addr, offset, .. } => self.field(addr, *offset, 4, Kind::I32),
+            Stmt::Assign { .. } => self.kept(stmt),
             // Floats one after another, as many as the value has cells: no width is stated.
-            Stmt::StoreF32Slots { .. }
-            | Stmt::Assign { .. }
-            | Stmt::AssignMany { .. }
-            | Stmt::Eval(_) => {}
+            Stmt::StoreF32Slots { .. } | Stmt::AssignMany { .. } | Stmt::Eval(_) => {}
         }
         stmt.each_expr(&mut |top| self.expr(top));
     }
@@ -583,11 +794,12 @@ pub fn of_function(project: &mut Project, f: &cfg::Function) {
         ) if f.head.params > 0 => TypeKey::of_name(name),
         _ => None,
     };
-    let bases = Sets::of(f).bases(receiver);
+    let sets = Sets::of(f, None);
+    let bases = sets.bases(receiver);
     seen_through(project, f, &bases);
 }
 
-/// Adds the fields one function's loads and stores show through what a settled project proves of it: the variables the kinds pass types as an object of a script type, and the receiver of a member.
+/// Adds the fields one function's loads and stores show through what a settled project proves of it: the variables the kinds pass types as an object of a script type, the parameters its signature does, and the receiver of a member.
 // ⚠ Read after every program is in, with the kinds the project gives: a part for [`refine`].
 pub fn of_typed_function(part: &mut Project, f: &cfg::Function, project: &Project) {
     let own = FunctionKey::new(f.head.program, f.head.at);
@@ -596,27 +808,21 @@ pub fn of_typed_function(part: &mut Project, f: &cfg::Function, project: &Projec
         .filter(|member| !member.is_static && f.head.params > 0)
         .map(|member| member.owner)
         .filter(|owner| object(*owner));
-    let sets = Sets::of(f);
+    let sets = Sets::of(f, Some(project));
     let mut bases = sets.bases(receiver);
-    let lowest = sets.lowest();
     for (var, info) in &f.head.vars {
         let Kind::Object(name) = &info.kind else {
             continue;
         };
         let typed = TypeKey::of_name(name).filter(|key| key.builtin().is_none() && object(*key));
-        let reached = match var {
-            Var::Local(n) => lowest.is_some_and(|low| *n >= low),
-            Var::Value { .. } | Var::Stack { .. } | Var::Param(_) => sets.addressed.contains(var),
-            Var::Global { .. } => true,
-        };
-        if let (Some(key), false) = (typed, reached) {
+        if let (Some(key), false) = (typed, sets.frame.reaches(*var)) {
             bases.entry(*var).or_insert(key);
         }
     }
     seen_through(part, f, &bases);
 }
 
-/// Adds the rows and the truths the accesses of `f` through `bases` show.
+/// Adds the rows, the truths and the objects stored the accesses of `f` through `bases` show.
 fn seen_through(project: &mut Project, f: &cfg::Function, bases: &BTreeMap<Var, TypeKey>) {
     if bases.is_empty() {
         return;
@@ -627,6 +833,7 @@ fn seen_through(project: &mut Project, f: &cfg::Function, bases: &BTreeMap<Var, 
         rows: Vec::new(),
         truths: Vec::new(),
         tested: BTreeSet::new(),
+        made: Vec::new(),
     };
     for block in &f.cfg.blocks {
         for stmt in &block.stmts {
@@ -646,6 +853,14 @@ fn seen_through(project: &mut Project, f: &cfg::Function, bases: &BTreeMap<Var, 
     for (place, truth) in seen.truths {
         *project.truths.entry(place).or_insert(true) &= truth;
     }
+    for (key, offset, ty) in seen.made {
+        project
+            .rows
+            .made
+            .entry((key, offset))
+            .or_default()
+            .insert(ty);
+    }
 }
 
 /// Moves the fields of `from` into `into`: a type both hold has the rows of both, each once.
@@ -660,6 +875,9 @@ pub fn absorb(into: &mut Project, from: &mut Project) {
     }
     for (place, truth) in std::mem::take(&mut from.truths) {
         *into.truths.entry(place).or_insert(true) &= truth;
+    }
+    for (place, types) in std::mem::take(&mut from.rows.made) {
+        into.rows.made.entry(place).or_default().extend(types);
     }
 }
 
@@ -700,6 +918,8 @@ fn both(a: Kind, b: &Kind) -> Option<Kind> {
         // A reference, and what one store says it refers to.
         (Kind::Pointer, b) if named(b) => Some(b.clone()),
         (a, Kind::Pointer) if named(&a) => Some(a),
+        // Two references that say other things of what they refer to are a reference and no more.
+        (a, b) if named(&a) && named(b) => Some(Kind::Pointer),
         // Cells held in place, and the type a member table gives them.
         (Kind::Aggregate(n), Kind::Value { cells, .. }) if n == *cells => Some(b.clone()),
         (Kind::Value { ty, cells }, Kind::Aggregate(n)) if cells == *n => {
@@ -709,19 +929,29 @@ fn both(a: Kind, b: &Kind) -> Option<Kind> {
     }
 }
 
-/// The most derived of the types `called`: the one that each of the others is a base type or an interface of; `None` where no one of them is all of them.
-fn narrowest(project: &Project, called: &BTreeSet<TypeKey>) -> Option<TypeKey> {
-    if called.len() > RECEIVERS {
+/// The most derived of the types `called` that is each of them and that each of the types `made` is; `None` where none is.
+// A call is made as the field's type or one above it, and an object stored is of the field's type
+// or one below it. ⚠ Only a call names the type: a store through a base of no proved type is never
+// seen, so the objects stored that are seen can only rule a type out.
+fn narrowest(
+    project: &Project,
+    called: &BTreeSet<TypeKey>,
+    made: &BTreeSet<TypeKey>,
+) -> Option<TypeKey> {
+    if called.len().saturating_add(made.len()) > RECEIVERS {
         return None;
     }
-    let all = |ty: &TypeKey| called.iter().all(|other| project.is_a(*ty, *other));
-    called.iter().copied().find(all)
+    let fits = |ty: TypeKey| {
+        called.iter().all(|other| project.is_a(ty, *other))
+            && made.iter().all(|object| project.is_a(*object, ty))
+    };
+    called.iter().copied().find(|ty| fits(*ty))
 }
 
 /// The one field the rows seen at an offset make: none where two widths were seen, and of no kind where two kinds were.
-// A reference whose objects are of script types is of the most derived of them, and where they
-// are of no one line it is a reference and no more.
-fn agreed(project: &Project, rows: &[FieldFacts]) -> Option<FieldFacts> {
+// A reference is of the most derived type the calls on it are made as, where every object stored
+// in it is one; where there is none it is a reference and no more.
+fn agreed(project: &Project, rows: &[FieldFacts], made: &BTreeSet<TypeKey>) -> Option<FieldFacts> {
     let first = rows.first()?;
     if rows.iter().any(|row| row.bytes != first.bytes) {
         return None;
@@ -741,9 +971,12 @@ fn agreed(project: &Project, rows: &[FieldFacts]) -> Option<FieldFacts> {
             None => both(known, &row.kind),
         });
     }
-    let kind = match (kind, called.is_empty()) {
+    // ⚠ Only a reference of eight bytes is stored an object.
+    let empty = BTreeSet::new();
+    let made = if first.bytes == 8 { made } else { &empty };
+    let kind = match (kind, called.is_empty() && made.is_empty()) {
         (Some(kind), true) => kind,
-        (Some(Kind::Pointer), false) => match narrowest(project, &called) {
+        (Some(Kind::Pointer), false) => match narrowest(project, &called, made) {
             Some(key) => Kind::Object(key.to_string()),
             None => Kind::Pointer,
         },
@@ -762,7 +995,24 @@ fn agreed(project: &Project, rows: &[FieldFacts]) -> Option<FieldFacts> {
 // ⚠ An offset seen at two widths has no field: each access of it keeps the form it has.
 pub fn settle(project: &mut Project) {
     // Kept, so that [`refine`] settles them again with more.
-    project.rows = (project.fields.clone(), project.truths.clone());
+    let stored = std::mem::take(&mut project.rows.made);
+    project.rows = Rows {
+        fields: project.fields.clone(),
+        truths: project.truths.clone(),
+        made: stored.clone(),
+    };
+    // The objects stored in each field, under the type that declares it.
+    let mut made: BTreeMap<(TypeKey, u32), BTreeSet<TypeKey>> = BTreeMap::new();
+    for ((key, offset), types) in stored {
+        let row = FieldFacts {
+            offset,
+            bytes: 8,
+            kind: Kind::Pointer,
+        };
+        if let Some(owner) = declarer(&project.types, key, &row) {
+            made.entry((owner, offset)).or_default().extend(types);
+        }
+    }
     let mut seen: BTreeMap<TypeKey, BTreeMap<u32, Vec<FieldFacts>>> = BTreeMap::new();
     for (key, rows) in std::mem::take(&mut project.fields) {
         if waits(key) {
@@ -791,11 +1041,15 @@ pub fn settle(project: &mut Project) {
         }
     }
     let known: &Project = project;
+    let none = BTreeSet::new();
     let mut settled = BTreeMap::new();
     for (owner, offsets) in seen {
         let mut fields: Vec<FieldFacts> = offsets
-            .into_values()
-            .filter_map(|rows| agreed(known, &rows))
+            .into_iter()
+            .filter_map(|(offset, rows)| {
+                let stored = made.get(&(owner, offset)).unwrap_or(&none);
+                agreed(known, &rows, stored)
+            })
             .collect();
         // ⚠ Not a signed byte: its loads widen it by its sign, which a truth has no use for.
         for field in &mut fields {
@@ -812,11 +1066,16 @@ pub fn settle(project: &mut Project) {
     project.fields = settled;
 }
 
-/// Adds the rows and the truths of `parts`, each read by [`of_typed_function`], to those the fields of `project` were settled from, and settles them again.
+/// Adds the rows, the truths and the objects stored of `parts`, each read by [`of_typed_function`], to those the fields of `project` were settled from, and settles them again.
 pub fn refine(project: &mut Project, parts: Vec<Project>) {
-    let (rows, truths) = std::mem::take(&mut project.rows);
-    project.fields = rows;
+    let Rows {
+        fields,
+        truths,
+        made,
+    } = std::mem::take(&mut project.rows);
+    project.fields = fields;
     project.truths = truths;
+    project.rows.made = made;
     for mut part in parts {
         absorb(project, &mut part);
     }

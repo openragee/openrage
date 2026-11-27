@@ -1,6 +1,6 @@
 use super::*;
 use crate::gta6::script::cfg::{Block, Cfg, Function, Terminator};
-use crate::gta6::script::ir::{Const, Returns, VmType};
+use crate::gta6::script::ir::{Const, Returns, VmType, Width};
 use crate::gta6::script::program::{Area, FieldRow, FunctionRow};
 
 const PROGRAM: u32 = 0x1122_3344;
@@ -53,6 +53,7 @@ fn made() -> Expr {
 /// A function of one block at `at`, of two parameters and four locals.
 fn function(at: u32, stmts: Vec<Stmt>) -> Function {
     let head = Head {
+        value_types: Default::default(),
         program: PROGRAM,
         at,
         name: format!("func_{at:06X}"),
@@ -525,7 +526,7 @@ fn a_variable_typed_by_the_project_and_a_members_receiver_add_their_accesses_onc
 }
 
 #[test]
-fn a_field_every_object_stored_in_which_is_of_one_line_is_of_the_most_derived_of_them() {
+fn a_field_objects_are_stored_in_and_no_call_is_made_on_is_a_reference_and_no_more() {
     let body = vec![
         set(Var::Local(0), made()),
         set(Var::Local(1), made()),
@@ -545,12 +546,276 @@ fn a_field_every_object_stored_in_which_is_of_one_line_is_of_the_most_derived_of
     of_function(&mut part, &function(0x40, body));
     absorb(&mut project, &mut part);
     settle(&mut project);
-    let of = |key: TypeKey| Kind::Object(key.to_string());
+    // ⚠ A store through a base of no known type is never seen: what the stores seen hold names
+    // no type the field is.
     let fields = vec![
-        field(8, 8, of(MADE)),
-        field(0x10, 8, of(MADE)),
-        field(0x18, 8, of(MADE)),
+        field(8, 8, Kind::Pointer),
+        field(0x10, 8, Kind::Pointer),
+        field(0x18, 8, Kind::Pointer),
         field(0x20, 8, Kind::Pointer),
     ];
     assert_eq!(project.fields.get(&MADE), Some(&fields));
+}
+
+/// An object of the type `key`.
+fn object(key: TypeKey) -> Expr {
+    Expr::NewObject(VmType {
+        name: key.to_string(),
+        byte_size: 24,
+        id: 9,
+        flags: 0x22,
+    })
+}
+
+#[test]
+fn a_reference_field_is_of_the_most_derived_type_its_calls_are_made_as_that_every_object_stored_in_it_is(
+) {
+    // `LOWER` and `APART` both derive from `UPPER`.
+    let below = |base: TypeKey| TypeFacts {
+        base: Some(base),
+        ..TypeFacts::default()
+    };
+    let mut project = Project::default();
+    project.types.insert(UPPER, TypeFacts::default());
+    project.types.insert(LOWER, below(UPPER));
+    project.types.insert(APART, below(UPPER));
+    let body = vec![
+        set(Var::Local(0), made()),
+        // An object of a type and one of the type it derives from.
+        store(StoreKind::Ref, local(0), 8, object(LOWER)),
+        store(StoreKind::Ref, local(0), 8, object(UPPER)),
+        // Objects of two types that derive from one.
+        store(StoreKind::Ref, local(0), 0x10, object(LOWER)),
+        store(StoreKind::Ref, local(0), 0x10, object(APART)),
+        // An object of a type, and a call made as the type below it.
+        store(StoreKind::Ref, local(0), 0x18, object(UPPER)),
+        called(LOWER, load(Scalar::U64, local(0), 0x18)),
+        // An object of a type, and a call made as the type above it.
+        store(StoreKind::Ref, local(0), 0x20, object(LOWER)),
+        called(UPPER, load(Scalar::U64, local(0), 0x20)),
+    ];
+    let mut part = Project::default();
+    of_function(&mut part, &function(0x40, body));
+    absorb(&mut project, &mut part);
+    settle(&mut project);
+    let of = |key: TypeKey| Kind::Object(key.to_string());
+    // Objects stored and no call: no type. A call made as the type below the object's: no type.
+    let fields = vec![
+        field(8, 8, Kind::Pointer),
+        field(0x10, 8, Kind::Pointer),
+        field(0x18, 8, Kind::Pointer),
+        field(0x20, 8, of(UPPER)),
+    ];
+    assert_eq!(project.fields.get(&MADE), Some(&fields));
+    // Settled again from the rows it was settled from, with nothing more.
+    let rows = project.rows.clone();
+    refine(&mut project, Vec::new());
+    assert_eq!(project.fields.get(&MADE), Some(&fields));
+    assert_eq!(project.rows, rows);
+}
+
+#[test]
+fn a_field_stored_arrays_or_strings_is_a_reference_and_no_more() {
+    let array = |key: TypeKey, flags: u32| Expr::NewArray {
+        ty: VmType {
+            name: key.to_string(),
+            byte_size: 12,
+            id: 3,
+            flags,
+        },
+        len: Box::new(int(4)),
+        wrapper: "NewArray".to_owned(),
+    };
+    let text = || Expr::StringConstant {
+        program: PROGRAM,
+        offset: 0x10,
+    };
+    let body = vec![
+        set(Var::Local(0), made()),
+        store(StoreKind::Ref, local(0), 8, array(APART, 0)),
+        store(StoreKind::Ref, local(0), 8, array(APART, 0)),
+        // Of values held in place.
+        store(StoreKind::Ref, local(0), 0x10, array(APART, 0x04)),
+        // Arrays of two element types, and an array beside a string.
+        store(StoreKind::Ref, local(0), 0x18, array(APART, 0)),
+        store(StoreKind::Ref, local(0), 0x18, array(UPPER, 0)),
+        store(StoreKind::Ref, local(0), 0x20, array(APART, 0)),
+        store(StoreKind::Ref, local(0), 0x20, text()),
+        store(StoreKind::Ref, local(0), 0x28, text()),
+        // An array beside a reference of no known kind, and one beside a null.
+        store(StoreKind::Ref, local(0), 0x30, array(APART, 0)),
+        store(StoreKind::Ref, local(0), 0x30, param(1)),
+        store(StoreKind::Ref, local(0), 0x38, array(APART, 0)),
+        store(StoreKind::Ref, local(0), 0x38, int(0)),
+    ];
+    let project = settled(&[function(0x40, body)]);
+    // ⚠ A store through a base of no known type is never seen: the arrays and the strings stored
+    // that are seen name nothing a field holds.
+    let offsets = [8, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38];
+    let fields: Vec<FieldFacts> = (offsets.iter())
+        .map(|offset| field(*offset, 8, Kind::Pointer))
+        .collect();
+    assert_eq!(project.fields.get(&MADE), Some(&fields));
+}
+
+#[test]
+fn a_byte_stored_a_truth_and_kept_whole_in_a_bool_is_a_bool() {
+    use crate::gta6::script::ir::VarInfo;
+    let stores = function(
+        0x10,
+        vec![
+            set(Var::Local(0), made()),
+            store(StoreKind::U8, local(0), 0x10, int(1)),
+            store(StoreKind::U8, local(0), 0x11, int(0)),
+        ],
+    );
+    let mut reads = function(
+        0x20,
+        vec![
+            set(Var::Local(0), made()),
+            set(Var::Local(1), load(Scalar::U8, local(0), 0x10)),
+            // Kept in a variable of no proved kind.
+            set(Var::Local(2), load(Scalar::U8, local(0), 0x11)),
+        ],
+    );
+    let mut truth = VarInfo::new(Width::Cell);
+    truth.kind = Kind::Bool;
+    reads.head.vars.insert(Var::Local(1), truth);
+    let project = settled(&[stores, reads]);
+    let kind = |offset: u32| project.field(MADE, offset).map(|field| field.kind.clone());
+    assert_eq!(kind(0x10), Some(Kind::Bool));
+    assert_eq!(kind(0x11), Some(Kind::U8));
+}
+
+#[test]
+fn a_four_byte_field_stored_an_integer_variable_takes_its_sign_unless_another_access_says_the_other(
+) {
+    use crate::gta6::script::ir::VarInfo;
+    let mut one = function(
+        0x10,
+        vec![
+            set(Var::Local(0), made()),
+            store(StoreKind::I32, local(0), 8, local(1)),
+            store(StoreKind::I32, local(0), 0xC, local(2)),
+            store(StoreKind::I32, local(0), 0x10, local(1)),
+            // A variable of no proved kind, and a sum, whose cast to the other sign stores the same bits.
+            store(StoreKind::I32, local(0), 0x14, local(3)),
+            store(
+                StoreKind::I32,
+                local(0),
+                0x18,
+                worked(BinOp::Add, Kind::I32, local(1), int(1)),
+            ),
+        ],
+    );
+    for (n, kind) in [(1, Kind::I32), (2, Kind::U32)] {
+        let mut info = VarInfo::new(Width::Cell);
+        info.kind = kind;
+        one.head.vars.insert(Var::Local(n), info);
+    }
+    let other = function(
+        0x20,
+        vec![
+            set(Var::Local(0), made()),
+            // Shifted as a `uint`.
+            set(
+                Var::Local(1),
+                worked(
+                    BinOp::Shr,
+                    Kind::U32,
+                    load(Scalar::U32, local(0), 0x10),
+                    int(2),
+                ),
+            ),
+        ],
+    );
+    let project = settled(&[one, other]);
+    let fields = vec![
+        field(8, 4, Kind::I32),
+        field(0xC, 4, Kind::U32),
+        field(0x10, 4, Kind::Unknown),
+        field(0x14, 4, Kind::Unknown),
+        field(0x18, 4, Kind::Unknown),
+    ];
+    assert_eq!(project.fields.get(&MADE), Some(&fields));
+}
+
+#[test]
+fn a_typed_local_no_address_handed_on_reaches_is_a_base_and_a_parameter_only_its_signature_types_is_not(
+) {
+    use crate::gta6::script::ir::VarInfo;
+    use crate::gta6::script::project::reach::Reach;
+    use crate::gta6::script::project::{Param, Signature};
+    let mut project = Project::default();
+    let facts = TypeFacts {
+        byte_size: 32,
+        ..TypeFacts::default()
+    };
+    project.types.insert(MADE, facts);
+    let seen = Some(vec![field(0x10, 4, Kind::F32)]);
+    let read = |project: &Project, f: &Function| {
+        let mut part = Project::default();
+        of_typed_function(&mut part, f, project);
+        part.fields.get(&MADE).cloned()
+    };
+
+    // The address of `local_1`, handed to the function at 0x80, then a read through `local_3`.
+    let callee = FunctionKey::new(PROGRAM, 0x80);
+    let handed = Stmt::Eval(Expr::Call {
+        callee: Callee::Local {
+            at: 0x80,
+            name: "func_000080".to_owned(),
+        },
+        args: vec![Expr::AddrOf {
+            var: Var::Local(1),
+            cell: 0,
+        }],
+        returns: Some(0),
+    });
+    let read_through = set(Var::Local(2), load(Scalar::F32, local(3), 0x10));
+    let mut typed = function(0x20, vec![handed, read_through]);
+    let mut info = VarInfo::new(Width::Cell);
+    info.kind = Kind::Object(MADE.to_string());
+    typed.head.vars.insert(Var::Local(3), info);
+    let reaching = |bytes: u32| {
+        let mut held = project.clone();
+        let cells = BTreeMap::from([(
+            0,
+            Reach {
+                bytes,
+                dies: true,
+                ..Reach::default()
+            },
+        )]);
+        held.reach.insert(callee, cells);
+        held
+    };
+    // With no reach known, the address may reach every local after it.
+    assert_eq!(read(&project, &typed), None);
+    // One cell from `local_1`, and two, miss `local_3`; four reach it, and so does an address nothing bounds.
+    assert_eq!(read(&reaching(8), &typed), seen);
+    assert_eq!(read(&reaching(16), &typed), seen);
+    assert_eq!(read(&reaching(32), &typed), None);
+    assert_eq!(read(&reaching(reach::UNBOUNDED), &typed), None);
+
+    // ⚠ A parameter only the function's signature gives an object of `MADE` is none: the kinds
+    // pass weighs what the calls pass with the function's own code, and its kind is the proof.
+    let own = FunctionKey::new(PROGRAM, 0x30);
+    let one = |kind: Kind| Param { kind, cells: 1 };
+    let signature = Signature {
+        params: vec![one(Kind::Object(MADE.to_string())), one(Kind::Unknown)],
+        returns: 0,
+        result: Kind::Unknown,
+    };
+    project.signatures.insert(own, signature);
+    let through = function(
+        0x30,
+        vec![set(Var::Local(0), load(Scalar::F32, param(0), 0x10))],
+    );
+    assert_eq!(read(&project, &through), None);
+    let mut kinded = through.clone();
+    let mut info = VarInfo::new(Width::Cell);
+    info.kind = Kind::Pointer;
+    kinded.head.vars.insert(Var::Param(0), info);
+    assert_eq!(read(&project, &kinded), None);
 }

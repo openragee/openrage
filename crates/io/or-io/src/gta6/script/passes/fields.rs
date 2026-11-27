@@ -4,10 +4,10 @@
 //! each naming the type that declares the field: where the project's layout of that type has a
 //! field at the offset as wide as the access, or has none that the access overlaps, inside the
 //! bytes the type holds. A reference is of known type where it is a base of one, a variable the
-//! kinds pass proves holds one, or a field the layouts give a type, loaded through such a
-//! reference.
+//! kinds pass proves holds one, a parameter the project's signature types and the function
+//! leaves as it was passed, or a field the layouts give a type, loaded through such a reference.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use crate::gta6::script::ir::{
     self, Expr, ExprSugar, FunctionKey, Kind, Scalar, StoreKind, TypeKey, Var,
@@ -45,16 +45,18 @@ fn own_simples<'a>(stmt: &'a tree::Stmt, f: &mut impl FnMut(&'a ir::Stmt)) {
 }
 
 /// The variables that hold an object of one known type wherever the function reads them, with that type.
-// A variable only ever assigned objects the function makes of one type, and the receiver of a
-// function the project proves a member of a type. ⚠ A variable whose address is taken, and a
-// local at or after one whose address is, may be written through that address: an address the
-// function only loads or stores its own cell through reaches no other.
+// A variable only ever assigned objects the function makes of one type, the receiver of a
+// function the project proves a member of a type, and a parameter the project's signature types.
+// ⚠ A variable an address the function takes may reach may be written through that address: an
+// address the function only loads or stores its own cell through reaches no other, and one
+// handed whole to a function reaches what the project's reach table says that function touches.
 fn objects(f: &mut tree::Function, project: &Project) -> BTreeMap<Var, TypeKey> {
+    let tree::Function { head, body } = f;
+    let head = &*head;
     let mut made: BTreeMap<Var, Option<TypeKey>> = BTreeMap::new();
-    // Each variable whose address is taken: how often, and how often only to reach its own cell.
-    let mut taken: BTreeMap<Var, (u32, u32)> = BTreeMap::new();
+    let mut reached = layouts::Reached::default();
     // An explicit stack: a body nests as deep as its listing does.
-    let mut work: Vec<&mut Vec<tree::Stmt>> = vec![&mut f.body];
+    let mut work: Vec<&mut Vec<tree::Stmt>> = vec![body];
     while let Some(list) = work.pop() {
         for stmt in list {
             own_simples(stmt, &mut |s| {
@@ -73,39 +75,20 @@ fn objects(f: &mut tree::Function, project: &Project) -> BTreeMap<Var, TypeKey> 
                 }
                 // A store through the variable's own address writes it as an assignment does.
                 if let Some(var) = layouts::own_cell_store(s) {
-                    taken.entry(var).or_default().1 += 1;
                     made.insert(var, None);
                 }
+                reached.own_store(s);
             });
-            tree::own_exprs_mut(stmt, &mut |top| {
-                top.walk(&mut |e| match e {
-                    Expr::AddrOf { var, .. } => taken.entry(*var).or_default().0 += 1,
-                    Expr::Load { ty, addr, offset } => {
-                        if let Some(var) = layouts::own_cell(addr, *offset, ty.bytes()) {
-                            taken.entry(var).or_default().1 += 1;
-                        }
-                    }
-                    _ => {}
-                });
-            });
+            tree::own_exprs_mut(stmt, &mut |top| reached.expr(top, head, Some(project)));
             work.extend(tree::nested_mut(stmt));
         }
     }
-    let addressed: BTreeSet<Var> = (taken.into_iter())
-        .filter(|(_, (all, own))| all > own)
-        .map(|(var, _)| var)
-        .collect();
+    let frame = reached.finish();
 
-    let lowest = addressed.iter().filter_map(|var| match var {
-        Var::Local(n) => Some(*n),
-        _ => None,
-    });
-    let lowest = lowest.min();
     let mut bases = BTreeMap::new();
     for (var, ty) in &made {
         let reached = match var {
-            Var::Local(n) => lowest.is_some_and(|low| *n >= low),
-            Var::Value { .. } | Var::Stack { .. } => addressed.contains(var),
+            Var::Local(_) | Var::Value { .. } | Var::Stack { .. } => frame.reaches(*var),
             // A caller sets a parameter, and any code a global.
             Var::Param(_) | Var::Global { .. } => true,
         };
@@ -119,42 +102,27 @@ fn objects(f: &mut tree::Function, project: &Project) -> BTreeMap<Var, TypeKey> 
     let this = Var::Param(0);
     let member = project
         .members
-        .get(&FunctionKey::new(f.head.program, f.head.at));
+        .get(&FunctionKey::new(head.program, head.at));
     let receiver = member
-        .filter(|member| !member.is_static && f.head.params > 0)
+        .filter(|member| !member.is_static && head.params > 0)
         .map(|member| member.owner)
         .filter(|owner| (project.types.get(owner)).is_some_and(|ty| !ty.is_value()))
-        .filter(|_| !made.contains_key(&this) && !addressed.contains(&this));
+        .filter(|_| !made.contains_key(&this) && !frame.reaches(this));
     if let Some(owner) = receiver {
         bases.insert(this, owner);
     }
 
     // A variable the kinds pass declares a reference to an object of a script type is one, as
     // far as no address of the frame reaches it.
-    for (var, info) in &f.head.vars {
-        let Some(ty) = object_type(project, &info.kind) else {
+    for (var, info) in &head.vars {
+        let Some(ty) = layouts::object_of(project, &info.kind) else {
             continue;
         };
-        let reached = match var {
-            Var::Local(n) => lowest.is_some_and(|low| *n >= low),
-            Var::Value { .. } | Var::Stack { .. } | Var::Param(_) => addressed.contains(var),
-            Var::Global { .. } => true,
-        };
-        if !reached {
+        if !frame.reaches(*var) {
             bases.entry(*var).or_insert(ty);
         }
     }
     bases
-}
-
-/// The script type `kind` refers to an object of, where the project holds that type and it is no value type.
-fn object_type(project: &Project, kind: &Kind) -> Option<TypeKey> {
-    let Kind::Object(name) = kind else {
-        return None;
-    };
-    let key = TypeKey::of_name(name).filter(|key| key.builtin().is_none())?;
-    let facts = project.types.get(&key)?;
-    (!facts.is_value()).then_some(key)
 }
 
 /// The type that declares the field of `bytes` bytes at `offset` of an object of type `ty`, and the field.
@@ -304,6 +272,32 @@ fn float_constant(project: &Project, owner: TypeKey, s: &mut ir::Stmt) {
     }
 }
 
+/// Gives the zero that a store writes whole to a field the layouts prove a reference's the kind of a reference, which is `null`; its bits stay.
+// ⚠ By the field's kind alone: every access the layouts saw of it holds a reference, and eight
+// zero bytes are a number only to a field that ever holds one.
+fn null_constant(project: &Project, owner: TypeKey, s: &mut ir::Stmt) {
+    let ir::Stmt::Store {
+        kind: StoreKind::U64 | StoreKind::Ref,
+        offset,
+        value: Expr::Const(c),
+        ..
+    } = s
+    else {
+        return;
+    };
+    let field = project.field(owner, *offset);
+    let reference = field.is_some_and(|field| {
+        let held = matches!(
+            field.kind,
+            Kind::Object(_) | Kind::String | Kind::Array(_) | Kind::Pointer
+        );
+        field.bytes == 8 && held
+    });
+    if reference && c.bits == 0 {
+        c.kind = Kind::Pointer;
+    }
+}
+
 /// Reads each load in `top` of a field the layouts have as the field; returns how many.
 fn loads(top: &mut Expr, project: &Project, bases: &BTreeMap<Var, TypeKey>) -> usize {
     let mut read = 0;
@@ -371,6 +365,7 @@ pub(crate) fn apply(f: &mut tree::Function, project: &Project) -> Found {
                 let taken = std::mem::replace(stmt, tree::Stmt::Break);
                 if let tree::Stmt::Simple(mut store) = taken {
                     float_constant(project, owner, &mut store);
+                    null_constant(project, owner, &mut store);
                     let parts = vec![store];
                     *stmt = tree::Stmt::Sugar(Box::new(Sugar::Group { kind, parts }));
                     done.stores += 1;

@@ -12,6 +12,9 @@ use super::effects::{cells_of, depth, evaluated, inert, one_cell, stored, Effect
 #[path = "values_fold_across.rs"]
 mod across;
 pub(in crate::gta6::script::passes) use self::across::across;
+#[path = "values_fold_chain.rs"]
+mod chain;
+pub(in crate::gta6::script::passes) use self::chain::chained;
 
 /// How many statements may stand between a value's assignment and the place it moves to.
 // ponytail: a fixed reach keeps a block of thousands of statements linear; a running summary of

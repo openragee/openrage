@@ -45,7 +45,8 @@ type Site = (BlockId, usize);
 // two holds an object no one else has yet, or where it is the same variable and other bytes.
 // A temporary that is zeroed and filled through its own address is no memory at all: `cells`.
 // `forward` also moves a temporary's value to its one read in a later block (`across`), and
-// writes a clear of the low bytes of a local whose upper bytes stay zero as `local = 0`.
+// writes a clear of the low bytes of a local whose upper bytes stay zero as `local = 0`, and reads
+// a temporary given zero cells whose address only clears it as those zeroes (`zeroed`).
 // `dead-loads` also drops a branch whose arms meet where its test cannot fault, and a read kept
 // for nothing that the next statement makes first.
 pub fn run(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) -> bool {
@@ -56,6 +57,7 @@ pub fn run(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) -> bool 
     let mut changed = false;
     if options.on(Pass::Forward) {
         changed |= cells(f);
+        changed |= zeroed(f);
         changed |= stores(f, options.on(Pass::Escape));
         changed |= low_clears(f);
         changed |= across(f, options.on(Pass::Escape));
@@ -302,6 +304,157 @@ fn cells(f: &mut cfg::Function) -> bool {
                 f.head.vars.remove(var);
             }
         }
+    }
+    true
+}
+
+/// Reads each temporary given zero cells by its one assignment, whose address only ever clears bytes of those cells, as the zeroes it holds.
+// `v = zero_slots(2); zero_bytes(&v, 16); store_bytes(p, 0x10, 16, v);` is
+// `store_bytes(p, 0x10, 16, zero_slots(2));`: every write of `v` leaves its cells zero, so a read
+// its assignment comes before on every path reads zeroes, and a cell of it read alone is zero.
+// ⚠ Every address of `v` must be one of those clears: an address handed on, or a load or a store
+// gone through it, is memory something else may write.
+fn zeroed(f: &mut cfg::Function) -> bool {
+    let facts = Facts::of(f);
+    // Each such temporary: its cells, and where it is assigned.
+    let mut found: HashMap<Var, (u32, Site)> = HashMap::new();
+    for (b, block) in f.cfg.blocks.iter().enumerate() {
+        for (i, stmt) in block.stmts.iter().enumerate() {
+            let Stmt::Assign {
+                target,
+                value: Expr::ZeroSlots(cells),
+            } = stmt
+            else {
+                continue;
+            };
+            let once = (facts.uses.get(target)).is_some_and(|uses| uses.defs == 1);
+            if target.is_temporary() && once && *cells > 0 {
+                found.insert(*target, (*cells, (b, i)));
+            }
+        }
+    }
+    if found.is_empty() {
+        return false;
+    }
+    // The clears through each one's own address that stay within its cells, and those that do not.
+    let mut clears: HashMap<Var, u32> = HashMap::new();
+    let mut spoiled: HashSet<Var> = HashSet::new();
+    for stmt in f.cfg.blocks.iter().flat_map(|block| &block.stmts) {
+        let Stmt::ZeroBytes {
+            addr: Expr::AddrOf { var, cell },
+            bytes,
+        } = stmt
+        else {
+            continue;
+        };
+        let Some((cells, _)) = found.get(var) else {
+            continue;
+        };
+        let end = 8 * u64::from(*cell) + u64::from(*bytes);
+        match end <= 8 * u64::from(*cells) {
+            true => *clears.entry(*var).or_default() += 1,
+            false => {
+                spoiled.insert(*var);
+            }
+        }
+    }
+    found.retain(|var, _| {
+        let addrs = facts.uses.get(var).map_or(0, |uses| uses.addrs);
+        !spoiled.contains(var) && addrs == clears.get(var).copied().unwrap_or(0)
+    });
+    if found.is_empty() {
+        return false;
+    }
+
+    // Every read comes after the assignment on every path, and a cell read alone is one of its cells.
+    let idom = f.cfg.dominators();
+    let before = |a: Site, b: Site| match a.0 == b.0 {
+        true => a.1 < b.1,
+        false => dominates(&idom, a.0, b.0),
+    };
+    let mut late: HashSet<Var> = HashSet::new();
+    for (b, block) in f.cfg.blocks.iter().enumerate() {
+        for k in 0..=block.stmts.len() {
+            let mut see = |top: &Expr| {
+                top.walk(&mut |e| {
+                    let (var, index) = match e {
+                        Expr::Var(var) => (var, None),
+                        Expr::Cell { base, index } => match &**base {
+                            Expr::Var(var) => (var, Some(*index)),
+                            _ => return,
+                        },
+                        _ => return,
+                    };
+                    let Some((cells, set)) = found.get(var) else {
+                        return;
+                    };
+                    if !before(*set, (b, k)) || index.is_some_and(|index| index >= *cells) {
+                        late.insert(*var);
+                    }
+                });
+            };
+            match block.stmts.get(k) {
+                Some(stmt) => stmt.each_expr(&mut see),
+                None => {
+                    if let Some(e) = block.term.expr() {
+                        see(e);
+                    }
+                }
+            }
+        }
+    }
+    for var in late {
+        found.remove(&var);
+    }
+    if found.is_empty() {
+        return false;
+    }
+
+    // A cell read alone is a zero cell; read whole, it is the zero cells it was given.
+    let reread = |top: &mut Expr| {
+        top.walk_mut(&mut |e| {
+            let cell = match &*e {
+                Expr::Cell { base, .. } => {
+                    matches!(&**base, Expr::Var(var) if found.contains_key(var))
+                }
+                _ => false,
+            };
+            if cell {
+                *e = Expr::Const(Const::i32(0));
+            }
+        });
+        top.walk_mut(&mut |e| {
+            let whole = match &*e {
+                Expr::Var(var) => found.get(var).map(|(cells, _)| *cells),
+                _ => None,
+            };
+            if let Some(cells) = whole {
+                *e = Expr::ZeroSlots(cells);
+            }
+        });
+    };
+    for block in &mut f.cfg.blocks {
+        block.stmts.retain(|stmt| match stmt {
+            Stmt::Assign {
+                target,
+                value: Expr::ZeroSlots(_),
+            } => !found.contains_key(target),
+            Stmt::ZeroBytes {
+                addr: Expr::AddrOf { var, .. },
+                ..
+            } => !found.contains_key(var),
+            _ => true,
+        });
+        for stmt in &mut block.stmts {
+            stmt.each_expr_mut(&mut |top| reread(top));
+        }
+        if let Some(e) = block.term.expr_mut() {
+            reread(e);
+        }
+    }
+    // A temporary that is gone is no variable of the function any more.
+    for var in found.keys() {
+        f.head.vars.remove(var);
     }
     true
 }

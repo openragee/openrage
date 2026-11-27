@@ -492,3 +492,70 @@ fn a_read_kept_for_nothing_stays_where_the_next_statement_may_fault_or_act_first
         assert_eq!(f.cfg, read_before(&next).cfg, "{next}");
     }
 }
+
+/// A temporary of two cells, declared and given zero cells, then `rest`.
+fn zero_pair(rest: &str) -> String {
+    format!("VmValues v_000020_2 = null!;\n v_000020_2 = zero_slots(2); {rest}")
+}
+
+/// A clear of all sixteen bytes of that temporary through its own address.
+const CLEAR_PAIR: &str = "zero_bytes(Vm.Address(v_000020_2, 0), 16);";
+
+/// The temporary stored whole at `p0 + 0x10`.
+const STORE_PAIR: &str = "store_bytes(p0, 0x10, 16, v_000020_2); return;";
+
+#[test]
+fn a_temporary_given_zeroes_and_only_cleared_through_its_address_reads_as_its_zeroes() {
+    becomes(
+        &[Pass::Forward],
+        &zero_pair(&format!("{CLEAR_PAIR} {STORE_PAIR}")),
+        "store_bytes(p0, 0x10, 16, zero_slots(2)); return;",
+    );
+    // A cell of it read alone is a zero cell.
+    becomes(
+        &[Pass::Forward],
+        &format!(
+            "{} Native.DEMO.USE2(p0, v_000020_2[1]); return;",
+            zero_pair(CLEAR_PAIR)
+        ),
+        "Native.DEMO.USE2(p0, 0); return;",
+    );
+    // Of one cell, its cell is zero.
+    becomes(
+        &[Pass::Forward],
+        &format!(
+            "{} Native.DEMO.USE(v_000020_2[0]); return;",
+            cell("zero_bytes(Vm.Address(v_000020_2, 0), 8);")
+        ),
+        "Native.DEMO.USE(0); return;",
+    );
+    // The name switched off, the clear and the temporary stay.
+    stays(
+        &[Pass::DeadLoads],
+        &zero_pair(&format!("{CLEAR_PAIR} {STORE_PAIR}")),
+    );
+}
+
+#[test]
+fn a_temporary_given_zeroes_stays_where_something_may_write_it_otherwise_or_a_read_comes_first() {
+    for body in [
+        // A store through its address writes what is no zero.
+        zero_pair(&format!(
+            "store_i32(Vm.Address(v_000020_2, 0), 0x0, 5); {STORE_PAIR}"
+        )),
+        // A clear that runs past its cells writes what is not its own.
+        zero_pair(&format!(
+            "zero_bytes(Vm.Address(v_000020_2, 0), 24); {STORE_PAIR}"
+        )),
+        // An address handed on is memory a callee may write.
+        zero_pair(&format!(
+            "{CLEAR_PAIR} Native.DEMO.USE(Vm.Address(v_000020_2, 0)); {STORE_PAIR}"
+        )),
+        // On one way of two the read comes with no assignment before it.
+        format!(
+            "VmValues v_000020_2 = null!;\n {TEST} {{ v_000020_2 = zero_slots(2); {CLEAR_PAIR} }} else {{ }} {STORE_PAIR}"
+        ),
+    ] {
+        stays(&[Pass::Forward], &body);
+    }
+}

@@ -227,3 +227,23 @@ fn a_value_made_for_the_next_statement_alone_is_settled_into_it() {
     assert!(!changed);
     assert_eq!(left.cfg, read(body).cfg);
 }
+
+#[test]
+fn a_value_read_after_what_it_cannot_change_is_settled_into_its_reader_under_coalesce() {
+    let body = "v_000010_0 = Native.DEMO.GET(p0); Native.DEMO.USE2(p1, v_000010_0); return;";
+    let settled = |options: Options| {
+        let mut f = read(body);
+        let names = Names::default();
+        let cx = Context::new(&names, Project::empty(), options);
+        let changed = settle(&mut f, &cx, &mut Stats::default());
+        (f, changed)
+    };
+    let (made, changed) = settled(Options::baseline().with(Pass::Coalesce));
+    assert!(changed);
+    let wanted = read("Native.DEMO.USE2(p1, Native.DEMO.GET(p0)); return;");
+    assert_eq!(made.cfg, wanted.cfg);
+    // With `coalesce` off only a value read first moves, and this one is read second.
+    let (left, changed) = settled(Options::baseline());
+    assert!(!changed);
+    assert_eq!(left.cfg, read(body).cfg);
+}

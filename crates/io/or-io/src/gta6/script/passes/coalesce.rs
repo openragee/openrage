@@ -13,7 +13,7 @@ use crate::gta6::script::{Context, Pass, Stats};
 
 use super::forward::flow::{self, Set};
 use super::values::effects::Facts;
-use super::values::fold::{adjacent, constant, leftover};
+use super::values::fold::{adjacent, chained, constant, leftover};
 
 /// The names this file's rewrites are switched by.
 pub const PASSES: &[Pass] = &[Pass::Constants, Pass::Coalesce];
@@ -54,12 +54,14 @@ pub fn run(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) -> bool 
 
 /// Lets a statement evaluate the value the statement before it made for it alone, after a pass that made one variable of several cells; `true` when anything changed.
 // `aggregates` runs once the last fold is over and leaves `v = f(); local = v;` where it made
-// `local` of two locals. Switched by `values`, whose fold this is.
+// `local` of two locals. Switched by `values`, whose fold this is. With `coalesce` on too, a row
+// of such values goes into the statement after it that reads them in their order (`chained`).
 pub fn settle(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) -> bool {
     if !cx.options.on(Pass::Values) || f.head.incomplete.is_some() || f.cfg.blocks.is_empty() {
         return false;
     }
-    let changed = adjacent(f);
+    let mut changed = adjacent(f);
+    changed |= cx.options.on(Pass::Coalesce) && chained(f);
     if changed {
         super::values::declared(f);
     }

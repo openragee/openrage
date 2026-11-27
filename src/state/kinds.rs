@@ -299,12 +299,12 @@ static KINDS: &[KindInfo] = &[
     KindInfo {
         kind: DocumentKind::Bik,
         noun: tr_key!("Bink Video"),
-        tooltip: tr_key!("BIK — Bink video, played in the preview"),
+        tooltip: tr_key!("BIK/BK2 — Bink video, played in the preview"),
         glyph: ph::FILM_STRIP,
         color: Color32::from_rgb(0xe0, 0x6a, 0x8f),
         workspace: Workspace::Browse,
         keeps_source_extension: false,
-        own_extensions: &["bik"],
+        own_extensions: &["bik", "bk2"],
     },
     KindInfo {
         kind: DocumentKind::Awc,

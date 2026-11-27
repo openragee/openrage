@@ -1,4 +1,4 @@
-//! A `.bik` preview: `or_media` opens the movie and decodes it through its table, which holds the
+//! A `.bik` or `.bk2` preview: `or_media` opens the movie and decodes it through its table, which holds the
 //! picture and sound of Bink 1 and Bink 2 in OpenRage's own Rust, on every platform. Nothing here
 //! runs an external program or loads a library.
 
@@ -16,7 +16,7 @@ pub const PREVIEW_HEIGHT: u32 = 360;
 pub const PREVIEW_FPS: f64 = 30.0;
 const FRAME_BYTES: usize = (PREVIEW_WIDTH * PREVIEW_HEIGHT * 4) as usize;
 
-/// A `.bik` document: the file's bytes, decoded afresh on every seek, and its header.
+/// A Bink video document: the file's bytes, decoded afresh on every seek, and its header.
 #[derive(Clone)]
 pub struct BikDocument {
     pub bytes: Arc<[u8]>,
@@ -268,7 +268,11 @@ impl Preview {
             (numerator @ 1.., denominator @ 1..) => f64::from(numerator) / f64::from(denominator),
             _ => PREVIEW_FPS,
         };
-        let first = (seconds * self.fps).round() as u64;
+        let mut first = (seconds * self.fps).round() as u64;
+        if let Some(last) = info.video.and_then(|video| video.frames.checked_sub(1)) {
+            first = first.min(last);
+        }
+        let seconds = first as f64 / self.fps;
         if first > 0 {
             if let Err(why) = stream.seek(first) {
                 self.problem = Some(why.to_string());
@@ -426,12 +430,14 @@ impl Preview {
     #[cfg(test)]
     pub fn wait_for_frame(&mut self, timeout: std::time::Duration) -> bool {
         let deadline = std::time::Instant::now() + timeout;
-        while self.frame.is_none() && self.problem.is_none() && std::time::Instant::now() < deadline
+        while self.frames_since_seek == 0
+            && self.problem.is_none()
+            && std::time::Instant::now() < deadline
         {
             self.tick(0.0);
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        self.frame.is_some()
+        self.frames_since_seek > 0
     }
 }
 
@@ -552,6 +558,21 @@ mod tests {
         assert!(preview.wait_for_frame(Duration::from_secs(10)));
         assert_eq!(preview.frame().map(|f| f[0]), Some(4));
         assert_eq!(preview.position, 4.0 / 30.0);
+    }
+
+    #[test]
+    fn a_seek_at_the_end_shows_the_last_frame() {
+        let movie = bink2_head(8);
+        let mut preview = preview_of_shades(8, None);
+        preview.seek(&movie, 8.0 / 30.0);
+        assert!(
+            preview.wait_for_frame(Duration::from_secs(10)),
+            "{:?}",
+            preview.problem()
+        );
+        assert_eq!(preview.frame().map(|f| f[0]), Some(7));
+        assert_eq!(preview.position, 7.0 / 30.0);
+        assert_eq!(preview.problem(), None);
     }
 
     #[test]

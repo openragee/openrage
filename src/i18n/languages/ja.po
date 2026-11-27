@@ -2179,8 +2179,8 @@ msgstr "製品版ファイルの編集の確認待ち"
 msgid "BC7 texture in a Legacy pack"
 msgstr "LegacyパックのBC7テクスチャ"
 
-msgid "BIK — Bink video, played in the preview"
-msgstr "BIK — Binkビデオ、プレビューで再生"
+msgid "BIK/BK2 — Bink video, played in the preview"
+msgstr "BIK/BK2 — Binkビデオ、プレビューで再生"
 
 msgid "Back"
 msgstr "戻る"

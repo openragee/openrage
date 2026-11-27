@@ -2179,8 +2179,8 @@ msgstr "Wartet auf Bestätigung der Retail-Bearbeitung"
 msgid "BC7 texture in a Legacy pack"
 msgstr "BC7-Textur in einem Legacy-Pack"
 
-msgid "BIK — Bink video, played in the preview"
-msgstr "BIK – Bink-Video, wird in der Vorschau abgespielt"
+msgid "BIK/BK2 — Bink video, played in the preview"
+msgstr "BIK/BK2 – Bink-Video, wird in der Vorschau abgespielt"
 
 msgid "Back"
 msgstr "Zurück"

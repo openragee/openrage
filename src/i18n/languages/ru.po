@@ -2182,8 +2182,8 @@ msgstr "Ожидается подтверждение правки рознич�
 msgid "BC7 texture in a Legacy pack"
 msgstr "Текстура BC7 в паке Legacy"
 
-msgid "BIK — Bink video, played in the preview"
-msgstr "BIK — видео Bink, воспроизводится в предпросмотре"
+msgid "BIK/BK2 — Bink video, played in the preview"
+msgstr "BIK/BK2 — видео Bink, воспроизводится в предпросмотре"
 
 msgid "Back"
 msgstr "Назад"

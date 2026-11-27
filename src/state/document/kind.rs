@@ -238,7 +238,7 @@ impl DocumentKind {
 
         match ext.as_str() {
             "gxt2" => Some(Self::Gxt2),
-            "bik" => Some(Self::Bik),
+            "bik" | "bk2" => Some(Self::Bik),
             "awc" => Some(Self::Awc),
             // A DLC ships each `.datNN.rel` beside a `.datNN`, the same container.
             "rel" | "dat4" | "dat10" | "dat15" | "dat54" | "dat149" | "dat150" | "dat151" => {

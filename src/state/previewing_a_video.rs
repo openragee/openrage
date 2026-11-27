@@ -209,6 +209,21 @@ fn grey_bink2_movie(frames: u32) -> Vec<u8> {
 }
 
 #[test]
+fn a_bk2_file_opens_in_the_video_preview() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let path = dir.path().join("grey.bk2");
+    std::fs::write(&path, grey_bink2_movie(12)).expect("the synthetic movie is written");
+    assert_eq!(DocumentKind::from_path(&path), Some(DocumentKind::Bik));
+    assert!(DocumentKind::Bik.info().extensions().contains(&"bk2"));
+    let mut state = AppState::default();
+    let doc = open(&mut state, path);
+    let mut preview = state.video_preview(doc).expect("BK2 has a video preview");
+    assert!(preview.wait_for_frame(Duration::from_secs(30)));
+    assert_eq!(preview.problem(), None);
+    assert_eq!(preview.duration, Some(12.0 / 30.0));
+}
+
+#[test]
 fn a_bink2_header_opens_with_its_stated_fields_and_says_why_a_head_alone_cannot_play() {
     let dir = tempfile::tempdir().expect("a scratch directory");
     let path = dir.path().join("movie.bik");

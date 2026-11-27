@@ -2179,8 +2179,8 @@ msgstr "等待零售版编辑确认"
 msgid "BC7 texture in a Legacy pack"
 msgstr "Legacy 包中的 BC7 纹理"
 
-msgid "BIK — Bink video, played in the preview"
-msgstr "BIK — Bink 视频，在预览中播放"
+msgid "BIK/BK2 — Bink video, played in the preview"
+msgstr "BIK/BK2 — Bink 视频，在预览中播放"
 
 msgid "Back"
 msgstr "返回"

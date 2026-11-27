@@ -2179,8 +2179,8 @@ msgstr "Esperando la confirmación de edición de la versión comercial"
 msgid "BC7 texture in a Legacy pack"
 msgstr "Textura BC7 en un pack Legacy"
 
-msgid "BIK — Bink video, played in the preview"
-msgstr "BIK — video Bink, reproducido en la vista previa"
+msgid "BIK/BK2 — Bink video, played in the preview"
+msgstr "BIK/BK2 — video Bink, reproducido en la vista previa"
 
 msgid "Back"
 msgstr "Atrás"

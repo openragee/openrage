@@ -39,10 +39,12 @@ pub fn run(f: &mut cfg::Function, names: &Names, stats: &mut Stats) {
 // taken at, and so is a test of the variable the statement straight before it gave a constant.
 // `coalesce`: a local that copies a temporary keeps its name, a stack variable copied into or from
 // a local is that local where their values never need to differ, and two arms that only choose a
-// value for one variable are the one assignment of the choice. `aggregates`: a temporary of
+// value for one variable are the one assignment of the choice, a stack slot's arms even where
+// they call or choose. `aggregates`: a temporary of
 // several cells that only ever holds one, its address handed out or not, is a temporary of one
 // cell. `wide-joins`: temporaries of one
-// cell each that only ever carry a value of several cells whole are one variable of its cells.
+// cell each that only ever carry a value of several cells whole are one variable of its cells,
+// the width stated by a value, a clear or a group.
 // `repeats`: a test that repeats the one its block was entered by goes the way that one went.
 // `Stats` counts temporaries on the trees either side of the passes, so nothing is counted here.
 pub fn run_in(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) {

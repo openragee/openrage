@@ -6,9 +6,9 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::gta6::script::cfg::{self, Block, BlockId, Cfg, Terminator, ENTRY};
-use crate::gta6::script::ir::{Expr, Head, Kind, Stmt, UnOp, Var, VarInfo, Width};
+use crate::gta6::script::ir::{BinOp, Expr, Head, Kind, Scalar, Stmt, UnOp, Var, VarInfo, Width};
 
-use super::effects::{depth, each_top_mut, one_cell, Effects, Facts};
+use super::effects::{depth, each_top, each_top_mut, one_cell, Effects, Facts};
 
 /// The sweeps given to settling what each stack variable carries; a chain of renames longer than this that runs against the order of the blocks is left alone.
 const SWEEPS: usize = 32;
@@ -1076,6 +1076,59 @@ fn row(facts: &Facts, head: &Head, stmts: &[Stmt], slots: Slots, part: bool) -> 
     locals.then(|| Expr::Cells(values.into_iter().cloned().collect()))
 }
 
+/// The row `stmts` starts with where a clear of whole cells is followed by a copy of each local it clears in turn: `zero_bytes(&local_4, 16); t = local_4; t+1 = local_5;`.
+fn cleared_row(facts: &Facts, head: &Head, stmts: &[Stmt]) -> Option<Slots> {
+    let Some(Stmt::ZeroBytes {
+        addr: Expr::AddrOf {
+            var: Var::Local(first),
+            cell: 0,
+        },
+        bytes,
+    }) = stmts.first()
+    else {
+        return None;
+    };
+    let cells = (bytes.is_multiple_of(8).then_some(bytes / 8))
+        .filter(|cells| (2..=WHOLE).contains(cells))?;
+    let Some(Stmt::Assign {
+        target,
+        value: Expr::Var(Var::Local(low)),
+    }) = stmts.get(1)
+    else {
+        return None;
+    };
+    if low != first || !lone_cell(facts, head, *target) {
+        return None;
+    }
+    let slots = Slots {
+        first: *target,
+        cells,
+    };
+    let copied = row(facts, head, stmts.get(1..)?, slots, false);
+    matches!(copied, Some(Expr::Cells(_))).then_some(slots)
+}
+
+/// The row a group of two or more items names where each item is the row's next temporary: `new VmValues(t, t+1)`.
+fn grouped_row(facts: &Facts, head: &Head, e: &Expr) -> Option<Slots> {
+    let Expr::Cells(items) = e else {
+        return None;
+    };
+    let cells = u32::try_from(items.len())
+        .ok()
+        .filter(|cells| (2..=WHOLE).contains(cells))?;
+    let Some(Expr::Var(first)) = items.first() else {
+        return None;
+    };
+    let slots = Slots {
+        first: *first,
+        cells,
+    };
+    let named = (items.iter().zip(0u32..)).all(|(item, i)| {
+        matches!(item, Expr::Var(var) if slots.place(*var) == Some(i) && lone_cell(facts, head, *var))
+    });
+    named.then_some(slots)
+}
+
 /// The row whose every temporary `items[at..]` names in order, from its first.
 fn run_of(members: &HashMap<Var, (Slots, u32)>, items: &[Expr], at: usize) -> Option<Slots> {
     let Some(Expr::Var(var)) = items.get(at) else {
@@ -1112,6 +1165,8 @@ fn picked(members: &HashMap<Var, (Slots, u32)>, inner: &Expr, refused: &mut Hash
 // of one whole value says the temporaries carry a value; another row may give zeroes, or locals
 // in a row. So does a row of cells in a row inside one value, `t0 = x[2]; t1 = x[3];`, where
 // every read of the temporaries is a group of exactly them, `f((t0, t1))`: the value is those bytes.
+// A row of locals in a row says so too where a clear of exactly those locals comes straight
+// before it, or where some read is a group of exactly the temporaries.
 // ⚠ Every assignment of each temporary must be in such a row, and every read in a run of all of
 // them in order that a call or a group is given whole: no cell is taken alone, so the variable is
 // only another name for the same cells.
@@ -1173,6 +1228,25 @@ pub(super) fn wholes(f: &mut cfg::Function) -> bool {
             {
                 refused.insert(*target);
             }
+        }
+    }
+    // A clear of whole cells the row then copies, and a group of exactly the row's temporaries,
+    // each state how wide the value they carry is, as every cell of one whole value does.
+    let mut offered: Vec<Slots> = Vec::new();
+    for block in &f.cfg.blocks {
+        for i in 0..block.stmts.len() {
+            offered.extend(cleared_row(&facts, head, &block.stmts[i..]));
+        }
+    }
+    each_top(&f.cfg, &mut |top| {
+        top.walk(&mut |e| offered.extend(grouped_row(&facts, head, e)));
+    });
+    for slots in offered {
+        if proposed
+            .insert(slots.first, slots.cells)
+            .is_some_and(|known| known != slots.cells)
+        {
+            refused.insert(slots.first);
         }
     }
     if proposed.is_empty() {
@@ -1429,17 +1503,25 @@ fn truth(e: &Expr) -> bool {
     }
 }
 
-/// Whether `value` may stand as an arm of a choice: one cell that no call, store or allocation makes, and no choice itself.
-fn chosen(facts: &Facts, head: &Head, value: &Expr) -> bool {
+/// Whether `value` may stand as an arm of a choice: one cell that no store or allocation makes; with `carried`, a call or a choice may make it.
+// A stack slot a join carries holds a value the source wrote as one expression, and a choice
+// evaluates only the arm taken: `c ? f() : x` calls `f` where the `if` did. A local given a
+// value in each arm may be the source's own `if`, so its arms stay arms where one calls.
+fn chosen(facts: &Facts, head: &Head, value: &Expr, carried: bool) -> bool {
     let effects = Effects::of_expr(facts, value);
-    let quiet = !(effects.call || effects.store || effects.alloc);
-    quiet && one_cell(head, value) && !matches!(value, Expr::Select { .. })
+    let quiet = !((effects.call && !carried) || effects.store || effects.alloc);
+    let nested = matches!(value, Expr::Select { .. }) && !carried;
+    quiet && one_cell(head, value) && !nested
 }
 
 /// Whether the block two arms meet in only tests what they hand it in `var`, at once or through copies of it.
 // The test may still compare the value with constants and join such comparisons: that is the
 // test of a condition whose parts the arms hold. One that reads anything else uses a value.
-fn only_tested(join: &Block, var: Var) -> bool {
+// ⚠ For a stack slot, only where the structure pass can thread the join into the arms: tests of
+// equality at an integer kind, through no float reading, and either an empty block with the
+// slot's one read in the function, or a block of copies of it alone. A slot the join compares in
+// order, as a float, or reads again is a value, which only a choice writes as one.
+fn only_tested(facts: &Facts, join: &Block, var: Var) -> bool {
     let Terminator::Branch { cond, .. } = &join.term else {
         return false;
     };
@@ -1458,19 +1540,32 @@ fn only_tested(join: &Block, var: Var) -> bool {
             }
         }
     }
-    let (mut read, mut plain) = (false, true);
+    let (mut reads, mut plain, mut threaded) = (0u32, true, true);
     cond.walk(&mut |e| match e {
         Expr::Var(named) => {
             let ours = carried.contains(named);
-            read |= ours;
+            reads = reads.saturating_add(u32::from(ours));
             plain &= ours;
         }
-        Expr::Const(_) | Expr::Truth(_) | Expr::Cast { .. } | Expr::Unary { op: UnOp::Not, .. } => {
+        Expr::Const(_) | Expr::Truth(_) | Expr::Unary { op: UnOp::Not, .. } => {}
+        Expr::Cast { to, .. } => threaded &= !matches!(to, Scalar::F32 | Scalar::F64),
+        Expr::Binary { op, at, .. } => {
+            plain &= op.is_logical();
+            threaded &= matches!(op, BinOp::Eq | BinOp::Ne) && !at.is_float();
         }
-        Expr::Binary { op, .. } => plain &= op.is_logical(),
         _ => plain = false,
     });
-    read && plain
+    if reads == 0 || !plain {
+        return false;
+    }
+    if !matches!(var, Var::Stack { .. }) {
+        return true;
+    }
+    let uses = facts.uses.get(&var).copied().unwrap_or_default();
+    let alone = join.stmts.is_empty() && reads == 1 && uses.reads == 1 && uses.addrs == 0;
+    // Each statement of the block put a copy of what is carried on the list.
+    let copies = !join.stmts.is_empty() && join.stmts.len() + 1 == carried.len();
+    threaded && (alone || copies)
 }
 
 /// The variable block `b` chooses a value for, the choice, and the block its two arms meet in, where `b` branches to two arms that each only assign that variable.
@@ -1502,8 +1597,10 @@ fn choice(
     if target != other || join != meet || !one || !apart {
         return None;
     }
-    let values = chosen(facts, head, yes) && chosen(facts, head, no);
-    if !values || (truth(yes) && truth(no)) || only_tested(cfg.blocks.get(join)?, target) {
+    let carried = matches!(target, Var::Stack { .. });
+    let values = chosen(facts, head, yes, carried) && chosen(facts, head, no, carried);
+    let tested = only_tested(facts, cfg.blocks.get(join)?, target);
+    if !values || (truth(yes) && truth(no)) || tested {
         return None;
     }
     let shallow = [cond, yes, no].into_iter().all(|e| depth(e) < CHOICE_DEPTH);
@@ -1520,7 +1617,8 @@ fn choice(
 /// Writes a branch whose two arms each give one variable one value, and do nothing else, as the one assignment of a choice between the two values.
 // `if (c) { s = a; } else { s = b; }` is `s = c ? a : b;`: the test is evaluated where it was,
 // and of the two values only the one whose arm ran. The arms are left with nothing that leads
-// to them, for `tidy` to remove.
+// to them, for `tidy` to remove. For a stack slot an arm may call or be a choice itself:
+// `if (c) { s = f(); } else { s = d ? a : b; }` is `s = c ? f() : d ? a : b;`.
 // ⚠ Not where the two values are truths, nor where the block the arms meet in only tests the
 // variable: those are the value and the test of an `&&` or an `||`, which the structure pass
 // reads from the arms as they stand.

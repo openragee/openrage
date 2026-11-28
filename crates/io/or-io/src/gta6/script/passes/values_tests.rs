@@ -989,6 +989,9 @@ fn two_arms(yes: &str, no: &str, after: &str) -> String {
 /// Both readers of the first stack variable, so that it stays a variable.
 const READ_TWICE: &str = "Native.DEMO.USE2(stack_000040_0, stack_000040_0);";
 
+/// A choice between the second parameter and a constant.
+const CHOSEN: &str = "(((((as_i32(p1) == as_i32(5))) != Truth(0)) ? (VmValue)(p1) : (VmValue)(7)))";
+
 #[test]
 fn two_arms_that_each_only_give_one_variable_a_value_are_one_choice() {
     let body = two_arms(
@@ -1047,9 +1050,13 @@ fn arms_that_do_more_than_choose_a_value_stay_arms() {
         assert_eq!(f.cfg, before, "from:\n{body}");
     };
     let plain = "stack_000040_0 = local_3;";
-    // A call is made where its arm runs, and stays a statement of that arm.
-    let call = "stack_000040_0 = Native.DEMO.GET(p1);";
-    stays_arms(STACK, &two_arms(call, plain, READ_TWICE));
+    // A local an arm gives a call's result may be the source's own `if`: the call stays a statement of that arm.
+    let call = "local_1 = Native.DEMO.GET(p1);";
+    let read_local = "Native.DEMO.USE2(local_1, local_1);";
+    stays_arms("", &two_arms(call, "local_1 = local_3;", read_local));
+    // So does a choice a local is given in one arm.
+    let inner = format!("local_1 = {CHOSEN};");
+    stays_arms("", &two_arms(&inner, "local_1 = local_3;", read_local));
     // An arm that holds another statement.
     let more = "Native.DEMO.USE(p1); stack_000040_0 = p1;";
     stays_arms(STACK, &two_arms(more, plain, READ_TWICE));
@@ -1324,9 +1331,21 @@ fn a_local_a_join_is_given_in_one_arm_is_the_join() {
     // local keeps its own value, which no other arm's can then be hoisted over.
     let both = "if (((as_u32(p0) == 0))) { local_1 = Native.DEMO.GET(p0); stack_000040_0 = local_1; } else { stack_000040_0 = Native.DEMO.GET(p1); } local_2 = stack_000040_0; Native.DEMO.USE(local_2); return;";
     let made = ran_with(&[Pass::Coalesce], STACK, both);
-    // One variable is given each arm's call and read where the arms meet: the join, or the local after it.
+    // One variable is given each arm's call and read where the arms meet, the join or the local
+    // after it; or the arms are one choice of the two calls, made where they meet.
     let (join, after) = (given(&made, JOIN), given(&made, Var::Local(2)));
-    assert_eq!(join.len() + after.len(), 2, "{:?}", made.cfg);
+    let chosen = (made.cfg.blocks.iter().flat_map(|block| &block.stmts)).any(|stmt| {
+        matches!(stmt, Stmt::Eval(Expr::Call { args, .. }) if matches!(
+            &args[..],
+            [Expr::Select { then, els, .. }]
+                if matches!(**then, Expr::Call { .. }) && matches!(**els, Expr::Call { .. })
+        ))
+    });
+    assert!(
+        join.len() + after.len() == 2 || (chosen && join.is_empty() && after.is_empty()),
+        "{:?}",
+        made.cfg
+    );
     assert!(given(&made, Var::Local(1)).is_empty(), "{:?}", made.cfg);
 }
 
@@ -1492,4 +1511,143 @@ fn a_temporary_of_several_cells_that_only_ever_holds_one_is_one_cell_its_address
     let made = ran_with(&[Pass::Aggregates], MANY, filled);
     let width = made.head.vars.get(&v).map(|info| info.width);
     assert_ne!(width, Some(Width::Cell), "{:?}", made.cfg);
+}
+
+/// The two arms of the choice the first block ends by giving `var`, where it ends so.
+fn chosen_arms(f: &cfg::Function, var: Var) -> Option<(Expr, Expr)> {
+    match f.cfg.blocks.first()?.stmts.last()? {
+        Stmt::Assign {
+            target,
+            value: Expr::Select { then, els, .. },
+        } if *target == var => Some(((**then).clone(), (**els).clone())),
+        _ => None,
+    }
+}
+
+#[test]
+fn a_join_whose_arm_calls_is_a_choice_that_makes_the_call_in_that_arm_alone() {
+    let call = "stack_000040_0 = Native.DEMO.GET(p1);";
+    let body = two_arms(call, "stack_000040_0 = 7;", READ_TWICE);
+    let mut f = read(STACK, &body);
+    assert!(joins::selects(&mut f), "{:?}", f.cfg);
+    let arms = chosen_arms(&f, JOIN);
+    let called = matches!(&arms, Some((Expr::Call { .. }, Expr::Const(c))) if c.bits == 7);
+    assert!(called, "{:?}", f.cfg);
+    // Through the whole pass with `coalesce` on, the branch is gone.
+    let made = ran_with(&[Pass::Coalesce], STACK, &body);
+    assert!(!branches(&made), "{:?}", made.cfg);
+    // Without the name the branch stays.
+    assert!(branches(&ran_with(&[], STACK, &body)));
+}
+
+#[test]
+fn a_join_given_a_choice_in_one_arm_is_one_choice_of_the_two() {
+    let inner = format!("stack_000040_0 = {CHOSEN};");
+    let body = two_arms("stack_000040_0 = p1;", &inner, READ_TWICE);
+    let mut f = read(STACK, &body);
+    assert!(joins::selects(&mut f), "{:?}", f.cfg);
+    let arms = chosen_arms(&f, JOIN);
+    let nested = matches!(&arms, Some((Expr::Var(Var::Param(1)), Expr::Select { .. })));
+    assert!(nested, "{arms:?}");
+}
+
+#[test]
+fn a_join_the_meeting_block_compares_in_order_or_reads_again_is_a_choice() {
+    let arms = |after: &str| {
+        two_arms(
+            "stack_000040_0 = p1;",
+            "stack_000040_0 = load_i32(p0, 0x8);",
+            after,
+        )
+    };
+    let chose = |decls: &str, body: &str| {
+        let mut f = read(decls, body);
+        let changed = joins::selects(&mut f);
+        (changed, f)
+    };
+    // An order is no test of equality the structure pass can make in each arm: the slot is a value.
+    let ordered = "if (((as_i32(stack_000040_0) < 5))) { Native.DEMO.USE(p1); } else { }";
+    let (changed, f) = chose(STACK, &arms(ordered));
+    assert!(changed && chosen_arms(&f, JOIN).is_some(), "{:?}", f.cfg);
+    // Nor is a test of equality where the slot is read again after it.
+    let again = "if (((as_u32(stack_000040_0) != 0))) { Native.DEMO.USE(p1); } else { } Native.DEMO.USE(stack_000040_0);";
+    let (changed, f) = chose(STACK, &arms(again));
+    assert!(changed && chosen_arms(&f, JOIN).is_some(), "{:?}", f.cfg);
+    // Read once, by a test of equality, it is the parts of a condition and the arms stay.
+    let tested = "if (((as_u32(stack_000040_0) != 0))) { Native.DEMO.USE(p1); } else { }";
+    let (changed, f) = chose(STACK, &arms(tested));
+    assert!(!changed, "{:?}", f.cfg);
+    // A local compared in order keeps its arms: the `if` may be the source's.
+    let local = two_arms(
+        "local_1 = p1;",
+        "local_1 = load_i32(p0, 0x8);",
+        "if (((as_i32(local_1) < 5))) { Native.DEMO.USE(p1); } else { }",
+    );
+    let (changed, f) = chose("", &local);
+    assert!(!changed, "{:?}", f.cfg);
+}
+
+#[test]
+fn a_value_of_two_cells_a_clear_states_carried_over_two_stack_slots_is_one_variable() {
+    let (low, high) = (
+        Var::Stack { at: 0x60, index: 0 },
+        Var::Stack { at: 0x60, index: 1 },
+    );
+    let copied = "stack_000060_0 = local_2; stack_000060_1 = local_3;";
+    let cleared = "zero_bytes(Vm.Address(locals, 4), 16); stack_000060_0 = local_4; stack_000060_1 = local_5;";
+    let reads = "Native.DEMO.USE3(p1, stack_000060_0, stack_000060_1);";
+    let body = pair_join(copied, cleared, reads);
+    let made = ran_with(&[Pass::WideJoins], PAIR_SLOTS, &body);
+    let info = &made.head.vars[&low];
+    assert_eq!(
+        (info.width, info.kind.clone()),
+        (Width::Cells, Kind::Aggregate(2))
+    );
+    assert!(!mentioned(&made, high), "{:?}", made.cfg);
+    // The arm that copies two locals gives the slot the group of the two.
+    let pair = Expr::Cells(vec![Expr::Var(Var::Local(2)), Expr::Var(Var::Local(3))]);
+    let values = given(&made, low);
+    assert!(values.contains(&pair), "{values:?}");
+    // Without the name the slots stay.
+    assert!(mentioned(&ran_with(&[], PAIR_SLOTS, &body), high));
+    // A slot read alone takes one cell: the two stay two.
+    let alone = format!("{reads} Native.DEMO.USE(stack_000060_1);");
+    let split = ran_with(
+        &[Pass::WideJoins],
+        PAIR_SLOTS,
+        &pair_join(copied, cleared, &alone),
+    );
+    assert!(mentioned(&split, high), "{:?}", split.cfg);
+}
+
+#[test]
+fn two_stack_slots_a_group_of_exactly_them_reads_carry_one_value_of_two_cells() {
+    let (low, high) = (
+        Var::Stack { at: 0x60, index: 0 },
+        Var::Stack { at: 0x60, index: 1 },
+    );
+    let first = "stack_000060_0 = local_2; stack_000060_1 = local_3;";
+    let second = "stack_000060_0 = local_4; stack_000060_1 = local_5;";
+    let grouped = "Native.DEMO.USE2(new VmValues(stack_000060_0, stack_000060_1), p1);";
+    let body = pair_join(first, second, grouped);
+    let made = ran_with(&[Pass::WideJoins], PAIR_SLOTS, &body);
+    assert!(!mentioned(&made, high), "{:?}", made.cfg);
+    let info = &made.head.vars[&low];
+    assert_eq!(
+        (info.width, info.kind.clone()),
+        (Width::Cells, Kind::Aggregate(2))
+    );
+    let all = made.cfg.blocks.iter().flat_map(|block| &block.stmts);
+    let handed = |stmt: &&Stmt| matches!(stmt, Stmt::Eval(Expr::Call { args, .. }) if args.first() == Some(&Expr::Var(low)));
+    assert_eq!(all.filter(handed).count(), 1, "{:?}", made.cfg);
+    // An arm that gives the two slots two values of no one row keeps them two.
+    let loose = "stack_000060_0 = p1; stack_000060_1 = 0;";
+    let split = ran_with(
+        &[Pass::WideJoins],
+        PAIR_SLOTS,
+        &pair_join(loose, second, grouped),
+    );
+    assert!(mentioned(&split, high), "{:?}", split.cfg);
+    // Without the name the slots stay.
+    assert!(mentioned(&ran_with(&[], PAIR_SLOTS, &body), high));
 }

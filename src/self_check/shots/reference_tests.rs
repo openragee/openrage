@@ -89,3 +89,39 @@ fn the_script_that_holds_names_every_shot_and_dump_of_the_script_that_draws_and_
     let named: Vec<String> = shots.iter().map(|name| format!("{name}.json")).collect();
     assert_eq!(dumps, named, "each dump is compared once, in its order");
 }
+
+const FED: &str = include_str!("../../../scripts/shots/gta5_world.shots");
+
+#[test]
+fn the_gta_v_script_takes_its_install_from_the_environment_and_only_steps_a_fed_world_takes() {
+    let variable = |name: &str| match name {
+        "OPENRAGE_GTA5_EDITION" => Some("enhanced".to_owned()),
+        "OPENRAGE_GTA5_INSTALL" => Some("an install".to_owned()),
+        _ => None,
+    };
+    let steps = parse_with(FED, &variable).expect("the script reads");
+    let steps: Vec<Step> = steps.into_iter().map(|(_, _, step)| step).collect();
+    assert!(steps.contains(&Step::Game(
+        crate::state::prefs::Game::GtaVEnhanced,
+        Some(PathBuf::from("an install"))
+    )));
+    let (mut settled, mut shots) = (false, 0);
+    for (at, step) in steps.iter().enumerate() {
+        match step {
+            Step::World(WorldStep::Settle(_)) => settled = true,
+            Step::World(WorldStep::Dump(_) | WorldStep::Clean(_)) => {}
+            Step::World(WorldStep::Camera(_) | WorldStep::Hour(_)) => settled = false,
+            Step::World(other) => panic!("{other:?} is refused by a world drawn through the seam"),
+            Step::Shot(name) => {
+                assert!(settled, "`shot {name}` comes after a settle of its camera");
+                assert_eq!(
+                    steps.get(at + 1),
+                    Some(&Step::World(WorldStep::Dump(format!("{name}.json"))))
+                );
+                shots += 1;
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(shots, 4);
+}

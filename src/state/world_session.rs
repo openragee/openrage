@@ -211,7 +211,7 @@ impl AppState {
     pub fn world_session(&mut self) -> Option<&mut (dyn WorldSession + 'static)> {
         let wanted = wanted(&self.prefs, &self.world);
         if self.world.key() != wanted.as_ref() {
-            // The session held is let go first: its threads end before another's begin.
+            // ⚠ The session held is let go first and its thread told to stop, but not waited for: one still taking its index ends when that is taken.
             self.world.drop_session();
             if let Some(key) = wanted {
                 let session: Box<dyn WorldSession> = match key.game.is_gta_vi() {

@@ -63,6 +63,9 @@ converge` is a settle here, and the other `world` steps are GTA VI's alone and r
 JSON: what is waited for, what was drawn, the bytes on the device, what a frame took, and every
 reason something was not read with its count.
 
+`scripts/shots/gta5_world.shots` flies four fixed cameras of an install the environment names, and
+shoots and dumps each; its head says how it is run. It judges nothing: the shots are looked at.
+
 ## What it does not do yet
 
 - **The game's own look.** No shader of the game runs: no shadow, sky, cloud, fog, water (the sea

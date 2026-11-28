@@ -13,7 +13,7 @@ use or_world::contract::{Keys, Opening, WorldTitle};
 use or_world::driver::Driver;
 use or_world::fake::{self, FakeTitle, Fault};
 use or_world::kept;
-use or_world::model::{AssetKey, Moment, Switched};
+use or_world::model::{AssetKey, Moment, Switched, TextureAsk};
 use or_world::streaming::NodeState;
 
 use super::driven::{DrivenSession, OwnedKeys};
@@ -288,8 +288,24 @@ fn the_active_install_decides_whose_world_is_opened_and_another_drops_the_one_he
     );
     state.world.choose(Game::GtaVLegacy, vec![level.clone()]);
     let key = state.world_session().map(|session| session.key().clone());
-    assert_eq!(key.map(|key| key.options), Some(vec![level]));
+    assert_eq!(key.map(|key| key.options), Some(vec![level.clone()]));
     assert_eq!(state.world.opened, 3);
+    // The same choice opens nothing, and another replaces what was chosen before.
+    state.world.choose(Game::GtaVLegacy, vec![level]);
+    state.world_session();
+    assert_eq!(state.world.opened, 3);
+    let other = (
+        title.options()[0].id,
+        or_world::slots::OptionValue::Named("another-pack".into()),
+    );
+    state.world.choose(Game::GtaVLegacy, vec![other.clone()]);
+    assert_eq!(
+        state.world.options_of(Game::GtaVLegacy),
+        std::slice::from_ref(&other)
+    );
+    let key = state.world_session().map(|session| session.key().clone());
+    assert_eq!(key.map(|key| key.options), Some(vec![other]));
+    assert_eq!(state.world.opened, 4);
 
     // A folder that is no install does not open, and says so.
     let started = Instant::now();
@@ -311,7 +327,7 @@ fn the_active_install_decides_whose_world_is_opened_and_another_drops_the_one_he
     state.prefs.active_game = None;
     let game = state.world_session().map(|session| session.key().game);
     assert_eq!(game, Some(Game::GtaVI));
-    assert_eq!(state.world.opened, 4);
+    assert_eq!(state.world.opened, 5);
     assert!(!crate::ui::panels::world_viewer::fed(&state));
 }
 
@@ -388,4 +404,109 @@ fn a_gta_v_install_opens_a_session_of_gta_vs_capabilities_whose_selection_is_the
     assert!(!session.caps().has(Capability::Edits));
     assert_ne!(session.caps(), gta6::CAPS);
     assert_eq!(session.option_kinds(), entry.title.options());
+}
+
+/// Poll `session` at `eye`, asking for the colour map of every mesh that arrives as a frame does, until `done` says so; the textures that came and those that never will.
+fn textured(
+    session: &mut DrivenSession,
+    eye: Vec3,
+    mut done: impl FnMut(&DrivenSession, &[TextureAsk], &[TextureAsk]) -> bool,
+) -> (Vec<TextureAsk>, Vec<TextureAsk>) {
+    let mut camera = session.camera();
+    camera.position = eye;
+    session.set_camera(camera);
+    let started = Instant::now();
+    let (mut asks, mut came, mut never) = (Vec::new(), Vec::new(), Vec::new());
+    loop {
+        session.poll();
+        if let Some(feed) = session.feed() {
+            while let Some((model, read)) = feed.take_model() {
+                let Some(read) = read else {
+                    continue;
+                };
+                feed.tell(model, NodeState::Ready);
+                let meshes = read.lods.iter().flat_map(|lod| &lod.meshes);
+                for ask in meshes.filter_map(|mesh| mesh.surface.colour) {
+                    if !asks.contains(&ask) {
+                        asks.push(ask);
+                    }
+                }
+            }
+            while let Some((ask, read)) = feed.take_texture() {
+                match read {
+                    Some(_) => came.push(ask),
+                    None => never.push(ask),
+                }
+            }
+            let waited: Vec<(f32, TextureAsk)> = (asks.iter())
+                .filter(|ask| !came.contains(ask) && !never.contains(ask))
+                .map(|ask| (0.0, *ask))
+                .collect();
+            feed.want_textures(waited);
+        }
+        if done(session, &came, &never) {
+            return (came, never);
+        }
+        assert!(
+            started.elapsed() < PATIENCE,
+            "the textures did not come: {came:?} came, {never:?} never, waiting for {:?}",
+            session.waiting()
+        );
+        std::thread::sleep(Duration::from_millis(15));
+    }
+}
+
+#[test]
+fn a_texture_a_frame_asks_for_arrives_once_and_one_that_does_not_read_is_counted_with_its_reason() {
+    let (mut whole, _a) = over(FakeTitle::new(), "fake-install");
+    // Flown on for a while after it came: every frame goes on asking for what it still lacks, and it is handed once.
+    let mut after = 0;
+    let (came, never) = textured(&mut whole, fake::NEAR_EYE, |session, came, _| {
+        after += u32::from(!came.is_empty() && !session.waiting().any());
+        after > QUIET
+    });
+    assert_eq!((came.len(), never.len()), (1, 0), "{came:?} {never:?}");
+    assert_eq!(whole.unread(), []);
+
+    let (mut torn, _b) = over(FakeTitle::broken(Fault::TextureUnread), "fake-install");
+    let (came, never) = textured(&mut torn, fake::NEAR_EYE, |session, _, never| {
+        !never.is_empty() && !session.waiting().any() && !session.unread().is_empty()
+    });
+    assert_eq!((came.len(), never.len()), (0, 1), "{came:?} {never:?}");
+    let unread = torn.unread();
+    assert_eq!(unread.len(), 1, "{unread:?}");
+    assert_eq!((unread[0].kind, unread[0].count), (Kind::Texture, 1));
+    let Reason::Said(why) = &unread[0].why else {
+        panic!("a texture's reason is a sentence: {:?}", unread[0].why);
+    };
+    assert_eq!(why.key(), "The title read no texture and gave no reason");
+    assert_eq!(
+        torn.waiting().textures,
+        0,
+        "what never reads is not waited for"
+    );
+}
+
+#[test]
+fn a_model_the_device_let_go_is_read_and_handed_again() {
+    let (mut session, _scratch) = over(FakeTitle::new(), "fake-install");
+    let mut device = Device::default();
+    at_rest(&mut session, fake::NEAR_EYE, &mut device);
+    let first = device.there.clone();
+    assert!(!first.is_empty());
+    // At rest nothing is handed twice.
+    let resting = at_rest(&mut session, fake::NEAR_EYE, &mut device);
+    assert_eq!(device.there, first);
+    // A model the selection at rest draws with: one only a parent drew while its children loaded is wanted no more.
+    let gone = resting.instances.models[0];
+    {
+        use super::WorldFeed;
+        session.tell(gone, NodeState::Loading);
+    }
+    let started = Instant::now();
+    while device.there.len() == first.len() {
+        at_rest(&mut session, fake::NEAR_EYE, &mut device);
+        assert!(started.elapsed() < PATIENCE, "the model was not read again");
+    }
+    assert_eq!(device.there[first.len()..], [gone]);
 }

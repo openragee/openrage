@@ -242,6 +242,46 @@ impl Plain {
         })
     }
 
+    /// Hold what came for `ask`, its view with its bytes and its longest side, or that nothing came; the bytes that went to the device.
+    fn took_map(&mut self, ask: &TextureAsk, made: Option<(wgpu::TextureView, u64, u32)>) -> u64 {
+        let key = (ask.scope, ask.name);
+        if self.asked.get(&key) == Some(&ask.pixels) {
+            self.asked.remove(&key);
+        }
+        self.stamps += 1;
+        let map = match made {
+            Some((view, bytes, longest)) => Map {
+                view: Some(view),
+                bytes,
+                got: ask.pixels,
+                top: longest < ask.pixels,
+                used: self.frame,
+                stamp: self.stamps,
+            },
+            None => {
+                // ⚠ A larger answer that did not come leaves the smaller one in place, for good: its bytes are counted already.
+                if let Some(held) = self.maps.get_mut(&key).filter(|held| held.view.is_some()) {
+                    held.top = true;
+                    return 0;
+                }
+                Map {
+                    view: None,
+                    bytes: 0,
+                    got: ask.pixels,
+                    top: true,
+                    used: self.frame,
+                    stamp: self.stamps,
+                }
+            }
+        };
+        let bytes = map.bytes;
+        self.map_bytes += bytes;
+        if let Some(old) = self.maps.insert(key, map) {
+            self.map_bytes -= old.bytes;
+        }
+        bytes
+    }
+
     fn free(&mut self, model: AssetKey) {
         if let Some(Slot::Ready { lods, bytes, .. }) = self.models.remove(&model) {
             for mesh in lods.into_iter().flat_map(|lod| lod.meshes) {
@@ -343,10 +383,6 @@ impl RenderBridge {
             let Some((ask, read)) = feed.take_texture() else {
                 break;
             };
-            let key = (ask.scope, ask.name);
-            if plain.asked.get(&key) == Some(&ask.pixels) {
-                plain.asked.remove(&key);
-            }
             let made = read.as_ref().and_then(|texture| {
                 let cpu = CpuTexture {
                     width: texture.width,
@@ -357,34 +393,7 @@ impl RenderBridge {
                 let (view, bytes) = upload(&self.device, &self.queue, &cpu, bc, budgets.most_side)?;
                 Some((view, bytes, texture.width.max(texture.height)))
             });
-            plain.stamps += 1;
-            let map = match made {
-                Some((view, bytes, longest)) => Map {
-                    view: Some(view),
-                    bytes,
-                    got: ask.pixels,
-                    top: longest < ask.pixels,
-                    used: frame,
-                    stamp: plain.stamps,
-                },
-                // ⚠ A larger answer that did not come leaves the smaller one in place, for good.
-                None => match plain.maps.remove(&key) {
-                    Some(held) if held.view.is_some() => Map { top: true, ..held },
-                    _ => Map {
-                        view: None,
-                        bytes: 0,
-                        got: ask.pixels,
-                        top: true,
-                        used: frame,
-                        stamp: plain.stamps,
-                    },
-                },
-            };
-            uploaded += map.bytes;
-            plain.map_bytes += map.bytes;
-            if let Some(old) = plain.maps.insert(key, map) {
-                plain.map_bytes -= old.bytes;
-            }
+            uploaded += plain.took_map(&ask, made);
             plain.changes += 1;
         }
         let mut uploaded = 0u64;
@@ -782,5 +791,71 @@ mod tests {
             "each keeps its own fade, the nearer of a run first"
         );
         assert_eq!(plain.spheres.len(), plain.laid.len());
+    }
+
+    #[test]
+    fn a_larger_map_that_did_not_come_leaves_the_smaller_one_counted_once() {
+        const WHAT: &str = "a_larger_map_that_did_not_come_leaves_the_smaller_one_counted_once";
+        let Some((device, queue)) = crate::render::test_device(WHAT) else {
+            return;
+        };
+        let pixel = CpuTexture {
+            width: 1,
+            height: 1,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            levels: vec![vec![128, 128, 128, 255]],
+        };
+        let (view, bytes) = upload(&device, &queue, &pixel, false, 4096).expect("one pixel");
+        let ask = |pixels| TextureAsk {
+            scope: AssetKey(3),
+            name: 5,
+            pixels,
+        };
+        let key = (AssetKey(3), 5);
+        let mut plain = Plain::default();
+        plain.asked.insert(key, 64);
+        // Asked at 64 a side and come at 64: a larger one may exist.
+        assert_eq!(plain.took_map(&ask(64), Some((view, bytes, 64))), bytes);
+        assert!(bytes > 0 && plain.map_bytes == bytes && plain.asked.is_empty());
+        assert!(!plain.maps[&key].top);
+        // The larger did not read: the smaller stays, is the largest there will be, and weighs what it did.
+        assert_eq!(plain.took_map(&ask(256), None), 0);
+        let held = &plain.maps[&key];
+        assert!(held.view.is_some() && held.top && held.got == 64);
+        assert_eq!(plain.map_bytes, bytes);
+        // One that never read is held as nothing, so that it is not asked for again.
+        let other = TextureAsk { name: 6, ..ask(64) };
+        assert_eq!(plain.took_map(&other, None), 0);
+        let never = &plain.maps[&(AssetKey(3), 6)];
+        assert!(never.view.is_none() && never.top);
+        assert_eq!(plain.map_bytes, bytes);
+        assert_eq!(plain.evict_maps(0), 0, "a map used this frame is kept");
+        plain.frame += IDLE_FRAMES + 2;
+        assert_eq!(plain.evict_maps(0), 1);
+        assert_eq!(plain.map_bytes, 0);
+    }
+
+    #[test]
+    fn the_models_longest_unheld_are_let_go_until_the_rest_fit_and_one_held_lately_stays() {
+        let mut plain = Plain::default();
+        let slot = |bytes, held| Slot::Ready {
+            lods: Vec::new(),
+            bytes,
+            held,
+        };
+        plain.frame = 1000;
+        for (key, held) in [(1, 10), (2, 5), (3, 990), (4, 700)] {
+            plain.models.insert(AssetKey(key), slot(100, held));
+            plain.model_bytes += 100;
+        }
+        plain.models.insert(AssetKey(9), Slot::Missing);
+        assert_eq!(plain.evict_models(400), [], "what fits is kept");
+        // The longest unheld first, and no more than the budget asks.
+        assert_eq!(plain.evict_models(250), [AssetKey(2), AssetKey(1)]);
+        assert_eq!(plain.model_bytes, 200);
+        // The one a selection held inside the idle frames stays whatever the budget.
+        assert_eq!(plain.evict_models(0), [AssetKey(4)]);
+        assert!(plain.models.contains_key(&AssetKey(3)) && plain.model_bytes == 100);
+        assert!(matches!(plain.models[&AssetKey(9)], Slot::Missing));
     }
 }

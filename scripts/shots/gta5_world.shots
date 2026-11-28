@@ -1,0 +1,32 @@
+# The GTA V World screen at four fixed cameras: a street, the city from height, open country and
+# the coast. Each stop is settled, then shot and dumped. It judges nothing: look at the shots.
+#
+#   OPENRAGE_GTA5_EDITION=<legacy or enhanced> OPENRAGE_GTA5_INSTALL=<the install's folder> \
+#       OPENRAGE_CONFIG_DIR=<a scratch folder> just shots scripts/shots/gta5_world.shots OUT
+#
+# The first run over an install takes its index, which reads every archive: several minutes.
+size 1600 900
+game ${OPENRAGE_GTA5_EDITION} ${OPENRAGE_GTA5_INSTALL}
+workspace World
+world clean on
+world hour 10
+
+world camera 215 -900 34 20 -4 60
+world settle 1200
+shot street
+world dump street.json
+
+world camera -150 -1700 420 0 -24 60
+world settle 1200
+shot height
+world dump height.json
+
+world camera 1900 3900 110 40 -8 60
+world settle 1200
+shot country
+world dump country.json
+
+world camera -1450 -950 70 120 -10 60
+world settle 1200
+shot coast
+world dump coast.json

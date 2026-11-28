@@ -11102,7 +11102,8 @@ surface as it is, and GTA V's index on the core's kept file
   `or-worlds`, `or-depends`, `or-maps`, `or-project`, `or-cli` and the app lists 6142 tests before
   and after, with no test's name lost or gained; no body changed. The ledger of
   `crates/domain/or-world/tests/the_core_names_no_game.rs` shrank from 22 files and 29 pairs to
-  one file and two pairs. The slow tier holds the six install suites that moved under
+  one file and two pairs, and to nothing once [R71b](#r71b-the-gta-vi-world-behind-the-contract)'s
+  fourth part split the streaming rules. The slow tier holds the six install suites that moved under
   `or-world-gta5`.
 - **Found by a second engineer (2026-11-28).** `BoundCollider::of_shapes`, the constructor the
   split made public, took any shape, where every shape was asked whether it is sound before the

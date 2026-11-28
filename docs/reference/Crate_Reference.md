@@ -1847,8 +1847,8 @@ those listed here it holds `aabb` (the box a tree, a placed bound and a title's 
 entity stands), `gizmo` (the manipulator, which was `or-maps`') and `place` (what a person pastes read as a
 position, a hash or text, which was `or-maps`' too). The ledger of
 `crates/domain/or-world/tests/the_core_names_no_game.rs` went, on 2026-11-28, from 22 files that name a game and 29 pairs that
-lean on one to `streaming_rules.rs`, whose one comment says two names of levels are GTA V's, and the two
-modules that lean on it.
+lean on one to `streaming_rules.rs` and the two modules that lean on it, and the split of the streaming
+rules (the selecting half, above) emptied it: both ledgers hold nothing.
 
 - `contract` is what a title answers. A `WorldTitle` opens a `WorldSpec` (a game by the id its
   profile registers, an install, the options chosen at open, read-only layers) into a

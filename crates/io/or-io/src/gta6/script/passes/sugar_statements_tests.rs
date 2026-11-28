@@ -258,8 +258,8 @@ fn a_loop_that_uses_its_index_its_array_or_its_item_otherwise_stays_a_for() {
             1,
         ),
         (
-            "the address of the array is taken",
-            vec![address(4), counted(Vec::new())],
+            "the address of the array is taken and the body makes a call",
+            vec![address(4), counted(vec![touch(0)])],
             1,
         ),
         (
@@ -1116,4 +1116,143 @@ fn an_item_only_ever_read_through_its_address_is_still_the_item_a_foreach_takes(
     let (is, found) = read(was.clone(), &Names::default());
     assert_eq!(is, was);
     assert_eq!((found.arrays, found.refused), (0, 1));
+}
+
+/// A global cell of the program's statics, which a call may change behind its name.
+fn global(offset: u32) -> Var {
+    Var::Global {
+        program: 1,
+        offset,
+        statics: true,
+    }
+}
+
+/// `for (local_5 = 0; local_5 < <array>.Length; local_5++) { local_6 = <array>[local_5]; <rest> }`.
+fn counted_over(array: Expr, rest: Vec<Stmt>) -> Stmt {
+    let length = Expr::cast(Scalar::I32, op("array_length", vec![array.clone()]));
+    let cond = Expr::binary(BinOp::Lt, Expr::cast(Scalar::I32, local(5)), length);
+    let mut body = vec![set(6, op("array_get_u64", vec![array, local(5)]))];
+    body.extend(rest);
+    looped(cond, body)
+}
+
+/// `local_7 = local_7 + local_6;`: what writes no memory and calls nothing.
+fn summed() -> Stmt {
+    set(7, Expr::binary(BinOp::Add, local(7), local(6)))
+}
+
+#[test]
+fn an_array_something_else_may_change_is_gone_through_where_the_loop_runs_nothing_that_may() {
+    let names = Names::default();
+    let over_global = |rest: Vec<Stmt>| vec![counted_over(Expr::Var(global(0x40)), rest)];
+
+    // A global array, and a local one whose address a call was handed before the loop.
+    let handed = eval(call(vec![Expr::AddrOf {
+        var: Var::Local(4),
+        cell: 0,
+    }]));
+    let quiet: Vec<Vec<Stmt>> = vec![
+        over_global(vec![summed()]),
+        vec![handed.clone(), counted(vec![summed()])],
+    ];
+    for was in quiet {
+        let (is, found) = read(was.clone(), &names);
+        assert_eq!((found.arrays, found.refused), (1, 0), "{was:?}");
+        assert!(
+            is.iter().any(|stmt| matches!(stmt, Stmt::Sugar(_))),
+            "{is:?}"
+        );
+        assert_eq!(cfg::lower_body(is), cfg::lower_body(was));
+    }
+
+    // ⚠ The test reads the array again each round: a call, a store or a write to another global
+    // there may change it, and the loop stays.
+    let store = Stmt::Simple(ir::Stmt::Store {
+        kind: StoreKind::I32,
+        addr: local(0),
+        offset: 8,
+        value: int(1),
+    });
+    let other = Stmt::Simple(ir::Stmt::Assign {
+        target: global(0x48),
+        value: local(6),
+    });
+    let loud: Vec<(&str, Vec<Stmt>)> = vec![
+        ("a call", over_global(vec![eval(call(Vec::new()))])),
+        ("a store", over_global(vec![store])),
+        ("another global assigned", over_global(vec![other])),
+        (
+            "a call after the address was handed",
+            vec![handed, counted(vec![eval(call(Vec::new()))])],
+        ),
+    ];
+    for (why, was) in loud {
+        let (is, found) = read(was.clone(), &names);
+        assert_eq!(is, was, "{why}");
+        assert_eq!((found.arrays, found.refused), (0, 1), "{why}");
+    }
+}
+
+/// `for (local_5 = <from>; local_5 < 10; local_5++) { <body> }`: a loop over no array.
+fn upto(from: Expr, body: Vec<Stmt>) -> Stmt {
+    let up = Expr::binary(BinOp::Add, Expr::cast(Scalar::I32, local(5)), int(1));
+    let cond = Expr::binary(BinOp::Lt, Expr::cast(Scalar::I32, local(5)), int(10));
+    Stmt::For {
+        init: Some(Box::new(assign(5, from))),
+        cond: Some(cond),
+        step: Some(Box::new(assign(5, up))),
+        body,
+    }
+}
+
+#[test]
+fn an_index_another_loop_sets_in_its_own_head_is_still_this_loops_alone() {
+    let names = Names::default();
+    let touch = eval(call(vec![local(5)]));
+    let shared: Vec<Vec<Stmt>> = vec![
+        vec![counted(Vec::new()), upto(int(0), vec![touch.clone()])],
+        vec![upto(int(0), vec![touch.clone()]), counted(Vec::new())],
+    ];
+    for was in shared {
+        let (is, found) = read(was.clone(), &names);
+        assert_eq!((found.arrays, found.refused), (1, 0), "{was:?}");
+        assert_eq!(cfg::lower_body(is), cfg::lower_body(was));
+    }
+
+    // ⚠ Each of these reads what the loop left in the index, or may.
+    let inside = Stmt::Label(tree::Label::Block(1));
+    let cases: Vec<(&str, Vec<Stmt>)> = vec![
+        (
+            "the other loop's head reads the index",
+            vec![counted(Vec::new()), upto(local(5), vec![touch.clone()])],
+        ),
+        (
+            "the other loop holds a label",
+            vec![counted(Vec::new()), upto(int(0), vec![inside])],
+        ),
+        (
+            "the index is read after the other loop",
+            vec![counted(Vec::new()), upto(int(0), Vec::new()), touch.clone()],
+        ),
+        (
+            "the other loop holds this one, and steps the index it left",
+            vec![upto(int(0), vec![counted(Vec::new())])],
+        ),
+    ];
+    for (why, was) in cases {
+        let (is, found) = read(was.clone(), &names);
+        assert_eq!(is, was, "{why}");
+        assert_eq!((found.arrays, found.refused), (0, 1), "{why}");
+    }
+}
+
+#[test]
+fn an_index_a_wider_variable_names_by_its_cells_is_no_loops_alone() {
+    // `local_3`, of three cells, holds the index's: reading it reads what the loop left there.
+    let was = vec![counted(Vec::new()), eval(call(vec![local(3)]))];
+    let (is, found) = read(was.clone(), &Names::default());
+    assert_eq!((found.arrays, found.refused), (1, 0));
+    assert_ne!(is, was);
+    let (is, found) = read_wide(was.clone());
+    assert_eq!((is, found.arrays, found.refused), (was, 0, 1));
 }

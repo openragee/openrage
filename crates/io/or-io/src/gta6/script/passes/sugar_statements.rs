@@ -85,11 +85,12 @@ pub fn rewrite(f: &mut tree::Function, cx: &Context<'_>) -> Found {
     }
     let scope = Scope::of(&f.head, &f.body, cx);
     let mut items: Vec<(Var, VarInfo)> = Vec::new();
-    // An explicit stack: a body nests as deep as its listing does.
-    let mut work: Vec<&mut Vec<Stmt>> = vec![&mut f.body];
-    while let Some(list) = work.pop() {
+    // An explicit stack: a body nests as deep as its listing does. Beside each list, the counters
+    // the loops around it set in their heads; `None` past [`DEPTH`] of them.
+    let mut work: Vec<(&mut Vec<Stmt>, Option<Vec<Var>>)> = vec![(&mut f.body, Some(Vec::new()))];
+    while let Some((list, around)) = work.pop() {
         if foreach {
-            loops(list, &scope, &mut items, &mut found);
+            loops(list, &scope, around.as_deref(), &mut items, &mut found);
         }
         // After the loops: the disposal a `foreach` hides is no `using` of its enumerator.
         if guarded {
@@ -97,7 +98,15 @@ pub fn rewrite(f: &mut tree::Function, cx: &Context<'_>) -> Found {
         }
         // What was just read is gone into too: the loops and blocks inside it are read in their turn.
         for stmt in list {
-            work.extend(tree::nested_mut(stmt));
+            let own = heads(stmt);
+            let inside = around.as_ref().and_then(|around| {
+                let mut inside = around.clone();
+                inside.extend(own);
+                (inside.len() <= DEPTH as usize).then_some(inside)
+            });
+            for nested in tree::nested_mut(stmt) {
+                work.push((nested, inside.clone()));
+            }
         }
     }
     f.head.vars.extend(items);
@@ -120,10 +129,76 @@ fn item_name(head: &Head, items: &[(Var, VarInfo)]) -> String {
     name
 }
 
-/// Reads the loops that stand in `list` itself.
+/// The variables `stmt` sets in its head and then runs what it holds after: a `for`'s first part, or what a `foreach`'s setup assigns.
+fn heads(stmt: &Stmt) -> Vec<Var> {
+    match stmt {
+        Stmt::For {
+            init: Some(init), ..
+        } => init.targets().to_vec(),
+        Stmt::Sugar(sugar) => match &**sugar {
+            Sugar::Foreach { setup, .. } => (setup.iter())
+                .flat_map(|s| s.targets().iter().copied())
+                .collect(),
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
+
+/// The variable `stmt` sets in its head before anything of it runs, where it is a `for` whose first part assigns a variable from what does not read it and no label stands in it.
+// ⚠ A label is a way in that goes round the head.
+fn head_set(stmt: &Stmt) -> Option<Var> {
+    let Stmt::For {
+        init: Some(init), ..
+    } = stmt
+    else {
+        return None;
+    };
+    let ir::Stmt::Assign { target, value } = &**init else {
+        return None;
+    };
+    let mut reads = false;
+    value.walk(&mut |e| {
+        reads |= matches!(e, Expr::Var(var) | Expr::AddrOf { var, .. } if var == target);
+    });
+    (!reads && !labelled(std::slice::from_ref(stmt))).then_some(*target)
+}
+
+/// The uses of each variable inside the `for` loops [`head_set`] finds it set in, each loop counted where no other such loop over the variable holds it.
+// Every use counted runs after a head set the variable on the way in to it. ⚠ What lies deeper
+// than [`DEPTH`] such loops is not looked into: its uses are counted by nothing.
+fn headed(body: &[Stmt]) -> BTreeMap<Var, Use> {
+    let mut found: BTreeMap<Var, Use> = BTreeMap::new();
+    let mut work: Vec<(&[Stmt], Vec<Var>)> = vec![(body, Vec::new())];
+    while let Some((list, around)) = work.pop() {
+        for stmt in list {
+            let set = head_set(stmt);
+            let mut inside = around.clone();
+            if let Some(var) = set {
+                if !around.contains(&var) {
+                    let uses = used(std::slice::from_ref(stmt));
+                    if let Some(of) = uses.get(&var) {
+                        let held = found.entry(var).or_default();
+                        held.assigned += of.assigned;
+                        held.read += of.read;
+                        held.addressed |= of.addressed;
+                    }
+                }
+                inside.push(var);
+            }
+            if inside.len() <= DEPTH as usize {
+                work.extend(nested(stmt).into_iter().map(|list| (list, inside.clone())));
+            }
+        }
+    }
+    found
+}
+
+/// Reads the loops that stand in `list` itself, inside loops that set the variables `around` in their heads.
 fn loops(
     list: &mut Vec<Stmt>,
     scope: &Scope<'_>,
+    around: Option<&[Var]>,
     items: &mut Vec<(Var, VarInfo)>,
     found: &mut Found,
 ) {
@@ -137,7 +212,8 @@ fn loops(
             _ => None,
         };
         if counted {
-            match array_loop(&list[at]).filter(|read| scope.proves(read)) {
+            let proved = array_loop(&list[at]).filter(|read| scope.proves(read, &list[at], around));
+            match proved {
                 Some(read) if read.item.is_some() => {
                     let taken = std::mem::replace(&mut list[at], Stmt::Break);
                     list[at] = array_foreach(taken);
@@ -252,6 +328,8 @@ struct Scope<'a> {
     addresses: BTreeMap<Var, Vec<(u32, enumerators::Taken)>>,
     /// The uses of each variable that the loops [`array_loop`] takes it is the index of make, all together.
     indexed: BTreeMap<Var, Use>,
+    /// The uses of each variable inside the `for` loops that set it in their heads: [`headed`].
+    headed: BTreeMap<Var, Use>,
     /// The loops over an enumerator held in place that each variable is the enumerator of.
     enumerated: BTreeMap<Var, usize>,
     /// The make, the advance and the read of the item that those loops take, by the value type the advance is a method of.
@@ -298,6 +376,7 @@ impl<'a> Scope<'a> {
             addressed,
             addresses,
             indexed,
+            headed: headed(body),
             enumerated,
             pairs,
         }
@@ -337,20 +416,45 @@ impl<'a> Scope<'a> {
         }
     }
 
-    /// Whether the function names the index of an [`array_loop`] nowhere but in the heads of such loops and the reads of their elements, and changes none of its three variables behind their names.
+    /// Whether the function names the index of the [`array_loop`] `looped`, inside loops that set `around` in their heads, only in loops whose heads set it first, and nothing changes the index or the item behind their names, or the array while the loop runs.
     // ⚠ A slot is the index of several loops in turn, so the count is over all of them: each
     // sets the index before it reads it, and what is read after a loop is then never its index.
-    fn proves(&self, read: &Counted) -> bool {
+    // That holds of every `for` that sets it in its head, where none such holds this loop: the
+    // way from this loop to a use in another goes through that one's head.
+    fn proves(&self, read: &Counted, looped: &Stmt, around: Option<&[Var]>) -> bool {
         let (index, array) = (read.index, read.array.base);
         let only = self.indexed.get(&index).copied().unwrap_or_default();
+        let uses = self.uses.get(&index);
+        let outermost = around.is_some_and(|around| !around.contains(&index));
+        let headed = outermost && uses.is_some() && uses == self.headed.get(&index);
+        // A wider variable whose cells hold the index reads it by another name.
+        let wider = (self.uses.keys()).any(|var| *var != index && self.covers(*var, index));
+        let counted = (uses == Some(&only) || headed) && !wider;
         let apart = read
             .item
             .is_none_or(|item| !self.covers(item, index) && !self.covers(item, array));
-        let named_only = ![Some(index), Some(array), read.item]
+        let named_only = ![Some(index), read.item]
             .into_iter()
             .flatten()
             .any(|var| self.exposed(var));
-        self.uses.get(&index) == Some(&only) && apart && named_only
+        // ⚠ The test reads the array again each round: what may change it behind its name changes
+        // it only while the loop runs something that may write to memory or give way.
+        let kept = !self.exposed(array) || (read.still && !self.reassigns(array, looped));
+        counted && apart && named_only && kept
+    }
+
+    /// Whether `stmt` assigns a variable whose cells may be those of `var`: `var`, one that covers it, or any global where `var` is one.
+    fn reassigns(&self, var: Var, stmt: &Stmt) -> bool {
+        let mut found = false;
+        tree::each_simple(std::slice::from_ref(stmt), &mut |s| {
+            for target in s.targets() {
+                found |= match (var, *target) {
+                    (Var::Global { .. }, Var::Global { .. }) => true,
+                    (var, target) => target == var || self.covers(target, var),
+                };
+            }
+        });
+        found
     }
 
     /// A variable for the item of a loop that kept none: a value at the function's own offset that nothing names, `taken` included.
@@ -486,6 +590,8 @@ struct Counted {
     item: Option<Var>,
     /// How often the body reads the index: once in each read of the element, and nowhere else.
     index_reads: usize,
+    /// Whether nothing the body runs, at any depth, may write to memory or give way.
+    still: bool,
 }
 
 impl Counted {
@@ -542,6 +648,7 @@ fn array_loop(stmt: &Stmt) -> Option<Counted> {
         array: a,
         item: None,
         index_reads: 1,
+        still: still(body) && !suspends(body),
     };
     // ⚠ A body that opens by taking an element is judged as that alone: where the item it takes
     // is not a `foreach`'s, the loop stays as it is and no other item is made for it.

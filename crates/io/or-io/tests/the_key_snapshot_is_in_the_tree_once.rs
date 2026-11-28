@@ -22,8 +22,8 @@ struct Snapshot {
 
 const SNAPSHOTS: [Snapshot; 4] = [
     Snapshot {
-        file: "gtavi_scarlett_magic.dat",
-        bundled: "crates/io/or-io/data/gtavi_scarlett_magic.dat",
+        file: "gtavi_xboxsx_magic.dat",
+        bundled: "crates/io/or-io/data/gtavi_xboxsx_magic.dat",
         embed: "crates/io/or-io/src/container/rpf/gta6_keygate.rs",
         sha1: "8c488ed36ce5e49874a2dfac873b7248d71568a1",
         len: 144_248,

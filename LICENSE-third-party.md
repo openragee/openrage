@@ -62,7 +62,7 @@ Ported from CodeX with the permission of its authors.
 
 | Where | What |
 |---|---|
-| `crates/io/or-io/data/gtavi_scarlett_magic.dat` | The masked key snapshot of the Xbox Series build 1.0.2.1, read out of the user's own `game_scarlett_master.exe` by `gta6_extract`. Masked under the executable's own cipher-table region, so it opens only with that executable (D18). |
+| `crates/io/or-io/data/gtavi_xboxsx_magic.dat` | The masked key snapshot of the Xbox Series build 1.0.2.1, read out of the user's own `game_scarlett_master.exe` by `gta6_extract`. Masked under the executable's own cipher-table region, so it opens only with that executable (D18). |
 | `crates/io/or-io/data/gtavi_ps5_magic.dat` | The same for the PlayStation 5 build 1.0.2.1, read out of the user's own `eboot.bin`, an unencrypted SELF container around the game's ELF. |
 
 ## Ported from bcpack-rs: the BCPack coder of GTA VI texture packs

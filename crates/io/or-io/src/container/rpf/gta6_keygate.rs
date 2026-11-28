@@ -18,7 +18,7 @@ use crate::error::{IoError, Result};
 /// The masked snapshot for an Xbox build that `bundled-keys` embeds: inert until the user's own
 /// executable keys it (D18).
 #[cfg(feature = "bundled-keys")]
-pub const BUNDLED_SNAPSHOT: &[u8] = include_bytes!("../../../data/gtavi_scarlett_magic.dat");
+pub const BUNDLED_SNAPSHOT: &[u8] = include_bytes!("../../../data/gtavi_xboxsx_magic.dat");
 
 /// The masked snapshot for a PlayStation 5 build that `bundled-keys` embeds, the same rule as
 /// [`BUNDLED_SNAPSHOT`]'s.

@@ -901,3 +901,187 @@ fn a_typed_local_no_address_handed_on_reaches_is_a_base_and_a_parameter_only_its
     kinded.head.vars.insert(Var::Param(0), info);
     assert_eq!(read(&project, &kinded), None);
 }
+
+/// A call of the intrinsic `name` on `arg`.
+fn intrinsic(name: &str, arg: Expr) -> Expr {
+    Expr::Call {
+        callee: Callee::Intrinsic {
+            name: name.to_owned(),
+            ty: None,
+            wrapper: None,
+        },
+        args: vec![arg],
+        returns: Some(1),
+    }
+}
+
+#[test]
+fn a_conversion_of_a_fields_four_bytes_to_a_wider_number_is_listed_at_the_sign_it_reads_them_under()
+{
+    let body = vec![
+        set(Var::Local(0), made()),
+        set(
+            Var::Local(1),
+            intrinsic("i32_to_f32", load(Scalar::I32, local(0), 8)),
+        ),
+        set(
+            Var::Local(1),
+            intrinsic("u32_to_u64", load(Scalar::U32, local(0), 0xC)),
+        ),
+        // Loaded under the other sign: the conversion does not read the field as it lies.
+        set(
+            Var::Local(1),
+            intrinsic("u32_to_f64", load(Scalar::I32, local(0), 0x10)),
+        ),
+        // A conversion from a float says nothing of a sign.
+        set(
+            Var::Local(1),
+            intrinsic("f32_to_i64", load(Scalar::F32, local(0), 0x14)),
+        ),
+    ];
+    let project = settled(&[function(0x40, body)]);
+    let kind = |offset: u32| project.field(MADE, offset).map(|field| field.kind.clone());
+    assert_eq!(kind(8), Some(Kind::I32));
+    assert_eq!(kind(0xC), Some(Kind::U32));
+    assert_eq!(kind(0x10), Some(Kind::Unknown));
+    assert_eq!(kind(0x14), Some(Kind::F32));
+}
+
+#[test]
+fn a_member_tables_field_of_another_programs_type_is_of_that_type_once_every_program_is_in() {
+    use crate::gta6::script::project::{ImportInfo, ProgramInfo};
+    const OTHER: u32 = 0x5566_7788;
+    let stated = |offset: u32, bytes: u32, ty: u32| FieldRow {
+        offset,
+        bytes,
+        ty: Some(ty),
+        ..FieldRow::default()
+    };
+    let program = Program {
+        program: PROGRAM,
+        types: vec![TypeRow {
+            name: MADE.0,
+            byte_size: 40,
+            fields: vec![
+                stated(8, 8, 5),
+                stated(0x10, 16, 6),
+                // A type of the runtime's, which no program states.
+                stated(0x20, 8, 0x8000_0003),
+            ],
+            ..TypeRow::default()
+        }],
+        ..Program::default()
+    };
+    let mut project = Project::default();
+    of_program(&mut project, &program);
+    // Read alone, the program says nothing of what those types are.
+    let rows = project.fields.get(&MADE);
+    assert!(rows.is_some_and(|rows| rows.iter().all(|row| row.kind == Kind::Unknown)));
+
+    // Ids 4 to 9 of the program are the types of another, whose second and third are an object type and a value type.
+    let imports = vec![ImportInfo {
+        program: OTHER,
+        first: 4,
+        end: 10,
+    }];
+    let own = ProgramInfo {
+        program: PROGRAM,
+        imports,
+        ..ProgramInfo::default()
+    };
+    let home = ProgramInfo {
+        program: OTHER,
+        types: BTreeMap::from([(1, UPPER), (2, VALUE)]),
+        ..ProgramInfo::default()
+    };
+    project.programs.insert(PROGRAM, own);
+    project.programs.insert(OTHER, home);
+    let object = TypeFacts {
+        byte_size: 16,
+        ..TypeFacts::default()
+    };
+    let value = TypeFacts {
+        byte_size: 16,
+        flags: 0x04,
+        ..TypeFacts::default()
+    };
+    project.types.insert(UPPER, object);
+    project.types.insert(VALUE, value);
+    settle(&mut project);
+    let in_place = Kind::Value {
+        ty: VALUE.to_string(),
+        cells: 2,
+    };
+    let fields = vec![
+        field(8, 8, Kind::Object(UPPER.to_string())),
+        field(0x10, 16, in_place),
+        field(0x20, 8, Kind::Unknown),
+    ];
+    assert_eq!(project.fields.get(&MADE), Some(&fields));
+    assert!(project.rows.stated.is_empty());
+}
+
+#[test]
+fn an_access_through_a_field_the_project_types_is_of_that_type_while_the_field_still_refers_to_it()
+{
+    use crate::gta6::script::ir::VarInfo;
+    const OTHER: TypeKey = TypeKey(0x0A0A_0000_0000_0007);
+    // Made in one function, whose field at 0x10 is called as an `OTHER`.
+    let made_here = function(
+        0x10,
+        vec![
+            set(Var::Local(0), made()),
+            called(OTHER, load(Scalar::U64, local(0), 0x10)),
+        ],
+    );
+    let mut project = settled(&[made_here]);
+    let facts = TypeFacts {
+        byte_size: 32,
+        ..TypeFacts::default()
+    };
+    project.types.insert(MADE, facts.clone());
+    project.types.insert(OTHER, facts.clone());
+    project.types.insert(APART, facts);
+    let refers = project.field(MADE, 0x10).map(|field| field.kind.clone());
+    assert_eq!(refers, Some(Kind::Object(OTHER.to_string())));
+
+    // A local the kinds pass types as a `MADE`, and a float read through its field at 0x10.
+    let typed = |at: u32, stmts: Vec<Stmt>| {
+        let mut f = function(at, stmts);
+        let mut info = VarInfo::new(Width::Cell);
+        info.kind = Kind::Object(MADE.to_string());
+        f.head.vars.insert(Var::Local(1), info);
+        f
+    };
+    let through = || load(Scalar::U64, local(1), 0x10);
+    let reads = typed(
+        0x20,
+        vec![set(Var::Local(2), load(Scalar::F32, through(), 0x18))],
+    );
+    let refined = |more: &[Function]| {
+        let mut project = project.clone();
+        let mut part = Project::default();
+        for f in std::iter::once(&reads).chain(more) {
+            of_typed_function(&mut part, f, &project);
+        }
+        refine(&mut project, vec![part]);
+        project
+    };
+    let other = |project: &Project, offset: u32| {
+        project
+            .field(OTHER, offset)
+            .map(|field| (field.bytes, field.kind.clone()))
+    };
+    let read = refined(&[]);
+    assert_eq!(other(&read, 0x18), Some((4, Kind::F32)));
+    // What was read through the field is kept apart, so that a later refining weighs it again.
+    assert_eq!(read.rows.chained.len(), 1);
+
+    // Called as well as a type no `OTHER` is, the field refers to no one type: what was read
+    // through it is no `OTHER`'s.
+    let apart = typed(0x30, vec![called(APART, through())]);
+    let read = refined(&[apart]);
+    let refers = read.field(MADE, 0x10).map(|field| field.kind.clone());
+    assert_eq!(refers, Some(Kind::Pointer));
+    assert_eq!(other(&read, 0x18), None);
+}

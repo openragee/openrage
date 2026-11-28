@@ -11,7 +11,9 @@
 //! whose every store is a truth and whose every load is only tested for zero or kept in a `bool`
 //! is a `bool`. A reference field is of the most derived type every call on it is made as, where
 //! every object a store seen puts in it derives from that type: a store through a base of no
-//! known type is never seen, so a store only rules a type out.
+//! known type is never seen, so a store only rules a type out. Read again with a settled project,
+//! an access through a field the project types as an object is that type's, for as long as the
+//! field, settled again with it, still refers to that type.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -32,10 +34,55 @@ pub struct Rows {
     // ⚠ Kept apart from the rows: a type a call is made as lies above the field's type, and the
     // type of an object stored lies below it.
     pub made: BTreeMap<(TypeKey, u32), BTreeSet<TypeKey>>,
+    /// The member-table fields of a type another program defines, until every program is in.
+    pub stated: Vec<Stated>,
+    /// What the accesses read through a field the settled project types showed, kept apart from the rows.
+    // ⚠ Each holds only while every field it went through refers to the type it did: [`refine`]
+    // settles them in and checks that again.
+    pub chained: Vec<Chained>,
+}
+
+/// A member table's field whose type is another program's, by the id the stating program gives that type.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stated {
+    pub owner: TypeKey,
+    pub offset: u32,
+    pub bytes: u32,
+    pub program: u32,
+    pub id: u32,
+}
+
+/// One field a chain of loads went through: the type it is a field of, its offset, and the type the settled project gave what it refers to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Link {
+    pub ty: TypeKey,
+    pub offset: u32,
+    pub refers: TypeKey,
+}
+
+/// What one access shows of a field: a row, whether a byte is a truth, the type of an object stored.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Fact {
+    Row(TypeKey, FieldFacts),
+    Truth((TypeKey, u32), bool),
+    Made((TypeKey, u32), TypeKey),
+}
+
+/// What an access through fields the settled project types showed, with the fields it went through from the base out.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Chained {
+    pub links: Vec<Link>,
+    pub fact: Fact,
 }
 
 /// The bytes of an object's header: its fields start after them.
 const HEADER: u32 = 8;
+/// The bit a builtin type's id carries: no program states such a type.
+const BUILTIN: u32 = 0x8000_0000;
+/// The fields an address may be loaded through, one after another, below a base of known type.
+const CHAIN: usize = 8;
+/// The times [`refine`] settles what was read through fields before it settles without it.
+const ROUNDS: usize = 4;
 /// The flags of a type whose values are held in place and never made as objects.
 const VALUE: u32 = 0x1C;
 /// The `byte_offset`s under one access that are added into its offset.
@@ -99,8 +146,8 @@ fn inherited(program: &Program, row: &TypeRow, at: u32) -> bool {
 
 /// Adds the fields a compiled program's member tables state, its global cells that hold a reference, and the receiver's type of each function one type's virtual slots are the first to hold.
 // A type is keyed by its name's hash, as the types a function's code names are. A field's own
-// type is kept only where it is one of the program's: what another program's type is, a value
-// or an object, this program does not say.
+// type is kept where it is one of the program's: what another program's type is, a value or an
+// object, this program does not say, and [`settle`] looks it up once every program is in.
 pub fn of_program(project: &mut Project, program: &Program) {
     // The container's map has a bit a cell, the program's own cells first; a global is named by its byte offset.
     let mapped = program.global_references.len().saturating_mul(8);
@@ -116,6 +163,17 @@ pub fn of_program(project: &mut Project, program: &Program) {
     for row in program.types.iter().filter(named) {
         for field in row.fields.iter().filter(|field| field.bytes > 0) {
             let of = field.ty.and_then(|id| program.types.get(id as usize));
+            if let (Some(id), None) = (field.ty, of) {
+                if id & BUILTIN == 0 {
+                    project.rows.stated.push(Stated {
+                        owner: TypeKey(row.name),
+                        offset: field.offset,
+                        bytes: field.bytes,
+                        program: program.program,
+                        id,
+                    });
+                }
+            }
             let of = of.filter(named);
             let facts = FieldFacts {
                 offset: field.offset,
@@ -455,6 +513,45 @@ fn is_zero(e: &Expr) -> bool {
     matches!(e, Expr::Const(c) if c.bits == 0)
 }
 
+/// The sign a conversion of 32 bits to a wider integer or to a float reads them under: each sign has an instruction of its own.
+fn converted(name: &str) -> Option<Kind> {
+    match name {
+        "i32_to_i64" | "i32_to_f32" | "i32_to_f64" => Some(Kind::I32),
+        "u32_to_u64" | "u32_to_f32" | "u32_to_f64" => Some(Kind::U32),
+        _ => None,
+    }
+}
+
+/// The script type of object a settled `project` gives the reference at `offset` of a `ty`, its own field or a base type's.
+fn refers(project: &Project, ty: TypeKey, offset: u32) -> Option<TypeKey> {
+    let field = project.field(ty, offset).filter(|field| field.bytes == 8)?;
+    object_of(project, &field.kind)
+}
+
+/// Whether the field a chain went through refers, in a settled `project`, to the type it did when the chain was read, or to one derived from it.
+fn holds(project: &Project, link: &Link) -> bool {
+    refers(project, link.ty, link.offset).is_some_and(|now| project.is_a(now, link.refers))
+}
+
+/// Which of `chained` every field it went through still holds for in a settled `project`.
+fn holding(project: &Project, chained: &[Chained]) -> Vec<bool> {
+    // Many accesses go through one field: each is looked up once.
+    let mut known: BTreeMap<Link, bool> = BTreeMap::new();
+    let mut held = Vec::with_capacity(chained.len());
+    for seen in chained {
+        let mut all = true;
+        for link in &seen.links {
+            let ok = *known.entry(*link).or_insert_with(|| holds(project, link));
+            if !ok {
+                all = false;
+                break;
+            }
+        }
+        held.push(all);
+    }
+    held
+}
+
 /// `e` under the casts around it.
 fn uncast(e: &Expr) -> &Expr {
     let mut e = e;
@@ -467,6 +564,8 @@ fn uncast(e: &Expr) -> &Expr {
 /// One reading of a function for the fields its accesses show.
 struct Seen<'a> {
     bases: &'a BTreeMap<Var, TypeKey>,
+    /// The settled project of a second reading, whose fields of object types a base's loads go through; `None` in the first.
+    project: Option<&'a Project>,
     /// The types among the bases' that are held in place: a base of one points at the value's first byte, where its first field lies.
     values: &'a BTreeSet<TypeKey>,
     head: &'a Head,
@@ -477,11 +576,13 @@ struct Seen<'a> {
     tested: BTreeSet<*const Expr>,
     /// Each reference field stored an object of a script type through a base: the base's type, the offset, the object's type.
     made: Vec<(TypeKey, u32, TypeKey)>,
+    /// What the accesses through fields the settled project types showed.
+    chained: Vec<Chained>,
 }
 
 impl Seen<'_> {
-    /// The type and the offset in it that an access at `offset` from `addr` reaches, where `addr` is a base of known type moved by constants.
-    fn place(&self, addr: &Expr, offset: u32) -> Option<(TypeKey, u32)> {
+    /// The type and the offset in it that an access at `offset` from `addr` reaches, and the fields loaded on the way, where `addr` is a base of known type moved by constants, or a reference loaded through fields the settled project types.
+    fn place(&self, addr: &Expr, offset: u32) -> Option<(TypeKey, u32, Vec<Link>)> {
         let (mut addr, mut offset) = (addr, offset);
         for _ in 0..NESTED {
             let Expr::ByteOffset {
@@ -498,9 +599,46 @@ impl Seen<'_> {
             offset = offset.checked_add(by)?;
             addr = &**inner;
         }
-        match addr {
-            Expr::Var(var) => self.bases.get(var).map(|key| (*key, offset)),
-            _ => None,
+        // The offsets `addr` is loaded through, the last load first.
+        let mut through: Vec<u32> = Vec::new();
+        let var = loop {
+            match addr {
+                Expr::Var(var) => break var,
+                Expr::Load {
+                    ty: Scalar::U64,
+                    addr: under,
+                    offset: at,
+                } if self.project.is_some() && through.len() < CHAIN => {
+                    through.push(*at);
+                    addr = &**under;
+                }
+                _ => return None,
+            }
+        };
+        let mut key = *self.bases.get(var)?;
+        let mut links = Vec::with_capacity(through.len());
+        for at in through.iter().rev() {
+            let to = refers(self.project?, key, *at)?;
+            links.push(Link {
+                ty: key,
+                offset: *at,
+                refers: to,
+            });
+            key = to;
+        }
+        Some((key, offset, links))
+    }
+
+    /// Keeps what one access showed: with the rows where it went through no field, apart where it did.
+    fn keep(&mut self, links: Vec<Link>, fact: Fact) {
+        if !links.is_empty() {
+            self.chained.push(Chained { links, fact });
+            return;
+        }
+        match fact {
+            Fact::Row(key, row) => self.rows.push((key, row)),
+            Fact::Truth(place, truth) => self.truths.push((place, truth)),
+            Fact::Made((key, offset), ty) => self.made.push((key, offset, ty)),
         }
     }
 
@@ -514,9 +652,9 @@ impl Seen<'_> {
 
     /// Notes whether an access of the one byte at `offset` from `addr` is of a truth, where that is a field of a base of known type.
     fn truth(&mut self, addr: &Expr, offset: u32, truth: bool) {
-        if let Some((key, offset)) = self.place(addr, offset) {
+        if let Some((key, offset, links)) = self.place(addr, offset) {
             if offset >= self.start(key) {
-                self.truths.push(((key, offset), truth));
+                self.keep(links, Fact::Truth((key, offset), truth));
             }
         }
     }
@@ -576,14 +714,14 @@ impl Seen<'_> {
 
     /// Notes `bytes` bytes of kind `kind` at `offset` from `addr`, where that is a field of a base of known type.
     fn row(&mut self, addr: &Expr, offset: u32, bytes: u32, kind: Kind) {
-        if let Some((key, offset)) = self.place(addr, offset) {
+        if let Some((key, offset, links)) = self.place(addr, offset) {
             if offset >= self.start(key) && bytes > 0 {
                 let facts = FieldFacts {
                     offset,
                     bytes,
                     kind,
                 };
-                self.rows.push((key, facts));
+                self.keep(links, Fact::Row(key, facts));
             }
         }
     }
@@ -629,11 +767,11 @@ impl Seen<'_> {
     }
 
     /// Notes the sign an operator that works at `at` reads a field's four bytes under, where `read` loads them under that sign; `test` is a comparison with zero for being equal.
-    // ⚠ Only a division, a remainder, a right shift and an ordering have an instruction for each
-    // sign. Any other operator is listed at one sign whatever its operands hold: arithmetic and
-    // equality signed, a bit operator unsigned. So a field's sign is the one every operator on it
-    // is listed at, and a field worked on at both has none. A test of 32 bits against zero is
-    // listed unsigned whatever they are, and says nothing.
+    // ⚠ Only a division, a remainder, a right shift, an ordering and a conversion to a wider
+    // number have an instruction for each sign. Any other operator is listed at one sign whatever
+    // its operands hold: arithmetic and equality signed, a bit operator unsigned. So a field's
+    // sign is the one every operator on it is listed at, and a field worked on at both has none.
+    // A test of 32 bits against zero is listed unsigned whatever they are, and says nothing.
     fn operand(&mut self, at: &Kind, read: &Expr, test: bool) {
         let Expr::Load { ty, addr, offset } = read else {
             return;
@@ -674,9 +812,9 @@ impl Seen<'_> {
 
     /// Notes that a reference field at `offset` from `addr` is stored an object of the script type `ty`, where that is a field of a base of known type.
     fn made_as(&mut self, addr: &Expr, offset: u32, ty: TypeKey) {
-        if let Some((key, offset)) = self.place(addr, offset) {
+        if let Some((key, offset, links)) = self.place(addr, offset) {
             if offset >= self.start(key) {
-                self.made.push((key, offset, ty));
+                self.keep(links, Fact::Made((key, offset), ty));
             }
         }
     }
@@ -789,6 +927,15 @@ impl Seen<'_> {
                     }
                 }
             }
+            Expr::Call {
+                callee: Callee::Intrinsic { name, .. },
+                args,
+                ..
+            } => {
+                if let (Some(sign), [read]) = (converted(name), args.as_slice()) {
+                    self.operand(&sign, read, false);
+                }
+            }
             _ => {}
         });
     }
@@ -808,7 +955,7 @@ pub fn of_function(project: &mut Project, f: &cfg::Function) {
     };
     let sets = Sets::of(f, None);
     let bases = sets.bases(receiver);
-    seen_through(project, f, &bases, &BTreeSet::new());
+    seen_through(project, f, &bases, &BTreeSet::new(), None);
 }
 
 /// Adds the fields one function's loads and stores show through what a settled project proves of it: the variables the kinds pass types as an object of a script type, and the receiver of a member, an object or a value.
@@ -837,27 +984,30 @@ pub fn of_typed_function(part: &mut Project, f: &cfg::Function, project: &Projec
             bases.entry(*var).or_insert(key);
         }
     }
-    seen_through(part, f, &bases, &values);
+    seen_through(part, f, &bases, &values, Some(project));
 }
 
-/// Adds the rows, the truths and the objects stored the accesses of `f` through `bases` show; a base of a type in `values` points at a value held in place.
+/// Adds the rows, the truths and the objects stored the accesses of `f` through `bases` show; a base of a type in `values` points at a value held in place, and `settled`, where given, types the fields loaded below a base.
 fn seen_through(
     project: &mut Project,
     f: &cfg::Function,
     bases: &BTreeMap<Var, TypeKey>,
     values: &BTreeSet<TypeKey>,
+    settled: Option<&Project>,
 ) {
     if bases.is_empty() {
         return;
     }
     let mut seen = Seen {
         bases,
+        project: settled,
         values,
         head: &f.head,
         rows: Vec::new(),
         truths: Vec::new(),
         tested: BTreeSet::new(),
         made: Vec::new(),
+        chained: Vec::new(),
     };
     for block in &f.cfg.blocks {
         for stmt in &block.stmts {
@@ -885,6 +1035,7 @@ fn seen_through(
             .or_default()
             .insert(ty);
     }
+    project.rows.chained.extend(seen.chained);
 }
 
 /// Moves the fields of `from` into `into`: a type both hold has the rows of both, each once.
@@ -902,6 +1053,25 @@ pub fn absorb(into: &mut Project, from: &mut Project) {
     }
     for (place, types) in std::mem::take(&mut from.rows.made) {
         into.rows.made.entry(place).or_default().extend(types);
+    }
+    into.rows.stated.append(&mut from.rows.stated);
+    into.rows.chained.append(&mut from.rows.chained);
+}
+
+/// What a member table's field of another program's type holds, where a settled project knows that type: the value in place, or a reference to an object.
+fn stated_kind(project: &Project, stated: &Stated) -> Option<Kind> {
+    let key = project.type_key(stated.program, stated.id)?;
+    if key.builtin().is_some() || waits(key) {
+        return None;
+    }
+    let facts = project.types.get(&key)?;
+    match (facts.is_value(), stated.bytes) {
+        (true, bytes) => Some(Kind::Value {
+            ty: key.to_string(),
+            cells: bytes.div_ceil(8),
+        }),
+        (false, 8) => Some(Kind::Object(key.to_string())),
+        (false, _) => None,
     }
 }
 
@@ -1026,12 +1196,26 @@ fn agreed(project: &Project, rows: &[FieldFacts], made: &BTreeSet<TypeKey>) -> O
 /// Once every part is in: one field an offset, by rising offset, with the kind every access agrees on, under the type that declares it.
 // ⚠ An offset seen at two widths has no field: each access of it keeps the form it has.
 pub fn settle(project: &mut Project) {
+    // A member table's field of another program's type, now that the type is known.
+    for stated in std::mem::take(&mut project.rows.stated) {
+        if let Some(kind) = stated_kind(project, &stated) {
+            let row = FieldFacts {
+                offset: stated.offset,
+                bytes: stated.bytes,
+                kind,
+            };
+            note(project, stated.owner, row);
+        }
+    }
     // Kept, so that [`refine`] settles them again with more.
     let stored = std::mem::take(&mut project.rows.made);
+    let chained = std::mem::take(&mut project.rows.chained);
     project.rows = Rows {
         fields: project.fields.clone(),
         truths: project.truths.clone(),
         made: stored.clone(),
+        stated: Vec::new(),
+        chained,
     };
     // The objects stored in each field, under the type that declares it.
     let mut made: BTreeMap<(TypeKey, u32), BTreeSet<TypeKey>> = BTreeMap::new();
@@ -1099,17 +1283,64 @@ pub fn settle(project: &mut Project) {
 }
 
 /// Adds the rows, the truths and the objects stored of `parts`, each read by [`of_typed_function`], to those the fields of `project` were settled from, and settles them again.
+// ⚠ What was read through a field holds only while that field refers to the type it did then,
+// and settling it in may change the field: it is settled in until what holds is what was
+// settled, and left out where that takes more than a few rounds.
 pub fn refine(project: &mut Project, parts: Vec<Project>) {
     let Rows {
         fields,
         truths,
         made,
+        stated,
+        chained,
     } = std::mem::take(&mut project.rows);
     project.fields = fields;
     project.truths = truths;
     project.rows.made = made;
+    project.rows.stated = stated;
+    project.rows.chained = chained;
     for mut part in parts {
         absorb(project, &mut part);
+    }
+    let chained = std::mem::take(&mut project.rows.chained);
+    settle(project);
+    let plain = std::mem::take(&mut project.rows);
+    let mut applied = vec![false; chained.len()];
+    let mut agrees = false;
+    for _ in 0..ROUNDS {
+        let held = holding(project, &chained);
+        if held == applied {
+            agrees = true;
+            break;
+        }
+        applied = held;
+        let facts = chained
+            .iter()
+            .zip(&applied)
+            .filter_map(|(seen, on)| on.then_some(&seen.fact));
+        settle_with(project, &plain, facts);
+    }
+    if !agrees {
+        settle_with(project, &plain, std::iter::empty::<&Fact>());
+    }
+    project.rows = Rows { chained, ..plain };
+}
+
+/// Settles the fields of `project` from `plain`, the rows they were settled from, and `facts` besides.
+fn settle_with<'a>(project: &mut Project, plain: &Rows, facts: impl Iterator<Item = &'a Fact>) {
+    project.fields = plain.fields.clone();
+    project.truths = plain.truths.clone();
+    project.rows.made = plain.made.clone();
+    for fact in facts {
+        match fact {
+            Fact::Row(key, row) => note(project, *key, row.clone()),
+            Fact::Truth(place, truth) => {
+                *project.truths.entry(*place).or_insert(true) &= *truth;
+            }
+            Fact::Made(place, ty) => {
+                project.rows.made.entry(*place).or_default().insert(*ty);
+            }
+        }
     }
     settle(project);
 }

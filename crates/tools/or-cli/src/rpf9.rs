@@ -34,9 +34,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use or_io::container::rpf::gta6_kinds::entry_kinds;
-use or_io::container::rpf::{
-    decode_masked, is_masked, Gta6Archive, Gta6Entry, Gta6Mount, GtaViKeys, NameResolver,
-};
+use or_io::container::rpf::{Gta6Archive, Gta6Entry, Gta6Mount, GtaViKeys, NameResolver};
 use or_io::meta::binary::pso::string_names;
 
 #[path = "rpf9_find.rs"]
@@ -137,40 +135,8 @@ fn take_common<'a>(
     Ok(true)
 }
 
-/// The key snapshot: the one `--keys` names, else the one a session supplies for the install; `exe`
-/// is the executable a masked snapshot opens with.
-pub(crate) fn load_keys(explicit: Option<&Path>, exe: Option<&Path>) -> Result<GtaViKeys, String> {
-    if let Some(path) = explicit {
-        return match exe {
-            Some(exe) => keys_with_exe(path, exe),
-            None => GtaViKeys::from_file(path).map_err(|e| e.to_string()),
-        };
-    }
-    match GtaViKeys::for_install_with(or_title::config::config_dir().as_deref(), exe)
-        .map_err(|e| e.to_string())?
-    {
-        Some(keys) => Ok(keys),
-        None => Err(format!(
-            "No GTA VI key snapshot: set {}, pass --keys, or place {} beside the keys cache; a \
-             masked snapshot also needs --exe or {}.",
-            or_io::container::rpf::GTA6_SNAPSHOT_ENV,
-            or_io::container::rpf::GTA6_SNAPSHOT_FILE_NAME,
-            or_io::container::rpf::GTA6_EXE_ENV,
-        )),
-    }
-}
-
-/// The snapshot at `path`, unmasked with the executable at `exe` when it is masked.
-fn keys_with_exe(path: &Path, exe: &Path) -> Result<GtaViKeys, String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let plain = if is_masked(&bytes) {
-        let exe_bytes = std::fs::read(exe).map_err(|e| format!("{}: {e}", exe.display()))?;
-        decode_masked(&bytes, &exe_bytes).map_err(|e| format!("{}: {e}", path.display()))?
-    } else {
-        bytes
-    };
-    GtaViKeys::parse(&plain).map_err(|e| format!("{}: {e}", path.display()))
-}
+/// The keys every GTA VI verb reads with, of either build: the one loader, in `gta6_keys`.
+pub(crate) use crate::gta6_keys::load as load_keys;
 
 /// Bundled names supplemented by `dir` or `OPENRAGE_GTA6_NAMES`, and the local vocabulary.
 pub(crate) fn load_resolver(dir: Option<&Path>) -> NameResolver {

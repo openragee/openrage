@@ -388,7 +388,7 @@ puts R55's conversion in the app, closing it added R55c, closing R55c added R55d
 - [ ] [R56 RDR2 the second container](#r56-rdr2-the-second-container) — the archive reads and writes (an RPF8 table in the clear, 2026-10-07); RSC8 and RDR2's structures are not started, and the other archives' tables need the title's TFIT keys; `PagingModel`, `ResourceEnvelope` and every `GameProfile` method are kept for it (OD-AUDIT-KEEPS)
 - [ ] [R57 GTA VI readiness](#r57-gta-vi-readiness) — a property row; the paging model and the resource envelope are held behind their seams, and the archive is a version and a layout
 - [ ] [R57b Earlier RAGE titles](#r57b-earlier-rage-titles) — unscheduled: GTA IV, EFLC, Max Payne 3 and RDR1, future goals rather than non-goals (owner, 2026-10-01); their archives read and write in `or-io`, and nothing above them does
-- [ ] [R72 GTA VI on every platform](#r72-gta-vi-on-every-platform) — the plan of 2026-11-28: the rows that need no key are built, so a PlayStation 5 build is detected, its texture packs read and its archives scan; its tables wait on a key snapshot; [GTA_VI_Platforms_Plan.md](GTA_VI_Platforms_Plan.md) has the design and the rows
+- [ ] [R72 GTA VI on every platform](#r72-gta-vi-on-every-platform) — the plan of 2026-11-28: a PlayStation 5 build is detected and opens with the keys of its own executable, every kind of its bodies reads as the Xbox Series build's does, and a 2D texture of its packs is replaced in place; the audio census and the module move are left; [GTA_VI_Platforms_Plan.md](GTA_VI_Platforms_Plan.md) has the design and the rows
 
 ### Phase 10 — The application
 
@@ -10937,7 +10937,7 @@ programs run for one model's surface pass. Measured on 2026-11-27, a Metal devic
 413 of the 476 shading pairs handed to it, and the binder refuses 272 of 748 for what the game
 fills, 124 of them for the transform of an instance; the lighting translates and is not run, 64 of
 its bindings being known by hash alone
-([what a build's programs come to](../features/GTA_VI_Xbox_Build.md#what-a-builds-programs-come-to)).
+([what a build's programs come to](../features/GTA_VI_Builds.md#what-a-builds-programs-come-to)).
 That picture is the fallback and gains no family, and GTA VI's frame has no encoder for a fallback
 surface.
 
@@ -11050,7 +11050,7 @@ the contract asks of a title
 
 **Where it stands.** Measured on 2026-11-27, at `cb55fc42` with this change, on the owner's Mac;
 the answers and commands are in [what a build's programs come
-to](../features/GTA_VI_Xbox_Build.md#what-a-builds-programs-come-to) and [what the measures
+to](../features/GTA_VI_Builds.md#what-a-builds-programs-come-to) and [what the measures
 found](../reference/Crate_Reference.md#what-the-measures-found). Nearly every GTA VI program
 translates and almost no pass binds, for what the game fills at run time; a Metal
 device builds most passes that shade a model; and the lighting is not run for want of what feeds it,
@@ -11161,8 +11161,11 @@ the facts of each in one table, a header is held to its own platform's byte, the
 build is a profile under a title id and an unknown folder is no game, one function lists an
 install's files, a texture pack opens behind either envelope and reads in either texel order, and a
 scan names the bodies an archive stores as they are. [The plan](GTA_VI_Platforms_Plan.md#the-order-of-work)
-names the test that holds each and what is left of them. The rows after them are not started, and
-take a checkbox here as each is scheduled.
+names the test that holds each and what is left of them. The rows after them are built too, but for
+the audio census and the module move: keys are handed to an open and the process-wide key context
+is gone, RPF9 is a backend of `RpfArchive`, the pairing rule and the reader census are tests over
+both builds, and [GTA_VI_Builds.md](../features/GTA_VI_Builds.md#a-playstation-5-build) says what a
+PlayStation 5 build reads and saves.
 
 **Depends on.** Nothing for the rows that need no key: the platform type and the header, the
 PlayStation 5 profile, the list of an install's files, texture packs and the scan of stored bodies. The rows

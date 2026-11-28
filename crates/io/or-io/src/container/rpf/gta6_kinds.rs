@@ -25,6 +25,18 @@ pub const CLASSES: [(u8, &str); 10] = [
 ];
 
 /// The kinds a 20-byte row's type code names, one per code of the headerless version table.
+/// The bit of a 20-byte row's type code that says its two sections are stored as raw DEFLATE, over
+/// the code of the row's kind.
+// Measured on the PlayStation 5 build, whose rows without it hold their sections as they are: its
+// 598,195 acceleration and script rows state it (`0x10F`, `0x110`, `0x111`, `0x159`), and no row
+// of the Xbox Series build does, where every body is zlib chunks.
+pub const TYPE_DEFLATED_BIT: u32 = 0x100;
+
+/// The type code that names a row's kind: `code` without [`TYPE_DEFLATED_BIT`].
+pub fn kind_code(code: u32) -> u32 {
+    code & !TYPE_DEFLATED_BIT
+}
+
 pub const TYPES: [(u32, &str); 36] = [
     (0x02, "drawable"),
     (0x03, "fragment"),
@@ -73,7 +85,7 @@ pub fn kind_label(class: Option<u8>, type_code: Option<u32>) -> Cow<'static, str
         ),
         (None, Some(code)) => TYPES
             .iter()
-            .find(|(c, _)| *c == code)
+            .find(|(c, _)| *c == kind_code(code))
             .map_or_else(|| format!("type {code:#04x}").into(), |(_, l)| (*l).into()),
         (None, None) => "no row".into(),
     }
@@ -127,6 +139,10 @@ mod tests {
         assert_eq!(kind_label(Some(0x0B), Some(0x02)), "resource");
         assert_eq!(kind_label(Some(0x0E), None), "class 0x0e");
         assert_eq!(kind_label(None, Some(0x7F)), "type 0x7f");
+        // The raw DEFLATE bit over a code names the code's kind, and over no code names nothing.
+        assert_eq!(kind_label(None, Some(0x159)), "script program");
+        assert_eq!(kind_label(None, Some(0x10F)), "acceleration structure");
+        assert_eq!(kind_label(None, Some(0x17F)), "type 0x17f");
         assert_eq!(kind_label(None, Some(0x1_0000)), "type 0x10000");
         assert_eq!(kind_label(None, None), "no row");
     }

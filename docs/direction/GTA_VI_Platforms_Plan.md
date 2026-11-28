@@ -2,7 +2,7 @@
 
 How OpenRage's GTA VI support stops being support for one Xbox package and becomes support for a title that ships on several platforms: what a PlayStation 5 build holds, where the tree bakes in Xbox facts, the design that makes the platform an explicit axis, and the order of the rows that build it.
 
-Status: the plan of 2026-11-28; its rows R72a to R72e are built, and its decisions are the plan's own until the owner rules on [what is asked](#asked-of-the-owner). [R72](Roadmap.md#r72-gta-vi-on-every-platform) says where each row stands.
+Status: the plan of 2026-11-28; its rows R72a to R72i are built but for the audio census of R72i, R72j's document is one of every build and its module move is not made, and its decisions are the plan's own until the owner rules on [what is asked](#asked-of-the-owner). [R72](Roadmap.md#r72-gta-vi-on-every-platform) says where each row stands.
 
 ## The shape in brief
 
@@ -233,7 +233,7 @@ Each row ends on a check that fails today. Rows a to e need no key.
 | R72g | RPF9 as a backend of `RpfArchive` | the version branches are one match, with every archive suite unchanged |
 | R72h | The tables of a PlayStation 5 archive: rows, pairs, the mount, a census of every reader | waits on a snapshot; then each reader's share read on PlayStation 5 is measured against the Xbox's |
 | R72i | Shaders and audio on PlayStation 5 | waits on R72h's measurements |
-| R72j | The module move, the suites over a list of builds, the documents | no file named for the Xbox holds a fact of the game, and [GTA_VI_Xbox_Build.md](../features/GTA_VI_Xbox_Build.md) is one document of every build |
+| R72j | The module move, the suites over a list of builds, the documents | no file named for the Xbox holds a fact of the game, and [GTA_VI_Builds.md](../features/GTA_VI_Builds.md) is one document of every build |
 
 R72a stands on nothing and R72b beside it. R72c needs R72b, R72d and R72e need R72a, R72f and R72g follow in either order, and R72j is last because it moves files every other row edits.
 

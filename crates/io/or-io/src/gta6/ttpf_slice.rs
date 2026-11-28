@@ -4,7 +4,7 @@
 
 use std::fs::File;
 
-use super::super::{malformed, Plan, TexturePack, TtpfError};
+use super::super::{malformed, Envelope, Plan, TexturePack, TtpfError};
 use super::{place, zlib};
 use crate::gta6::tiling::{place_planes, Layout, Level};
 
@@ -81,7 +81,11 @@ impl TexturePack {
     /// How many mips a replacement of slice `slice` of texture `index` writes, once the writer covers it.
     pub fn replaced_mips(&self, index: usize, slice: u32) -> Result<usize, TtpfError> {
         if self.is_flat(index, slice)? {
-            return Ok(self.writable(index)?.layout.levels.len());
+            let layout = match self.envelope {
+                Envelope::Rows => self.writable(index)?.layout,
+                Envelope::Plain => self.writable_plain(index)?.layout,
+            };
+            return Ok(layout.levels.len());
         }
         self.sliced(index, slice).map(|(_, _, kept)| kept)
     }

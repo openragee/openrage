@@ -244,7 +244,7 @@ RDR2's column is still unmeasured: R71m found what its world files name and not 
 
 ## Drawing
 
-The owner chose option C: one shared frame host in which each game runs its own shader programs, with a plain fallback for what cannot be translated ([the record](Project_Context.md#each-game-draws-its-world-with-its-own-shader-programs-in-one-shared-frame-host-2026-11-26)). The figures of [R71m](#the-measures-that-decide-the-design-r71m) are in [what the measures found](../reference/Crate_Reference.md#what-the-measures-found) and [what a build's programs come to](../features/GTA_VI_Xbox_Build.md#what-a-builds-programs-come-to).
+The owner chose option C: one shared frame host in which each game runs its own shader programs, with a plain fallback for what cannot be translated ([the record](Project_Context.md#each-game-draws-its-world-with-its-own-shader-programs-in-one-shared-frame-host-2026-11-26)). The figures of [R71m](#the-measures-that-decide-the-design-r71m) are in [what the measures found](../reference/Crate_Reference.md#what-the-measures-found) and [what a build's programs come to](../features/GTA_VI_Builds.md#what-a-builds-programs-come-to).
 
 ### The host
 
@@ -462,7 +462,7 @@ Read [Shader_Definition_Database.md](../features/Shader_Definition_Database.md) 
 
 ### The programs of GTA VI over a world (R71h)
 
-Read [what a build's programs come to](../features/GTA_VI_Xbox_Build.md#what-a-builds-programs-come-to), [what the graphics library cannot run](#what-the-graphics-library-cannot-run), `crates/runtime/or-renderer/src/game_shaders/meshlets.rs`, `src/render/gta6_meshlets.rs` and `src/state/gta6_shaders.rs`.
+Read [what a build's programs come to](../features/GTA_VI_Builds.md#what-a-builds-programs-come-to), [what the graphics library cannot run](#what-the-graphics-library-cannot-run), `crates/runtime/or-renderer/src/game_shaders/meshlets.rs`, `src/render/gta6_meshlets.rs` and `src/state/gta6_shaders.rs`.
 
 - **Builds.** GTA VI's profile: its targets and steps; its surface pass over the host's pages as storage buffers; a transform for each instance, which nothing feeds today; the bindings only the game fills, named; the buffer fitting Metal needs, applied where the app builds a pass; and an encoder its fallback surfaces write its targets with, where today such a surface is drawn after the resolve. Then its lighting: by its own programs if the bindings the game fills can be named, and by named passes if not, which the measure makes the likelier.
 - **Deletes.** A family of the fallback's shader once every supported backend draws every material that used it; the renderer's mapping of a material onto a family with the last of them.
@@ -554,4 +554,4 @@ Each has a default a row takes until a sentence reverses it. The measures answer
 ## Sources
 
 - The three readings of the tree at `9fdf0fee`, of 2026-11-26, the two reviews of this plan against the code, of 2026-11-27, and the reports of the engineers who built and hardened R71a and took and hardened R71m, of that day.
-- [World_Editor_Plan.md](World_Editor_Plan.md), [Shader_Pipeline_Design.md](Shader_Pipeline_Design.md), [Shader_Definition_Database.md](../features/Shader_Definition_Database.md), [GTA_VI_Xbox_Build.md](../features/GTA_VI_Xbox_Build.md), [GTA_VI_World_Viewer.md](../features/GTA_VI_World_Viewer.md) and [the layers](../reference/Crate_Reference.md#layers) of the crate reference.
+- [World_Editor_Plan.md](World_Editor_Plan.md), [Shader_Pipeline_Design.md](Shader_Pipeline_Design.md), [Shader_Definition_Database.md](../features/Shader_Definition_Database.md), [GTA_VI_Builds.md](../features/GTA_VI_Builds.md), [GTA_VI_World_Viewer.md](../features/GTA_VI_World_Viewer.md) and [the layers](../reference/Crate_Reference.md#layers) of the crate reference.

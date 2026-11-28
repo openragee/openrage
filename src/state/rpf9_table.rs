@@ -40,20 +40,29 @@ type KeySource = (Option<PathBuf>, Option<std::ffi::OsString>);
 /// GTA VI's keys as the app loads them, held with the failure when none are found: unmasking a
 /// snapshot reads and hashes a large executable. They are loaded again once their source changes.
 pub(crate) fn keys() -> Result<Arc<GtaViKeys>, String> {
-    type Held = Option<(KeySource, Result<Arc<GtaViKeys>, String>)>;
-    static KEYS: Mutex<Held> = Mutex::new(None);
+    keys_from(gta6_keys_flow::executable())
+}
+
+/// The keys of the build of `platform`, which an archive states in its header, where that build's install folder is set; else [`keys`].
+pub(crate) fn keys_of(platform: Option<or_io::Platform>) -> Result<Arc<GtaViKeys>, String> {
+    let exe = platform.and_then(gta6_keys_flow::executable_of);
+    keys_from(exe.or_else(gta6_keys_flow::executable))
+}
+
+/// The keys the executable `exe` unmasks, held for each source they were loaded from, so two builds' keys are held side by side.
+fn keys_from(exe: Option<PathBuf>) -> Result<Arc<GtaViKeys>, String> {
+    type Held = std::collections::BTreeMap<KeySource, Result<Arc<GtaViKeys>, String>>;
+    static KEYS: Mutex<Held> = Mutex::new(Held::new());
     let source: KeySource = (
-        gta6_keys_flow::executable(),
+        exe,
         std::env::var_os(or_io::container::rpf::GTA6_SNAPSHOT_ENV),
     );
     let mut held = KEYS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some((from, keys)) = held.as_ref() {
-        if *from == source {
-            return keys.clone();
-        }
+    if let Some(keys) = held.get(&source) {
+        return keys.clone();
     }
     let keys = gta6_keys_flow::load_gta6_keys_with(source.0.as_deref()).map(Arc::new);
-    *held = Some((source, keys.clone()));
+    held.insert(source, keys.clone());
     if keys.is_ok() {
         warm_names();
     }

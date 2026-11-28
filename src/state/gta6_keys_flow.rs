@@ -30,8 +30,19 @@ pub(crate) fn executable() -> Option<PathBuf> {
 /// against, from a reader's thread.
 fn configured_executable() -> Option<PathBuf> {
     let prefs = read_prefs(&prefs_path()?).0;
+    // The active game's build first, so the keys held are those of the build the user works in.
+    (prefs.active_game.into_iter())
+        .chain([Game::GtaVI, Game::GtaVIPs5])
+        .filter(|game| game.is_gta_vi())
+        .find_map(|game| game.find_executable(prefs.game_paths.get(game)?))
+}
+
+/// The executable in the install folder the preferences hold for the build of `platform`.
+pub(crate) fn executable_of(platform: or_io::Platform) -> Option<PathBuf> {
+    let prefs = read_prefs(&prefs_path()?).0;
     [Game::GtaVI, Game::GtaVIPs5]
         .into_iter()
+        .filter(|game| game.profile().platform() == platform)
         .find_map(|game| game.find_executable(prefs.game_paths.get(game)?))
 }
 
@@ -133,5 +144,31 @@ mod tests {
         assert!(err.contains(&exe.display().to_string()), "{err}");
         let cache = or_io::container::rpf::gta6_extract::KEYS_CACHE_FILE_NAME;
         assert!(!config.path().join(cache).exists());
+    }
+
+    #[test]
+    fn each_build_set_yields_its_own_executable_and_the_active_build_is_the_one_held() {
+        let config = tempfile::tempdir().expect("a config folder");
+        let xbox = tempfile::tempdir().expect("an Xbox install folder");
+        let ps5 = tempfile::tempdir().expect("a PlayStation 5 install folder");
+        keep_prefs_in(config.path());
+        let mut prefs = Prefs::default();
+        let exe = |game: Game, dir: &tempfile::TempDir| dir.path().join(game.executable_name());
+        for (game, dir) in [(Game::GtaVI, &xbox), (Game::GtaVIPs5, &ps5)] {
+            std::fs::write(exe(game, dir), b"not an executable").expect("write");
+            prefs.game_paths.set(game, Some(dir.path().to_path_buf()));
+        }
+        save_prefs(&prefs);
+        let (xbox, ps5) = (exe(Game::GtaVI, &xbox), exe(Game::GtaVIPs5, &ps5));
+        assert_eq!(
+            executable_of(or_io::Platform::XboxSeries),
+            Some(xbox.clone())
+        );
+        assert_eq!(executable_of(or_io::Platform::Ps5), Some(ps5.clone()));
+        assert_eq!(executable_of(or_io::Platform::Pc), None);
+        assert_eq!(configured_executable(), Some(xbox));
+        prefs.active_game = Some(Game::GtaVIPs5);
+        save_prefs(&prefs);
+        assert_eq!(configured_executable(), Some(ps5));
     }
 }

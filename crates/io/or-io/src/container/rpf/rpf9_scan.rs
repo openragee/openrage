@@ -2718,7 +2718,7 @@ fn after(blocks: &[Rpf9Block]) -> u64 {
 }
 
 /// The block map a resource's first 16 inflated bytes point at: zero, then a 0x5000_0000 pointer.
-fn block_map_at(head: &[u8]) -> Option<u64> {
+pub(super) fn block_map_at(head: &[u8]) -> Option<u64> {
     let pointer = LE::read_u64(head.get(8..16)?);
     (LE::read_u64(head) == 0 && pointer >> 28 == 5).then_some(pointer & 0x0FFF_FFFF)
 }

@@ -119,7 +119,7 @@ folder's view offers the scan and the name harvest.
   `openrage-cli ttpf calibrate`, or the app's job, fits on your machine from the packs of the
   folder, and are refused by name before that. A texture read through fitted tables is an estimate
   and is marked calibrated wherever it is shown or exported
-  ([the two sources](GTA_VI_Xbox_Build.md#textures-the-coder-and-its-tables)).
+  ([the two sources](GTA_VI_Builds.md#textures-the-coder-and-its-tables)).
 - **Shaded.** Shaded draws a pass of a GTA VI drawable with the game's own programs where both its
   vertex and its pixel program translate and bind, lit by the hour and the weather the install's
   time cycle states, and its button says how many programs were refused and why the first was.
@@ -166,4 +166,4 @@ folder's view offers the scan and the name harvest.
   ([GTA_VI_Script_Decompiler.md](GTA_VI_Script_Decompiler.md)). A program the shader front end
   cannot translate or bind leaves its pass undrawn in Shaded, and no save file of the game has been
   opened: the save reader was written from a description of the layout.
-  [GTA_VI_Xbox_Build.md](GTA_VI_Xbox_Build.md) has each reader, refusal and command.
+  [GTA_VI_Builds.md](GTA_VI_Builds.md) has each reader, refusal and command.

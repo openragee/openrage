@@ -249,13 +249,13 @@ const EXTENSIONS: &[(&str, &str)] = &[
 /// The kind of an entry: a 24-byte row's class byte wins over a 20-byte row's type code, and a row
 /// whose class says archive is one only when its body begins one. `None` where no table names it.
 fn row_kind(entry: &Gta6Entry, type_code: Option<u32>, archive: bool) -> Option<Rpf9Kind> {
-    use super::gta6_kinds::{CLASSES, TYPES};
+    use super::gta6_kinds::{kind_code, CLASSES, TYPES};
     if !archive && entry.kind() == Some(Gta6Class::NestedArchive) {
         return None;
     }
     let label = match (entry.class, type_code) {
         (Some(class), _) => CLASSES.iter().find(|(byte, _)| *byte == class)?.1,
-        (None, Some(code)) => TYPES.iter().find(|(c, _)| *c == code)?.1,
+        (None, Some(code)) => TYPES.iter().find(|(c, _)| *c == kind_code(code))?.1,
         (None, None) => return None,
     };
     let extension = (EXTENSIONS.iter().find(|(l, _)| *l == label)).map(|(_, ext)| *ext);

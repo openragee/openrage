@@ -10,7 +10,7 @@ pub fn open_archive_from_disk(
     // A GTA VI archive is read with the keys and names this app holds, carried into the open; any
     // other archive keeps the crypto it was handed.
     let crypto = match is_rpf9(path) {
-        true => gta6_crypto().unwrap_or(crypto),
+        true => gta6_crypto(path).unwrap_or(crypto),
         false => crypto,
     };
     let opened = RpfArchive::open_with(path, crypto);
@@ -25,7 +25,7 @@ pub(super) fn gta6_tree(path: &Path) -> Option<super::DocPayload> {
     if !is_rpf9(path) {
         return None;
     }
-    let crypto = gta6_crypto()?;
+    let crypto = gta6_crypto(path)?;
     let opened = RpfArchive::open_with(path, crypto)
         .map_err(|e| super::gta_vi::rpf9_unopened_at(path, &e).unwrap_or_else(|| e.to_string()))
         .and_then(super::rpf_session::RpfDocument::new);
@@ -52,9 +52,14 @@ fn is_rpf9(path: &Path) -> bool {
 /// handed; `None` when the app holds no keys, so the archive is refused rather than read.
 // ⚠ Waits until the names are built, so it is reached only from a load's or a tree row's worker,
 // whose loading row shows meanwhile.
-fn gta6_crypto() -> Option<Arc<dyn RpfCryptoProvider>> {
+fn gta6_crypto(path: &Path) -> Option<Arc<dyn RpfCryptoProvider>> {
     use or_io::container::rpf::Gta6Context;
-    let keys = super::rpf9_scan::rpf9_table::keys().ok()?;
+    // The keys are those of the build whose platform letter the archive's header states at 0x19.
+    let mut head = [0u8; 0x1A];
+    let read = std::fs::File::open(path)
+        .and_then(|mut file| std::io::Read::read_exact(&mut file, &mut head));
+    let platform = read.ok().and_then(|()| or_io::Platform::from_letter(head[0x19]));
+    let keys = super::rpf9_scan::rpf9_table::keys_of(platform).ok()?;
     Some(Arc::new(Gta6Context {
         keys,
         names: super::rpf9_scan::rpf9_table::resolver(),

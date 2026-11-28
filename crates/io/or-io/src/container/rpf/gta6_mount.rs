@@ -154,12 +154,109 @@ impl Gta6Mount {
             None => start + super::rpf9_scan::RPF9_SLOT,
             Some(_) => start,
         };
-        read_rpf9_body(src, at, limit)
+        if let Some(body) = self.deflated_sections(&mut src, entry, at)? {
+            return Ok(body);
+        }
+        if let Some(body) = self.stored_sections(&mut src, entry, at)? {
+            return Ok(body);
+        }
+        let found = read_rpf9_body(&mut src, at, limit);
+        // A sized row with no chunk table whose stored size is its real size, to the slot, holds
+        // its body as it is: where no coder's head is found there, the row's own length reads it.
+        let slot = super::rpf9_scan::RPF9_SLOT;
+        let as_it_is = match (&found, entry.stored, entry.real) {
+            (Err(_), Some(stored), Some(real)) if stored == real.next_multiple_of(slot) => {
+                let end = src.seek(SeekFrom::End(0)).map_err(mount_io)?;
+                start.checked_add(real).filter(|body_end| *body_end <= end)
+            }
+            _ => None,
+        };
+        if let (Some(_), Some(real)) = (as_it_is, entry.real) {
+            return read_at(&mut src, start, real as usize);
+        }
+        found
             .map(|(_, bytes)| bytes)
             .map_err(|source| IoError::Invalid {
                 what: "an RPF9 entry body".into(),
                 why: source.to_string(),
             })
+    }
+
+    /// The two sections of a 20-byte row whose type code states raw DEFLATE, inflated; `None` for any other row.
+    // Measured: the streams follow one another from the slot's end, each from a 16-byte boundary,
+    // and inflate to the two sections' sizes the row states.
+    fn deflated_sections<R: Read + Seek>(
+        &self,
+        src: &mut R,
+        entry: &Gta6Entry,
+        at: u64,
+    ) -> Result<Option<Vec<u8>>> {
+        let row = (self.archive.entry_extra(entry.index as usize)).and_then(|extra| extra.nested);
+        let deflated = |row: &super::gta6_archive::Gta6NestedRow| {
+            entry.stored.is_none() && row.resource_type & super::gta6_kinds::TYPE_DEFLATED_BIT != 0
+        };
+        let Some(row) = row.filter(deflated) else {
+            return Ok(None);
+        };
+        let sections = u64::from(row.virtual_size & !0xF) + u64::from(row.flags & !0xF);
+        let stored = (row.stored_size()).saturating_sub(super::rpf9_scan::RPF9_SLOT);
+        let refused = |why: String| IoError::Invalid {
+            what: "an RPF9 entry body".into(),
+            why: format!(
+                "entry {} states raw DEFLATE sections and {why}",
+                entry.index
+            ),
+        };
+        let end = src.seek(SeekFrom::End(0)).map_err(mount_io)?;
+        if at.checked_add(stored).is_none_or(|body_end| body_end > end) {
+            return Err(refused("its stored extent runs past the source".into()));
+        }
+        let body = read_at(src, at, stored as usize)?;
+        let (mut out, mut pos) = (Vec::new(), 0usize);
+        while (out.len() as u64) < sections {
+            let left = sections - out.len() as u64;
+            let stream = body
+                .get(pos..)
+                .and_then(|rest| inflate_one(rest, true, left));
+            let Some((used, bytes)) = stream.filter(|(_, bytes)| !bytes.is_empty()) else {
+                return Err(refused(format!(
+                    "no stream inflates at {pos:#x} of its {stored:#x} stored bytes, {} of {sections} bytes read",
+                    out.len()
+                )));
+            };
+            out.extend_from_slice(&bytes);
+            pos = round16(pos + used);
+        }
+        Ok(Some(out))
+    }
+
+    /// The body of a 20-byte row whose two sections are stored as they are, read by the length its
+    /// row states; `None` for any other row, and for one whose bytes at `at` begin no section.
+    // Measured on the PlayStation 5 build: such a body is the zero slot, then the virtual and the
+    // physical section with no coder, and the row's stored size is the slot and the two sections.
+    // A zlib chunk begins with no eight zero bytes, so a body of chunks is never taken for one.
+    fn stored_sections<R: Read + Seek>(
+        &self,
+        src: &mut R,
+        entry: &Gta6Entry,
+        at: u64,
+    ) -> Result<Option<Vec<u8>>> {
+        let row = (self.archive.entry_extra(entry.index as usize)).and_then(|extra| extra.nested);
+        let Some(row) = row.filter(|_| entry.stored.is_none()) else {
+            return Ok(None);
+        };
+        let sections = u64::from(row.virtual_size & !0xF) + u64::from(row.flags & !0xF);
+        let slot = super::rpf9_scan::RPF9_SLOT;
+        let end = src.seek(SeekFrom::End(0)).map_err(mount_io)?;
+        if row.stored_size() != slot + sections || at.checked_add(sections).is_none_or(|e| e > end)
+        {
+            return Ok(None);
+        }
+        let head = read_at(src, at, (slot.min(sections)) as usize)?;
+        if super::rpf9_scan::block_map_at(&head).is_none() {
+            return Ok(None);
+        }
+        read_at(src, at, sections as usize).map(Some)
     }
 
     /// Read `entry`'s body, decrypting it first when it is content-ciphered (type 17): the inflated,

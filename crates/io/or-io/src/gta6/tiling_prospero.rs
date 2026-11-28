@@ -15,11 +15,11 @@ use crate::codec::texture::DxgiFormat;
 /// Where a texture's levels lie in the image.
 pub(super) struct Planned {
     /// The image bytes its levels lie in.
-    start: u64,
-    len: u64,
+    pub(super) start: u64,
+    pub(super) len: u64,
     /// Where the zero bytes after a cube's six faces start; `len` for any other shape.
     pad_from: u64,
-    layout: Layout,
+    pub(super) layout: Layout,
 }
 
 /// Where texture `index`'s levels lie, from its entry alone, or why it cannot be read.

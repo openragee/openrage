@@ -531,8 +531,8 @@ The module table and the app's traps are in
   [Mesh_Interchange.md](docs/features/Mesh_Interchange.md) and
   [Dlc_Pack_Creation.md](docs/features/Dlc_Pack_Creation.md): what each kind of file
   supports per game, shading modes, glTF out and back, and generating a DLC pack.
-- [GTA_VI_Xbox_Build.md](docs/features/GTA_VI_Xbox_Build.md): what is read, saved and
-  refused of a GTA VI Xbox build, and its commands.
+- [GTA_VI_Builds.md](docs/features/GTA_VI_Builds.md): what is read, saved and
+  refused of a GTA VI build, Xbox Series or PlayStation 5, and its commands.
 - [GTA_VI_World_Viewer.md](docs/features/GTA_VI_World_Viewer.md): the World screen, how a GTA VI install is mounted, and the streaming rules.
 - [Unified_World_Plan.md](docs/direction/Unified_World_Plan.md): one world core and an adapter crate for each game, and the rows of R71.
 - [GTA_VI_Script_Decompiler.md](docs/features/GTA_VI_Script_Decompiler.md): what is read of

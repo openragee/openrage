@@ -214,7 +214,7 @@ fn a_playstation_5_texture_whose_entry_states_more_than_its_range_holds_is_refus
 }
 
 #[test]
-fn a_plain_pack_saves_as_its_file_and_refuses_every_edit_by_its_platform() {
+fn a_plain_pack_saves_as_its_file_and_refuses_by_its_platform_each_edit_written_as_rows() {
     let (specs, _) = textures();
     let bytes = build_plain(&specs, b'p');
     let (_dir, mut plain) = plain_of(&specs);
@@ -229,10 +229,7 @@ fn a_plain_pack_saves_as_its_file_and_refuses_every_edit_by_its_platform() {
         mips: None,
     };
     let edits = [
-        plain.replace_levels(0, &[]).err(),
-        plain.replace_slice_levels(0, 0, &[]).err(),
         plain.reshape_levels(0, shape, &[]).err(),
-        plain.replaced_mips(0, 0).err(),
         plain.save_layout().err(),
     ];
     for refused in edits {
@@ -240,4 +237,170 @@ fn a_plain_pack_saves_as_its_file_and_refuses_every_edit_by_its_platform() {
         assert!(matches!(refused, TtpfError::EditPlain { .. }), "{refused}");
         assert!(refused.to_string().contains("PlayStation 5"), "{refused}");
     }
+}
+
+/// A texture's pixels cut into its levels, top first.
+fn levels_of(texture: &Texture) -> Vec<Vec<u8>> {
+    let (side, bytes) = (
+        texture.format.element_side(),
+        texture.format.element_bytes(),
+    );
+    let mut rest = texture.pixels.as_slice();
+    (0..texture.levels)
+        .map(|level| {
+            let across = |pixels: u32| (pixels >> level).max(1).div_ceil(side) as usize;
+            let (level, after) =
+                rest.split_at(across(texture.width) * across(texture.height) * bytes);
+            rest = after;
+            level.to_vec()
+        })
+        .collect()
+}
+
+#[test]
+fn a_replaced_texture_of_a_playstation_5_pack_is_written_over_its_own_bytes_and_reads_back() {
+    let (mut specs, expected) = textures();
+    let tiled = tile(&expected[1], 128, 64, 16, PROSPERO_64K_16);
+    specs[1].bodies = vec![Body::Stored(tiled)];
+    let tiled = tile(&expected[3], 150, 75, 8, PROSPERO_64K_8);
+    specs[3].bodies = vec![Body::Stored(tiled)];
+    let bytes = build_plain(&specs, b'p');
+    let (_dir, mut plain) = plain_of(&specs);
+    let flat = |pack: &TexturePack, index: usize| {
+        let entry = pack.entries[index];
+        matches!((entry.dimension, entry.slices), (1 | 5, 1))
+    };
+
+    // Replaced by itself, every 2D texture is written as the bytes the file holds; any other shape is refused by name.
+    let mut replaced = Vec::new();
+    for index in 0..specs.len() {
+        let levels = levels_of(&plain.texture(index).expect("its image reads"));
+        match plain.replace_levels(index, &levels) {
+            Ok(()) => replaced.push(index),
+            Err(refused) => {
+                assert!(!flat(&plain, index), "texture {index}: {refused}");
+                assert!(
+                    matches!(refused, TtpfError::ReplaceShape { .. }),
+                    "{refused}"
+                );
+            }
+        }
+    }
+    assert!(
+        replaced.contains(&1) && replaced.contains(&3),
+        "{replaced:?}"
+    );
+    let mut saved = Vec::new();
+    plain.save_to(&mut saved).expect("it saves");
+    assert!(
+        saved == bytes,
+        "a texture replaced by itself changes no byte"
+    );
+
+    // Replaced by other elements, it reads back before a save and after one, and no byte outside it moved.
+    let mut levels = levels_of(&plain.texture(1).expect("its image reads"));
+    levels.iter_mut().flatten().for_each(|byte| *byte = !*byte);
+    assert!(matches!(
+        plain.replace_levels(1, &levels[1..]),
+        Err(TtpfError::Malformed(_))
+    ));
+    assert_eq!(plain.replaced_mips(1, 0).ok(), Some(levels.len()));
+    plain.replace_levels(1, &levels).expect("it replaces");
+    let want = levels.concat();
+    assert!(plain.texture(1).expect("it reads").pixels == want);
+    let mut saved = Vec::new();
+    plain.save_to(&mut saved).expect("it saves");
+    let range = plain.range_of(1).expect("a range");
+    let (from, to) = (range.start as usize, range.end as usize);
+    assert_eq!(saved.len(), bytes.len());
+    assert!(saved[..from] == bytes[..from] && saved[to..] == bytes[to..]);
+    assert!(saved[from..to] != bytes[from..to]);
+
+    let (_dir, again) = open(&saved);
+    let again = again.expect("the saved pack opens");
+    for (index, linear) in expected.iter().enumerate() {
+        let read = again.texture(index).expect("its image reads").pixels;
+        assert!(
+            read == *if index == 1 { &want } else { linear },
+            "texture {index}"
+        );
+    }
+    let mut twice = Vec::new();
+    again.save_to(&mut twice).expect("it saves again");
+    assert!(twice == saved, "saving a saved pack is byte-identical");
+}
+
+/// Install-gated: over a PlayStation 5 build's packs, a 2D texture replaced by itself is written as
+/// the bytes its file holds, which holds the writer's placing to the reader's on the real layouts.
+#[test]
+fn a_2d_texture_of_a_playstation_5_build_replaced_by_itself_changes_no_byte() {
+    /// The largest range read, and the most textures tried in one pack.
+    const LARGEST: u64 = 16 << 20;
+    const IN_A_PACK: usize = 48;
+    let root = std::env::var_os("OPENRAGE_GTA6_BUILD")
+        .map(PathBuf::from)
+        .filter(|root| root.join("eboot.bin").is_file());
+    let Some(root) = root else {
+        or_test_support::skip_install(
+            "a PlayStation 5 texture replaced by itself",
+            format_args!("set OPENRAGE_GTA6_BUILD to a PlayStation 5 build"),
+        );
+        return;
+    };
+    let (mut packs, mut folders) = (Vec::new(), vec![root]);
+    while let Some(folder) = folders.pop() {
+        for path in (std::fs::read_dir(&folder).into_iter().flatten().flatten()).map(|e| e.path()) {
+            if path.is_dir() {
+                folders.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "ttpf") {
+                packs.push(path);
+            }
+        }
+    }
+    packs.sort();
+    let (mut same, mut differs) = (0usize, Vec::new());
+    let mut refused: std::collections::BTreeMap<String, usize> = Default::default();
+    for path in &packs {
+        let mut pack = TexturePack::open(path).expect("a pack of the build opens");
+        assert_eq!(pack.envelope(), Envelope::Plain, "{}", path.display());
+        let step = (pack.entries.len() / IN_A_PACK).max(1);
+        for index in (0..pack.entries.len()).step_by(step) {
+            let entry = pack.entries[index];
+            let Some(range) = pack.range_of(index) else {
+                continue;
+            };
+            let len = range.end - range.start;
+            if !matches!((entry.dimension, entry.slices), (1 | 5, 1)) || len > LARGEST {
+                continue;
+            }
+            let Ok(texture) = pack.texture(index) else {
+                *refused.entry("does not read".into()).or_default() += 1;
+                continue;
+            };
+            // A signed BC6H texture reads as floats, which are not the elements a replacement takes.
+            if texture.format.dxgi() == crate::codec::texture::DxgiFormat::Bc6hSf16 {
+                continue;
+            }
+            let was = pack.image(range.start, len).expect("its range reads");
+            match pack.replace_levels(index, &levels_of(&texture)) {
+                Ok(()) if pack.image(range.start, len).expect("its range reads") == was => {
+                    same += 1
+                }
+                Ok(()) => differs.push(format!("{} texture {index}", path.display())),
+                Err(e) => {
+                    *refused
+                        .entry(e.to_string().chars().take(60).collect())
+                        .or_default() += 1
+                }
+            }
+            *pack.replaced_mut() = Replaced::default();
+        }
+    }
+    println!(
+        "{} packs: {same} textures written as the file holds them, {} differ, refused {refused:?}",
+        packs.len(),
+        differs.len()
+    );
+    assert!(differs.is_empty(), "{:?}", &differs[..differs.len().min(8)]);
+    assert!(same > 0, "no 2D texture of the build was replaced");
 }

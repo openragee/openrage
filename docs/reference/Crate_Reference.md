@@ -480,7 +480,7 @@ Its suites are `or-io-verify`'s `meta` binary, and the layouts are the local
 
 `or_io::gta6`, behind the `gta6` feature, is GTA VI's formats as ordinary code, since no source names
 their fields: a name says the role a field was measured to play, and nothing there is a declaration
-([GTA_VI_Xbox_Build.md](../features/GTA_VI_Xbox_Build.md) owns what is read, saved and refused).
+([GTA_VI_Builds.md](../features/GTA_VI_Builds.md) owns what is read, saved and refused).
 
 | Module | Holds |
 |---|---|
@@ -2280,7 +2280,7 @@ kind and lists Vulkan's first.
 
 ### What the measures found
 
-What [R71m](../direction/Roadmap.md#r71m-the-measures-that-decide-the-design) measured of the frame and of RDR2 on 2026-11-27, at `cb55fc42` with this change, each with the command that measures it again; GTA VI's programs are in [GTA_VI_Xbox_Build.md](../features/GTA_VI_Xbox_Build.md#what-a-builds-programs-come-to).
+What [R71m](../direction/Roadmap.md#r71m-the-measures-that-decide-the-design) measured of the frame and of RDR2 on 2026-11-27, at `cb55fc42` with this change, each with the command that measures it again; GTA VI's programs are in [GTA_VI_Builds.md](../features/GTA_VI_Builds.md#what-a-builds-programs-come-to).
 
 **The deferred frame is six kinds of step and five passes no kind states.** `render_deferred` in `crates/runtime/or-renderer/src/viewport/game_frame.rs` draws two frames today: a GTA V drawable in Shaded, and the GTA VI World screen, which branches on whether the day carries GTA VI's post. `crates/runtime/or-renderer/tests/the_frame_as_targets_and_passes.rs` lists both in order and counts the kinds (`cargo nextest run -p or-renderer --test the_frame_as_targets_and_passes --no-capture` prints the list); a pass added to the source, or a call that records into the frame added to, taken from or moved within `render_deferred`, fails it until it is entered. What kind a step is, whose program draws it and how often are a reading entered by hand.
 
@@ -2358,7 +2358,7 @@ and `gta6-mission` are `crates/tools/or-cli/src/gta6_save.rs` and `crates/tools/
 `navmesh scan`, `disable` and `delete` take a scanned or loose cell. A command that writes writes a loose
 resource or a new pack, never the archive. `crates/tools/or-cli/src/gta6_translate.rs` runs a GTA VI program
 through the front end its payload takes, and the app's Shaded calls the same function
-([the commands in one table](../features/GTA_VI_Xbox_Build.md#commands)).
+([the commands in one table](../features/GTA_VI_Builds.md#commands)).
 **or-shader-tool** translates shaders, `.fxc` to a pack of SPIR-V modules, with a
 binary of its own. Its `inventory` command counts what an install's shaders are
 (the bytecode, shader model, stage, container parts and feature flags of every
@@ -3091,7 +3091,7 @@ RDR2 is declared, discovered and unsupported until a second container exists;
 GTA VI is declared with a target of its own (`Gta6` in
 `crates/title/or-title/src/game/profiles.rs`): its install opens as a plain folder and an archive as a
 scan, since the archive's table is encrypted
-([GTA_VI_Xbox_Build.md](../features/GTA_VI_Xbox_Build.md)).
+([GTA_VI_Builds.md](../features/GTA_VI_Builds.md)).
 
 ## The container seam
 

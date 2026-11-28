@@ -1,13 +1,15 @@
 //! Writing a `.ttpf`: every row of a texture left alone is carried as the file stores it, codecs
 //! no reader decodes included, and a replaced texture is tiled and written as zlib rows of the
 //! sizes its entry states, so the directory, the keys and every virtual address stay as they were.
-//! A pack with no rows takes no edit and is written as the image its file is.
+//! A pack with no rows stores its image as it is: a replaced 2D texture is tiled over its own bytes,
+//! and the file is written as it is around them.
 
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::Write;
 
 use super::super::tiling::{Level, Tile};
+use super::super::tiling_prospero;
 use super::{
     read_at, row_code_pages, Envelope, Plan, Row, TexturePack, TtpfError, HEADER_LEN, KIND_ZLIB,
 };
@@ -160,15 +162,18 @@ impl TexturePack {
         image: &crate::codec::texture::RgbaImage,
         options: &crate::authoring::TextureBuildOptions,
     ) -> Result<u32, TtpfError> {
-        let plan = self.writable(index)?;
-        let format = plan.layout.format;
+        let layout = match self.envelope {
+            Envelope::Rows => self.writable(index)?.layout,
+            Envelope::Plain => self.writable_plain(index)?.layout,
+        };
+        let format = layout.format;
         if !crate::authoring::is_encodable(format.stored()) {
             return Err(TtpfError::ReplaceFormat {
                 index,
                 format: format.name(),
             });
         }
-        let (width, height) = (plan.layout.width, plan.layout.height);
+        let (width, height) = (layout.width, layout.height);
         if (image.width, image.height) != (width, height) {
             return Err(TtpfError::ImageSize {
                 index,
@@ -177,7 +182,7 @@ impl TexturePack {
                 got: (image.width, image.height),
             });
         }
-        let count = plan.layout.levels.len() as u32;
+        let count = layout.levels.len() as u32;
         let encode = |e: crate::Error| TtpfError::Encode(e.to_string());
         let chain = crate::codec::texture::generate_mip_chain_with(
             width,
@@ -197,14 +202,71 @@ impl TexturePack {
             })
             .collect::<Result<Vec<_>, _>>()
             .map_err(encode)?;
-        self.put(index, plan, &levels)?;
+        self.replace_levels(index, &levels)?;
         Ok(count)
     }
 
     /// Texture `index` replaced by `levels`, its mips top first as linear elements of its format, one for each mip its chain holds.
     pub fn replace_levels(&mut self, index: usize, levels: &[Vec<u8>]) -> Result<(), TtpfError> {
+        if self.envelope == Envelope::Plain {
+            return self.put_plain(index, levels);
+        }
         let plan = self.writable(index)?;
         self.put(index, plan, levels)
+    }
+
+    /// Where the levels of 2D texture `index` of a pack with no rows lie in its image, once the pack is whole.
+    fn writable_plain(&self, index: usize) -> Result<tiling_prospero::Planned, TtpfError> {
+        if !self.is_complete() {
+            return Err(TtpfError::NotWhole);
+        }
+        let count = self.entries.len();
+        let entry = (self.entries.get(index)).ok_or(TtpfError::NoSuchTexture { index, count })?;
+        if !matches!((entry.dimension, entry.slices), (1 | 5, 1)) {
+            return Err(TtpfError::ReplaceShape { index });
+        }
+        tiling_prospero::plan(self, index)
+    }
+
+    /// Tiles `levels` over texture `index`'s bytes of the image, which a save writes in their place: a pack with no rows stores them as they are, so nothing moves.
+    fn put_plain(&mut self, index: usize, levels: &[Vec<u8>]) -> Result<(), TtpfError> {
+        let tiling_prospero::Planned {
+            start, len, layout, ..
+        } = self.writable_plain(index)?;
+        if levels.len() != layout.levels.len() {
+            return Err(super::malformed(format!(
+                "texture {index}'s chain holds {} mips, not {}",
+                layout.levels.len(),
+                levels.len()
+            )));
+        }
+        let element = layout.format.element_bytes();
+        // The bytes no level covers stay as the file has them.
+        let mut memory = self.image(start, len)?;
+        for (i, (level, elements)) in layout.levels.iter().zip(levels).enumerate() {
+            if elements.len() != level.width * level.height * element
+                || !place(&mut memory, level, elements, &layout.tile, element)
+            {
+                return Err(super::malformed(format!(
+                    "mip {i} of texture {index}'s replacement is not {}x{} elements of its chain",
+                    level.width, level.height
+                )));
+            }
+        }
+        self.replaced.0.insert(index, vec![memory]);
+        Ok(())
+    }
+
+    /// Each replaced texture of a pack with no rows: where its bytes start in the image, and the bytes, in the image's order.
+    pub(super) fn replaced_plain(&self) -> Vec<(u64, &[u8])> {
+        let mut found: Vec<(u64, &[u8])> = (self.replaced.0.iter())
+            .filter(|_| self.envelope == Envelope::Plain)
+            .filter_map(|(&index, bodies)| {
+                Some((self.range_of(index)?.start, bodies.first()?.as_slice()))
+            })
+            .collect();
+        found.sort_by_key(|(start, _)| *start);
+        found
     }
 
     /// Where texture `index`'s replacement goes, once its shape, its tail and its rows are ones the writer covers.
@@ -414,16 +476,24 @@ impl TexturePack {
         })
     }
 
-    /// Writes a pack with no rows to `out` as the image its file is, which no edit has changed.
+    /// Writes a pack with no rows to `out` as the image its file is, each replaced texture's bytes in place of the file's.
     fn save_plain(&self, out: &mut impl Write) -> Result<(), TtpfError> {
-        // `replaced_mut` hands out the replaced textures, and none of them would be written.
-        if !self.replaced.0.is_empty() || self.moved.is_some() {
+        use std::io::{Read, Seek, SeekFrom};
+        if self.moved.is_some() {
             return self.edits_rows();
         }
         let mut file = File::open(&self.path).map_err(|source| TtpfError::Io {
             path: self.path.clone(),
             source,
         })?;
+        let mut at = 0u64;
+        for (start, memory) in self.replaced_plain() {
+            let before = start.saturating_sub(at);
+            std::io::copy(&mut (&mut file).take(before), out).map_err(TtpfError::Write)?;
+            out.write_all(memory).map_err(TtpfError::Write)?;
+            at = start + memory.len() as u64;
+            (file.seek(SeekFrom::Start(at))).map_err(TtpfError::Write)?;
+        }
         (std::io::copy(&mut file, out).map(drop)).map_err(TtpfError::Write)
     }
 

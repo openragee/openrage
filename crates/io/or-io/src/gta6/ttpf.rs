@@ -52,7 +52,7 @@ pub enum TtpfError {
     )]
     ImageRange { at: u64, len: u64, size: u64 },
     #[error(
-        "editing a {platform} texture pack is not implemented: an edit is written as rows, and its \
+        "this edit of a {platform} texture pack is not implemented: it is written as rows, and its \
          file has no row table"
     )]
     EditPlain { platform: &'static str },
@@ -747,7 +747,15 @@ impl TexturePack {
             source,
         })?;
         if self.envelope == Envelope::Plain {
-            return read_at(&mut file, &self.path, at, len);
+            let mut bytes = read_at(&mut file, &self.path, at, len)?;
+            for (from, memory) in self.replaced_plain() {
+                let (lo, hi) = (at.max(from), end.min(from + memory.len() as u64));
+                if lo < hi {
+                    bytes[(lo - at) as usize..(hi - at) as usize]
+                        .copy_from_slice(&memory[(lo - from) as usize..(hi - from) as usize]);
+                }
+            }
+            return Ok(bytes);
         }
         let mut out = vec![0u8; len as usize];
         // Row 0 starts at 0 and the sentinel at the image's end, so a row holds `at` and the walk ends.

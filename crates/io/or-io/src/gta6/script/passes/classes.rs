@@ -12,7 +12,9 @@
 //! member was given or an object of a script type its settled signature states every such call
 //! hands, and of the receivers' type and its bases those of the function's program that are made
 //! from each class whose slot it calls on that parameter and hold every byte it reaches through it
-//! are one, or the highest of them holds a byte reached that no type above it holds.
+//! are one, or the highest of them holds a byte reached that no type above it holds. Every mention
+//! handing it, first, a reference field of a member's receiver that the project types is that
+//! proof again, with the fields' type for the receivers'.
 //!
 //! ⚠ The fourth proof cannot tell a method from a static function that is only ever handed
 //! objects of one type and works on that type's own fields: the two are one function in the code.
@@ -48,6 +50,9 @@ mod typed;
 
 #[path = "classes_frame.rs"]
 mod frame;
+
+#[path = "classes_fields.rs"]
+mod fields;
 
 use properties::{accessed, standing, Stands};
 pub use properties::{accessor, Accessor};
@@ -239,6 +244,8 @@ enum Said {
     Receiver,
     /// The function is handed, first, a value of one cell the function that mentions it holds of its own: what that is, its signature says of every such call.
     Typed,
+    /// The function is handed, first, the reference the field at this byte offset of the receiver the function that mentions it was given holds.
+    Field(u32),
 }
 
 /// Whether `object` is an object of the builtin type `ty` that the function itself makes: in place, or into a variable that holds nothing else.
@@ -361,7 +368,7 @@ fn site<'a>(
     }
 }
 
-/// Notes what `top` says of every script function it calls or refers to, but for the mention at `proof`: handed the receiver first, handed a value of the caller's own first, or mentioned like any function.
+/// Notes what `top` says of every script function it calls or refers to, but for the mention at `proof`: handed the receiver first, handed a value of the caller's own first, handed a field of the receiver first, or mentioned like any function.
 fn others(
     top: &Expr,
     head: &Head,
@@ -379,6 +386,10 @@ fn others(
         let said = match e {
             Expr::Call { args, .. } if hands(args, receiver) => Said::Receiver,
             Expr::Call { args, .. } if typed::handed_value(args, head) => Said::Typed,
+            Expr::Call { args, .. } => match fields::handed(args, receiver) {
+                Some(offset) => Said::Field(offset),
+                None => Said::Note(disputed()),
+            },
             _ => Said::Note(disputed()),
         };
         found.push((function, said));
@@ -406,6 +417,9 @@ fn carry(into: &mut Carried, from: Carried) {
         into.needs.entry(function).or_default().extend(types);
     }
     into.self_typed.extend(from.self_typed);
+    for (function, by) in from.fields {
+        into.fields.entry(function).or_default().extend(by);
+    }
 }
 
 /// The script functions the instructions of `row` call or take a reference to; `None` where a word of it is no instruction, or names an import the program does not hold.
@@ -583,6 +597,10 @@ pub fn of_function(project: &mut Project, f: &cfg::Function) {
             }
             Said::Typed => {
                 carried.typed.entry(function).or_default().insert(own);
+            }
+            Said::Field(offset) => {
+                let by = carried.fields.entry(function).or_default();
+                by.insert((own, offset));
             }
         }
     }
@@ -966,7 +984,9 @@ fn unseen(project: &Project, carried: &Carried, gathered: &mut BTreeMap<Function
         blind.extend(imports.iter().map(|import| import.program));
     }
     let known = gathered.keys().chain(carried.handed.keys());
-    let known = known.chain(carried.typed.keys());
+    let known = known
+        .chain(carried.typed.keys())
+        .chain(carried.fields.keys());
     let known = known.filter(|function| blind.contains(&function.program()));
     let known: Vec<FunctionKey> = known.copied().collect();
     for function in known {
@@ -982,9 +1002,9 @@ pub fn settle(project: &mut Project) {
         carry(&mut carried, std::mem::take(&mut info.carried));
     }
     unseen(project, &carried, &mut gathered);
-    // ⚠ A function handed a value its caller holds of its own is called like any function: it is
-    // no constructor and no lambda, whatever another mention says.
-    for function in carried.typed.keys() {
+    // ⚠ A function handed a value its caller holds of its own, or a field of its receiver, is
+    // called like any function: it is no constructor and no lambda, whatever another mention says.
+    for function in carried.typed.keys().chain(carried.fields.keys()) {
         if gathered
             .get(function)
             .is_some_and(|said| said.owner != NO_OWNER)
@@ -1016,10 +1036,11 @@ pub fn settle(project: &mut Project) {
             }
         }
     }
-    // What is left to prove of each function handed a receiver; a table's function is spoken for by its table.
+    // What is left to prove of each function handed a receiver; a table's function is spoken for
+    // by its table, and one some mention hands a field is left to `fields::settle` alone.
     let mut open: BTreeMap<FunctionKey, Claim> = BTreeMap::new();
     for function in carried.handed.keys().chain(carried.typed.keys()) {
-        if holders.contains_key(function) {
+        if holders.contains_key(function) || carried.fields.contains_key(function) {
             continue;
         }
         let method = Claim {
@@ -1038,6 +1059,19 @@ pub fn settle(project: &mut Project) {
         };
         open.insert(*function, claim);
     }
+    // The functions only ever handed a field of a receiver, and mentioned in no other way.
+    let only_fields: BTreeSet<FunctionKey> = carried
+        .fields
+        .keys()
+        .filter(|function| {
+            let other = holders.contains_key(*function)
+                || carried.handed.contains_key(*function)
+                || carried.typed.contains_key(*function);
+            let said = gathered.get(*function);
+            !other && said.is_none_or(|said| *said == returning())
+        })
+        .copied()
+        .collect();
     for (function, said) in gathered {
         // A function of a virtual table is no constructor and no lambda, whichever type holds it.
         let handed = carried.handed.contains_key(&function);
@@ -1047,6 +1081,7 @@ pub fn settle(project: &mut Project) {
     }
     chained(project, &carried, &mut members, &mut open);
     received(project, &carried, &mut members, open);
+    fields::settle(project, &carried, &mut members, only_fields);
     project.members = members;
 }
 
@@ -1062,6 +1097,12 @@ fn constructs(
     reached: &Reached,
     frame: &frame::Frame,
 ) -> bool {
+    let target = constructed(made, call, head, project);
+    target.is_some_and(|target| !reached.has(target) || frame.private(target, head))
+}
+
+/// The variable `made` assigns an object to where `call` runs a constructor of the object's type on it, and is handed nothing else of the variable.
+fn constructed(made: &ir::Stmt, call: &ir::Stmt, head: &Head, project: &Project) -> Option<Var> {
     let program = head.program;
     let (
         ir::Stmt::Assign {
@@ -1071,31 +1112,35 @@ fn constructs(
         ir::Stmt::Eval(Expr::Call { callee, args, .. }),
     ) = (made, call)
     else {
-        return false;
+        return None;
     };
     let Some((Expr::Var(receiver), passed)) = args.split_first() else {
-        return false;
+        return None;
     };
     let found = callee_key(program, callee).and_then(|key| member(project, key));
     let owned =
         found.is_some_and(|m| m.role == Role::Constructor && Some(m.owner) == TypeKey::of(ty));
-    let unseen = || !reached.has(*target) || frame.private(*target, head);
-    owned && receiver == target && !passed.iter().any(|arg| mentions(arg, *target)) && unseen()
+    let alone = receiver == target && !passed.iter().any(|arg| mentions(arg, *target));
+    (owned && alone).then_some(*target)
 }
 
-/// Groups each object made and the constructor the next statement runs on it into the one `new` they were.
+/// Groups each object made and the constructor the next statement runs on it into the one `new` they were; `early` holds the places in the list, as it was, of the objects made that `frame::early` proves of the outermost list.
 fn construct(
     list: &mut Vec<Stmt>,
     head: &Head,
     project: &Project,
     reached: &Reached,
     frame: &frame::Frame,
+    early: &BTreeSet<usize>,
 ) {
     let mut out: Vec<Stmt> = Vec::with_capacity(list.len());
-    for stmt in list.drain(..) {
+    for (at, stmt) in list.drain(..).enumerate() {
+        // The statement before is the one at `at - 1` wherever it is still a simple one.
+        let proved = at.checked_sub(1).is_some_and(|made| early.contains(&made));
         match (out.pop(), stmt) {
             (Some(Stmt::Simple(made)), Stmt::Simple(call))
-                if constructs(&made, &call, head, project, reached, frame) =>
+                if (proved && constructed(&made, &call, head, project).is_some())
+                    || constructs(&made, &call, head, project, reached, frame) =>
             {
                 let parts = vec![made, call];
                 let kind = Group::Construct;
@@ -1218,7 +1263,8 @@ fn read(e: &mut Expr, stands: Stands, head: &Head, cx: &Context<'_>) {
     let options = &cx.options;
     let property = || {
         let read = options.on(Pass::Properties);
-        read && accessed(callee, args, *returns, stands)
+        let runtime = accessed(callee, args, *returns, stands);
+        read && runtime
     };
     let kind = match callee {
         Callee::Builtin { path, .. } => {
@@ -1255,11 +1301,17 @@ pub fn run(f: &mut tree::Function, cx: &Context<'_>, _stats: &mut Stats) {
         true => (Reached::of(body), frame::Frame::of(body, head, cx.project)),
         false => (Reached::default(), frame::Frame::default()),
     };
+    let mut outermost = match constructors {
+        true => Some(frame::early(body, head, cx.project, &reached, &frame)),
+        false => None,
+    };
     // An explicit stack: a body nests as deep as its listing does.
     let mut work: Vec<&mut Vec<Stmt>> = vec![body];
     while let Some(list) = work.pop() {
         if constructors {
-            construct(list, head, cx.project, &reached, &frame);
+            // The outermost list is the first taken off.
+            let proved = outermost.take().unwrap_or_default();
+            construct(list, head, cx.project, &reached, &frame, &proved);
         }
         for stmt in list {
             if calls {
@@ -1500,10 +1552,9 @@ pub fn unit(
         };
         let base = project.types.get(&found.owner).and_then(|t| t.base);
         let filled = |(slot, base): (u32, TypeKey)| project.slot(base, slot).is_some();
-        let role = found.role;
         let method = Method {
             function: f,
-            role,
+            role: found.role,
             is_static: found.is_static,
             is_async,
             slot: found.slot,

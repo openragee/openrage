@@ -1,17 +1,92 @@
 //! What the addresses a function takes of its own locals may reach, read finer than `Reached`:
 //! an address loaded or stored through where it is taken touches the bytes it names and no more,
 //! and one handed to a script function touches what the project's reach table bounds, where the
-//! address dies with the call.
+//! address dies with the call. In a body that runs each statement once, in order, an address
+//! taken after a construction reaches nothing while its constructor runs.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::gta6::script::ir::{self, Expr, Head, Var, Width};
 use crate::gta6::script::print::cells_of;
 use crate::gta6::script::project::signatures::key_of;
 use crate::gta6::script::project::{reach, Project};
-use crate::gta6::script::tree::{self, Stmt};
+use crate::gta6::script::tree::{self, Stmt, Sugar};
 
-use super::whole;
+use super::{constructed, whole, Reached};
+
+/// The most constructions of one body whose variable is looked for again over what runs before them alone.
+// Each look reads the statements before the construction once more.
+const MAX_EARLY: usize = 64;
+
+/// The places in the outermost list of `body` where an object is made and constructed and an address taken later may reach its variable, but none taken before or by the constructor's call.
+// ⚠ Only where each statement runs once and after those written before it: the outermost list
+// is in no loop, and a body with no jump, no label and no point it resumes at runs nothing out of
+// the order it is written in. An address taken later points nowhere while the constructor runs;
+// one kept from an earlier run of the function points into a frame that has ended.
+pub(super) fn early(
+    body: &[Stmt],
+    head: &Head,
+    project: &Project,
+    reached: &Reached,
+    frame: &Frame,
+) -> BTreeSet<usize> {
+    let mut found = BTreeSet::new();
+    if jumps(body) {
+        return found;
+    }
+    let mut looks = 0usize;
+    for (at, pair) in body.windows(2).enumerate() {
+        let [Stmt::Simple(made), Stmt::Simple(call)] = pair else {
+            continue;
+        };
+        let Some(target) = constructed(made, call, head, project) else {
+            continue;
+        };
+        // What the whole body says is said already.
+        if !reached.has(target) || frame.private(target, head) {
+            continue;
+        }
+        if looks == MAX_EARLY {
+            break;
+        }
+        looks += 1;
+        let before = &body[..at + 2];
+        let none = !Reached::of(before).has(target);
+        if none || Frame::of(before, head, project).private(target, head) {
+            found.insert(at);
+        }
+    }
+    found
+}
+
+/// Whether a body holds a jump, a label or a point a state machine resumes at: what may run a statement again, or before one written ahead of it.
+fn jumps(body: &[Stmt]) -> bool {
+    let mut work = vec![body];
+    while let Some(list) = work.pop() {
+        for stmt in list {
+            match stmt {
+                Stmt::Goto(_) | Stmt::Label(_) => return true,
+                Stmt::If { then, els, .. } => work.extend([then.as_slice(), els.as_slice()]),
+                Stmt::While { body, .. } | Stmt::DoWhile { body, .. } | Stmt::For { body, .. } => {
+                    work.push(body);
+                }
+                Stmt::Switch { cases, .. } => work.extend(cases.iter().map(|c| c.body.as_slice())),
+                Stmt::Sugar(sugar) => {
+                    if matches!(&**sugar, Sugar::Await { .. } | Sugar::Yield { .. }) {
+                        return true;
+                    }
+                    work.extend(sugar.parts().bodies);
+                }
+                Stmt::Simple(_)
+                | Stmt::Break
+                | Stmt::Continue
+                | Stmt::Return(_)
+                | Stmt::Unreachable => {}
+            }
+        }
+    }
+    false
+}
 
 /// The bytes of a cell.
 const CELL: u64 = 8;

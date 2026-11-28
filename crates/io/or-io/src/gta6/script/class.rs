@@ -3,8 +3,8 @@
 //!
 //! ⚠ A function belongs to a type only by proof: a virtual slot the type fills, a constructor
 //! run on an object just made, a closure a delegate binds, every call handing it first a
-//! member's receiver or an object of one type. Every other function stays free, and prints as a
-//! function of its program.
+//! member's receiver, an object of one type or a reference field of a member's receiver the
+//! project types. Every other function stays free, and prints as a function of its program.
 
 use serde::{Deserialize, Serialize};
 
@@ -152,4 +152,9 @@ pub struct Carried {
     >,
     /// The functions whose own code types their first parameter as an object or an array.
     pub self_typed: std::collections::BTreeSet<super::ir::FunctionKey>,
+    /// For a function mentioned: the functions that call it with, first, the reference held by a field of the first parameter they were given, untouched, each with the field's byte offset.
+    pub fields: std::collections::BTreeMap<
+        super::ir::FunctionKey,
+        std::collections::BTreeSet<(super::ir::FunctionKey, u32)>,
+    >,
 }

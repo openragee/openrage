@@ -203,3 +203,31 @@ fn only_a_local_of_one_cell_is_private() {
     assert!(!frame.private(Var::Param(0), &head));
     assert!(!frame.private(Var::Value { at: 0x10, index: 0 }, &head));
 }
+
+#[test]
+fn a_jump_or_a_label_anywhere_in_a_body_runs_it_out_of_the_order_it_is_written_in() {
+    let label = tree::Label::Block(1);
+    let cond = Expr::Var(Var::Param(1));
+    let nested = |inner: Stmt| Stmt::If {
+        cond: cond.clone(),
+        then: Vec::new(),
+        els: vec![Stmt::While {
+            cond: cond.clone(),
+            body: vec![inner],
+        }],
+    };
+    assert!(!jumps(&[]));
+    assert!(!jumps(&[
+        hands(vec![address(local(1))]),
+        nested(Stmt::Break),
+        Stmt::Return(None),
+    ]));
+    for inner in [Stmt::Goto(label), Stmt::Label(label)] {
+        let around = [hands(Vec::new()), nested(inner.clone())];
+        assert!(jumps(&around), "{inner:?}");
+        assert!(jumps(&[inner]));
+    }
+    // A construct's own statements are looked in too.
+    let hidden = Stmt::Sugar(Box::new(Sugar::Hidden(vec![Stmt::Goto(label)])));
+    assert!(jumps(&[hidden]));
+}

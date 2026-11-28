@@ -525,7 +525,7 @@ fn an_object_made_and_its_constructor_run_on_it_are_one_construction() {
     let mut between = body.clone();
     between.insert(1, eval(call(0x500, vec![p(0)])));
     // ⚠ `x = new T(a)` assigns once the constructor has run: a global the constructor can read
-    // while it runs, and a variable a pointer reaches, must hold the object before.
+    // while it runs, and a variable a pointer taken before it reaches, must hold the object before.
     let global = Var::Global {
         program: PROGRAM,
         offset: 0x10,
@@ -537,7 +537,7 @@ fn an_object_made_and_its_constructor_run_on_it_are_one_construction() {
         var: temp(1),
         cell: 0,
     };
-    pointed.insert(2, eval(call(0x500, vec![address])));
+    pointed.insert(0, eval(call(0x500, vec![address])));
     for left in [
         run_on(&held, 0x200, vec![value(global), p(0)]),
         pointed,
@@ -618,6 +618,74 @@ fn a_local_an_earlier_locals_address_reaches_no_byte_of_is_constructed_in_one_ne
     let parts = vec![made.clone(), ctor.clone()];
     let group = Stmt::Sugar(Box::new(Sugar::Group { kind, parts }));
     assert_eq!(ran(&handed, &bounded, options), [handed[0].clone(), group]);
+}
+
+#[test]
+fn a_construction_in_the_outermost_list_an_address_taken_only_after_it_may_reach_is_one_new() {
+    let mut project = Project::default();
+    project
+        .members
+        .insert(key(0x200), provisional(T1, Role::Constructor));
+    let options = Options::default().without(Pass::Receivers);
+    let object = Var::Local(3);
+    let making = make(object, &vm_type(T1, 0));
+    let running = ir::Stmt::Eval(call(0x200, vec![value(object), p(0)]));
+    let made = Stmt::Simple(making.clone());
+    let ctor = Stmt::Simple(running.clone());
+    // An earlier local's address handed to a function nothing bounds: it may reach local 3.
+    let address = Expr::AddrOf {
+        var: Var::Local(1),
+        cell: 0,
+    };
+    let handed = eval(call(0x500, vec![address.clone()]));
+    let kind = Group::Construct;
+    let parts = vec![making, running];
+    let group = Stmt::Sugar(Box::new(Sugar::Group { kind, parts }));
+
+    let body = vec![made.clone(), ctor.clone(), handed.clone()];
+    let done = ran(&body, &project, options);
+    assert_eq!(done, [group, handed.clone()]);
+    assert_eq!(tree::desugar(done), body);
+    let off = options.without(Pass::Constructors);
+    assert_eq!(ran(&body, &project, off), body);
+
+    let label = tree::Label::Block(1);
+    let cond = p(1);
+    let with_it = vec![value(object), address.clone()];
+    let by_the_call = Stmt::Simple(ir::Stmt::Eval(call(0x200, with_it)));
+    for left in [
+        // The address taken before, or handed to the constructor itself.
+        vec![handed.clone(), made.clone(), ctor.clone()],
+        vec![made.clone(), by_the_call],
+        // A jump or a label may run the address's statement before the two.
+        vec![
+            made.clone(),
+            ctor.clone(),
+            handed.clone(),
+            Stmt::Goto(label),
+        ],
+        vec![
+            Stmt::Label(label),
+            made.clone(),
+            ctor.clone(),
+            handed.clone(),
+        ],
+        // A loop may run the two again after the address; a list inside one is not looked at.
+        vec![Stmt::While {
+            cond: cond.clone(),
+            body: vec![made.clone(), ctor.clone(), handed.clone()],
+        }],
+        vec![
+            Stmt::If {
+                cond: cond.clone(),
+                then: vec![made.clone(), ctor.clone()],
+                els: Vec::new(),
+            },
+            handed.clone(),
+        ],
+    ] {
+        assert_eq!(ran(&left, &project, options), left, "{left:?}");
+    }
 }
 
 #[test]
@@ -1623,6 +1691,68 @@ fn a_member_an_accessor_by_its_name_is_still_a_method() {
     assert_eq!(roles(Options::default()), plain);
     let off = roles(Options::default().without(Pass::Properties));
     assert_eq!(off, plain);
+}
+
+#[test]
+fn a_slot_a_list_names_as_one_of_both_accessors_of_a_property_stays_a_method_and_its_calls_method_calls(
+) {
+    // ⚠ Declared as a property, a getter and its setter would be two members of one name, and the
+    // setter's body could hold a local written as its `value`.
+    let mut project = Project::default();
+    // T2 is a class, and T3 one made from it; the functions at 0x110 and 0x120 fill T2's slots 3 and 4.
+    project.types.insert(T2, facts(Some(OBJECT), &[]));
+    project.types.insert(T3, facts(Some(T2), &[]));
+    project.members.insert(key(0x110), method(T2, Some(3)));
+    project.members.insert(key(0x120), method(T2, Some(4)));
+    let through = |slot: u32, args: Vec<Expr>, returns: u32| Expr::Call {
+        callee: Callee::Virtual {
+            class: T3.to_string(),
+            method: format!("Method_{slot}"),
+            ty: T3.to_string(),
+            slot,
+        },
+        args,
+        returns: Some(returns),
+    };
+    let get = through(3, vec![p(1)], 1);
+    let set = through(4, vec![p(1), p(0)], 0);
+    let taken = |value: Expr| {
+        Stmt::Simple(ir::Stmt::Assign {
+            target: Var::Local(0),
+            value,
+        })
+    };
+    let body = vec![taken(get.clone()), eval(set.clone())];
+    let read = |names: &Names, options: Options| {
+        let cx = Context::new(names, &project, options);
+        let mut f = function(0x100, 2, body.clone());
+        run(&mut f, &cx, &mut Stats::default());
+        f.body
+    };
+    let getter = tree::Function {
+        head: head(0x110, 1, Returns::Cell),
+        body: Vec::new(),
+    };
+    let functions = vec![getter, function(0x120, 2, Vec::new())];
+    let roles = |names: &Names, options: Options| {
+        let cx = Context::new(names, &project, options);
+        let done = unit(PROGRAM, Vec::new(), functions.clone(), &cx);
+        methods(&done.classes[0])
+    };
+    let as_method = |e: Expr| Expr::sugar(ExprSugar::Method, e);
+
+    let mut names = Names::default();
+    names.methods.insert((T2, 3), "get_Zorp".to_owned());
+    names.methods.insert((T2, 4), "set_Zorp".to_owned());
+    let calls = vec![taken(as_method(get.clone())), eval(as_method(set.clone()))];
+    let plain = [(0x110, Role::Method, false), (0x120, Role::Method, false)];
+    for options in [
+        Options::default(),
+        Options::default().without(Pass::Properties),
+    ] {
+        assert_eq!(read(&names, options), calls);
+        assert_eq!(roles(&names, options), plain);
+    }
 }
 
 #[test]

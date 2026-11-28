@@ -20,13 +20,20 @@ struct Snapshot {
     len: u64,
 }
 
-const SNAPSHOTS: [Snapshot; 3] = [
+const SNAPSHOTS: [Snapshot; 4] = [
     Snapshot {
         file: "gtavi_scarlett_magic.dat",
         bundled: "crates/io/or-io/data/gtavi_scarlett_magic.dat",
         embed: "crates/io/or-io/src/container/rpf/gta6_keygate.rs",
         sha1: "8c488ed36ce5e49874a2dfac873b7248d71568a1",
         len: 144_248,
+    },
+    Snapshot {
+        file: "gtavi_ps5_magic.dat",
+        bundled: "crates/io/or-io/data/gtavi_ps5_magic.dat",
+        embed: "crates/io/or-io/src/container/rpf/gta6_keygate.rs",
+        sha1: "5681c8fa6d48b277a02da03cc2349cfb89281f0d",
+        len: 144_260,
     },
     Snapshot {
         file: "magic.dat",

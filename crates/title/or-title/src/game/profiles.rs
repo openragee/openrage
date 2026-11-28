@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use or_io::Generation;
 
 use super::overlay_loader::{OverlayLoaders, Project, Redirect};
@@ -468,11 +470,16 @@ impl GameProfile for Gta6Ps5 {
         Gta6.target_labels()
     }
 
-    // ⚠ Empty on purpose: every PlayStation package holds an `eboot.bin`, and a
-    // folder holding an executable candidate is claimed, so naming it would
-    // claim them all.
+    // ⚠ Empty on purpose: every PlayStation package holds an `eboot.bin`, and a folder holding an
+    // executable candidate is claimed, so naming it would claim them all. The keys still read from
+    // the folder's own `eboot.bin`, which only a folder already known to be this build looks up.
     fn executable_candidates(&self) -> &'static [&'static str] {
         &[]
+    }
+
+    fn find_executable(&self, root: &Path) -> Option<PathBuf> {
+        let exe = root.join("eboot.bin");
+        exe.is_file().then_some(exe)
     }
 
     fn playstation_title_ids(&self) -> &'static [&'static str] {

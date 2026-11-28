@@ -127,6 +127,13 @@ fn every_nested_table_in_the_build_mounts() {
         walk(&mut file, &mount, &keys, 0, &mut w);
     }
 
+    // The nested archives a build holds, measured per build: a PlayStation 5 build is named by its
+    // `eboot.bin`.
+    let (top_level, nested) = if build.join("eboot.bin").is_file() {
+        (5_699, 5_699)
+    } else {
+        (4_351, 4_351)
+    };
     // Every non-ciphered entry resolves to a start, so none was silently dropped for want of a row
     // shape; the unknown columns of the first offender name what a future shape must read.
     assert_eq!(
@@ -134,12 +141,12 @@ fn every_nested_table_in_the_build_mounts() {
         "{} non-ciphered entries have no entry row (unknown columns {:?})",
         w.rowless, w.rowless_columns
     );
-    // The build's 22 tables hold 4,351 nested archives, every one directly under the top level.
+    // Every one of the build's nested archives sits directly under the top level.
     assert_eq!(
-        w.top_level, 4_351,
+        w.top_level, top_level,
         "nested archives directly under the top level"
     );
-    assert_eq!(w.nested, 4_351, "nested archives at every depth");
+    assert_eq!(w.nested, nested, "nested archives at every depth");
     println!(
         "mounted {} nested RPF9 archives ({} at the top level), 0 refusals",
         w.nested, w.top_level

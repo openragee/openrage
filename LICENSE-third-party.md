@@ -58,6 +58,13 @@ Ported from CodeX with the permission of its authors.
 | `crates/io/or-io/src/container/rpf/lzb16.rs` | OpenRage's own: Oodle's LZB16 read off streams the game's `oo2core` produced and consumed. No code or text of Oodle is in the tree. |
 | `oozextract` (vendored in `crates/io/or-kraken/oozextract`, a dependency of `or-kraken`, which `or-io` reaches behind `oodle`) | A pure-Rust port of the Kraken decoder in [ooz](https://github.com/powzix/ooz), which declares MIT in its manifest and ships no licence file; the licence of ooz itself is not stated in its repository, and the question is open (lawyer question 4 covers the bundled snapshot, not this). |
 
+## GTA VI archives
+
+| Where | What |
+|---|---|
+| `crates/io/or-io/data/gtavi_scarlett_magic.dat` | The masked key snapshot of the Xbox Series build 1.0.2.1, read out of the user's own `game_scarlett_master.exe` by `gta6_extract`. Masked under the executable's own cipher-table region, so it opens only with that executable (D18). |
+| `crates/io/or-io/data/gtavi_ps5_magic.dat` | The same for the PlayStation 5 build 1.0.2.1, read out of the user's own `eboot.bin`, an unencrypted SELF container around the game's ELF. |
+
 ## Ported from bcpack-rs: the BCPack coder of GTA VI texture packs
 
 `crates/io/or-io/src/gta6/bcpack/` decodes the bodies of a GTA VI `.ttpf` pack that are stored

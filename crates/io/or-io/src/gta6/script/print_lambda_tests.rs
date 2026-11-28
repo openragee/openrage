@@ -1,4 +1,5 @@
 use super::*;
+use crate::gta6::script::class::Field;
 use crate::gta6::script::ir::{Callee, Const, FunctionKey, Head, Returns, VmType};
 use crate::gta6::script::project::{ImportInfo, ProgramInfo};
 use crate::gta6::script::tree::{Arm, Catch};
@@ -657,4 +658,283 @@ fn a_local_given_to_a_closure_object_is_read_for_its_field_where_assigned_once_b
     let mut above = binder.clone();
     above.body.push(address(5));
     assert!(hides(&above));
+}
+
+/// The field of one cell at byte 8 of the closure class.
+fn cell_at_8() -> Field {
+    Field {
+        offset: 8,
+        bytes: 8,
+        kind: Kind::Unknown,
+        is_static: false,
+    }
+}
+
+/// The closure class whose one member is the lambda `body`, of the fields `fields`.
+fn closure_with(body: tree::Function, fields: Vec<Field>) -> Class {
+    Class {
+        fields,
+        ..closure_class(body)
+    }
+}
+
+/// [`unit_of`], with the closure class stating its field of one cell at byte 8.
+fn unit_with_field(functions: Vec<tree::Function>, body: tree::Function) -> Unit {
+    let mut unit = Unit::flat(PROGRAM, Vec::new(), functions);
+    unit.classes.push(closure_with(body, vec![cell_at_8()]));
+    unit
+}
+
+/// [`maker`], the field given what a call returns.
+fn computed() -> tree::Function {
+    let mut binder = maker(Vec::new(), Vec::new());
+    binder.body[1] = given(Var::Local(0), 8, local_call(0x92, Vec::new()));
+    binder
+}
+
+#[test]
+fn a_field_given_what_no_variable_holds_reads_as_a_variable_of_its_own() {
+    let project = installed(&[]);
+    // ⚠ Without the class's fields nothing says what the variable is: the class stays.
+    let bare = unit_of(vec![computed()], lambda_body());
+    assert!(!hidden_in(&bare, &project, Options::default()).hides(CLOSURE));
+    let unit = unit_with_field(vec![computed()], lambda_body());
+    assert!(hidden_in(&unit, &project, Options::default()).hides(CLOSURE));
+    let text = written(&unit, &project, 0x40, None, true);
+    assert!(text.contains("f_8 = func_000092();"), "{text}");
+    assert!(text.contains("=> func_000080(f_8, p1);"), "{text}");
+    assert!(!text.contains("local_0"), "{text}");
+    assert!(!text.contains("type_00000000000000CD"), "{text}");
+
+    // The way back: with nothing hidden the object is made, given its field and read.
+    let before = written(&unit, &project, 0x40, None, false);
+    assert!(before.contains("local_0.f_8"), "{before}");
+    assert!(before.contains("type_00000000000000CD"), "{before}");
+}
+
+#[test]
+fn a_field_stored_again_after_its_lambda_is_bound_is_one_variable_binder_and_lambda_share() {
+    let project = installed(&[]);
+    let again = given(Var::Local(0), 8, param(1));
+    let unit = unit_with_field(vec![maker(Vec::new(), vec![again])], lambda_body());
+    assert!(hidden_in(&unit, &project, Options::default()).hides(CLOSURE));
+    let text = written(&unit, &project, 0x40, None, true);
+    let first = text.find("f_8 = p2;");
+    let bound = text.find("=> func_000080(f_8, p1);");
+    let later = text.find("f_8 = p1;");
+    assert!(
+        first.is_some() && bound.is_some() && later.is_some(),
+        "{text}"
+    );
+    assert!(first < bound && bound < later, "{text}");
+}
+
+#[test]
+fn a_field_read_before_it_is_given_anything_reads_as_its_variable_made_zero_with_the_object() {
+    let project = installed(&[]);
+    let mut early = maker(Vec::new(), Vec::new());
+    early
+        .body
+        .insert(1, eval(local_call(0x91, vec![field(local(0), 8)])));
+    let unit = unit_with_field(vec![early], lambda_body());
+    assert!(hidden_in(&unit, &project, Options::default()).hides(CLOSURE));
+    let text = written(&unit, &project, 0x40, None, true);
+    let zero = text.find("f_8 = 0;");
+    let read = text.find("func_000091(f_8);");
+    let set = text.find("f_8 = p2;");
+    assert!(zero.is_some() && read.is_some() && set.is_some(), "{text}");
+    assert!(zero < read && read < set, "{text}");
+}
+
+#[test]
+fn a_field_a_lambda_writes_is_a_variable_of_its_own_the_lambda_assigns() {
+    let project = installed(&[]);
+    let mut writes = lambda_body();
+    writes.body.insert(0, given(Var::Param(0), 8, param(1)));
+    let unit = unit_with_field(vec![maker(Vec::new(), Vec::new())], writes.clone());
+    assert!(hidden_in(&unit, &project, Options::default()).hides(CLOSURE));
+    let text = written(&unit, &project, 0x40, None, true);
+    assert!(text.contains("f_8 = p2;"), "{text}");
+    assert!(text.contains("f_8 = p1;"), "{text}");
+    assert!(text.contains("func_000080(f_8, p1);"), "{text}");
+    assert!(!text.contains("this"), "{text}");
+    // ⚠ Read as `p2`, the field would keep what the lambda wrote out of the binder's sight: with
+    // no fields stated the class stays.
+    let bare = unit_of(vec![maker(Vec::new(), Vec::new())], writes);
+    assert!(!hidden_in(&bare, &project, Options::default()).hides(CLOSURE));
+}
+
+#[test]
+fn a_field_given_a_variable_whose_name_the_lambda_has_reads_as_a_variable_of_its_own() {
+    let project = installed(&[]);
+    let mut named = maker(Vec::new(), Vec::new());
+    named.body[1] = given(Var::Local(0), 8, param(1));
+    let unit = unit_with_field(vec![named], lambda_body());
+    assert!(hidden_in(&unit, &project, Options::default()).hides(CLOSURE));
+    let text = written(&unit, &project, 0x40, None, true);
+    assert!(text.contains("f_8 = p1;"), "{text}");
+    assert!(text.contains("=> func_000080(f_8, p1);"), "{text}");
+}
+
+#[test]
+fn a_closure_class_stays_where_its_object_or_a_field_reaches_further_than_its_variables() {
+    let project = installed(&[]);
+    let hides = |unit: &Unit| hidden_in(unit, &project, Options::default()).hides(CLOSURE);
+    assert!(hides(&unit_with_field(vec![computed()], lambda_body())));
+    // ⚠ The object handed on.
+    let mut handed = computed();
+    handed.body.push(eval(local_call(0x93, vec![local(0)])));
+    assert!(!hides(&unit_with_field(vec![handed], lambda_body())));
+    // ⚠ The address of its field handed on.
+    let mut addressed = computed();
+    let place = Expr::ByteOffset {
+        addr: Box::new(local(0)),
+        offset: Box::new(Expr::Const(Const::i32(8))),
+    };
+    addressed.body.push(eval(local_call(0x93, vec![place])));
+    assert!(!hides(&unit_with_field(vec![addressed], lambda_body())));
+    // ⚠ Less than its whole cell stored.
+    let mut narrow = computed();
+    narrow.body.push(simple(Stmt::Store {
+        kind: StoreKind::I32,
+        addr: local(0),
+        offset: 8,
+        value: zero(),
+    }));
+    assert!(!hides(&unit_with_field(vec![narrow], lambda_body())));
+    // ⚠ A field of four bytes, which a whole cell does not stand for.
+    let four = Field {
+        offset: 8,
+        bytes: 4,
+        kind: Kind::I32,
+        is_static: false,
+    };
+    let mut unit = Unit::flat(PROGRAM, Vec::new(), vec![computed()]);
+    unit.classes.push(closure_with(lambda_body(), vec![four]));
+    assert!(!hides(&unit));
+    // ⚠ A variable of the binder's own already goes by the field's name.
+    let mut taken = computed();
+    let info = VarInfo {
+        name: Some("f_8".to_owned()),
+        ..VarInfo::new(Width::Cell)
+    };
+    taken.head.vars.insert(Var::Local(3), info);
+    taken.body.push(eval(local_call(0x93, vec![local(3)])));
+    assert!(!hides(&unit_with_field(vec![taken], lambda_body())));
+}
+
+#[test]
+fn a_closure_class_of_no_member_is_written_nowhere_only_where_its_object_is_read_away() {
+    let project = installed(&[]);
+    let hides = |unit: &Unit| hidden_in(unit, &project, Options::default()).hides(CLOSURE);
+    let made = Stmt::Assign {
+        target: Var::Local(0),
+        value: Expr::NewObject(closure_type()),
+    };
+    let body = vec![
+        simple(made),
+        given(Var::Local(0), 8, local_call(0x92, Vec::new())),
+        eval(local_call(0x91, vec![field(local(0), 8)])),
+    ];
+    let binder = tree::Function {
+        head: head(0x40, 1),
+        body,
+    };
+    let alone = |functions: Vec<tree::Function>| {
+        let mut unit = Unit::flat(PROGRAM, Vec::new(), functions);
+        let mut class = closure_with(lambda_body(), vec![cell_at_8()]);
+        class.methods.clear();
+        unit.classes.push(class);
+        unit
+    };
+    let unit = alone(vec![binder.clone()]);
+    assert!(hides(&unit));
+    let text = written(&unit, &project, 0x40, None, true);
+    assert!(text.contains("f_8 = func_000092();"), "{text}");
+    assert!(text.contains("func_000091(f_8);"), "{text}");
+    assert!(!text.contains("type_00000000000000CD"), "{text}");
+    // ⚠ The object handed on, and an object nothing read makes.
+    let mut handed = binder;
+    handed.body.push(eval(local_call(0x93, vec![local(0)])));
+    assert!(!hides(&alone(vec![handed])));
+    assert!(!hides(&alone(Vec::new())));
+}
+
+#[test]
+fn a_lambda_its_objects_name_kept_out_of_place_is_written_in_place_where_its_class_is_hidden() {
+    let project = installed(&[]);
+    // The lambda keeps its field in a local of its own, which goes by the binder's object's name.
+    let mut body = lambda_body();
+    body.body = vec![
+        simple(Stmt::Assign {
+            target: Var::Local(0),
+            value: field(param(0), 8),
+        }),
+        eval(local_call(0x80, vec![local(0), param(1)])),
+    ];
+    let binder = maker(Vec::new(), Vec::new());
+    let unit = unit_of(vec![binder.clone()], body.clone());
+    let names = Names::default();
+    let cx = Context::new(&names, &project, Options::default());
+    let mut alone = Lambdas::new();
+    alone.insert(0x200, &body);
+    assert!(bound_in_place(&binder, &alone, &cx).is_empty());
+    // What the export hands on for the unit: no body written in place.
+    let none = Lambdas::new();
+    let hidden = Hidden::of(&unit, &none, &cx);
+    assert!(hidden.hides(CLOSURE));
+    let mut out = String::new();
+    method_hiding(
+        &mut out,
+        method_at(&unit, 0x40),
+        None,
+        0,
+        &cx,
+        &none,
+        &hidden,
+    );
+    assert!(out.contains("local_0 = p2;"), "{out}");
+    assert!(out.contains("func_000080(local_0, p1);"), "{out}");
+    assert!(!out.contains("type_00000000000000CD"), "{out}");
+    assert!(!out.contains("func_000200"), "{out}");
+
+    // The way back: with nothing hidden the delegate names the function.
+    let mut old = String::new();
+    let nothing = Hidden::default();
+    method_hiding(
+        &mut old,
+        method_at(&unit, 0x40),
+        None,
+        0,
+        &cx,
+        &none,
+        &nothing,
+    );
+    assert!(old.contains("func_000200"), "{old}");
+}
+
+#[test]
+fn a_local_given_to_a_closure_object_is_read_for_its_field_only_where_assigned_beside_the_making() {
+    let project = installed(&[]);
+    let set = simple(Stmt::Assign {
+        target: Var::Local(3),
+        value: local_call(0x70, Vec::new()),
+    });
+    let nested = tree::Stmt::If {
+        cond: param(1),
+        then: vec![set],
+        els: Vec::new(),
+    };
+    let mut binder = maker(Vec::new(), Vec::new());
+    binder.body[1] = given(Var::Local(0), 8, local(3));
+    binder.body.insert(0, nested);
+    // ⚠ Assigned in a block of its own, the local may be declared there, out of the lambda's reach.
+    let bare = unit_of(vec![binder.clone()], lambda_body());
+    assert!(!hidden_in(&bare, &project, Options::default()).hides(CLOSURE));
+    // The field is then a variable of its own, given the local where the object was.
+    let unit = unit_with_field(vec![binder], lambda_body());
+    assert!(hidden_in(&unit, &project, Options::default()).hides(CLOSURE));
+    let text = written(&unit, &project, 0x40, None, true);
+    assert!(text.contains("f_8 = local_3;"), "{text}");
+    assert!(text.contains("=> func_000080(f_8, p1);"), "{text}");
 }

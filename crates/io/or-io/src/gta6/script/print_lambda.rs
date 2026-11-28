@@ -52,10 +52,14 @@ pub(crate) fn method_hiding(
         return method_in(out, method, class, depth, cx, lambdas);
     };
     // The lambdas of a hidden class read what their object held as the variables it was given.
-    let bodies: Lambdas<'_> = lambdas
+    let mut bodies: Lambdas<'_> = lambdas
         .iter()
         .map(|(at, body)| (*at, hidden.bodies.get(at).unwrap_or(*body)))
         .collect();
+    // A lambda its binder's object kept out of place is written in place once the object is gone.
+    for (at, body) in &hidden.bodies {
+        bodies.entry(*at).or_insert(body);
+    }
     let mut writer = Writer::in_context(out, cx, &written.function.head);
     writer.depth = depth;
     // ⚠ What the original binds in place: the object a body was bound to is gone from `written`.
@@ -80,17 +84,19 @@ impl Hidden {
         self.classes.contains(&key)
     }
 
-    /// The closure classes of `unit` every lambda of which `lambdas` writes in place and that nothing written otherwise names, with their binders and bodies as they are then written.
+    /// The closure classes of `unit` every lambda of which is written in place, by `lambdas` or where only its object's name kept it out, and that nothing written otherwise names, with their binders and bodies as they are then written.
     // ⚠ A closure captures a variable and not its value: the object's field is what both sides
     // read. A field reads as the variable it was given only where neither is written after the
-    // object is given it, and the object reaches nothing but the lambdas bound to it. Each part
-    // is proved on its own copy: the tree keeps the object, and `lambdas` off writes it.
+    // object is given it; any other field is a variable of its own, which binder and lambdas
+    // read and write as they did the field. Either holds only where the object reaches nothing
+    // but the lambdas bound to it. Each part is proved on its own copy: the tree keeps the
+    // object, and `lambdas` off writes it.
     pub(crate) fn of(unit: &Unit, lambdas: &Lambdas<'_>, cx: &Context<'_>) -> Hidden {
         let on = cx.options.level == Level::Source
             && true_csharp(&cx.options)
             && cx.options.on(Pass::Delegates)
             && cx.options.on(Pass::Lambdas);
-        if !on || lambdas.is_empty() || !unimported(unit.program, cx.project) {
+        if !on || !unimported(unit.program, cx.project) {
             return Hidden::default();
         }
         // Every method of the unit, and whether it is written as a member of a class.
@@ -102,8 +108,14 @@ impl Hidden {
             methods.extend(class.methods.iter().map(|m| (m, true)));
             open.extend(&class.nested);
         }
+        if !classes.iter().any(|class| class.kind == ClassKind::Closure) {
+            return Hidden::default();
+        }
+        let extra = renamed(unit.program, &methods, &classes, lambdas);
+        let mut every: Lambdas<'_> = lambdas.iter().map(|(at, body)| (*at, *body)).collect();
+        every.extend(extra.iter().map(|(at, body)| (*at, *body)));
         let mut keep: BTreeSet<TypeKey> = (classes.iter())
-            .filter(|class| candidate(class, lambdas, cx.project))
+            .filter(|class| candidate(class, &every, cx.project))
             .map(|class| class.key)
             .collect();
         if keep.is_empty() {
@@ -116,14 +128,24 @@ impl Hidden {
                 (class.key, ats.collect())
             })
             .collect();
+        let plans: BTreeMap<TypeKey, Plan> = (classes.iter())
+            .filter(|class| keep.contains(&class.key))
+            .map(|class| (class.key, Plan::of(class, cx.names)))
+            .collect();
+        let sites = Sites {
+            lambdas,
+            every: &every,
+            extra: &extra,
+        };
         let binders: Vec<Binder<'_>> = (methods.iter())
-            .filter_map(|(method, member)| Binder::of(method, *member, &keep, lambdas, cx))
+            .filter_map(|(method, member)| Binder::of(method, *member, &keep, &sites, cx))
             .collect();
         let found = Found {
             methods: &methods,
             classes: &classes,
             binders: &binders,
             owned: &owned,
+            plans: &plans,
             program: unit.program,
         };
         // Each round leaves out the classes some part of whose writing failed.
@@ -148,7 +170,9 @@ pub(crate) fn unimported(program: u32, project: &Project) -> bool {
     project.programs.contains_key(&program) && !named
 }
 
-/// Whether `class` is a closure class whose every member is a lambda `lambdas` writes in place.
+/// Whether `class` is a closure class whose every member, of none or more, is a lambda `lambdas` writes in place.
+// A class of no member is one whose object holds variables alone: hidden only where the object
+// is read away whole, and bound to no delegate.
 fn candidate(class: &Class, lambdas: &Lambdas<'_>, project: &Project) -> bool {
     let lambda = |m: &Method| {
         m.role == Role::Lambda && !m.is_async && lambdas.contains_key(&m.function.head.at)
@@ -156,18 +180,131 @@ fn candidate(class: &Class, lambdas: &Lambdas<'_>, project: &Project) -> bool {
     let slots = (project.types.get(&class.key)).is_none_or(|facts| facts.slots.is_empty());
     class.kind == ClassKind::Closure
         && class.nested.is_empty()
-        && !class.methods.is_empty()
         && class.methods.iter().all(lambda)
         && class.fields.iter().all(|field| !field.is_static)
         && slots
 }
 
-/// What a lambda reads of its object, field by field: the offset, the name of the binder's variable the field was given, and what the binder knows of it.
+/// The lambdas of the unit's closure classes that `lambdas` leaves out and that are named once, not `async` and of a form a lambda is written in: those the name of their binder's object may have kept out of place.
+// ⚠ Such a body reads its object by the binder's variable, and a variable of its own goes by that
+// name: it is written in place only where its class is hidden and the object read away.
+fn renamed<'u>(
+    program: u32,
+    methods: &[(&'u Method, bool)],
+    classes: &[&'u Class],
+    lambdas: &Lambdas<'_>,
+) -> Lambdas<'u> {
+    // How often the unit names each of its functions: a call, or a reference bound or kept.
+    let mut named: BTreeMap<u32, u32> = BTreeMap::new();
+    for (method, _) in methods {
+        tree::each_expr(&method.function.body, &mut |top| {
+            top.walk(&mut |e| match e {
+                Expr::FunctionRef { program: of, at } if *of == program => {
+                    *named.entry(*at).or_default() += 1;
+                }
+                Expr::Call {
+                    callee: Callee::Local { at, .. },
+                    ..
+                } => *named.entry(*at).or_default() += 1,
+                _ => {}
+            });
+        });
+    }
+    let mut found = Lambdas::new();
+    for class in classes.iter().copied() {
+        if class.kind != ClassKind::Closure {
+            continue;
+        }
+        for method in &class.methods {
+            let body = &method.function;
+            let at = body.head.at;
+            let fits = method.role == Role::Lambda
+                && !method.is_async
+                && !lambdas.contains_key(&at)
+                && named.get(&at) == Some(&1)
+                && closures::inline(body).is_some();
+            if fits {
+                found.insert(at, body);
+            }
+        }
+    }
+    found
+}
+
+/// The lambdas a binder may write in place: those of the unit, those [`renamed`] found, and both.
+struct Sites<'s, 'l> {
+    lambdas: &'s Lambdas<'l>,
+    every: &'s Lambdas<'l>,
+    extra: &'s Lambdas<'l>,
+}
+
+/// What the fields of a closure class are where one is read away: each field of one cell by offset with the kind it holds and the name it is written under, the fields its lambdas store, and the names its lambdas' own variables go by.
+struct Plan {
+    cells: BTreeMap<u32, (Kind, String)>,
+    stored: BTreeSet<u32>,
+    reserved: BTreeSet<String>,
+}
+
+impl Plan {
+    fn of(class: &Class, names: &Names) -> Plan {
+        const RECEIVER: Var = Var::Param(0);
+        let several = |kind: &Kind| {
+            matches!(
+                kind,
+                Kind::Aggregate(_) | Kind::Value { .. } | Kind::Vector | Kind::Handle
+            )
+        };
+        let cells = (class.fields.iter())
+            .filter(|field| !field.is_static && field.bytes == 8 && !several(&field.kind))
+            .map(|field| {
+                let name = match names.field(class.key, field.offset) {
+                    Some(name) => name.to_owned(),
+                    None => format!("f_{:X}", field.offset),
+                };
+                (field.offset, (field.kind.clone(), name))
+            })
+            .collect();
+        let mut stored = BTreeSet::new();
+        let mut reserved = BTreeSet::new();
+        for method in &class.methods {
+            let f = &method.function;
+            tree::each_simple(&f.body, &mut |s| {
+                stored.extend(field_store(s, RECEIVER).map(|(offset, _)| offset));
+            });
+            for var in own_vars(f) {
+                reserved.insert(label(&f.head, var));
+            }
+        }
+        Plan {
+            cells,
+            stored,
+            reserved,
+        }
+    }
+}
+
+/// The variables a body names of its own: its parameters but the receiver, and every other one it mentions but a global.
+fn own_vars(f: &tree::Function) -> BTreeSet<Var> {
+    let mut own: BTreeSet<Var> = (1..f.head.params).map(Var::Param).collect();
+    tree::each_simple(&f.body, &mut |s| own.extend(s.targets().iter().copied()));
+    tree::each_expr(&f.body, &mut |top| {
+        top.walk(&mut |e| {
+            if let Expr::Var(var) | Expr::AddrOf { var, .. } = e {
+                own.insert(*var);
+            }
+        });
+    });
+    own.retain(|var| *var != Var::Param(0) && !matches!(var, Var::Global { .. }));
+    own
+}
+
+/// What a lambda reads of its object, field by field: the offset, the name of the binder's variable the field was given, what the binder knows of it, and whether the field is a variable of its own, which a lambda may write.
 #[derive(Clone)]
 struct Given {
     offset: u32,
     name: String,
     info: VarInfo,
+    hoisted: bool,
 }
 
 /// How a function's code uses its variables.
@@ -207,7 +344,13 @@ struct Binder<'u> {
     closures: BTreeSet<Var>,
     /// The lambdas the function binds in place.
     sited: BTreeSet<u32>,
+    /// The lambdas of [`renamed`] it would bind in place but for the name of its object.
+    extra: BTreeSet<u32>,
     facts: Facts,
+    /// Every name it writes a variable under, `this` among them.
+    names: BTreeSet<String>,
+    /// The first local slot no variable of it takes.
+    free: u32,
 }
 
 impl<'u> Binder<'u> {
@@ -215,7 +358,7 @@ impl<'u> Binder<'u> {
         method: &'u Method,
         member: bool,
         keep: &BTreeSet<TypeKey>,
-        lambdas: &Lambdas<'_>,
+        sites: &Sites<'_, '_>,
         cx: &Context<'_>,
     ) -> Option<Binder<'u>> {
         let f = &method.function;
@@ -246,13 +389,40 @@ impl<'u> Binder<'u> {
         if objects.is_empty() {
             return None;
         }
+        let mut vars: BTreeSet<Var> = (0..f.head.params).map(Var::Param).collect();
+        vars.extend(f.head.vars.keys().copied());
+        tree::each_simple(&f.body, &mut |s| vars.extend(s.targets().iter().copied()));
+        tree::each_expr(&f.body, &mut |top| {
+            top.walk(&mut |e| {
+                if let Expr::Var(var) | Expr::AddrOf { var, .. } = e {
+                    vars.insert(*var);
+                }
+            });
+        });
+        let mut free = f.head.locals;
+        for var in &vars {
+            if let Var::Local(n) = var {
+                free = free.max(n.checked_add(1)?);
+            }
+        }
+        let mut names: BTreeSet<String> = vars.iter().map(|var| label(&f.head, *var)).collect();
+        names.insert("this".to_owned());
+        let extra = match sites.extra.is_empty() {
+            true => BTreeSet::new(),
+            false => (bound_in_place_by(f, sites.every, cx, false).into_iter())
+                .filter(|at| sites.extra.contains_key(at))
+                .collect(),
+        };
         Some(Binder {
             method,
             member,
             objects,
             closures,
-            sited: bound_in_place(f, lambdas, cx),
+            sited: bound_in_place(f, sites.lambdas, cx),
+            extra,
             facts: Facts::of(&f.body),
+            names,
+            free,
         })
     }
 
@@ -271,9 +441,10 @@ impl<'u> Binder<'u> {
         held.unwrap_or_else(|| VarInfo::new(Width::Cell))
     }
 
-    /// Whether `var`, given to an object by a statement that `before` stands before, holds that value for as long as the function runs: one cell, assigned in `before` or never, and reached through no address.
+    /// Whether `var`, given to an object by a statement that `before` stands before, holds that value for as long as the function runs: one cell, assigned by a statement of `before` itself or never, and reached through no address.
     // ⚠ An address of a parameter reaches every cell from it on, the locals included; one of a
-    // local, every local from it on.
+    // local, every local from it on. A variable assigned only in a block nested there may be
+    // declared in that block, where a lambda bound after it cannot read it.
     fn steady(&self, var: Var, before: &[tree::Stmt]) -> bool {
         let head = &self.method.function.head;
         let several = |kind: &Kind| {
@@ -287,9 +458,16 @@ impl<'u> Binder<'u> {
         let times = self.facts.assigned.get(&var).copied().unwrap_or(0);
         let addressed = &self.facts.addressed;
         let set_before = || {
-            let mut set = false;
-            tree::each_simple(before, &mut |s| set |= s.targets().contains(&var));
-            set
+            before.iter().any(|stmt| match stmt {
+                tree::Stmt::Simple(s) => s.targets().contains(&var),
+                tree::Stmt::Sugar(sugar) => match &**sugar {
+                    tree::Sugar::Group { parts, .. } => {
+                        parts.iter().any(|s| s.targets().contains(&var))
+                    }
+                    _ => false,
+                },
+                _ => false,
+            })
         };
         let unchanged = match var {
             Var::Global { .. } => false,
@@ -315,10 +493,36 @@ impl<'u> Binder<'u> {
 
 /// What one allocation of a closure object came to, read away.
 struct Captured {
-    /// The binder's variable each field was given, by offset.
+    /// The binder's variable each field was given, or the one it is read as, by offset.
     held: BTreeMap<u32, Var>,
+    /// The fields of `held` that are variables of their own.
+    hoisted: BTreeSet<u32>,
+    /// What the binder is to know of each of those variables.
+    declared: Vec<(Var, VarInfo)>,
     /// The lambdas bound to the object.
     bound: BTreeSet<u32>,
+}
+
+/// One closure object a binder makes: the variable that holds it, its class, the lambdas bound to it that may be written in place, and what its fields are.
+struct Object<'p> {
+    var: Var,
+    key: TypeKey,
+    allowed: BTreeSet<u32>,
+    plan: &'p Plan,
+}
+
+/// The local slots and the names a binder's fields are read as: the next slot no variable takes, and every name already written.
+struct Fresh {
+    next: u32,
+    taken: BTreeSet<String>,
+}
+
+impl Fresh {
+    fn local(&mut self) -> Option<Var> {
+        let var = Var::Local(self.next);
+        self.next = self.next.checked_add(1)?;
+        Some(var)
+    }
 }
 
 /// What [`Hidden::of`] reads of a unit once.
@@ -328,6 +532,7 @@ struct Found<'f, 'u> {
     binders: &'f [Binder<'u>],
     /// The lambdas of each class that may be hidden.
     owned: &'f BTreeMap<TypeKey, BTreeSet<u32>>,
+    plans: &'f BTreeMap<TypeKey, Plan>,
     program: u32,
 }
 
@@ -337,6 +542,8 @@ impl Found<'_, '_> {
         let mut hidden = Hidden::default();
         let mut failed: BTreeSet<TypeKey> = BTreeSet::new();
         let mut given: BTreeMap<u32, Vec<Given>> = BTreeMap::new();
+        // The classes an object of which some binder read away.
+        let mut dissolved: BTreeSet<TypeKey> = BTreeSet::new();
         for binder in self.binders {
             let objects: Vec<(Var, TypeKey)> = (binder.objects.iter())
                 .filter(|(_, key)| keep.contains(*key))
@@ -348,21 +555,47 @@ impl Found<'_, '_> {
             // ⚠ A round in which one fails is thrown away whole: what it changed of the copy
             // is never written.
             let mut written = binder.method.clone();
+            let mut fresh = Fresh {
+                next: binder.free,
+                taken: binder.names.clone(),
+            };
             for (object, key) in objects {
                 let own = self.owned.get(&key);
-                let allowed: BTreeSet<u32> = (binder.sited.iter().copied())
+                let allowed: BTreeSet<u32> = (binder.sited.iter().chain(&binder.extra).copied())
                     .filter(|at| own.is_some_and(|all| all.contains(at)))
                     .collect();
-                let Some(captured) = dissolve(&mut written.function, object, key, &allowed, binder)
+                let Some(plan) = self.plans.get(&key) else {
+                    failed.insert(key);
+                    continue;
+                };
+                let target = Object {
+                    var: object,
+                    key,
+                    allowed,
+                    plan,
+                };
+                let Some(captured) = dissolve(&mut written.function, &target, binder, &mut fresh)
                 else {
                     failed.insert(key);
                     continue;
                 };
+                dissolved.insert(key);
+                let head = &written.function.head;
                 let read: Vec<Given> = (captured.held.iter())
-                    .map(|(offset, var)| Given {
-                        offset: *offset,
-                        name: binder.spoken(*var),
-                        info: binder.info(*var),
+                    .map(|(offset, var)| match captured.hoisted.contains(offset) {
+                        true => Given {
+                            offset: *offset,
+                            name: label(head, *var),
+                            info: (head.vars.get(var).cloned())
+                                .unwrap_or_else(|| VarInfo::new(Width::Cell)),
+                            hoisted: true,
+                        },
+                        false => Given {
+                            offset: *offset,
+                            name: binder.spoken(*var),
+                            info: binder.info(*var),
+                            hoisted: false,
+                        },
                     })
                     .collect();
                 for at in captured.bound {
@@ -371,12 +604,23 @@ impl Found<'_, '_> {
                     }
                 }
             }
+            // What the binder writes in place: what it did, and the lambdas only a hidden class
+            // lets it, which no other part writes once the round holds.
+            let extra = (binder.extra.iter().copied()).filter(|at| {
+                (self.owned.iter()).any(|(key, all)| keep.contains(key) && all.contains(at))
+            });
+            let sited: BTreeSet<u32> = binder.sited.iter().copied().chain(extra).collect();
             let at = binder.method.function.head.at;
-            hidden.binders.insert(at, (written, binder.sited.clone()));
+            hidden.binders.insert(at, (written, sited));
         }
         for class in self.classes {
             if !keep.contains(&class.key) || failed.contains(&class.key) {
                 continue;
+            }
+            // ⚠ A class of no member is hidden only where an object of it is read away: one no
+            // binder makes may be made by code that is not read.
+            if class.methods.is_empty() && !dissolved.contains(&class.key) {
+                failed.insert(class.key);
             }
             for method in &class.methods {
                 let at = method.function.head.at;
@@ -575,13 +819,12 @@ fn captured_at(stmt: &tree::Stmt, object: Var) -> Option<(u32, Var)> {
     }
 }
 
-/// Reads the closure object `object` of the class `key` away from `f`: its making and the stores of its fields go, each field read as the variable it was given, each delegate of a lambda of `allowed` bound to it bound to nothing; `None` where any of it does not hold, with `f` left part changed.
+/// Reads the closure object `object` away from `f`: its making and the stores of its fields go, each field read as the variable it was given or as a variable of its own, each delegate of a lambda it allows bound to it bound to nothing; `None` where any of it does not hold, with `f` left part changed.
 fn dissolve(
     f: &mut tree::Function,
-    object: Var,
-    key: TypeKey,
-    allowed: &BTreeSet<u32>,
+    object: &Object<'_>,
     binder: &Binder<'_>,
+    fresh: &mut Fresh,
 ) -> Option<Captured> {
     let found = {
         let mut found = None;
@@ -590,10 +833,10 @@ fn dissolve(
         while let Some(list) = work.pop() {
             let at = list
                 .iter()
-                .position(|stmt| allocation(stmt, object, key).is_some());
+                .position(|stmt| allocation(stmt, object.var, object.key).is_some());
             match at {
                 Some(i) => {
-                    found = dissolve_in(list, i, object, key, allowed, binder);
+                    found = dissolve_in(list, i, object, binder, fresh);
                     break;
                 }
                 None => {
@@ -606,81 +849,273 @@ fn dissolve(
         found
     };
     let captured = found?;
-    (!mentioned(&f.body, object)).then_some(captured)
+    if mentioned(&f.body, object.var) {
+        return None;
+    }
+    for (var, info) in &captured.declared {
+        f.head.vars.insert(*var, info.clone());
+    }
+    Some(captured)
 }
 
 /// [`dissolve`] where `list[i]` makes the object.
-// Every statement after the last store of a field is reached only through the making and the
-// stores, as the list holds no label from the making on; the object is made outside every loop,
-// as a lambda is written in place only where it is. Between the making and the last store
-// nothing else mentions the object, so no field is read before it is given its variable.
+// Every statement after the making is reached only through it, as the list holds no label from
+// the making on, and nothing outside the list may name the object. A field given a variable
+// once, by a statement before anything else names the object, by a variable that holds that
+// value for as long as the function runs, and written by no lambda, reads as that variable. Any
+// other field of one cell is a variable of its own, made where the object is or at its first
+// assignment, which stands before any lambda is bound: binder and lambdas read and write it as
+// they did the field, which nothing else reached.
 fn dissolve_in(
     list: &mut Vec<tree::Stmt>,
     i: usize,
-    object: Var,
-    key: TypeKey,
-    allowed: &BTreeSet<u32>,
+    object: &Object<'_>,
     binder: &Binder<'_>,
+    fresh: &mut Fresh,
 ) -> Option<Captured> {
-    let mut held: BTreeMap<u32, Var> = BTreeMap::new();
-    // Each variable given and where the statement that gives it stands.
-    let mut given: Vec<(Var, usize)> = Vec::new();
-    for s in allocation(list.get(i)?, object, key)? {
-        let (offset, var) = capture(s, object)?;
-        if held.insert(offset, var).is_some() {
-            return None;
-        }
-        given.push((var, i));
+    let (var, plan) = (object.var, object.plan);
+    let init: Vec<(u32, Expr)> = allocation(list.get(i)?, var, object.key)?
+        .iter()
+        .map(|s| field_store(s, var).map(|(offset, value)| (offset, value.clone())))
+        .collect::<Option<_>>()?;
+    if tree::counts(list.get(i..)?).labels != 0 {
+        return None;
     }
     let after = i.checked_add(1)?;
-    let last = (after..list.len())
-        .rev()
-        .find(|j| captured_at(&list[*j], object).is_some())
-        .unwrap_or(i);
-    let mut stores = Vec::new();
-    for j in after..=last {
-        match captured_at(&list[j], object) {
-            Some((offset, var)) => {
-                if held.insert(offset, var).is_some() {
-                    return None;
-                }
-                given.push((var, j));
-                stores.push(j);
+    // How often each field is stored, the making's own stores among them, and which are read.
+    let mut stores: BTreeMap<u32, u32> = BTreeMap::new();
+    let mut loaded: BTreeSet<u32> = BTreeSet::new();
+    for (offset, value) in &init {
+        *stores.entry(*offset).or_default() += 1;
+        value.walk(&mut |e| loaded.extend(field_load(e, var)));
+    }
+    let rest = list.get(after..).unwrap_or_default();
+    tree::each_simple(rest, &mut |s| {
+        if let Some((offset, _)) = field_store(s, var) {
+            *stores.entry(offset).or_default() += 1;
+        }
+    });
+    tree::each_expr(rest, &mut |top| {
+        top.walk(&mut |e| loaded.extend(field_load(e, var)));
+    });
+    // The statements right after the making that give a field a variable or do not name the object.
+    let mut run = after;
+    while let Some(stmt) = list.get(run) {
+        if captured_at(stmt, var).is_none() && mentioned(std::slice::from_ref(stmt), var) {
+            break;
+        }
+        run += 1;
+    }
+    let mut givers: Vec<(u32, Var, usize)> = Vec::new();
+    for (offset, value) in &init {
+        if let Expr::Var(given) = underneath(value) {
+            if *given != var {
+                givers.push((*offset, *given, i));
             }
-            None if mentioned(&list[j..=j], object) => return None,
-            None => {}
         }
     }
-    if tree::counts(&list[i..]).labels != 0 {
-        return None;
+    for j in after..run {
+        if let Some((offset, given)) = list.get(j).and_then(|stmt| captured_at(stmt, var)) {
+            givers.push((offset, given, j));
+        }
     }
-    if !given
-        .iter()
-        .all(|(var, at)| binder.steady(*var, &list[..*at]))
-    {
-        return None;
+    let mut held: BTreeMap<u32, Var> = BTreeMap::new();
+    // The statements of the run that give a field its variable, which go.
+    let mut gone: Vec<usize> = Vec::new();
+    for (offset, given, at) in givers {
+        let once = stores.get(&offset) == Some(&1);
+        let free = !plan.stored.contains(&offset) && !plan.reserved.contains(&binder.spoken(given));
+        if once && free && binder.steady(given, list.get(..at).unwrap_or_default()) {
+            held.insert(offset, given);
+            if at != i {
+                gone.push(at);
+            }
+        }
     }
+    let mut hoisted: BTreeMap<u32, Var> = BTreeMap::new();
+    let mut declared: Vec<(Var, VarInfo)> = Vec::new();
+    for offset in stores.keys().chain(&loaded) {
+        if held.contains_key(offset) || hoisted.contains_key(offset) {
+            continue;
+        }
+        let (kind, name) = plan.cells.get(offset)?;
+        if plan.reserved.contains(name) || !fresh.taken.insert(name.clone()) {
+            return None;
+        }
+        let local = fresh.local()?;
+        hoisted.insert(*offset, local);
+        let info = VarInfo {
+            kind: kind.clone(),
+            name: Some(name.clone()),
+            single: true,
+            ..VarInfo::new(Width::Cell)
+        };
+        declared.push((local, info));
+    }
+    held.extend(hoisted.iter().map(|(offset, local)| (*offset, *local)));
     let program = binder.method.function.head.program;
     let values: BTreeSet<Var> = held.values().copied().collect();
     let mut bound = BTreeSet::new();
-    {
+    // Where the first statement that binds a lambda to the object stands.
+    let mut first_bind: Option<usize> = None;
+    for (j, top) in list.iter_mut().enumerate().skip(after) {
         // An explicit stack: a body nests as deep as its listing does.
-        let mut work: Vec<&mut tree::Stmt> = list[last + 1..].iter_mut().collect();
+        let mut work: Vec<&mut tree::Stmt> = vec![top];
         while let Some(stmt) = work.pop() {
-            if let Some(at) = unbound(stmt, object, allowed, program) {
+            assign_fields(stmt, var, &hoisted);
+            if let Some(at) = unbound(stmt, var, &object.allowed, program) {
                 bound.insert(at);
+                if first_bind.is_none() {
+                    first_bind = Some(j);
+                }
             }
-            tree::own_exprs_mut(stmt, &mut |top| read_fields(top, object, &held, &values));
+            tree::own_exprs_mut(stmt, &mut |e| read_fields(e, var, &held, &values));
             for nested in tree::nested_mut(stmt) {
                 work.extend(nested);
             }
         }
     }
-    for j in stores.iter().rev() {
+    gone.sort_unstable();
+    for j in gone.iter().rev() {
         list.remove(*j);
     }
-    list.remove(i);
-    Some(Captured { held, bound })
+    // Every statement gone stood in the run, before any lambda was bound.
+    let first_bind = first_bind.map(|j| j.saturating_sub(gone.len()));
+    let mut made: Vec<tree::Stmt> = Vec::new();
+    for (offset, mut value) in init {
+        if let Some(local) = hoisted.get(&offset) {
+            read_fields(&mut value, var, &held, &values);
+            made.push(tree::Stmt::Simple(Stmt::Assign {
+                target: *local,
+                value,
+            }));
+        }
+    }
+    for (local, info) in &declared {
+        let set = made.iter().any(|stmt| {
+            matches!(stmt, tree::Stmt::Simple(Stmt::Assign { target, .. }) if target == local)
+        });
+        // A field starts as zero: so does its variable where something may read it first.
+        if !set && !assigned_first(list, after, *local, first_bind) {
+            // Zero of a reference's kind is the null reference.
+            let kind = match reference(&info.kind) {
+                true => Kind::Pointer,
+                false => info.kind.clone(),
+            };
+            let zero = Const { bits: 0, kind };
+            made.push(tree::Stmt::Simple(Stmt::Assign {
+                target: *local,
+                value: Expr::Const(zero),
+            }));
+        }
+    }
+    let tail = list.split_off(after);
+    list.truncate(i);
+    list.extend(made);
+    list.extend(tail);
+    Some(Captured {
+        held,
+        hoisted: hoisted.keys().copied().collect(),
+        declared,
+        bound,
+    })
+}
+
+/// Whether the first statement of `list` from `from` on that names `var` assigns it a value that does not read it, and stands before `bind` where that is given.
+fn assigned_first(list: &[tree::Stmt], from: usize, var: Var, bind: Option<usize>) -> bool {
+    let rest = list.get(from..).unwrap_or_default();
+    let Some(at) = (rest.iter()).position(|stmt| mentioned(std::slice::from_ref(stmt), var)) else {
+        return false;
+    };
+    let assigns = match rest.get(at) {
+        Some(tree::Stmt::Simple(Stmt::Assign { target, value })) => {
+            *target == var && !reads(value, var)
+        }
+        _ => false,
+    };
+    assigns && bind.is_none_or(|bind| from.saturating_add(at) < bind)
+}
+
+/// Whether `e` reads `var` or takes its address.
+fn reads(e: &Expr, var: Var) -> bool {
+    let mut found = false;
+    e.walk(&mut |e| {
+        found |= matches!(e, Expr::Var(v) | Expr::AddrOf { var: v, .. } if *v == var);
+    });
+    found
+}
+
+/// The offset and the value of a store of a whole cell to a field of `object`.
+fn field_store(s: &Stmt, object: Var) -> Option<(u32, &Expr)> {
+    let Stmt::Store {
+        kind: StoreKind::U64 | StoreKind::Ref,
+        addr,
+        offset,
+        value,
+    } = s
+    else {
+        return None;
+    };
+    (*underneath(addr) == Expr::Var(object)).then_some((*offset, value))
+}
+
+/// The offset of the field of `object` a load of a whole cell reads.
+fn field_load(e: &Expr, object: Var) -> Option<u32> {
+    match e {
+        Expr::Load {
+            ty: Scalar::U64 | Scalar::I64,
+            addr,
+            offset,
+        } if *underneath(addr) == Expr::Var(object) => Some(*offset),
+        _ => None,
+    }
+}
+
+/// Reads each store of a whole cell to a field of `object` that `hoisted` gives a variable, among what `stmt` holds itself, as the assignment of that variable.
+// The field is the variable: nothing else reaches the object, so the two hold the same bits. A
+// field's group around what is now an assignment is that assignment.
+fn assign_fields(stmt: &mut tree::Stmt, object: Var, hoisted: &BTreeMap<u32, Var>) {
+    if hoisted.is_empty() {
+        return;
+    }
+    let assign = |s: &mut Stmt| {
+        let target = field_store(s, object).and_then(|(offset, _)| hoisted.get(&offset).copied());
+        let Some(target) = target else {
+            return;
+        };
+        let old = std::mem::replace(s, Stmt::Eval(Expr::GuidEmpty));
+        *s = match old {
+            Stmt::Store { value, .. } => Stmt::Assign { target, value },
+            other => other,
+        };
+    };
+    match stmt {
+        tree::Stmt::Simple(s) => assign(s),
+        tree::Stmt::For { init, step, .. } => {
+            for s in [init, step].into_iter().flatten() {
+                assign(s);
+            }
+        }
+        tree::Stmt::Sugar(sugar) => {
+            for s in sugar.parts_mut().simples {
+                assign(s);
+            }
+        }
+        _ => {}
+    }
+    let lone = match stmt {
+        tree::Stmt::Sugar(sugar) => match &mut **sugar {
+            tree::Sugar::Group {
+                kind: tree::Group::Field { .. },
+                parts,
+            } if matches!(parts.as_slice(), [Stmt::Assign { .. }]) => parts.pop(),
+            _ => None,
+        },
+        _ => None,
+    };
+    if let Some(s) = lone {
+        *stmt = tree::Stmt::Simple(s);
+    }
 }
 
 /// Binds the delegate `stmt` makes to nothing where it is bound to `object` and to a lambda of `allowed`, and says which lambda.
@@ -777,6 +1212,9 @@ fn read_in_place(body: &tree::Function, given: &[Given]) -> Option<tree::Functio
     const RECEIVER: Var = Var::Param(0);
     let mut f = body.clone();
     let mut held: BTreeMap<u32, Var> = BTreeMap::new();
+    // ⚠ Only a field that is a variable of its own may be written: one read as the variable it
+    // was given keeps the value it was given.
+    let mut hoisted: BTreeMap<u32, Var> = BTreeMap::new();
     let mut names: BTreeSet<&str> = BTreeSet::new();
     for (n, one) in given.iter().enumerate() {
         let var = Var::Param(f.head.params.checked_add(u32::try_from(n).ok()?)?);
@@ -785,6 +1223,9 @@ fn read_in_place(body: &tree::Function, given: &[Given]) -> Option<tree::Functio
             return None;
         }
         held.insert(one.offset, var);
+        if one.hoisted {
+            hoisted.insert(one.offset, var);
+        }
         let info = VarInfo {
             name: Some(one.name.clone()),
             ..one.info.clone()
@@ -797,6 +1238,7 @@ fn read_in_place(body: &tree::Function, given: &[Given]) -> Option<tree::Functio
         let mut work: Vec<&mut Vec<tree::Stmt>> = vec![&mut f.body];
         while let Some(list) = work.pop() {
             for stmt in list {
+                assign_fields(stmt, RECEIVER, &hoisted);
                 tree::own_exprs_mut(stmt, &mut |top| read_fields(top, RECEIVER, &held, &values));
                 work.extend(tree::nested_mut(stmt));
             }
@@ -929,6 +1371,17 @@ pub(crate) fn bound_in_place(
     bodies: &Lambdas<'_>,
     cx: &Context<'_>,
 ) -> BTreeSet<u32> {
+    bound_in_place_by(binder, bodies, cx, true)
+}
+
+/// [`bound_in_place`], asking where `named` that the body reads its object by the name of the binder's variable, and no own variable of it goes by that name.
+// ⚠ Unasked only for a body whose class is hidden: there it names no object at all.
+fn bound_in_place_by(
+    binder: &tree::Function,
+    bodies: &Lambdas<'_>,
+    cx: &Context<'_>,
+    named: bool,
+) -> BTreeSet<u32> {
     let mut found = BTreeSet::new();
     let on =
         true_csharp(&cx.options) && cx.options.on(Pass::Delegates) && cx.options.on(Pass::Lambdas);
@@ -968,7 +1421,7 @@ pub(crate) fn bound_in_place(
                     let Some(body) = bodies.get(&at).copied() else {
                         continue;
                     };
-                    if steady.contains(&at) && reads_as_bound(binder, held, body) {
+                    if steady.contains(&at) && (!named || reads_as_bound(binder, held, body)) {
                         found.insert(at);
                     }
                 }

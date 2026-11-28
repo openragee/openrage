@@ -16,7 +16,7 @@ use crate::gta6::script::{Context, Pass, Stats};
 
 use self::flow::Set;
 use super::values::effects::{each_top, evaluated, stored, sure_loads, Effects, Facts, Place};
-use super::values::fold::{across, constant, low_clears};
+use super::values::fold::{across, constant, low_clears, made};
 
 /// The names this file's rewrites are switched by.
 pub const PASSES: &[Pass] = &[Pass::Forward, Pass::DeadLoads];
@@ -50,7 +50,9 @@ type Site = (BlockId, usize);
 // `forward` also moves a temporary's value to its one read in a later block (`across`), and
 // writes a clear of the low bytes of a local whose upper bytes stay zero as `local = 0`, and reads
 // a temporary given zero cells whose address only clears it as those zeroes (`zeroed`), and
-// removes a clear of bytes an earlier clear left zero (`cleared_again`).
+// removes a clear of bytes an earlier clear left zero (`cleared_again`). With `escape`, it moves a
+// value in its block past the binding of a delegate just made (`delegates`), and past the setting
+// of an element of an array just made (`initialisers`): `made`.
 // `dead-loads` also drops a branch whose arms meet where its test cannot fault, and a read kept
 // for nothing that the next statement makes first.
 pub fn run(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) -> bool {
@@ -65,6 +67,9 @@ pub fn run(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) -> bool 
         changed |= zeroed(f);
         changed |= stores(f, options.on(Pass::Escape));
         changed |= low_clears(f);
+        let escape = options.on(Pass::Escape);
+        let delegates = escape && options.on(Pass::Delegates);
+        changed |= made(f, delegates, escape && options.on(Pass::Initialisers));
         changed |= across(f, options.on(Pass::Escape));
     }
     changed |= options.on(Pass::DeadLoads) && loads(f);

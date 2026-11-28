@@ -15,6 +15,9 @@ pub(in crate::gta6::script::passes) use self::across::across;
 #[path = "values_fold_chain.rs"]
 mod chain;
 pub(in crate::gta6::script::passes) use self::chain::chained;
+#[path = "values_fold_made.rs"]
+mod objects;
+use self::objects::Made;
 
 /// How many statements may stand between a value's assignment and the place it moves to.
 // ponytail: a fixed reach keeps a block of thousands of statements linear; a running summary of
@@ -851,10 +854,16 @@ impl Unheld {
     }
 }
 
+/// What lets a value move past a statement its effects alone keep it behind.
+struct Apart {
+    unheld: Unheld,
+    made: Made,
+}
+
 /// Whether a value that does `moving`, assigned by statement `i` of block `b`, may be evaluated at site `k` instead: past every statement between the two.
 fn crosses(
     facts: &Facts,
-    unheld: &Unheld,
+    apart: &Apart,
     stmts: &[Option<Stmt>],
     effects: &mut [Option<Effects>],
     moving: &Effects,
@@ -880,9 +889,11 @@ fn crosses(
         if moving.may_cross(crossed) {
             continue;
         }
-        let apart =
-            value.is_some_and(|value| unheld.lets_pass(facts, stmt, (value, moving), (b, j), k));
-        if !apart {
+        let passes = value.is_some_and(|value| {
+            (apart.unheld).lets_pass(facts, stmt, (value, moving), (b, j), k)
+                || (apart.made).lets_pass(facts, stmt, (value, moving), (b, j))
+        });
+        if !passes {
             return false;
         }
     }
@@ -935,7 +946,7 @@ fn worked(stmt: &Stmt) -> Option<Var> {
 // ⚠ Only what `x->f |= m` evaluates once in C# is written twice: no call and no allocation in
 // the address, and none in `m` where the address reads memory.
 fn moved_twice(
-    (facts, unheld): (&Facts, &Unheld),
+    (facts, apart): (&Facts, &Apart),
     stmts: &mut [Option<Stmt>],
     effects: &mut [Option<Effects>],
     (b, i, var, k): (BlockId, usize, Var, usize),
@@ -955,7 +966,7 @@ fn moved_twice(
     let fits = depth(stored) + depth(value) <= DEPTH;
     let moving = Effects::of_expr(facts, value);
     let pure = !moving.call && !moving.alloc && !moving.store;
-    if !steady || !fits || !pure || !crosses(facts, unheld, stmts, effects, &moving, (b, i, k)) {
+    if !steady || !fits || !pure || !crosses(facts, apart, stmts, effects, &moving, (b, i, k)) {
         return false;
     }
 
@@ -997,7 +1008,7 @@ fn fills(facts: &Facts, head: &Head, target: Var, value: &Expr) -> bool {
 
 /// Moves the value statement `i` of block `b` assigns to `var` into site `k`, the one place that reads it, where nothing between forbids.
 fn moved(
-    (facts, unheld): (&Facts, &Unheld),
+    (facts, apart): (&Facts, &Apart),
     stmts: &mut [Option<Stmt>],
     term: &mut Terminator,
     effects: &mut [Option<Effects>],
@@ -1007,7 +1018,7 @@ fn moved(
         return false;
     };
     let moving = Effects::of_expr(facts, value);
-    if !crosses(facts, unheld, stmts, effects, &moving, (b, i, k)) {
+    if !crosses(facts, apart, stmts, effects, &moving, (b, i, k)) {
         return false;
     }
 
@@ -1057,7 +1068,7 @@ fn moved(
 
 /// Folds one block; `emptied` takes each local of several cells whose one assignment and one read are gone.
 fn fold_block(
-    (facts, unheld): (&Facts, &Unheld),
+    (facts, apart): (&Facts, &Apart),
     head: &Head,
     b: BlockId,
     block: &mut Block,
@@ -1088,7 +1099,7 @@ fn fold_block(
         wanted.sort_unstable_by_key(|(i, _)| std::cmp::Reverse(*i));
         for (i, var) in wanted {
             if moved(
-                (facts, unheld),
+                (facts, apart),
                 &mut stmts,
                 &mut block.term,
                 &mut effects,
@@ -1107,7 +1118,7 @@ fn fold_block(
         };
         let held = through.and_then(|var| pointers.get(&var).map(|i| (*i, var)));
         if let Some((i, var)) = held {
-            if moved_twice((facts, unheld), &mut stmts, &mut effects, (b, i, var, k)) {
+            if moved_twice((facts, apart), &mut stmts, &mut effects, (b, i, var, k)) {
                 pointers.remove(&var);
                 changed = true;
             }
@@ -1144,17 +1155,51 @@ fn fold_block(
 // With `finer`, a value also moves past what writes a temporary no one holds the address of yet
 // (`Unheld`): `v = f(); t = default; store_i32(&t, 0, 5); store_bytes(&t, 4, 16, v);` is
 // `t = default; store_i32(&t, 0, 5); store_bytes(&t, 4, 16, f());`.
+// ⚠ Not past a store through an object the function has just made: the before/after check sees
+// that store as an event, and a call moved after it as the order changed.
 pub(super) fn fold(f: &mut cfg::Function, finer: bool) -> bool {
     let facts = match finer {
         true => Facts::finer(f),
         false => Facts::of(f),
     };
-    let unheld = Unheld::of(&f.cfg, finer);
+    let apart = Apart {
+        unheld: Unheld::of(&f.cfg, finer),
+        made: Made::of(f, &facts, (false, false)),
+    };
+    fold_with(f, &facts, &apart)
+}
+
+/// [`fold`] with `escape`, and a value also moved past the binding of a delegate made the statement before, with `delegates`, and past the setting of an element of an array made of a stated length, at a stated index inside it, with `initialisers`.
+// `v = load(p, 0x10); d = new D(); D.Ctor(d, p, &g); M(v, d);` is `d = new D(); D.Ctor(d, p, &g);
+// M(load(p, 0x10), d);`: neither fill writes anything but the object it fills, which nothing
+// else holds yet. Only a value that reads passes a delegate's binding, which may fault.
+pub(in crate::gta6::script::passes) fn made(
+    f: &mut cfg::Function,
+    delegates: bool,
+    arrays: bool,
+) -> bool {
+    if !objects::any(f, (delegates, arrays)) {
+        return false;
+    }
+    let facts = Facts::finer(f);
+    let found = Made::of(f, &facts, (delegates, arrays));
+    if found.fills_nothing() {
+        return false;
+    }
+    let apart = Apart {
+        unheld: Unheld::of(&f.cfg, true),
+        made: found,
+    };
+    fold_with(f, &facts, &apart)
+}
+
+/// Folds every block of `f` as `facts` and `apart` allow.
+fn fold_with(f: &mut cfg::Function, facts: &Facts, apart: &Apart) -> bool {
     let head = &f.head;
     let mut emptied = Vec::new();
     let mut changed = false;
     for (b, block) in f.cfg.blocks.iter_mut().enumerate() {
-        changed |= fold_block((&facts, &unheld), head, b, block, &mut emptied);
+        changed |= fold_block((facts, apart), head, b, block, &mut emptied);
     }
     // A local of several cells that nothing names any more is no variable of the function.
     for var in emptied {

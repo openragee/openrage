@@ -17,6 +17,16 @@ public static class Program_00000001
         throw new global::System.InvalidOperationException("Unexpected bytecode fallthrough.");
     }
 
+    public static class Builtins
+    {
+        public static class System
+        {
+            public static class Delegate
+            {
+                public static void Ctor(VmValue p0, VmValue p1, VmValue p2) => Vm.Builtin(2, 0, 0, p0, p1, p2);
+            }
+        }
+    }
     public static class Native
     {
         public static class DEMO
@@ -601,4 +611,26 @@ fn a_clear_stays_where_its_bytes_may_have_been_written_since_or_it_reaches_furth
     ] {
         assert_eq!(again(&body), (false, read(&body).cfg), "{body}");
     }
+}
+
+/// A delegate made into `v_000010_0` and bound to `p0` and a function, then handed on with what `read` reads.
+fn handed(before: &str, read: &str) -> String {
+    let made =
+        "v_000010_0 = Vm.NewObject(new VmType(\"System.Delegate\", 48, 0x80000002U, 0x000C2000U));";
+    let bound =
+        "Builtins.System.Delegate.Ctor(v_000010_0, p0, Vm.Function(0x00000001U, 0x000010));";
+    format!("{before} {made} {bound} Native.DEMO.USE2({read}, v_000010_0); return;")
+}
+
+#[test]
+fn a_read_moves_past_a_delegate_made_and_bound_under_escape_and_delegates() {
+    let before = handed("v_000018_1 = load_u64(p0, 0x10);", "v_000018_1");
+    becomes(
+        &[Pass::Forward, Pass::Escape, Pass::Delegates],
+        &before,
+        &handed("", "load_u64(p0, 0x10)"),
+    );
+    // Either name switched off, the binding is a call the read stays before.
+    stays(&[Pass::Forward, Pass::Escape], &before);
+    stays(&[Pass::Forward, Pass::Delegates], &before);
 }

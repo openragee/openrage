@@ -75,6 +75,39 @@ pub fn streams(file: &AwcFile) -> Vec<Stream> {
                     },
                 });
             }
+            // A GTA VI 32-byte record (chunk `OpusFormat`) stating a codec none of the readers above
+            // know: list it as that codec so it is named and refused, never dropped from the panel.
+            // A PlayStation 5 build may carry a codec Xbox does not (ATRAC9, say); codec 2 is Spectra,
+            // read above, so only a genuinely unnamed byte reaches here.
+            if let Some(record) = s.chunk(or_io::awc::AwcChunkKind::OpusFormat) {
+                let stated = Codec::from(or_io::awc::Codec::from_byte(*record.payload.get(0x1C)?));
+                // Codec 2 is Spectra, read above; a malformed one stays dropped. Any other unnamed byte
+                // is surfaced so it refuses by name instead of vanishing from the panel.
+                if let Codec::Unknown(byte) = stated {
+                    if byte != 2 {
+                        let u16_at = |o: usize| {
+                            record
+                                .payload
+                                .get(o..o + 2)
+                                .map(|b| u16::from_le_bytes([b[0], b[1]]))
+                        };
+                        let u32_at = |o: usize| {
+                            (record.payload.get(o..o + 4))
+                                .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                        };
+                        return Some(Stream {
+                            stream,
+                            id: s.id,
+                            info: AudioInfo {
+                                codec: Codec::Unknown(byte),
+                                channels: 1,
+                                sample_rate: u32::from(u16_at(0x08).unwrap_or(0)),
+                                frames: u64::from(u32_at(0x0C).unwrap_or(0)),
+                            },
+                        });
+                    }
+                }
+            }
             let format = s.stream_format()?;
             let first = format.channels.first()?;
             if first.codec == or_io::awc::Codec::Opus {
@@ -511,5 +544,38 @@ mod tests {
         assert_eq!(told.into_inner(), [(1, 1)]);
         assert!(opus_pcm(&groups, &|_, _| false).is_err());
         assert!(opus_groups(&file, 1).is_err());
+    }
+
+    #[test]
+    fn a_gta_vi_stream_of_an_unknown_codec_is_listed_and_refused_by_name() {
+        // A GTA VI 32-byte record (chunk 0x76) stating codec 8 — one no reader knows, as a
+        // PlayStation 5 build may carry. It is listed, not dropped, and refuses to decode by name.
+        let mut record = vec![0u8; 32];
+        record[0x00..0x04].copy_from_slice(&400u32.to_le_bytes());
+        record[0x08..0x0A].copy_from_slice(&48_000u16.to_le_bytes());
+        record[0x0C..0x10].copy_from_slice(&400u32.to_le_bytes());
+        record[0x1C] = 8;
+        record[0x1D] = 1;
+        let bytes = single(&[(0x76, record), (0x55, vec![0u8; 8192])]);
+        let file = AwcFile::parse(&bytes, AwcKey::default()).expect("parses");
+        let rows = streams(&file);
+        assert_eq!(
+            rows.len(),
+            1,
+            "the unknown-codec stream is listed, not dropped"
+        );
+        assert_eq!(rows[0].info.codec, Codec::Unknown(8));
+        assert_eq!(rows[0].info.codec.label(), "unknown(8)");
+        assert_eq!(
+            (
+                rows[0].info.channels,
+                rows[0].info.sample_rate,
+                rows[0].info.frames
+            ),
+            (1, 48_000, 400)
+        );
+        let source = open(&file, AwcKey::default(), 0).expect("opens");
+        let refused = source.audio(&Decoders::new()).err().expect("no decoder");
+        assert_eq!(refused, MediaError::NoDecoder(Codec::Unknown(8)));
     }
 }

@@ -28,3 +28,6 @@ ropus.workspace = true
 or-test-support.workspace = true
 # The hand-built movies FFmpeg is asked to decode go through a file.
 tempfile.workspace = true
+# The GTA VI audio census mounts RPF9 archives of both builds to find their `.awc` bodies; this adds
+# the mount to the `awc` feature the crate already builds against. Test-only: the runtime stays `awc`.
+or-io = { workspace = true, features = ["gta6"] }

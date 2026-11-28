@@ -5,7 +5,9 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::rc::Rc;
 
+use super::values::effects::Facts as Frame;
 use crate::gta6::script::cfg::{self, Terminator};
 use crate::gta6::script::ir::{
     BinOp, Callee, Const, Expr, FunctionKey, Head, Kind, Returns, Scalar, Stmt, StoreKind, TypeKey,
@@ -62,6 +64,7 @@ pub fn run_in(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) {
         normal: HashSet::new(),
         past: RefCell::new(HashSet::new()),
         loose: HashSet::new(),
+        frame: around.kinds.then(|| Frame::of(f)),
     };
     typing.infer(&f.cfg);
     typing.settle(&f.cfg);
@@ -152,17 +155,16 @@ impl<'a> Around<'a> {
         }
     }
 
-    /// A truth for a call of the runtime's member every public overload of which answers `bool`, where `kinds` and `runtime` are on.
+    /// What a call of the runtime's member yields where every public overload of it answers one kind, a truth, a number or a string, and `kinds` and `runtime` are on.
     // ⚠ The argument count picks the overloads, so this is asked at the call and not of `yields`.
-    fn runtime_truth(&self, callee: &Callee, args: &[Expr], returns: Option<u32>) -> Option<Lat> {
+    fn runtime_result(&self, callee: &Callee, args: &[Expr], returns: Option<u32>) -> Option<Lat> {
         let Callee::Builtin { path, .. } = callee else {
             return None;
         };
-        let truth = self.kinds
-            && self.runtime
-            && returns == Some(1)
-            && super::sugar_runtime::truth(path, args.len());
-        truth.then_some(Lat::Is(Kind::Bool))
+        if !(self.kinds && self.runtime && returns == Some(1)) {
+            return None;
+        }
+        super::sugar_runtime::result(path, args.len()).map(Lat::Is)
     }
 
     /// How a call takes each of its arguments.
@@ -1319,6 +1321,8 @@ struct Typing<'a> {
     past: RefCell<HashSet<Var>>,
     /// Variables [`Typing::loosen`] took the kind from.
     loose: HashSet<Var>,
+    /// What the function's accesses and the locals proved one cell wide say each address reaches, where `kinds` is on.
+    frame: Option<Rc<Frame>>,
 }
 
 impl Typing<'_> {
@@ -1817,10 +1821,12 @@ impl Typing<'_> {
     fn sealed(&self, var: Var) -> bool {
         match var {
             // Where `kinds` is on, an address only ever used to read or write its own cell reaches
-            // no other local: only one handed on or offset does.
+            // no other local: only one handed on or offset does, and that one stops before the next
+            // local `values::widths` proved one cell wide.
             Var::Local(n) if self.around.kinds => {
                 let reached = self.facts.locals_escape.is_some_and(|low| n >= low);
-                !reached && !self.facts.addressed.contains(&var)
+                let named = (self.frame.as_ref()).is_some_and(|frame| frame.named_only(var));
+                (!reached || named) && !self.facts.addressed.contains(&var)
             }
             Var::Local(n) => self.facts.lowest_local.is_none_or(|lowest| n < lowest),
             Var::Value { .. } | Var::Stack { .. } => !self.facts.addressed.contains(&var),
@@ -1903,7 +1909,7 @@ impl Typing<'_> {
             } => match self
                 .element(callee, args)
                 .or_else(|| self.around.cast_yields(callee))
-                .or_else(|| self.around.runtime_truth(callee, args, *returns))
+                .or_else(|| self.around.runtime_result(callee, args, *returns))
             {
                 Some(lat) => lat,
                 None => self.around.yields(callee, *returns).0,

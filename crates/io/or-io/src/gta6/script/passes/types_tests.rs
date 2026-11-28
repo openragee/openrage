@@ -1943,6 +1943,45 @@ fn an_address_used_only_for_its_own_cell_leaves_the_locals_above_it_written_by_n
     );
 }
 
+#[test]
+fn an_address_handed_on_reaches_no_local_from_the_next_one_proved_one_cell_wide() {
+    let stmts = || {
+        vec![
+            used(vec![address(1)]),
+            set(2, as_i32(param(0))),
+            used(vec![as_i32(local(2)), local(1)]),
+        ]
+    };
+    let names = Names::default();
+    let run = |single: bool, options: Options| {
+        let mut f = function(stmts());
+        let mut info = VarInfo::new(Width::Cell);
+        info.single = single;
+        f.head.vars.insert(Var::Local(2), info);
+        let cx = Context::new(&names, Project::empty(), options);
+        run_in(&mut f, &cx, &mut Stats::default());
+        f
+    };
+    let kinds = || Options::baseline().with(Pass::Kinds).with(Pass::Signs);
+    let f = run(true, kinds());
+    assert_eq!(f.cfg.blocks[0].stmts[2], used(vec![local(2), local(1)]));
+    assert_eq!(kind_of(&f, Var::Local(2)), Kind::I32);
+
+    // Not proved one cell wide, the local may be what the address reaches: the cast stays.
+    let f = run(false, kinds());
+    assert_eq!(
+        f.cfg.blocks[0].stmts[2],
+        used(vec![as_i32(local(2)), local(1)])
+    );
+
+    // With `kinds` off the frame is not read.
+    let f = run(true, Options::baseline());
+    assert_eq!(
+        f.cfg.blocks[0].stmts[2],
+        used(vec![as_i32(local(2)), local(1)])
+    );
+}
+
 /// A call of slot 3 of `OTHER`, a type the tests' projects do not hold.
 fn slot_call(args: Vec<Expr>) -> Expr {
     let callee = Callee::Virtual {
@@ -2017,10 +2056,13 @@ fn what_a_runtime_member_every_overload_of_which_answers_a_bool_yields_is_a_trut
     };
     let f = typed_with_runtime(asked(contains, 2), true);
     assert_eq!(kind_of(&f, Var::Local(0)), Kind::Bool);
-    // No overload takes as many arguments, a member that answers a number, or `runtime` off.
+    // A member every overload of which answers one number yields that number.
+    let f = typed_with_runtime(asked("System.Random.NextDouble", 1), true);
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::F64);
+    // No overload takes as many arguments, or `runtime` off.
     for (stmts, runtime) in [
         (asked(contains, 3), true),
-        (asked("System.Random.NextDouble", 1), true),
+        (asked("System.Random.NextDouble", 1), false),
         (asked(contains, 2), false),
     ] {
         let f = typed_with_runtime(stmts, runtime);

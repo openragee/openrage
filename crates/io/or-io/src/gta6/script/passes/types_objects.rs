@@ -5,13 +5,19 @@
 use std::collections::{HashMap, HashSet};
 
 use super::kinds::{self, Lat};
-use super::{Around, Scan, Typing};
-use crate::gta6::script::cfg;
+use super::{Around, Scan, Typing, VALUE};
+use crate::gta6::script::cfg::{self, BlockId};
 use crate::gta6::script::ir::{Callee, Expr, FunctionKey, Kind, Scalar, Stmt, TypeKey, Var};
+use crate::gta6::script::opcode;
 use crate::gta6::script::project::{signatures, Project};
 
 /// The intrinsic that reads an element of eight bytes whole: a reference, where the array holds references.
 const ELEMENT: &str = "array_get_u64";
+
+/// The assignments of one local followed to the calls made on what each assigns, before the local is given up on.
+const MAX_DEFS: usize = 16;
+/// The statements one assignment is followed through to the calls made on its value.
+const MAX_STEPS: usize = 4096;
 
 /// The stems of the two casts to a type: one that yields null where the object is no such type, and one that must hold.
 const CASTS: [&str; 2] = ["try_cast<", "cast<"];
@@ -30,6 +36,23 @@ fn object_of(project: &Project, key: TypeKey) -> Option<Kind> {
 /// A reference to an object of the script type named `name`, as [`object_of`] states it.
 fn object_named(project: &Project, name: &str) -> Option<Kind> {
     object_of(project, TypeKey::of_name(name)?)
+}
+
+/// A reference to an object of the builtin type `key`, where the runtime's table states the type's flags and they say its values are not held in place.
+// ⚠ Flags of 0 are what no program states: such a type may be a value type.
+fn builtin_object(key: TypeKey) -> Option<Kind> {
+    let index = key.builtin()? & 0x7FFF_FFFF;
+    let (_, flags) = opcode::builtin_type(index)?;
+    (flags != 0 && flags & VALUE == 0).then(|| Kind::Object(key.to_string()))
+}
+
+/// The type of two object types that holds a value of either: the one the other derives from; `None` where neither does.
+fn base(project: &Project, a: &Kind, b: &Kind) -> Option<Kind> {
+    let derived = meet(project, a, b)?;
+    match derived == *a {
+        true => Some(b.clone()),
+        false => Some(a.clone()),
+    }
 }
 
 /// Whether `e` takes the address of `var` anywhere in it.
@@ -128,7 +151,7 @@ fn held(array: &Lat) -> Lat {
 }
 
 impl Around<'_> {
-    /// The variable a call is made on as an object of a script type, and a reference to that type, where `kinds` is on: a virtual call's receiver, or the receiver a call of an instance member of the type is handed first.
+    /// The variable a call is made on as an object of a type, and a reference to that type, where `kinds` is on: a virtual call's receiver, of a script type or of a builtin one [`builtin_object`] admits, or the receiver a call of an instance member of a script type is handed first.
     // ⚠ The slot is called through the receiver's own object, so what the variable holds there is
     // an object of the type or of one derived from it. A member is called on its owner's objects
     // alone: what the project proves a member is handed `this`, never a value its own code shows.
@@ -145,7 +168,11 @@ impl Around<'_> {
             return None;
         }
         let kind = match callee {
-            Callee::Virtual { ty, .. } => object_named(self.project, ty)?,
+            // A builtin's slot is read from the receiver's own object as a script type's is.
+            Callee::Virtual { ty, .. } => {
+                let key = TypeKey::of_name(ty)?;
+                object_of(self.project, key).or_else(|| builtin_object(key))?
+            }
             other => {
                 let key = signatures::key_of(self.program, other)?;
                 let member = self.project.members.get(&key)?;
@@ -213,29 +240,129 @@ impl Scan<'_> {
 
 impl Typing<'_> {
     /// Gives each variable calls are made on as an object type, where nothing else says more of it than "a reference", the type the calls are made on, and [`Typing::arrays`] the arrays such variables are read from; `true` when any took one.
-    // ⚠ Only a variable that holds one value all through: a parameter the function never assigns,
-    // or a local assigned once that no address reaches. A slot reused for another value would
-    // carry the type to code where it holds something else.
+    // ⚠ Only a variable that holds one value all through (a parameter the function never assigns,
+    // or a local assigned once that no address reaches), or a local each value of which is called
+    // on: a slot reused for another value would carry the type to code where it holds something else.
     pub(super) fn receivers(&mut self, cfg: &cfg::Cfg) -> bool {
         if self.facts.received.is_empty() {
             return false;
         }
         let sets = assignments(cfg);
         let mut given: Vec<(Var, Kind)> = Vec::new();
+        let mut reached: Vec<(Var, Kind)> = Vec::new();
         for (var, lat) in std::mem::take(&mut self.facts.received) {
             let Lat::Is(kind) = lat else {
                 continue;
             };
-            if self.held_once(var, &sets) && self.open(var) && self.typed(var) {
+            if !(self.open(var) && self.typed(var)) {
+                continue;
+            }
+            if self.held_once(var, &sets) {
                 given.push((var, kind));
+            } else if let Some(kind) = self.called_after_each(cfg, var) {
+                reached.push((var, kind));
             }
         }
         let arrays = self.arrays(cfg, &sets, &given);
-        let changed = !given.is_empty() || !arrays.is_empty();
-        for (var, kind) in given.into_iter().chain(arrays) {
+        let changed = !given.is_empty() || !arrays.is_empty() || !reached.is_empty();
+        for (var, kind) in given.into_iter().chain(arrays).chain(reached) {
             self.known.insert(var, Lat::Is(kind));
         }
         changed
+    }
+
+    /// The type a local assigned more than once holds, where each assignment's value reaches a call made on the local before another assignment: the type each value is called on as, and of two the one the other derives from; `None` where one reaches no such call.
+    // ⚠ A call made on the value says what the variable it is in holds there, and so of every value
+    // that variable is given; a value that reaches no call may be another variable's in a reused
+    // slot. Only a local that nothing but an assignment of it writes.
+    fn called_after_each(&self, cfg: &cfg::Cfg, var: Var) -> Option<Kind> {
+        if !matches!(var, Var::Local(_)) || !self.sealed(var) {
+            return None;
+        }
+        let mut held: Option<Kind> = None;
+        let mut defs = 0usize;
+        for (at, block) in cfg.blocks.iter().enumerate() {
+            for (i, stmt) in block.stmts.iter().enumerate() {
+                if !stmt.targets().contains(&var) {
+                    continue;
+                }
+                if !matches!(stmt, Stmt::Assign { target, .. } if *target == var) {
+                    return None;
+                }
+                defs += 1;
+                if defs > MAX_DEFS {
+                    return None;
+                }
+                let kind = self.called_from(cfg, var, at, i + 1)?;
+                held = Some(match held {
+                    None => kind,
+                    Some(was) => base(self.around.project, &was, &kind)?,
+                });
+            }
+        }
+        held
+    }
+
+    /// The type the value `var` holds from statement `from` of block `at` on is called on as, on any path before `var` is assigned again; `None` where no call is made on it, or calls name two types neither of which derives from the other.
+    // A call in a statement that assigns `var` is made on the value before the assignment.
+    fn called_from(&self, cfg: &cfg::Cfg, var: Var, at: BlockId, from: usize) -> Option<Kind> {
+        let project = self.around.project;
+        let mut found: Option<Kind> = None;
+        let mut conflict = false;
+        let mut note = |e: &Expr, found: &mut Option<Kind>| {
+            e.walk(&mut |node| {
+                let Expr::Call { callee, args, .. } = node else {
+                    return;
+                };
+                let Some((on, kind)) = self.around.receiver_of(callee, args, &self.wide) else {
+                    return;
+                };
+                if on != var {
+                    return;
+                }
+                *found = match found.take() {
+                    None => Some(kind),
+                    Some(was) => {
+                        let met = meet(project, &was, &kind);
+                        conflict |= met.is_none();
+                        met
+                    }
+                };
+            });
+        };
+        let mut work: Vec<(BlockId, usize)> = vec![(at, from)];
+        let mut entered: HashSet<BlockId> = HashSet::new();
+        let mut steps = 0usize;
+        while let Some((at, from)) = work.pop() {
+            let block = cfg.blocks.get(at)?;
+            let mut assigned = false;
+            for stmt in block.stmts.get(from..)? {
+                steps += 1;
+                if steps > MAX_STEPS {
+                    return None;
+                }
+                stmt.each_expr(&mut |top| note(top, &mut found));
+                if stmt.targets().contains(&var) {
+                    assigned = true;
+                    break;
+                }
+            }
+            if assigned {
+                continue;
+            }
+            if let Some(e) = block.term.expr() {
+                note(e, &mut found);
+            }
+            for next in block.term.successors() {
+                if entered.insert(next) {
+                    work.push((next, 0));
+                }
+            }
+        }
+        match conflict {
+            true => None,
+            false => found,
+        }
     }
 
     /// Whether a variable holds one value all through: a parameter the function never assigns, or a local assigned once that no address reaches.

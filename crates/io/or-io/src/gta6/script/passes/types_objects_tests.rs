@@ -515,3 +515,115 @@ fn an_element_read_from_an_array_of_references_refers_to_what_the_array_holds() 
     assert_eq!(kind_of(&off, Var::Local(1)), Kind::Unknown);
     assert_eq!(kind_of(&off, Var::Local(7)), Kind::Unknown);
 }
+
+/// The name a call gives builtin type `index` of the runtime's table.
+fn builtin(index: u32) -> String {
+    TypeKey(u64::from(0x8000_0000 | index)).to_string()
+}
+
+#[test]
+fn what_a_builtin_types_slot_is_called_on_is_an_object_of_it_where_its_flags_say_so() {
+    let stmts = |ty: &str| {
+        vec![
+            set(0, unknown()),
+            Stmt::Eval(virtual_call(ty, 3, vec![local(0), int(1)], 1)),
+        ]
+    };
+    // The table states flags for type 0 that hold no value in place.
+    let root = builtin(0);
+    let f = typed(stmts(root.as_str()), &Project::default());
+    assert_eq!(kind_of(&f, Var::Local(0)), object(&root));
+
+    // Type 11's flags hold its values in place, and no program states type 16's: a reference and no more.
+    for index in [11, 16] {
+        let f = typed(stmts(builtin(index).as_str()), &Project::default());
+        assert_eq!(kind_of(&f, Var::Local(0)), Kind::Pointer, "{index}");
+    }
+
+    // Called on as the builtin and as a script type the project derives from it: the script type.
+    let mut both = stmts(root.as_str());
+    both.push(Stmt::Eval(virtual_call(THING, 4, vec![local(0)], 0)));
+    let mut derived = with_member(0, None);
+    if let Some(facts) = derived.types.get_mut(&TypeKey(0xAA)) {
+        facts.base = Some(TypeKey(0x8000_0000));
+    }
+    let f = typed(both.clone(), &derived);
+    assert_eq!(kind_of(&f, Var::Local(0)), object(THING));
+    // A script type no base of which is stated is not known to be one: neither.
+    let f = typed(both, &with_member(0, None));
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Pointer);
+
+    // With `kinds` off a call says nothing of what it is made on.
+    let off = typed_with(
+        stmts(root.as_str()),
+        &Project::default(),
+        Options::baseline(),
+    );
+    assert_eq!(kind_of(&off, Var::Local(0)), Kind::Unknown);
+}
+
+#[test]
+fn a_local_every_value_of_which_is_called_on_as_a_type_holds_that_type() {
+    let call = |ty: &str| Stmt::Eval(virtual_call(ty, 3, vec![local(0)], 0));
+    let stmts = || {
+        vec![
+            set(0, unknown()),
+            call(THING),
+            set(0, unknown()),
+            call(THING),
+        ]
+    };
+    let project = with_member(0, None);
+    let f = typed(stmts(), &project);
+    assert_eq!(kind_of(&f, Var::Local(0)), object(THING));
+
+    // One value called on as a type and the other as one derived from it: the type both are.
+    let mut derived = project.clone();
+    let below = TypeFacts {
+        base: Some(TypeKey(0xAA)),
+        ..TypeFacts::default()
+    };
+    derived.types.insert(TypeKey(0xBB), below);
+    let mut mixed = stmts();
+    mixed[3] = call(OTHER);
+    let f = typed(mixed, &derived);
+    assert_eq!(kind_of(&f, Var::Local(0)), object(THING));
+
+    // The call may stand in a block control comes to after the assignment.
+    let mut f = function(vec![set(0, unknown()), call(THING), set(0, unknown())]);
+    f.cfg.blocks[0].term = Terminator::Jump(1);
+    f.cfg.blocks.push(Block {
+        at: None,
+        stmts: vec![call(THING)],
+        term: Terminator::Return(None),
+    });
+    let names = Names::default();
+    let options = Options::baseline().with(Pass::Kinds).with(Pass::Signs);
+    super::super::run_in(
+        &mut f,
+        &Context::new(&names, &project, options),
+        &mut Stats::default(),
+    );
+    assert_eq!(kind_of(&f, Var::Local(0)), object(THING));
+
+    // A value no call is made on before the next assignment may be another variable's, and a
+    // local whose address is taken may be written through it: a reference and no more.
+    let mut unreached = stmts();
+    unreached.push(set(0, unknown()));
+    let mut addressed = stmts();
+    addressed.push(direct(
+        0x500,
+        vec![Expr::AddrOf {
+            var: Var::Local(0),
+            cell: 0,
+        }],
+    ));
+    for stmts in [unreached, addressed] {
+        let f = typed(stmts, &project);
+        assert_eq!(kind_of(&f, Var::Local(0)), Kind::Pointer);
+    }
+
+    // With `kinds` off a call says nothing of what it is made on.
+    let off = typed_with(stmts(), &project, Options::baseline());
+    assert_eq!(kind_of(&off, Var::Local(0)), Kind::Unknown);
+}

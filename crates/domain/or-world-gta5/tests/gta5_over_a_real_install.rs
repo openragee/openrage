@@ -1,5 +1,5 @@
 //! GTA V's world behind the contract over a real install: the adapter's selection through the
-//! core's driver held to `or_depends`' own forest at fixed cameras, the rules of the kit that take
+//! core's driver held to `WorldForest`'s own loop at fixed cameras, the rules of the kit that take
 //! no built scene, a level of DLC with a kept file of its own, and how much of what a selection
 //! draws with reads: its models by how their file holds them and for which target, their
 //! textures, and the lights and occluders of its bodies.
@@ -139,7 +139,7 @@ fn the_adapter_selects_as_the_forest_does_at_fixed_cameras_of_a_real_install() {
     let (index, report) = kept::refresh(TITLE, &spec, install, &file).expect("the index builds");
     assert!(report.not_kept.is_none(), "{:?}", report.not_kept);
     let index = Arc::new(index);
-    // The index `or_depends` builds of the same mount by itself, kept in a file of its own.
+    // The index `world_index` builds of the same mount by itself, kept in a file of its own.
     let source = MountedWorld::new(world.game(), &root);
     let (reference, _) = refresh(&source, &config().join(format!("{}.reference", id.0)));
     let linked = index.title::<Linked>().expect("a GTA V link");
@@ -218,7 +218,7 @@ fn the_rules_of_the_kit_that_take_no_built_scene_hold_over_a_real_install() {
         _ => None,
     });
     let (held_row, held_eye, switch) = held.expect("a map only a request lets in");
-    // What `or_depends` says by itself over a mount of its own: the highest ground of a fixed
+    // What `WorldCollision` says by itself over a mount of its own: the highest ground of a fixed
     // camera's column, and how many entities the child map places.
     let game = mounted(&root, &exe);
     let source = MountedWorld::new(&game, &root);
@@ -236,7 +236,7 @@ fn the_rules_of_the_kit_that_take_no_built_scene_hold_over_a_real_install() {
         .and_then(|map| read::map(&linked.world, &source, map).ok())
         .map(|read| read.placed.len())
         .expect("the child map reads");
-    // What `or_depends`' own forest and `or_world`'s reader of a map say of each fixed camera: the
+    // What `WorldForest`'s own loop and the model's reader of a map say of each fixed camera: the
     // instances that stand in an interior, and the far lights and occluders the maps in the
     // forest state.
     let own = Gta5World::over(mounted(&root, &exe), root.clone());

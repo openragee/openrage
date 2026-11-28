@@ -50,3 +50,37 @@ impl Aabb {
         self.add_box(other.min, other.max);
     }
 }
+
+/// How far a recomputed box is from a stored one, in world units: the largest disagreement of one axis over both corners, and infinite for an empty box.
+pub fn agreement(computed: &Aabb, stored: (Vec3, Vec3)) -> f32 {
+    if computed.is_empty() {
+        return f32::INFINITY;
+    }
+    let (min, max) = stored;
+    (computed.min - min)
+        .abs()
+        .max((computed.max - max).abs())
+        .max_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_empty_box_never_agrees_with_a_stored_one() {
+        let empty = Aabb::default();
+        assert!(agreement(&empty, (Vec3::ZERO, Vec3::ZERO)).is_infinite());
+        assert!(empty.expanded(100.0).is_empty());
+    }
+
+    #[test]
+    fn agreement_is_the_worst_single_axis() {
+        let a = Aabb {
+            min: Vec3::new(0.0, 0.0, 0.0),
+            max: Vec3::new(1.0, 1.0, 1.0),
+        };
+        assert_eq!(agreement(&a, (Vec3::ZERO, Vec3::ONE)), 0.0);
+        assert_eq!(agreement(&a, (Vec3::ZERO, Vec3::new(1.0, 1.0, 4.0))), 3.0);
+    }
+}

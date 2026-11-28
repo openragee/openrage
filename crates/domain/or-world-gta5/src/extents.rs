@@ -12,7 +12,7 @@
 //! offered as a proposal and [`agreement`] is how far it is from what the
 //! game shipped, not a claim to have reproduced it.
 
-use glam::Vec3;
+pub use or_world::aabb::agreement;
 use or_world::Aabb;
 
 use crate::archetypes::ArchetypeIndex;
@@ -104,25 +104,10 @@ pub fn compute(map: &MapData<'_>, index: &ArchetypeIndex) -> Extents {
     }
 }
 
-/// How far a recomputed box is from a stored one, in world units.
-///
-/// The answer is the largest single-axis disagreement over both corners, so
-/// zero means identical and a small number means a rounding-scale difference
-/// rather than a structural one.
-pub fn agreement(computed: &Aabb, stored: (Vec3, Vec3)) -> f32 {
-    if computed.is_empty() {
-        return f32::INFINITY;
-    }
-    let (min, max) = stored;
-    (computed.min - min)
-        .abs()
-        .max((computed.max - max).abs())
-        .max_element()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use glam::Vec3;
     use or_io::meta::instance::value::HashedString;
     use or_io::meta::{MetaInstance, Value};
 
@@ -192,22 +177,5 @@ mod tests {
         assert_eq!(out.resolved, 0);
         assert!(!out.is_complete());
         assert!(out.entities.is_empty());
-    }
-
-    #[test]
-    fn an_empty_box_never_agrees_with_a_stored_one() {
-        let empty = Aabb::default();
-        assert!(agreement(&empty, (Vec3::ZERO, Vec3::ZERO)).is_infinite());
-        assert!(empty.expanded(100.0).is_empty());
-    }
-
-    #[test]
-    fn agreement_is_the_worst_single_axis() {
-        let a = Aabb {
-            min: Vec3::new(0.0, 0.0, 0.0),
-            max: Vec3::new(1.0, 1.0, 1.0),
-        };
-        assert_eq!(agreement(&a, (Vec3::ZERO, Vec3::ONE)), 0.0);
-        assert_eq!(agreement(&a, (Vec3::ZERO, Vec3::new(1.0, 1.0, 4.0))), 3.0);
     }
 }

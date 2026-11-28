@@ -51,7 +51,7 @@ impl Gta5World {
         &self.source.game
     }
 
-    /// The mount as the world index and the forest of `or_depends` read it.
+    /// The mount as the world index and `WorldForest` read it.
     pub fn source(&self) -> &dyn WorldSource {
         &self.source
     }

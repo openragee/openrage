@@ -16,6 +16,7 @@
 
 // The fixtures of `tests_support` name this crate by its own name, so the crate that resolves
 // what the index states includes the file by path for its tests.
+#[cfg(test)]
 extern crate self as or_world_gta5;
 
 pub mod archetype_assets;

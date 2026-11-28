@@ -23,7 +23,7 @@ pub struct BoundCollider {
 }
 
 impl BoundCollider {
-    /// The collider of `pieces`, each a shape with the piece of its bound it is and that piece's material; `shapeless` is how many pieces were given no shape.
+    /// The collider of `pieces`, each a shape with the piece of its bound it is and that piece's material, refused where a shape is not sound; `shapeless` is how many pieces were given no shape.
     pub fn of_shapes(
         pieces: Vec<(Shape, Part, Option<u64>)>,
         shapeless: usize,
@@ -33,8 +33,19 @@ impl BoundCollider {
                 shapes: pieces.len(),
             });
         }
-        let (mut shapes, mut sources) = (Vec::new(), Vec::new());
+        let mut shapes = Vec::with_capacity(pieces.len());
+        let mut sources = Vec::with_capacity(pieces.len());
         for (shape, part, material) in pieces {
+            // ⚠ The tree is built of boxes, and the box of a shape with a number lost is the box of the rest of it.
+            if !shape.sound() {
+                return Err(CollisionError::Number {
+                    leaf: part.leaf,
+                    what: match part.polygon {
+                        Some(polygon) => format!("polygon {polygon}"),
+                        None => "the bound".into(),
+                    },
+                });
+            }
             shapes.push(shape);
             sources.push(Source { part, material });
         }
@@ -239,5 +250,29 @@ mod tests {
                 + 60 * std::mem::size_of::<Source>()
                 + tree
         );
+    }
+
+    #[test]
+    fn a_collider_of_shapes_refuses_a_shape_that_is_no_number_and_names_its_piece() {
+        let part = |polygon| Part { leaf: 3, polygon };
+        let sphere = |radius| Shape::Sphere {
+            centre: Vec3::ONE,
+            radius,
+        };
+        let whole = vec![(sphere(1.0), part(None), None)];
+        assert!(BoundCollider::of_shapes(whole, 0).is_ok());
+        for (polygon, what) in [(None, "the bound"), (Some(7), "polygon 7")] {
+            let pieces = vec![
+                (sphere(1.0), part(None), None),
+                (sphere(f32::NAN), part(polygon), None),
+            ];
+            assert_eq!(
+                BoundCollider::of_shapes(pieces, 0).err(),
+                Some(CollisionError::Number {
+                    leaf: 3,
+                    what: what.into()
+                })
+            );
+        }
     }
 }

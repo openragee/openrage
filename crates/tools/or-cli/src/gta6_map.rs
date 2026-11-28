@@ -13,9 +13,9 @@ use or_io::gta6::map::{
     self, ArchetypeClass, InstanceList, MapBody, MapData, MapTypes, ASSET_TYPES, LOD_LEVELS,
 };
 use or_io::gta6::names::Vocabulary;
+use or_world::aabb::agreement;
 use or_world::transform::{placed_corners, scale_of};
 use or_world::Aabb as Box3;
-use or_world_gta5::extents::agreement;
 
 const USAGE: &str =
     "usage: rpf scan-maps <archive.rpf> [--from <offset>] [--to <offset>] [--limit <bytes>] [--list] [--check] [--extents] [--names]";

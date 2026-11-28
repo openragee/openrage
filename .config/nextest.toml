@@ -623,7 +623,7 @@ filter = 'binary_id(=or-world-gta5::the_world_index_of_a_real_install)'
 slow-timeout = { period = "60s", terminate-after = 45 }
 
 # The install suite of the GTA V world behind the contract reads every map, type file and bound of an install twice, once through
-# the adapter and once as `or_depends` does, where the build's scratch folder keeps no index of it, and a third time for a level of
+# the adapter and once as `world_index` does, where the build's scratch folder keeps no index of it, and a third time for a level of
 # DLC, so every test of the binary is held to forty-five minutes, as the suites of the index are.
 [[profile.all.overrides]]
 filter = 'binary_id(=or-world-gta5::gta5_over_a_real_install)'

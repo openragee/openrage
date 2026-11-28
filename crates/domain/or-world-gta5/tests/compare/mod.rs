@@ -1,4 +1,4 @@
-//! One view asked of the core's driver over the adapter and of `or_depends`' own forest over the
+//! One view asked of the core's driver over the adapter and of `WorldForest`'s own loop over the
 //! same mount, each from nothing, and what each streamed and selected put in the same terms: a
 //! map by the hash of its name, an interior by the entity that places it.
 
@@ -55,7 +55,7 @@ fn loading(archetype: u32) -> bool {
     archetype.is_multiple_of(3)
 }
 
-/// What `or_depends`' forest makes of `view` over `index`, selected `times` times.
+/// What `WorldForest` makes of `view` over `index`, selected `times` times.
 pub fn by_the_forest(
     world: &Gta5World,
     index: &WorldIndex,

@@ -1,4 +1,4 @@
-//! A map and an interior of GTA V as bodies of the contract: the nodes `or_depends` reads, a
+//! A map and an interior of GTA V as bodies of the contract: the nodes `world_forest` reads, a
 //! parent named by its map's row where the reader names it by the map's name, beside each node
 //! what it places, and what the map states beside its entities.
 

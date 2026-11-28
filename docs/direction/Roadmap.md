@@ -11099,6 +11099,14 @@ surface as it is, and GTA V's index on the core's kept file
   `crates/domain/or-world/tests/the_core_names_no_game.rs` shrank from 22 files and 29 pairs to
   one file and two pairs. The slow tier holds the six install suites that moved under
   `or-world-gta5`.
+- **Found by a second engineer (2026-11-28).** `BoundCollider::of_shapes`, the constructor the
+  split made public, took any shape, where every shape was asked whether it is sound before the
+  split: it now refuses one that is not, by the piece it is
+  (`a_collider_of_shapes_refuses_a_shape_that_is_no_number_and_names_its_piece`). The box
+  agreement GTA VI's map verbs ask had moved into GTA V's adapter with the extents and is the
+  core's `aabb::agreement`. Comments of the adapter that named `or-depends` as the owner of the
+  world index and the forest name the adapter's own modules. ⚠ Two tests of the adapter keep
+  `or_depends` in their names, which the count of names holds as they were.
 - **Not built: `WorldForest` over the core's driver.** It still runs its own loop. The driver
   states why a map gave nothing as a sentence where `WorldForest` states an `Unread`, keys a map by
   its row where `WorldForest` keys it by its name, needs an install and a linked index where

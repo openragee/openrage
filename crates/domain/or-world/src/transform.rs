@@ -38,7 +38,7 @@ pub struct Pose {
 }
 
 impl Pose {
-    /// The rotation as degrees about X, Y and Z, which `from_degrees` turns back into the same rotation.
+    /// The rotation as degrees about X, Y and Z, which `rotation_of_degrees` turns back into the same rotation.
     pub fn degrees(&self) -> [f32; 3] {
         let (x, y, z) = self.rotation.to_euler(EulerRot::XYZ);
         [x.to_degrees(), y.to_degrees(), z.to_degrees()]

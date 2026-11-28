@@ -33,7 +33,7 @@ use forest_fixture::{
 };
 use world_fixture::{cube, dlc_list_bytes, hash, mount, mount_all, write_archive, write_pack};
 
-/// The world of the install at `root` with no DLC, its index through the kept file under `scratch`, and the index `or_depends` builds of the same mount by itself.
+/// The world of the install at `root` with no DLC, its index through the kept file under `scratch`, and the index `world_index` builds of the same mount by itself.
 fn opened(root: &Path, scratch: &Path) -> (Arc<Gta5World>, Arc<Index>, WorldIndex) {
     let world = Arc::new(Gta5World::over(mount(root), root.to_path_buf()));
     let spec = WorldSpec::of(LEGACY, root);

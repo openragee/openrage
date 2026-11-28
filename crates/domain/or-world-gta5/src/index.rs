@@ -1,5 +1,5 @@
 //! GTA V's rows through the kept file every title shares: a section an archive, which holds that
-//! archive's rows as `or_depends` seals an index of it alone, and a link that joins them.
+//! archive's rows as `world_index` seals an index of it alone, and a link that joins them.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -19,7 +19,7 @@ use or_world::model::{Gate, Index, MapId, MapRow, PlacementRow, SwitchId, EVERY_
 use crate::install::Gta5World;
 use crate::source::One;
 
-/// The version of what this crate writes in a section, over `or_depends`' own of what a row holds.
+/// The version of what this crate writes in a section, over `world_index`'s own of what a row holds.
 pub const RULES: u32 = 2 << 16 | world_index::VERSION << 8 | world_index::RULES;
 
 /// How a file of the mount holds what an archetype draws with.

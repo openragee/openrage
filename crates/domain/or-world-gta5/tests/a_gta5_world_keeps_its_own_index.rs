@@ -1,6 +1,6 @@
 //! GTA V's rows through the kept file every title shares: a world at a level of DLC keeps a file
 //! and an index of its own, a second start reads no archive, an archive that changed is the only
-//! one read again, and the rows joined from the sections are the index `or_depends` builds itself.
+//! one read again, and the rows joined from the sections are the index `world_index` builds itself.
 
 mod forest_fixture;
 mod hand_built;

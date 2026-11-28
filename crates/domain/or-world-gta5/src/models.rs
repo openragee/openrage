@@ -515,7 +515,7 @@ pub(crate) struct HeldAt<'a> {
 
 /// The file of the mount that holds the model of the archetype `ask` names.
 // ⚠ A drawable dictionary the archetype states and the mount holds outranks a loose file of the
-// asset's name, as `or_depends`' catalogue of models has it; a fragment outranks a drawable.
+// asset's name, as `model_catalogue` has it; a fragment outranks a drawable.
 pub(crate) fn held_at(linked: &Linked, ask: AssetKey) -> Result<HeldAt<'_>, NoModel> {
     let archetype = u32::try_from(ask.0).map_err(|_| NoModel::NotAnArchetype)?;
     let row = (linked.world.archetype(archetype)).ok_or(NoModel::Undeclared)?;

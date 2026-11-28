@@ -16,7 +16,7 @@ mod depends;
 mod describe;
 mod dlc;
 mod fixups;
-/// The maps with levels of detail and interiors that `world select`'s tests share with `or-depends`' own.
+/// The maps with levels of detail and interiors that `world select`'s tests share with `or-world-gta5`'s own.
 #[cfg(test)]
 #[path = "../../../domain/or-world-gta5/tests/forest_fixture/mod.rs"]
 mod forest_fixture;
@@ -141,7 +141,7 @@ mod world;
 mod world_archetypes;
 mod world_edit;
 mod world_find;
-/// The install built by hand that the world verbs' tests share with `or-depends`' own.
+/// The install built by hand that the world verbs' tests share with `or-world-gta5`'s own.
 #[cfg(test)]
 #[path = "../../../domain/or-world-gta5/tests/world_fixture/mod.rs"]
 mod world_fixture;

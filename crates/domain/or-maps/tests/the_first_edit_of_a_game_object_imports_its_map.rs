@@ -1,7 +1,7 @@
 //! The first edit of an object the game placed imports its map into the project as a source that keeps the game's file as its base,
 //! applies the edit, and is one record that is taken back whole.
 //!
-//! The install is built by hand as `or-depends` builds one for its world index: map files written as the bytes the game ships them
+//! The install is built by hand as `or-world-gta5` builds one for its world index: map files written as the bytes the game ships them
 //! in, put in an archive and mounted with no game present. The project is made in a temporary folder with one maps content, and the
 //! mount answers `first_edit::Game` through the world index, as the command line answers it.
 //!

@@ -1,4 +1,4 @@
-//! The adapter's selection through the core's driver is the selection `or_depends`' own forest
+//! The adapter's selection through the core's driver is the selection `WorldForest`'s own loop
 //! makes, over an install built by hand: the same maps wanted, the same instances with the same
 //! models, places and fades, and the same models waited for.
 
@@ -20,7 +20,7 @@ use or_world_gta5::{MountedWorld, WorldIndex};
 use forest_fixture::{arch, ent, install, map_around, map_file, types_file, Ent, Files, ORPHAN};
 use world_fixture::{cube, mount};
 
-/// The world of the install at `root`, its index through the kept file under `scratch`, and the index `or_depends` builds of the same mount by itself.
+/// The world of the install at `root`, its index through the kept file under `scratch`, and the index `world_index` builds of the same mount by itself.
 fn opened(
     root: &std::path::Path,
     scratch: &std::path::Path,

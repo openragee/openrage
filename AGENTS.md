@@ -534,6 +534,8 @@ The module table and the app's traps are in
 - [GTA_VI_Builds.md](docs/features/GTA_VI_Builds.md): what is read, saved and
   refused of a GTA VI build, Xbox Series or PlayStation 5, and its commands.
 - [GTA_VI_World_Viewer.md](docs/features/GTA_VI_World_Viewer.md): the World screen, how a GTA VI install is mounted, and the streaming rules.
+- [GTA_V_World_Viewer.md](docs/features/GTA_V_World_Viewer.md): the World screen over a GTA V install, the
+  sections its panel shows by capability, and what the plain pass does not draw yet.
 - [Unified_World_Plan.md](docs/direction/Unified_World_Plan.md): one world core and an adapter crate for each game, and the rows of R71.
 - [GTA_VI_Script_Decompiler.md](docs/features/GTA_VI_Script_Decompiler.md): what is read of
   a compiled GTA VI script, the levels, the passes, the names lists, and its commands.

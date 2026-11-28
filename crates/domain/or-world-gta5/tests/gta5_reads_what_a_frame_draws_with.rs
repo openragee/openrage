@@ -395,6 +395,34 @@ fn a_model_that_cannot_be_read_states_its_reason_and_the_contracts_reader_hands_
     let mut wanted = vec![key("whole"), key("fallen_back"), BOX];
     wanted.sort();
     assert_eq!(given, wanted);
+    // Asked with its reasons, the same reader answers every ask once, each refusal as the sentence of its reason and what the file said.
+    let mut answered = Vec::new();
+    (install.models()).models_or_why(&index, &asks, &mut Worker::new(), &mut answered);
+    assert_eq!(answered.len(), asks.len());
+    for (ask, model) in &answered {
+        let said = model
+            .as_ref()
+            .err()
+            .map(|refused| (refused.why, &refused.detail[..]));
+        let reason = why(*ask);
+        let stated = reason.as_ref().map(|why| (why.said(), why.to_string()));
+        assert_eq!(
+            said,
+            stated.as_ref().map(|(said, detail)| (*said, &detail[..]))
+        );
+    }
+    let nowhere = or_world::model::TextureAsk {
+        scope: AssetKey(0),
+        name: 1,
+        pixels: 64,
+    };
+    let mut textures = Vec::new();
+    (install.models()).textures_or_why(&index, &[nowhere], &mut Worker::new(), &mut textures);
+    let refused = textures.pop().and_then(|(_, texture)| texture.err());
+    assert_eq!(
+        refused.map(|refused| refused.why),
+        Some(or_world_gta5::NoTexture::NoDictionary.said())
+    );
 }
 
 /// The scene of the kit with a texture dictionary of the Enhanced game beside it.

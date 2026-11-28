@@ -339,6 +339,7 @@ or-world.workspace = true
 # forms a script takes a position in.
 or-world-gta5.workspace = true
 or-world-gta6.workspace = true
+or-worlds.workspace = true
 # Cancellation and progress-as-data, shared with `or-cli`. The app does depend
 # on `or-cli`, to host the `openrage-cli` binary; `or-job` keeps the job model
 # out of that edge.

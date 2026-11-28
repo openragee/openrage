@@ -33,6 +33,15 @@ pub mod gta6_script;
 
 pub use gta6_script::Gta6ScriptDocument;
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum LoadingState {
+    #[default]
+    Idle,
+    Loading,
+    Saving,
+    Error(String),
+}
+
 #[allow(clippy::large_enum_variant)]
 mod meta;
 

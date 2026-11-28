@@ -2497,6 +2497,56 @@ harder in an immediate-mode UI (`the_shell_is_flat_rather_than_deep`).
 | `gta6_dialogue.rs`, `gta6_text.rs`, `gta6_audio_links.rs` | dialogue lines, radio and texts indexed from the open scans; a text table edited and saved; what audio game data links to |
 | `file_index.rs`, `vfs_session.rs` | every file of the install and of each folder and archive open in Files, nested archives included, walked off the UI thread: what Go to File and the search of every archive read |
 
+### The world session
+
+The World screen reads one world through a seam of the app's own, `src/state/world_session.rs`
+([R71c](../direction/Roadmap.md#r71c-one-world-session-one-frame-host-and-panels-by-capability),
+[R71e](../direction/Roadmap.md#r71e-the-gta-v-world-drawn-in-the-fallback-pass)). `AppState`
+holds it as `world`, and `world_session::wanted` says whose world that is: the active game's where
+a title opens a world of it, else the first GTA VI build's with a folder set. A session is keyed
+by game, install and the options chosen at open (`WorldKey`); another key drops the session held
+and opens the next.
+
+| Module | What it holds |
+|---|---|
+| `src/state/world_session.rs` | `WorldSession`, what the screen and the panel ask (where it stands, its capabilities, its title's options, its camera and hour, what is waited for, what could not be read with its reason), and `WorldFeed`, what the bridge takes and tells back: the last selection, models and textures as plain data, the look's frame values, where a model stands on the device |
+| `src/state/world_session/driven.rs` | `DrivenSession`: a title of `or_worlds` opens the install, the core's `Driver` streams and selects on the session's thread, and maps, models and textures are read in three of the core's `Pool`s; an interior is read on that thread. Nothing is read on the thread that draws |
+| `src/state/world_session/mesh.rs` | a core `Model`, the game's vertex bytes with their layout, decoded on a reader to the vertices the plain pass draws |
+| `src/state/world_session/gta6.rs` | `Gta6Session`, a shell over GTA VI's viewer that hands the bridge no feed |
+| `src/render/viewport/world_plain.rs` | the bridge's path for a feed: pages of the kind the GTA VI world's are, one material a colour map and bucket, instances culled by their spheres and laid a run a model and level, the sun and the clear colour from the look |
+| `src/ui/panels/world_viewer_plain.rs` | the view and the panel of a fed world; `sections` lists what it shows from the capabilities, the options and where the world stands |
+| `src/self_check/shots/world_fed.rs` | the `world` steps over a fed world, and its dump |
+
+- **What is still GTA VI's own.** `Gta6Session` answers the seam from the viewer of
+  `src/state/gta6_worldview/mod.rs`, which is one static; GTA VI's screen, its panel and
+  `refresh_world` of the bridge reach that viewer themselves and name its types. The seam is where
+  they are to meet the driven path, and nothing of GTA VI's frame goes through it yet.
+- **Reasons.** The core's `ModelReader` gained `models_or_why` and `textures_or_why`, which answer
+  every ask once, a refusal as `Refused`: a sentence of the catalogs and what the file said. Their
+  defaults know only that nothing came; GTA V's adapter answers with `NoModel::said` and
+  `NoTexture::said`. A session counts each thing once by its reason, and the panel lists them.
+- **Colour space.** No GTA V texture states one, so the bridge reads a map bound as a surface's
+  colour as sRGB (`a_colour_map_is_read_as_srgb_wherever_its_format_has_such_a_form`). No normal
+  map is bound.
+- **Traps.** A model handed to a frame is asked of no reader until the frame tells where it
+  stands, and a texture queued for a frame is dropped from that frame's own asks: without either,
+  each is read once a frame. A stand-in box is asked of no reader, so an entity with no archetype
+  draws nothing. The session names no weather, so a map a weather gates stays out.
+- **Measured.** On the owner's Mac on 2026-11-28, with the code as this section first described
+  it, by a shots script kept in scratch at 1600 by 900 pixels (no suite of the tree holds these
+  figures). At a street camera
+  of the Legacy install's city the world settled 30 s after its kept index was taken, drew 1,243
+  of 4,816 selected instances in 3,419 draws, and held 1,998 models and 1,106 textures in 314 MB
+  on the device. A frame of the whole app at rest took 32 ms in one run, 40 ms in another and
+  133 ms in a third, the machine shared with other builds at a load average of 30 to 90: none is
+  a budget, and the frame's cost is still to be measured on a quiet machine. Over the four Legacy cameras flown in
+  turn, 53 of 2,370 textures were not read (36 for a format with no word, DXT3 or A8; 8 that no
+  dictionary of their chain holds; 5 whose chain names a dictionary the install lacks; 4 whose
+  scope names none) and 2 of 5,243 models (their dictionary holds no drawable of the name). At
+  the one Enhanced camera, over the city from height, 29 of 995 textures were not read (21, 6 and
+  2 for the first three reasons) and every one of 997 models was. ⚠ Two runs of one camera differ
+  by a model or two and a few textures on the device, which nothing explains yet.
+
 ### Panels, docks and panel state
 
 Panels are a registry keyed by a string id (`src/ui/panel_registry.rs`), and

@@ -3099,6 +3099,7 @@ dependencies = [
  "or-world",
  "or-world-gta5",
  "or-world-gta6",
+ "or-worlds",
  "pelite",
  "pollster",
  "rayon",

@@ -68,6 +68,7 @@ pub mod weapons;
 pub mod world_viewer;
 mod world_viewer_map;
 mod world_viewer_places;
+mod world_viewer_plain;
 pub mod world_viewer_prefs;
 mod world_viewer_side;
 pub mod ycd_clips;

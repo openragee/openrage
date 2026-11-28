@@ -444,9 +444,12 @@ impl Shell {
         // Every step ends on drawn frames, so with the World screen up its viewer has opened the install.
         if state.active_workspace != Workspace::World || !world_viewer::offered(state) {
             return Err(
-                "the World screen is not drawn: put `game gta6 FOLDER` and `workspace World` first"
+                "the World screen is not drawn: put `game gta6 FOLDER`, or `game legacy FOLDER`, and `workspace World` first"
                     .into(),
             );
+        }
+        if world_viewer::fed(state) {
+            return self.world_fed(state, step, out);
         }
         match step {
             WorldStep::Camera(pose) => {

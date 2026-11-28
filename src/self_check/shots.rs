@@ -22,6 +22,7 @@ mod script;
 mod waits;
 mod watched;
 mod world;
+mod world_fed;
 use png::{paint, save_png, target_texture};
 use script::{parse, Step};
 use waits::OPEN_DEADLINE;

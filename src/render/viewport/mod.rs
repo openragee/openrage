@@ -503,6 +503,7 @@ impl RenderBridge {
         self.inputs = CameraInputs::default();
         self.visible = false;
         self.world.shown = false;
+        self.world.plain.shown = false;
     }
 
     pub fn refresh_lines(&mut self, state: &AppState) {
@@ -739,6 +740,7 @@ impl RenderBridge {
             .set_sky_background(state.drivers.world_background.sky || self.world.shown);
         self.refresh_day(state);
         self.refresh_key_light(state);
+        self.light_world_feed();
         // The sprites are laid out for the camera of this frame
         self.renderer
             .prepare_game_particles(&self.device, &self.queue, &self.camera);

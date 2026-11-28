@@ -6,6 +6,7 @@
 //! handed the index its ids came from, and an id of another index names another map or none.
 
 use std::any::Any;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -262,6 +263,38 @@ pub trait MapBody: Any + Send + Sync {
     fn bytes(&self) -> u64;
 }
 
+/// Why a model or a texture gave nothing: the reason as a sentence the catalogs hold, and what the file said of itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refused {
+    pub why: Sentence,
+    /// What the file said of itself, in the title's own words; empty where the reason says it all.
+    pub detail: String,
+}
+
+impl Refused {
+    /// A refusal for the reason `why`, with nothing a file said.
+    pub fn because(why: Sentence) -> Self {
+        Self {
+            why,
+            detail: String::new(),
+        }
+    }
+}
+
+/// Each of `asks` with what `read` holds for it, and `unsaid` for one it holds nothing for.
+fn or_unsaid<K: Copy + Eq + std::hash::Hash, T>(
+    asks: &[K],
+    read: Vec<(K, T)>,
+    unsaid: Sentence,
+    out: &mut Vec<(K, Result<T, Refused>)>,
+) {
+    let mut read: HashMap<K, T> = read.into_iter().collect();
+    for ask in asks {
+        let answer = read.remove(ask).ok_or(Refused::because(unsaid));
+        out.push((*ask, answer));
+    }
+}
+
 /// What reads models and textures, in batches the title groups as its files hold them.
 pub trait ModelReader: Sync {
     /// Each model of `asks` that reads, with its ask.
@@ -280,6 +313,33 @@ pub trait ModelReader: Sync {
         worker: &mut Worker,
         out: &mut Vec<(TextureAsk, Texture)>,
     );
+    /// Each model of `asks`, read or refused with why: one answer an ask, a second ask of one model refused.
+    // ⚠ A title that words its reasons answers here itself: this default knows only that nothing came.
+    fn models_or_why(
+        &self,
+        index: &Index,
+        asks: &[AssetKey],
+        worker: &mut Worker,
+        out: &mut Vec<(AssetKey, Result<Model, Refused>)>,
+    ) {
+        let mut read = Vec::with_capacity(asks.len());
+        self.models(index, asks, worker, &mut read);
+        let unsaid = crate::sentence!("The title read no model and gave no reason");
+        or_unsaid(asks, read, unsaid, out);
+    }
+    /// Each texture of `asks`, read or refused with why: one answer an ask, a second ask of one texture refused.
+    fn textures_or_why(
+        &self,
+        index: &Index,
+        asks: &[TextureAsk],
+        worker: &mut Worker,
+        out: &mut Vec<(TextureAsk, Result<Texture, Refused>)>,
+    ) {
+        let mut read = Vec::with_capacity(asks.len());
+        self.textures(index, asks, worker, &mut read);
+        let unsaid = crate::sentence!("The title read no texture and gave no reason");
+        or_unsaid(asks, read, unsaid, out);
+    }
 }
 
 /// What a title's day is to the shared frame.

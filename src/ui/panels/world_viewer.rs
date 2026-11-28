@@ -10,7 +10,7 @@ use glam::Vec3;
 use or_renderer::FlyCamera;
 
 use super::world_viewer_prefs::WorldViewerPrefs;
-pub use super::world_viewer_side::draw_side;
+use super::world_viewer_side::draw_side as draw_own_side;
 use crate::render::RenderBridge;
 use crate::state::gta6_world::worldview::{self as gta6_worldview, Viewer};
 use crate::state::AppState;
@@ -18,13 +18,13 @@ use crate::ui::accessible_name::named;
 use crate::ui::theme;
 
 /// The least the view is drawn when the dock is far too short.
-const VIEW_MIN: f32 = 96.0;
+pub(super) const VIEW_MIN: f32 = 96.0;
 /// The steepest a camera line looks up or down, in degrees: the fly camera's own bound.
 const MOST_PITCH: f32 = 89.0;
 /// The vertical fields of view a camera line may state, in degrees.
 const FIELDS_OF_VIEW: std::ops::RangeInclusive<f32> = 5.0..=150.0;
 /// The area and the layer a clean frame is sensed and painted through.
-const CLEAN: &str = "world_viewer_clean";
+pub(super) const CLEAN: &str = "world_viewer_clean";
 
 /// Where a camera line puts the camera: metres, then degrees.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -128,16 +128,21 @@ impl crate::ui::panel_state::PanelState for Capture {
     const KEY: &'static str = "world-capture";
 }
 
-/// The folder of the GTA VI install the app was given, where it still stands.
+/// The folder of the GTA VI install the World screen shows, where the world it shows is GTA VI's.
 fn install(state: &AppState) -> Option<std::path::PathBuf> {
-    crate::state::gta_vi::install(&state.prefs)
-        .map(|(_, root)| root.clone())
-        .filter(|root| root.is_dir())
+    let world = crate::state::world_session::wanted(&state.prefs, &state.world)?;
+    world.game.is_gta_vi().then_some(world.install)
 }
 
 /// Whether the World screen has an install to show.
 pub fn offered(state: &AppState) -> bool {
-    install(state).is_some()
+    crate::state::world_session::wanted(&state.prefs, &state.world).is_some()
+}
+
+/// Whether the world the World screen shows is drawn through the seam, by the sections its capabilities state, and not by GTA VI's own screen.
+pub(crate) fn fed(state: &AppState) -> bool {
+    crate::state::world_session::wanted(&state.prefs, &state.world)
+        .is_some_and(|world| !world.game.is_gta_vi())
 }
 
 fn said(ui: &mut egui::Ui, text: &str) {
@@ -145,7 +150,7 @@ fn said(ui: &mut egui::Ui, text: &str) {
 }
 
 /// How far the keys held move the camera: forward, to the right and up, each −1 to 1, and whether fast.
-fn keys(ui: &egui::Ui) -> (f32, f32, f32, bool) {
+pub(super) fn keys(ui: &egui::Ui) -> (f32, f32, f32, bool) {
     use egui::Key;
     ui.input(|i| {
         let held = |keys: &[Key]| keys.iter().any(|k| i.key_down(*k)) as i32 as f32;
@@ -157,8 +162,19 @@ fn keys(ui: &egui::Ui) -> (f32, f32, f32, bool) {
     })
 }
 
+/// The panel beside the view: the sections the world's capabilities state, or GTA VI's own.
+pub fn draw_side(ui: &mut egui::Ui, state: &mut AppState, bridge: Option<&mut RenderBridge>) {
+    match fed(state) {
+        true => super::world_viewer_plain::draw_side(ui, state, bridge),
+        false => draw_own_side(ui, state, bridge),
+    }
+}
+
 /// The view: the world through the fly camera.
 pub fn draw_view(ui: &mut egui::Ui, state: &mut AppState, bridge: Option<&mut RenderBridge>) {
+    if fed(state) {
+        return super::world_viewer_plain::draw_view(ui, state, bridge);
+    }
     let Some(root) = install(state) else {
         ui.vertical_centered(|ui| {
             ui.add_space(theme::SPACING_SECTION);
@@ -181,6 +197,8 @@ pub fn draw_view(ui: &mut egui::Ui, state: &mut AppState, bridge: Option<&mut Re
         held.clean = false;
     }
     let clean = held.clean;
+    // The session of this install is held: another game's, where one was, ends here.
+    state.world_session();
     let mut viewer = gta6_worldview::viewer();
     viewer.open(&root);
     viewer.poll();
@@ -358,7 +376,7 @@ impl Loading {
 }
 
 /// The whole window as the view, sensed over everything the dock draws.
-fn whole_window(ctx: &egui::Context) -> (egui::Rect, egui::Response) {
+pub(super) fn whole_window(ctx: &egui::Context) -> (egui::Rect, egui::Response) {
     let window = ctx.content_rect();
     egui::Area::new(egui::Id::new(CLEAN))
         .order(egui::Order::Foreground)

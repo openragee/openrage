@@ -10799,8 +10799,14 @@ material mapping in the renderer's module for that title; panels and preferences
 capabilities and the slots; and the fake title drawn by the self-check and by a test of the
 renderer ([brief](Unified_World_Plan.md#one-session-one-host-panels-by-capability-r71c)).
 
-**Where it stands.** Not started. The static, its call sites, the values that are single for the
-process and what the host names of GTA VI are in [the plan](Unified_World_Plan.md#gta-vi).
+**Where it stands.** Begun out of the plan's order (coordinator, 2026-11-28): R71b's fourth part
+moved GTA VI's streamer and left its rewrite around the core's driver; this row did not wait.
+Built: the app's seam, `src/state/world_session.rs`, through which the World screen, panel
+and bridge read a session keyed by game, install and options
+(`the_active_install_decides_whose_world_is_opened_and_another_drops_the_one_held`). A registry title runs on the core's `Driver` (`two_sessions_share_no_state`). ⚠ GTA VI's
+session is a shell over its viewer, still one static. Left: that static, the host in
+`or-renderer`, GTA VI's panel by capability, the fake title drawn, the architecture tests
+([the world session](../reference/Crate_Reference.md#the-world-session)).
 
 **Depends on.** [R71b](#r71b-the-gta-vi-world-behind-the-contract). After its first part the other GTA VI sessions resume on the files its
 later parts do not move.
@@ -10853,16 +10859,17 @@ for the asks it holds, a material's fallback surface by its sampler names, and t
 GTA V install, read only
 ([brief](Unified_World_Plan.md#the-gta-v-world-drawn-in-the-fallback-pass-r71e)).
 
-**Where it stands.** The decode is built in `crates/domain/or-world-gta5`, with no screen: a model
-however its file holds it, for both targets, with its fallback surface, and textures through
-their dictionaries' chain, each file read once a batch. At eight fixed cameras every model a
-selection draws with reads on both installs, and so do 18247 of 18590 textures on Legacy and
-18249 of 18592 on Enhanced
-(`the_models_and_textures_a_selection_draws_with_read_at_fixed_cameras`, 2026-11-28); each that
-does not has a named reason, under "or-world-gta5" in
-[Crate_Reference.md](../reference/Crate_Reference.md#domain-crates). Left: the World room and
-every frame. Nothing draws the GTA V world yet, and the cost of a frame over the city and the
-memory of its textures are unmeasured.
+**Where it stands.** The World screen draws a GTA V install, read only, in the plain pass
+([GTA_V_World_Viewer.md](../features/GTA_V_World_Viewer.md)): models from the game's vertex bytes,
+one colour map a surface, read as sRGB since no texture states its space, under one sun. A refusal
+crosses the contract with its reason (`models_or_why`). Over an install built by hand the
+session's selection is the driver's
+(`a_gta_v_install_opens_a_session_of_gta_vs_capabilities_whose_selection_is_the_drivers`); a shots
+script settled four cameras of Legacy and one of Enhanced on 2026-11-28, with the figures under
+[the world session](../reference/Crate_Reference.md#the-world-session). Left: every program of the
+game (no shadow, sky, water or normal map), lights and occluders, instance lists, a weather, DXT3
+and A8 textures, a synthetic world drawn level by level, the instances held to R71d's capture, and
+the contract's freeze.
 
 **Depends on.** [R71c](#r71c-one-world-session-one-frame-host-and-panels-by-capability) and [R71d](#r71d-the-gta-v-world-behind-the-contract-and-one-kept-file).
 

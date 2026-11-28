@@ -21,11 +21,13 @@ use or_io::gta5::{
     GrmGeometry, GrmShaderGroup, GtaDrawable, GtaFragType, PgDictionary, RmcDrawable, TextureSlot,
 };
 use or_io::Generation;
-use or_world::contract::{ModelReader, Worker};
+use or_world::contract::{ModelReader, Refused, Worker};
 use or_world::model::{
     Alpha, AssetKey, Element, ElementFormat, Index, Lod, Mesh, Model, Semantic, Surface, Texture,
     TextureAsk, VertexLayout,
 };
+use or_world::sentence;
+use or_world::sentence::Sentence;
 
 use crate::index::{linked, Holding, Linked};
 use crate::install::Gta5World;
@@ -77,24 +79,31 @@ pub enum NoModel {
 }
 
 impl NoModel {
-    /// The reason without what a file said of itself, which a count of reasons is kept by.
-    pub fn kind(&self) -> &'static str {
+    /// The reason as a sentence the catalogs hold, without what a file said of itself.
+    pub fn said(&self) -> Sentence {
         match self {
-            Self::NotAnArchetype => "the ask names no archetype",
-            Self::Undeclared => "no type file declares the archetype",
-            Self::NoAsset => "the archetype names no asset",
-            Self::NoFile => "no file of the mount holds the asset",
-            Self::Absent => "the archive gave no file",
-            Self::Version(_) => "the file's version names a model of neither target",
-            Self::Refused(_) => "the file does not read",
-            Self::NotInDictionary => "the dictionary holds no such drawable",
-            Self::NoDrawable => "the fragment holds no drawable",
-            Self::NoLevel => "the drawable holds no level of detail",
-            Self::NoLayout => "a geometry states no layout",
-            Self::NoPosition => "a geometry's position has no format",
-            Self::PartVertex => "a geometry's bytes are no whole vertices",
-            Self::NotTriangles => "a geometry's indices are no whole triangles",
+            Self::NotAnArchetype => sentence!("It names no archetype of the game"),
+            Self::Undeclared => sentence!("No type file of the install declares the archetype"),
+            Self::NoAsset => sentence!("The archetype names no asset"),
+            Self::NoFile => sentence!("No file of the install holds the asset"),
+            Self::Absent => sentence!("The archive that lists the file gave none"),
+            Self::Version(_) => sentence!("The file's version names a model of neither target"),
+            Self::Refused(_) => sentence!("The file does not read"),
+            Self::NotInDictionary => sentence!("The dictionary holds no drawable of that name"),
+            Self::NoDrawable => sentence!("The fragment holds no drawable"),
+            Self::NoLevel => sentence!("The drawable holds no level of detail"),
+            Self::NoLayout => sentence!("A geometry states no layout of its vertices"),
+            Self::NoPosition => {
+                sentence!("A geometry's position is in an encoding with no format")
+            }
+            Self::PartVertex => sentence!("A geometry's bytes are no whole vertices"),
+            Self::NotTriangles => sentence!("A geometry's indices are no whole triangles"),
         }
+    }
+
+    /// [`Self::said`] as its English text, which a count of reasons is kept by.
+    pub fn kind(&self) -> &'static str {
+        self.said().key()
     }
 }
 
@@ -666,6 +675,42 @@ impl Gta5World {
 }
 
 impl ModelReader for Gta5World {
+    fn models_or_why(
+        &self,
+        index: &Index,
+        asks: &[AssetKey],
+        _worker: &mut Worker,
+        out: &mut Vec<(AssetKey, Result<Model, Refused>)>,
+    ) {
+        let mut outcomes = Vec::with_capacity(asks.len());
+        self.read_models(index, asks, &mut outcomes);
+        out.extend(outcomes.into_iter().map(|outcome| {
+            let model = outcome.model.map_err(|why| Refused {
+                why: why.said(),
+                detail: why.to_string(),
+            });
+            (outcome.ask, model)
+        }));
+    }
+
+    fn textures_or_why(
+        &self,
+        index: &Index,
+        asks: &[TextureAsk],
+        _worker: &mut Worker,
+        out: &mut Vec<(TextureAsk, Result<Texture, Refused>)>,
+    ) {
+        let mut outcomes = Vec::with_capacity(asks.len());
+        self.read_textures(index, asks, &mut outcomes);
+        out.extend(outcomes.into_iter().map(|(ask, texture)| {
+            let texture = texture.map_err(|why| Refused {
+                why: why.said(),
+                detail: why.to_string(),
+            });
+            (ask, texture)
+        }));
+    }
+
     fn models(
         &self,
         index: &Index,

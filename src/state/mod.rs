@@ -486,6 +486,7 @@ mod what_converting_still_gets_wrong_after_r55d;
 #[cfg(test)]
 mod what_the_create_menu_offers;
 pub mod workbench;
+pub mod world_session;
 
 pub use clip_regions::*;
 pub use closing::{AfterClose, CloseAnswer, PendingClose};
@@ -528,15 +529,6 @@ use std::sync::Arc;
 use std::thread;
 
 use crate::ui::dock::{Workspace, WorkspaceDocks};
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum LoadingState {
-    #[default]
-    Idle,
-    Loading,
-    Saving,
-    Error(String),
-}
 
 #[allow(clippy::large_enum_variant)]
 pub enum LoadResult {
@@ -589,6 +581,8 @@ pub struct AppState {
     pub project_path: Option<PathBuf>,
     pub project_carried: project::Carried,
     pub workbench: workbench::Workbench,
+    /// The session of the world the World screen shows.
+    pub world: world_session::Held,
     pub front_door: front_door::FrontDoor,
     pub loading: LoadingState,
     /// The file being opened, and where its result arrives.
@@ -759,6 +753,7 @@ impl AppState {
             project_path: None,
             project_carried: Default::default(),
             workbench: Default::default(),
+            world: Default::default(),
             front_door: Default::default(),
             loading: LoadingState::Idle,
             load_receiver: None,

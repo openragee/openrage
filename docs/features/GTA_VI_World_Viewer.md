@@ -6,7 +6,10 @@ Settings ▸ Games names, and writes nothing into it.
 
 ## Opening it
 
-The rail shows **World**, a globe with a small gamepad, once a GTA VI folder is set. It opens the
+The rail shows **World**, a globe with a small gamepad, once a GTA VI folder is set. ⚠ While the
+active install is a GTA V one, the World screen shows that install's world instead
+([GTA_V_World_Viewer.md](GTA_V_World_Viewer.md)); with no active game, or with GTA VI as it, it
+shows this one. It opens the
 World workspace: the view the whole height of the window, and beside it the World panel, with
 **Jobs** and **Log** as tabs behind it. With no folder set, both say so and offer
 **Settings ▸ Games…**. While the World screen shows a GTA VI folder, the status bar names GTA VI,

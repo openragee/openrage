@@ -17512,3 +17512,158 @@ msgstr "游戏的三十种材质类型中，标准、半透明与皮肤按各自
 
 msgid "No GTA VI keys: the {platform} build's folder holds no executable OpenRage reads them from, so they come only from a key snapshot of that build."
 msgstr "没有 GTA VI 密钥：{platform} 版本的文件夹中没有 OpenRage 可从中读取密钥的可执行文件，因此密钥只能来自该版本的密钥快照。"
+
+msgid "It names no archetype of the game"
+msgstr "它未指明游戏的任何原型"
+
+msgid "No type file of the install declares the archetype"
+msgstr "安装中没有类型文件声明该原型"
+
+msgid "The archetype names no asset"
+msgstr "该原型未指定资产"
+
+msgid "No file of the install holds the asset"
+msgstr "安装中没有文件包含该资产"
+
+msgid "The archive that lists the file gave none"
+msgstr "列出该文件的归档未给出文件"
+
+msgid "The file's version names a model of neither target"
+msgstr "文件版本不属于两种目标中任何一种的模型"
+
+msgid "The file does not read"
+msgstr "文件无法读取"
+
+msgid "The dictionary holds no drawable of that name"
+msgstr "字典中没有该名称的可绘制对象"
+
+msgid "The fragment holds no drawable"
+msgstr "碎片中没有可绘制对象"
+
+msgid "The drawable holds no level of detail"
+msgstr "可绘制对象没有任何细节层级"
+
+msgid "A geometry states no layout of its vertices"
+msgstr "某个几何体未说明其顶点布局"
+
+msgid "A geometry's position is in an encoding with no format"
+msgstr "某个几何体的位置使用了没有对应格式的编码"
+
+msgid "A geometry's bytes are no whole vertices"
+msgstr "某个几何体的字节不构成完整的顶点"
+
+msgid "A geometry's indices are no whole triangles"
+msgstr "某个几何体的索引不构成完整的三角形"
+
+msgid "Its scope names no texture dictionary"
+msgstr "其作用域未指明任何纹理字典"
+
+msgid "A dictionary of its chain does not read"
+msgstr "其链上的某个字典无法读取"
+
+msgid "The install lacks a dictionary of its chain"
+msgstr "安装中缺少其链上的某个字典"
+
+msgid "No dictionary of its chain holds it"
+msgstr "其链上没有字典包含它"
+
+msgid "The model that carries it does not read"
+msgstr "携带它的模型无法读取"
+
+msgid "The model's own dictionary lacks it"
+msgstr "模型自带的字典中没有它"
+
+msgid "Its format is one the texture has no word for"
+msgstr "其格式是纹理无法表示的一种"
+
+msgid "It is a cube or a volume"
+msgstr "它是立方体贴图或体积贴图"
+
+msgid "Its pixels are stored in a tiled order"
+msgstr "其像素按分块顺序存储"
+
+msgid "Its bytes hold no whole level"
+msgstr "其字节不包含完整的层级"
+
+msgid "The title read no model and gave no reason"
+msgstr "该游戏未读出模型，也未给出原因"
+
+msgid "The title read no texture and gave no reason"
+msgstr "该游戏未读出纹理，也未给出原因"
+
+msgid "Its reader stopped on an internal error"
+msgstr "其读取器因内部错误而停止"
+
+msgid "No world of this game is opened by this build of OpenRage"
+msgstr "此版本的 OpenRage 不能打开该游戏的世界"
+
+msgid "There is no configuration folder to keep the world's index in"
+msgstr "没有可保存世界索引的配置文件夹"
+
+msgid "The map does not read"
+msgstr "地图无法读取"
+
+msgid "No mesh of the model has a layout the plain pass draws"
+msgstr "模型没有任何网格具有简单通道可绘制的布局"
+
+msgid "Indexing the world of {game}: {percent} %"
+msgstr "正在为 {game} 的世界建立索引：{percent} %"
+
+msgid "The world of {game} did not open: {why}"
+msgstr "{game} 的世界未能打开：{why}"
+
+msgid "The world of {game}, flown through"
+msgstr "{game} 的世界（飞行浏览）"
+
+msgid "The first visit reads every archive of the install, which takes several minutes; the index is kept, so the next visit opens at once."
+msgstr "首次访问会读取安装中的每个归档，需要几分钟；索引会被保留，因此下次访问会立即打开。"
+
+msgid "The hour of the day: what is placed for some hours draws inside them, and the sun stands where that hour puts it"
+msgstr "一天中的时刻：只在某些时段放置的内容会在这些时段内绘制，太阳位于该时刻对应的位置"
+
+msgid "X Y Z in metres, or a camera line"
+msgstr "X Y Z（米），或一行相机参数"
+
+msgid "The place to put the camera at"
+msgstr "放置相机的位置"
+
+msgid "Go"
+msgstr "前往"
+
+msgid "That is no place: write X Y Z in metres, or paste a camera line"
+msgstr "这不是一个位置：请以米为单位写出 X Y Z，或粘贴一行相机参数"
+
+msgid "Open the world with these"
+msgstr "用这些选项打开世界"
+
+msgid "A world opened with other options has an index of its own, read from the install the first time"
+msgstr "用其他选项打开的世界有自己的索引，首次需从安装中读取"
+
+msgid "Drawn by the plain pass: one sun, and no shadow, sky, water or shader of the game's own"
+msgstr "由简单通道绘制：一个太阳，没有阴影、天空、水面，也没有游戏自身的着色器"
+
+msgid "No weather is named yet, so a map that streams under some weathers alone stays out"
+msgstr "尚未指定天气，因此仅在某些天气下流式加载的地图不会载入"
+
+msgid "As the install has it"
+msgstr "按安装原样"
+
+msgid "{count} map is still read"
+msgid_plural "{count} maps are still read"
+msgstr[0] "仍在读取 {count} 张地图"
+msgstr[1] "仍在读取 {count} 张地图"
+
+msgid "{count} map: {why}"
+msgid_plural "{count} maps: {why}"
+msgstr[0] "{count} 张地图：{why}"
+msgstr[1] "{count} 张地图：{why}"
+
+msgid "{count} model: {why}"
+msgid_plural "{count} models: {why}"
+msgstr[0] "{count} 个模型：{why}"
+msgstr[1] "{count} 个模型：{why}"
+
+msgid "{count} texture: {why}"
+msgid_plural "{count} textures: {why}"
+msgstr[0] "{count} 张纹理：{why}"
+msgstr[1] "{count} 张纹理：{why}"

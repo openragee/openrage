@@ -17512,3 +17512,158 @@ msgstr "ゲームの30種類の材質のうち、標準、半透明、肌はそ�
 
 msgid "No GTA VI keys: the {platform} build's folder holds no executable OpenRage reads them from, so they come only from a key snapshot of that build."
 msgstr "GTA VI の鍵がありません。{platform} ビルドのフォルダーに OpenRage が鍵を読み取れる実行ファイルがないため、鍵はそのビルドの鍵スナップショットからのみ得られます。"
+
+msgid "It names no archetype of the game"
+msgstr "ゲームのアーキタイプを指していません"
+
+msgid "No type file of the install declares the archetype"
+msgstr "インストール内のどの型ファイルもこのアーキタイプを宣言していません"
+
+msgid "The archetype names no asset"
+msgstr "アーキタイプがアセットを指定していません"
+
+msgid "No file of the install holds the asset"
+msgstr "インストール内のどのファイルにもこのアセットがありません"
+
+msgid "The archive that lists the file gave none"
+msgstr "ファイルを一覧に持つアーカイブがファイルを返しませんでした"
+
+msgid "The file's version names a model of neither target"
+msgstr "ファイルのバージョンはどちらのターゲットのモデルでもありません"
+
+msgid "The file does not read"
+msgstr "ファイルを読み取れません"
+
+msgid "The dictionary holds no drawable of that name"
+msgstr "辞書にその名前のドローアブルがありません"
+
+msgid "The fragment holds no drawable"
+msgstr "フラグメントにドローアブルがありません"
+
+msgid "The drawable holds no level of detail"
+msgstr "ドローアブルに詳細レベルがありません"
+
+msgid "A geometry states no layout of its vertices"
+msgstr "ジオメトリが頂点のレイアウトを示していません"
+
+msgid "A geometry's position is in an encoding with no format"
+msgstr "ジオメトリの位置が対応フォーマットのないエンコードです"
+
+msgid "A geometry's bytes are no whole vertices"
+msgstr "ジオメトリのバイト列が頂点の整数個分になっていません"
+
+msgid "A geometry's indices are no whole triangles"
+msgstr "ジオメトリのインデックスが三角形の整数個分になっていません"
+
+msgid "Its scope names no texture dictionary"
+msgstr "スコープがテクスチャ辞書を指していません"
+
+msgid "A dictionary of its chain does not read"
+msgstr "チェーン内の辞書を読み取れません"
+
+msgid "The install lacks a dictionary of its chain"
+msgstr "インストールにチェーン内の辞書がありません"
+
+msgid "No dictionary of its chain holds it"
+msgstr "チェーン内のどの辞書にもありません"
+
+msgid "The model that carries it does not read"
+msgstr "それを持つモデルを読み取れません"
+
+msgid "The model's own dictionary lacks it"
+msgstr "モデル自身の辞書にありません"
+
+msgid "Its format is one the texture has no word for"
+msgstr "テクスチャが表せないフォーマットです"
+
+msgid "It is a cube or a volume"
+msgstr "キューブまたはボリュームです"
+
+msgid "Its pixels are stored in a tiled order"
+msgstr "ピクセルがタイル順で格納されています"
+
+msgid "Its bytes hold no whole level"
+msgstr "バイト列に完全なレベルがありません"
+
+msgid "The title read no model and gave no reason"
+msgstr "タイトルはモデルを読み取らず、理由も示しませんでした"
+
+msgid "The title read no texture and gave no reason"
+msgstr "タイトルはテクスチャを読み取らず、理由も示しませんでした"
+
+msgid "Its reader stopped on an internal error"
+msgstr "読み取り処理が内部エラーで停止しました"
+
+msgid "No world of this game is opened by this build of OpenRage"
+msgstr "このビルドの OpenRage はこのゲームの世界を開けません"
+
+msgid "There is no configuration folder to keep the world's index in"
+msgstr "世界のインデックスを保存する設定フォルダーがありません"
+
+msgid "The map does not read"
+msgstr "マップを読み取れません"
+
+msgid "No mesh of the model has a layout the plain pass draws"
+msgstr "モデルのどのメッシュも簡易パスで描画できるレイアウトではありません"
+
+msgid "Indexing the world of {game}: {percent} %"
+msgstr "{game}の世界をインデックス化中：{percent} %"
+
+msgid "The world of {game} did not open: {why}"
+msgstr "{game}の世界を開けませんでした：{why}"
+
+msgid "The world of {game}, flown through"
+msgstr "{game}の世界（フライスルー）"
+
+msgid "The first visit reads every archive of the install, which takes several minutes; the index is kept, so the next visit opens at once."
+msgstr "初回はインストールのすべてのアーカイブを読み取るため数分かかります。インデックスは保存されるので、次回はすぐに開きます。"
+
+msgid "The hour of the day: what is placed for some hours draws inside them, and the sun stands where that hour puts it"
+msgstr "時刻：特定の時間帯にだけ配置されるものはその時間内に描画され、太陽はその時刻の位置に来ます"
+
+msgid "X Y Z in metres, or a camera line"
+msgstr "X Y Z（メートル）またはカメラ行"
+
+msgid "The place to put the camera at"
+msgstr "カメラを置く場所"
+
+msgid "Go"
+msgstr "移動"
+
+msgid "That is no place: write X Y Z in metres, or paste a camera line"
+msgstr "場所として読み取れません：X Y Z をメートルで入力するか、カメラ行を貼り付けてください"
+
+msgid "Open the world with these"
+msgstr "これらで世界を開く"
+
+msgid "A world opened with other options has an index of its own, read from the install the first time"
+msgstr "別のオプションで開いた世界は独自のインデックスを持ち、初回はインストールから読み取られます"
+
+msgid "Drawn by the plain pass: one sun, and no shadow, sky, water or shader of the game's own"
+msgstr "簡易パスで描画：太陽は 1 つで、影・空・水・ゲーム独自のシェーダーはありません"
+
+msgid "No weather is named yet, so a map that streams under some weathers alone stays out"
+msgstr "天候はまだ指定されないため、特定の天候でのみストリームされるマップは読み込まれません"
+
+msgid "As the install has it"
+msgstr "インストールのまま"
+
+msgid "{count} map is still read"
+msgid_plural "{count} maps are still read"
+msgstr[0] "マップ {count} 個を読み取り中"
+msgstr[1] "マップ {count} 個を読み取り中"
+
+msgid "{count} map: {why}"
+msgid_plural "{count} maps: {why}"
+msgstr[0] "マップ {count} 個：{why}"
+msgstr[1] "マップ {count} 個：{why}"
+
+msgid "{count} model: {why}"
+msgid_plural "{count} models: {why}"
+msgstr[0] "モデル {count} 個：{why}"
+msgstr[1] "モデル {count} 個：{why}"
+
+msgid "{count} texture: {why}"
+msgid_plural "{count} textures: {why}"
+msgstr[0] "テクスチャ {count} 個：{why}"
+msgstr[1] "テクスチャ {count} 個：{why}"

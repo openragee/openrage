@@ -33,10 +33,20 @@ mod self_check;
 #[cfg(test)]
 mod shell_budget;
 mod state;
+// ⚠ The GTA V install built by hand that the adapter's own suites open: its fixtures name each other from the crate's root, so a test of the app that opens it holds the three of them here.
+#[cfg(test)]
+#[path = "../crates/domain/or-world-gta5/tests/forest_fixture/mod.rs"]
+mod forest_fixture;
+#[cfg(test)]
+#[path = "../crates/domain/or-world-gta5/tests/hand_built/mod.rs"]
+mod hand_built;
 #[cfg(test)]
 mod suppressions;
 mod ui;
 mod video;
+#[cfg(test)]
+#[path = "../crates/domain/or-world-gta5/tests/world_fixture/mod.rs"]
+mod world_fixture;
 
 fn main() {
     // ⚠ Before anything starts: a packager asks, and the answer is the whole output.

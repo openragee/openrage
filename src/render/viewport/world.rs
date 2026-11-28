@@ -35,6 +35,8 @@ mod layout;
 mod material;
 #[path = "world_pages.rs"]
 mod pages;
+#[path = "world_plain.rs"]
+mod plain;
 #[path = "world_ready.rs"]
 mod ready;
 #[path = "world_textures.rs"]
@@ -198,6 +200,8 @@ pub(super) struct WorldGpu {
     gone: (HashSet<ModelRef>, HashSet<u64>),
     /// The terrain's heights the renderer was given, by their place in memory.
     terrain: usize,
+    /// A world a session feeds through the seam, drawn in the plain pass.
+    pub(super) plain: plain::Plain,
 }
 
 fn bucket_of(bucket: Bucket) -> WorldBucket {
@@ -772,6 +776,7 @@ impl RenderBridge {
             self.renderer.set_world_lamps(Vec::new());
             self.world.hide_cards(&mut self.renderer);
             (self.world.laid_for, self.world.day) = (None, None);
+            self.world.plain.forget_layout();
         }
     }
 }

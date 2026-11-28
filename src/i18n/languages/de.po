@@ -17512,3 +17512,158 @@ msgstr "Von den dreißig Materialarten des Spiels werden die Standardart, die du
 
 msgid "No GTA VI keys: the {platform} build's folder holds no executable OpenRage reads them from, so they come only from a key snapshot of that build."
 msgstr "Keine GTA VI-Schlüssel: Der Ordner der {platform}-Version hält keine ausführbare Datei, aus der OpenRage sie liest, daher kommen sie nur aus einem Schlüssel-Snapshot dieser Version."
+
+msgid "It names no archetype of the game"
+msgstr "Es benennt keinen Archetyp des Spiels"
+
+msgid "No type file of the install declares the archetype"
+msgstr "Keine Typdatei der Installation deklariert den Archetyp"
+
+msgid "The archetype names no asset"
+msgstr "Der Archetyp benennt kein Asset"
+
+msgid "No file of the install holds the asset"
+msgstr "Keine Datei der Installation enthält das Asset"
+
+msgid "The archive that lists the file gave none"
+msgstr "Das Archiv, das die Datei aufführt, lieferte keine"
+
+msgid "The file's version names a model of neither target"
+msgstr "Die Version der Datei benennt ein Modell keines der beiden Ziele"
+
+msgid "The file does not read"
+msgstr "Die Datei lässt sich nicht lesen"
+
+msgid "The dictionary holds no drawable of that name"
+msgstr "Das Wörterbuch enthält kein Drawable dieses Namens"
+
+msgid "The fragment holds no drawable"
+msgstr "Das Fragment enthält kein Drawable"
+
+msgid "The drawable holds no level of detail"
+msgstr "Das Drawable enthält keine Detailstufe"
+
+msgid "A geometry states no layout of its vertices"
+msgstr "Eine Geometrie gibt kein Layout ihrer Vertices an"
+
+msgid "A geometry's position is in an encoding with no format"
+msgstr "Die Position einer Geometrie liegt in einer Kodierung ohne Format vor"
+
+msgid "A geometry's bytes are no whole vertices"
+msgstr "Die Bytes einer Geometrie ergeben keine ganzen Vertices"
+
+msgid "A geometry's indices are no whole triangles"
+msgstr "Die Indizes einer Geometrie ergeben keine ganzen Dreiecke"
+
+msgid "Its scope names no texture dictionary"
+msgstr "Sein Bereich benennt kein Texturwörterbuch"
+
+msgid "A dictionary of its chain does not read"
+msgstr "Ein Wörterbuch seiner Kette lässt sich nicht lesen"
+
+msgid "The install lacks a dictionary of its chain"
+msgstr "Der Installation fehlt ein Wörterbuch seiner Kette"
+
+msgid "No dictionary of its chain holds it"
+msgstr "Kein Wörterbuch seiner Kette enthält sie"
+
+msgid "The model that carries it does not read"
+msgstr "Das Modell, das sie trägt, lässt sich nicht lesen"
+
+msgid "The model's own dictionary lacks it"
+msgstr "Im eigenen Wörterbuch des Modells fehlt sie"
+
+msgid "Its format is one the texture has no word for"
+msgstr "Ihr Format ist eines, für das die Textur kein Wort hat"
+
+msgid "It is a cube or a volume"
+msgstr "Sie ist ein Würfel oder ein Volumen"
+
+msgid "Its pixels are stored in a tiled order"
+msgstr "Ihre Pixel sind in gekachelter Reihenfolge gespeichert"
+
+msgid "Its bytes hold no whole level"
+msgstr "Ihre Bytes enthalten keine ganze Stufe"
+
+msgid "The title read no model and gave no reason"
+msgstr "Der Titel las kein Modell und nannte keinen Grund"
+
+msgid "The title read no texture and gave no reason"
+msgstr "Der Titel las keine Textur und nannte keinen Grund"
+
+msgid "Its reader stopped on an internal error"
+msgstr "Sein Leser brach mit einem internen Fehler ab"
+
+msgid "No world of this game is opened by this build of OpenRage"
+msgstr "Diese Version von OpenRage öffnet keine Welt dieses Spiels"
+
+msgid "There is no configuration folder to keep the world's index in"
+msgstr "Es gibt keinen Konfigurationsordner, in dem der Index der Welt aufbewahrt werden kann"
+
+msgid "The map does not read"
+msgstr "Die Karte lässt sich nicht lesen"
+
+msgid "No mesh of the model has a layout the plain pass draws"
+msgstr "Kein Mesh des Modells hat ein Layout, das der einfache Durchgang zeichnet"
+
+msgid "Indexing the world of {game}: {percent} %"
+msgstr "Welt von {game} wird indiziert: {percent} %"
+
+msgid "The world of {game} did not open: {why}"
+msgstr "Die Welt von {game} wurde nicht geöffnet: {why}"
+
+msgid "The world of {game}, flown through"
+msgstr "Die Welt von {game}, im Durchflug"
+
+msgid "The first visit reads every archive of the install, which takes several minutes; the index is kept, so the next visit opens at once."
+msgstr "Der erste Besuch liest jedes Archiv der Installation, was mehrere Minuten dauert; der Index wird aufbewahrt, sodass der nächste Besuch sofort öffnet."
+
+msgid "The hour of the day: what is placed for some hours draws inside them, and the sun stands where that hour puts it"
+msgstr "Die Tagesstunde: Was nur für manche Stunden platziert ist, wird innerhalb dieser gezeichnet, und die Sonne steht dort, wo diese Stunde sie hinstellt"
+
+msgid "X Y Z in metres, or a camera line"
+msgstr "X Y Z in Metern oder eine Kamerazeile"
+
+msgid "The place to put the camera at"
+msgstr "Der Ort, an den die Kamera gesetzt wird"
+
+msgid "Go"
+msgstr "Los"
+
+msgid "That is no place: write X Y Z in metres, or paste a camera line"
+msgstr "Das ist kein Ort: X Y Z in Metern schreiben oder eine Kamerazeile einfügen"
+
+msgid "Open the world with these"
+msgstr "Welt hiermit öffnen"
+
+msgid "A world opened with other options has an index of its own, read from the install the first time"
+msgstr "Eine mit anderen Optionen geöffnete Welt hat einen eigenen Index, der beim ersten Mal aus der Installation gelesen wird"
+
+msgid "Drawn by the plain pass: one sun, and no shadow, sky, water or shader of the game's own"
+msgstr "Vom einfachen Durchgang gezeichnet: eine Sonne, aber kein Schatten, Himmel, Wasser oder eigener Shader des Spiels"
+
+msgid "No weather is named yet, so a map that streams under some weathers alone stays out"
+msgstr "Noch ist kein Wetter benannt, daher bleibt eine Karte, die nur bei manchem Wetter gestreamt wird, draußen"
+
+msgid "As the install has it"
+msgstr "Wie in der Installation"
+
+msgid "{count} map is still read"
+msgid_plural "{count} maps are still read"
+msgstr[0] "{count} Karte wird noch gelesen"
+msgstr[1] "{count} Karten werden noch gelesen"
+
+msgid "{count} map: {why}"
+msgid_plural "{count} maps: {why}"
+msgstr[0] "{count} Karte: {why}"
+msgstr[1] "{count} Karten: {why}"
+
+msgid "{count} model: {why}"
+msgid_plural "{count} models: {why}"
+msgstr[0] "{count} Modell: {why}"
+msgstr[1] "{count} Modelle: {why}"
+
+msgid "{count} texture: {why}"
+msgid_plural "{count} textures: {why}"
+msgstr[0] "{count} Textur: {why}"
+msgstr[1] "{count} Texturen: {why}"

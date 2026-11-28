@@ -17512,3 +17512,158 @@ msgstr "Dos trinta tipos de material do jogo, o padrão, o translúcido e a pele
 
 msgid "No GTA VI keys: the {platform} build's folder holds no executable OpenRage reads them from, so they come only from a key snapshot of that build."
 msgstr "Sem chaves do GTA VI: a pasta da versão de {platform} não tem um executável do qual o OpenRage as leia, então elas vêm apenas de um snapshot de chaves dessa versão."
+
+msgid "It names no archetype of the game"
+msgstr "Não nomeia nenhum arquétipo do jogo"
+
+msgid "No type file of the install declares the archetype"
+msgstr "Nenhum arquivo de tipos da instalação declara o arquétipo"
+
+msgid "The archetype names no asset"
+msgstr "O arquétipo não nomeia nenhum asset"
+
+msgid "No file of the install holds the asset"
+msgstr "Nenhum arquivo da instalação contém o asset"
+
+msgid "The archive that lists the file gave none"
+msgstr "O arquivo compactado que lista o arquivo não entregou nenhum"
+
+msgid "The file's version names a model of neither target"
+msgstr "A versão do arquivo não nomeia um modelo de nenhum dos dois alvos"
+
+msgid "The file does not read"
+msgstr "O arquivo não pode ser lido"
+
+msgid "The dictionary holds no drawable of that name"
+msgstr "O dicionário não contém nenhum drawable com esse nome"
+
+msgid "The fragment holds no drawable"
+msgstr "O fragmento não contém nenhum drawable"
+
+msgid "The drawable holds no level of detail"
+msgstr "O drawable não contém nenhum nível de detalhe"
+
+msgid "A geometry states no layout of its vertices"
+msgstr "Uma geometria não declara o layout de seus vértices"
+
+msgid "A geometry's position is in an encoding with no format"
+msgstr "A posição de uma geometria está em uma codificação sem formato"
+
+msgid "A geometry's bytes are no whole vertices"
+msgstr "Os bytes de uma geometria não formam vértices inteiros"
+
+msgid "A geometry's indices are no whole triangles"
+msgstr "Os índices de uma geometria não formam triângulos inteiros"
+
+msgid "Its scope names no texture dictionary"
+msgstr "Seu escopo não nomeia nenhum dicionário de texturas"
+
+msgid "A dictionary of its chain does not read"
+msgstr "Um dicionário de sua cadeia não pode ser lido"
+
+msgid "The install lacks a dictionary of its chain"
+msgstr "Falta à instalação um dicionário de sua cadeia"
+
+msgid "No dictionary of its chain holds it"
+msgstr "Nenhum dicionário de sua cadeia a contém"
+
+msgid "The model that carries it does not read"
+msgstr "O modelo que a carrega não pode ser lido"
+
+msgid "The model's own dictionary lacks it"
+msgstr "O dicionário próprio do modelo não a contém"
+
+msgid "Its format is one the texture has no word for"
+msgstr "Seu formato é um para o qual a textura não tem nome"
+
+msgid "It is a cube or a volume"
+msgstr "É um cubo ou um volume"
+
+msgid "Its pixels are stored in a tiled order"
+msgstr "Seus pixels estão armazenados em ordem de blocos"
+
+msgid "Its bytes hold no whole level"
+msgstr "Seus bytes não contêm nenhum nível inteiro"
+
+msgid "The title read no model and gave no reason"
+msgstr "O título não leu nenhum modelo e não deu motivo"
+
+msgid "The title read no texture and gave no reason"
+msgstr "O título não leu nenhuma textura e não deu motivo"
+
+msgid "Its reader stopped on an internal error"
+msgstr "Seu leitor parou em um erro interno"
+
+msgid "No world of this game is opened by this build of OpenRage"
+msgstr "Esta versão do OpenRage não abre nenhum mundo deste jogo"
+
+msgid "There is no configuration folder to keep the world's index in"
+msgstr "Não há pasta de configuração onde guardar o índice do mundo"
+
+msgid "The map does not read"
+msgstr "O mapa não pode ser lido"
+
+msgid "No mesh of the model has a layout the plain pass draws"
+msgstr "Nenhuma malha do modelo tem um layout que a passagem simples desenhe"
+
+msgid "Indexing the world of {game}: {percent} %"
+msgstr "Indexando o mundo de {game}: {percent} %"
+
+msgid "The world of {game} did not open: {why}"
+msgstr "O mundo de {game} não abriu: {why}"
+
+msgid "The world of {game}, flown through"
+msgstr "O mundo de {game}, percorrido em voo"
+
+msgid "The first visit reads every archive of the install, which takes several minutes; the index is kept, so the next visit opens at once."
+msgstr "A primeira visita lê todos os arquivos compactados da instalação, o que leva vários minutos; o índice é mantido, então a próxima visita abre na hora."
+
+msgid "The hour of the day: what is placed for some hours draws inside them, and the sun stands where that hour puts it"
+msgstr "A hora do dia: o que é colocado para algumas horas é desenhado dentro delas, e o sol fica onde essa hora o põe"
+
+msgid "X Y Z in metres, or a camera line"
+msgstr "X Y Z em metros, ou uma linha de câmera"
+
+msgid "The place to put the camera at"
+msgstr "O lugar onde pôr a câmera"
+
+msgid "Go"
+msgstr "Ir"
+
+msgid "That is no place: write X Y Z in metres, or paste a camera line"
+msgstr "Isso não é um lugar: escreva X Y Z em metros, ou cole uma linha de câmera"
+
+msgid "Open the world with these"
+msgstr "Abrir o mundo com estas"
+
+msgid "A world opened with other options has an index of its own, read from the install the first time"
+msgstr "Um mundo aberto com outras opções tem um índice próprio, lido da instalação na primeira vez"
+
+msgid "Drawn by the plain pass: one sun, and no shadow, sky, water or shader of the game's own"
+msgstr "Desenhado pela passagem simples: um sol, e nenhuma sombra, céu, água ou shader próprio do jogo"
+
+msgid "No weather is named yet, so a map that streams under some weathers alone stays out"
+msgstr "Nenhum clima é nomeado ainda, então um mapa transmitido só sob certos climas fica de fora"
+
+msgid "As the install has it"
+msgstr "Como está na instalação"
+
+msgid "{count} map is still read"
+msgid_plural "{count} maps are still read"
+msgstr[0] "{count} mapa ainda está sendo lido"
+msgstr[1] "{count} mapas ainda estão sendo lidos"
+
+msgid "{count} map: {why}"
+msgid_plural "{count} maps: {why}"
+msgstr[0] "{count} mapa: {why}"
+msgstr[1] "{count} mapas: {why}"
+
+msgid "{count} model: {why}"
+msgid_plural "{count} models: {why}"
+msgstr[0] "{count} modelo: {why}"
+msgstr[1] "{count} modelos: {why}"
+
+msgid "{count} texture: {why}"
+msgid_plural "{count} textures: {why}"
+msgstr[0] "{count} textura: {why}"
+msgstr[1] "{count} texturas: {why}"

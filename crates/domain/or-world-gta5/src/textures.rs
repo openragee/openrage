@@ -17,6 +17,8 @@ use or_io::gta5::gen9::GrcTextureG9;
 use or_io::gta5::retarget::layout_of;
 use or_io::gta5::PgDictionary;
 use or_world::model::{AssetKey, Index, Texture, TextureAsk, TextureFormat};
+use or_world::sentence;
+use or_world::sentence::Sentence;
 
 use crate::index::{linked, Holding};
 use crate::install::Gta5World;
@@ -51,20 +53,29 @@ pub enum NoTexture {
 }
 
 impl NoTexture {
-    /// The reason without what a file said of itself, which a count of reasons is kept by.
-    pub fn kind(&self) -> &'static str {
+    /// The reason as a sentence the catalogs hold, without what a file said of itself.
+    pub fn said(&self) -> Sentence {
         match self {
-            Self::NoDictionary => "its scope names no dictionary",
-            Self::NotInChain { unread: 1.., .. } => "a dictionary of its chain does not read",
-            Self::NotInChain { absent: 1.., .. } => "the mount lacks a dictionary of its chain",
-            Self::NotInChain { .. } => "no dictionary of its chain holds it",
-            Self::Model(_) => "the model that carries it does not read",
-            Self::NotEmbedded => "the model's own dictionary lacks it",
-            Self::Format(_) => "its format has no word",
-            Self::NotFlat => "it is a cube or a volume",
-            Self::Tiled => "its pixels are tiled",
-            Self::PartLevel => "its bytes hold no whole level",
+            Self::NoDictionary => sentence!("Its scope names no texture dictionary"),
+            Self::NotInChain { unread: 1.., .. } => {
+                sentence!("A dictionary of its chain does not read")
+            }
+            Self::NotInChain { absent: 1.., .. } => {
+                sentence!("The install lacks a dictionary of its chain")
+            }
+            Self::NotInChain { .. } => sentence!("No dictionary of its chain holds it"),
+            Self::Model(_) => sentence!("The model that carries it does not read"),
+            Self::NotEmbedded => sentence!("The model's own dictionary lacks it"),
+            Self::Format(_) => sentence!("Its format is one the texture has no word for"),
+            Self::NotFlat => sentence!("It is a cube or a volume"),
+            Self::Tiled => sentence!("Its pixels are stored in a tiled order"),
+            Self::PartLevel => sentence!("Its bytes hold no whole level"),
         }
+    }
+
+    /// [`Self::said`] as its English text, which a count of reasons is kept by.
+    pub fn kind(&self) -> &'static str {
+        self.said().key()
     }
 }
 

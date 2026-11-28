@@ -816,3 +816,51 @@ fn a_parent_several_wanted_maps_name_is_wanted_as_the_parent_of_the_first_in_the
         ]
     );
 }
+
+#[test]
+fn a_reader_that_words_no_reason_answers_each_ask_once_and_refuses_what_did_not_read() {
+    use crate::fake::{Fault, CUBE, SLAB};
+    use crate::model::TextureAsk;
+    let whole = open();
+    let broken = open_title(FakeTitle::broken(Fault::ModelUnread));
+    let mut worker = Worker::new();
+    // The cube twice: one answer an ask, and the second ask of a model is refused.
+    let asks = [SLAB, CUBE, CUBE];
+    let read = |opened: &Opened, worker: &mut Worker| {
+        let mut out = Vec::new();
+        (opened.install.models()).models_or_why(&opened.index, &asks, worker, &mut out);
+        let whys: Vec<Option<&'static str>> = (out.iter())
+            .map(|(_, model)| model.as_ref().err().map(|refused| refused.why.key()))
+            .collect();
+        let asked: Vec<_> = out.iter().map(|(ask, _)| *ask).collect();
+        assert_eq!(asked, asks);
+        whys
+    };
+    let unsaid = Some("The title read no model and gave no reason");
+    assert_eq!(read(&whole, &mut worker), [None, None, unsaid]);
+    assert_eq!(read(&broken, &mut worker), [unsaid, None, unsaid]);
+
+    let torn = open_title(FakeTitle::broken(Fault::TextureUnread));
+    let flat = TextureAsk {
+        scope: CUBE,
+        name: 1,
+        pixels: 4,
+    };
+    let nowhere = TextureAsk { name: 2, ..flat };
+    let textures = |opened: &Opened, worker: &mut Worker| {
+        let mut out = Vec::new();
+        (opened.install.models()).textures_or_why(
+            &opened.index,
+            &[flat, nowhere],
+            worker,
+            &mut out,
+        );
+        let whys: Vec<Option<&'static str>> = (out.iter())
+            .map(|(_, texture)| texture.as_ref().err().map(|refused| refused.why.key()))
+            .collect();
+        whys
+    };
+    let unsaid = Some("The title read no texture and gave no reason");
+    assert_eq!(textures(&whole, &mut worker), [None, unsaid]);
+    assert_eq!(textures(&torn, &mut worker), [unsaid, unsaid]);
+}

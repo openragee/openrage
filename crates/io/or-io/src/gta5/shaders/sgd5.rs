@@ -2,6 +2,11 @@
 //! global variable table, six program banks, each program a raw DEFLATE stream of a DXIL
 //! container, and variable records that state name hashes where `SGD2` states names.
 //!
+//! The layout measured is the Xbox Series build's. The PlayStation 5 build ships the same `SGD5`
+//! magic but a different binding layout, so a container opened by a build it was not measured on
+//! is refused by that build's name through [`Sgd5File::open_for`] (R72i, and the platforms plan's
+//! decision 3: a platform with no measured row is an error that names it).
+//!
 //! The file states no end and no table of contents, so consuming it exactly to its trailer, with
 //! every count and reference in range, is the check that the read landed on the right fields. A
 //! piece of the file a download has not delivered reads as zeros: the read steps over it to the
@@ -18,6 +23,7 @@ use crate::gta5::shaders::shader_defs::{
     sga_parameter, ShaderDef, ShaderDefinitions, ShaderParamDef, ShaderParamValue,
 };
 use crate::gta6::hash::name_hash32;
+use crate::Platform;
 
 const MAGIC: &[u8; 4] = b"SGD5";
 /// Program banks: vertex, pixel, geometry, two empty in every container read, and compute.
@@ -69,6 +75,12 @@ pub enum Sgd5Error {
     NoSuchProgram { bank: usize, index: u32 },
     #[error("each program is a DXIL container (shader model 6), and the shader front end translates DXBC shader model 5 tokens, so none is translated")]
     NotTranslated,
+    #[error(
+        "GTA VI shader containers are measured only on the Xbox Series build; the {} shader program \
+         package is not measured",
+        platform.label()
+    )]
+    PlatformNotMeasured { platform: Platform },
     #[error("saving an SGD5 container is refused: OpenRage reads GTA VI's files and writes none, and a program carries a digest and a key that tie it to the pipeline cache")]
     ReadOnly,
 }
@@ -287,6 +299,17 @@ impl Sgd5Program {
 }
 
 impl Sgd5File {
+    /// The container in `bytes` read as the build `platform` named it, refusing a platform whose
+    /// shader program package is not measured by name. The Xbox Series build is the one measured;
+    /// another platform's `SGD5` framing is unmeasured, so it is refused here rather than read on
+    /// the Xbox layout (R72i, and D3: an unmeasured platform is refused by name).
+    pub fn open_for(bytes: &[u8], platform: Platform) -> Result<Self, Sgd5Error> {
+        match platform {
+            Platform::XboxSeries => Self::open(bytes),
+            platform => Err(Sgd5Error::PlatformNotMeasured { platform }),
+        }
+    }
+
     /// The container in `bytes`, which may run past its trailer into zero pad.
     pub fn open(bytes: &[u8]) -> Result<Self, Sgd5Error> {
         let b = bytes;

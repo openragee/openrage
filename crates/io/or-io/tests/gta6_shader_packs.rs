@@ -1,7 +1,10 @@
 //! The shader packs of GTA VI's builds, side by side: each build's `shaders.rpf` holds `SGD5`
 //! effect containers. The Xbox Series build's open, and a program's stream inflates to a `DXBC`
-//! container; the PlayStation 5 build's are refused by name at their first binding layout, whose
-//! head states a count that is not its record count, so their programs are not reached.
+//! container. The PlayStation 5 build ships the same `SGD5` magic but a binding layout not measured
+//! on it (its first layout head states a count that is not its record count, 88 for 28 records), so
+//! [`Sgd5File::open_for`] refuses a PlayStation 5 container by that build's name (R72i, the platforms
+//! plan's decision 3). The read reaching the layout still names where it stops, kept here beside the
+//! by-name refusal as the record of the structural difference.
 //!
 //! Install-gated: it skips cleanly without the builds.
 //!   `OPENRAGE_GTA6_BUILDS`  the roots of an Xbox Series build and a PlayStation 5 build, `;` between
@@ -16,6 +19,7 @@ use std::sync::Arc;
 use or_io::container::rpf::gta6_extract::snapshot_for_exe;
 use or_io::container::rpf::{Gta6Context, GtaViKeys, NameResolver, RpfArchive, RpfEntry};
 use or_io::gta5::shaders::sgd5::Sgd5File;
+use or_io::Platform;
 use or_test_support::skip_install;
 
 const BUILDS_ENV: &str = "OPENRAGE_GTA6_BUILDS";
@@ -35,7 +39,7 @@ struct Packs {
     refused: Vec<String>,
 }
 
-fn packs_of(root: &Path) -> Packs {
+fn packs_of(root: &Path, platform: Platform) -> Packs {
     let exe = (EXECUTABLES.iter().map(|name| root.join(name)))
         .find(|path| path.is_file())
         .expect("the build's executable");
@@ -63,10 +67,14 @@ fn packs_of(root: &Path) -> Packs {
             continue;
         }
         packs.containers += 1;
-        let file = match Sgd5File::open(&bytes) {
+        let file = match Sgd5File::open_for(&bytes, platform) {
             Ok(file) => file,
             Err(e) => {
-                packs.refused.push(format!("entry {index}: {e}"));
+                // The platform-named refusal (decision 3), and — for the record — where a read on
+                // the Xbox layout stops, so the structural difference stays visible.
+                let probe = (Sgd5File::open(&bytes).err())
+                    .map_or_else(String::new, |e| format!(" [Xbox-layout read: {e}]"));
+                packs.refused.push(format!("entry {index}: {e}{probe}"));
                 continue;
             }
         };
@@ -103,7 +111,10 @@ fn a_playstation_5_shader_pack_is_the_xbox_series_s_container_with_another_bindi
         );
         return;
     };
-    let (xbox, ps5) = (packs_of(xbox), packs_of(ps5));
+    let (xbox, ps5) = (
+        packs_of(xbox, Platform::XboxSeries),
+        packs_of(ps5, Platform::Ps5),
+    );
     for (label, packs) in [("Xbox Series", &xbox), ("PlayStation 5", &ps5)] {
         println!(
             "{label}: {} SGD5 container(s), {} opened, {} programs, {} effects, streams begin {:?}",
@@ -122,14 +133,19 @@ fn a_playstation_5_shader_pack_is_the_xbox_series_s_container_with_another_bindi
         "every Xbox Series container opens"
     );
     assert_eq!(xbox.heads.keys().collect::<Vec<_>>(), ["DXBC"]);
-    // Measured: a PlayStation 5 layout states, where the Xbox Series states its record count, a
-    // larger number (88 for 28 records), so the reader refuses the container and names where.
+    // A PlayStation 5 container is refused by that build's name (decision 3), and the Xbox-layout
+    // probe still names where the read stops: its first layout states, where the Xbox Series states
+    // its record count, a larger number (88 for 28 records).
     assert_eq!((ps5.opened, ps5.refused.len()), (0, ps5.containers));
     for refused in &ps5.refused {
         assert!(
+            refused.contains(Platform::Ps5.label()) && refused.contains("is not measured"),
+            "a PlayStation 5 container is refused by name: {refused}"
+        );
+        assert!(
             refused.contains("does not hold to the measured layout")
                 && refused.contains("a layout of"),
-            "{refused}"
+            "the Xbox-layout read still names where it stops: {refused}"
         );
     }
 }

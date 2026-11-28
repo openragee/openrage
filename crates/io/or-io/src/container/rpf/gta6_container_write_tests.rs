@@ -8,6 +8,7 @@ use crate::container::rpf::gta6_archive::GROUP_CONTENT_HASH;
 use crate::container::rpf::gta6_chunk_table::entry_chunks;
 use crate::container::rpf::gta6_dependencies::{self, GROUP_DEPENDENCIES};
 use crate::container::rpf::rpf9::RPF9_MAGIC;
+use crate::platform::Platform;
 
 const REGISTRY_ID: u64 = 0xDEAD_BEEF_0200_0000;
 const KEY_ID: u32 = 0xDEAD_BEEF;
@@ -1273,7 +1274,7 @@ fn build_makes_an_archive_from_nothing_that_reopens_and_reads_back() {
     let key = Rpf9IndexKey::of(&open(&child).archive.toc).unwrap();
     assert_eq!((key.key_id, key.iv), (KEY_ID, [0x33; 16]));
     let built_once = || {
-        let plan = build(&entries, &key, &keys()).expect("built");
+        let plan = build(&entries, Platform::XboxSeries, &key, &keys()).expect("built");
         let mut out = Vec::new();
         plan.write_to(&mut Cursor::new(Vec::<u8>::new()), &mut out)
             .expect("written");
@@ -1305,7 +1306,9 @@ fn build_makes_an_archive_from_nothing_that_reopens_and_reads_back() {
     assert!(relays_identically(&mount.archive.toc).unwrap());
     assert_eq!(write(&built, |_| {}).unwrap().1, built);
 
-    let refused = |entries: &[(String, Rpf9NewBody)]| build(entries, &key, &keys()).is_err();
+    let refused = |entries: &[(String, Rpf9NewBody)]| {
+        build(entries, Platform::XboxSeries, &key, &keys()).is_err()
+    };
     assert!(refused(&[]));
     assert!(refused(&[
         ("same".to_owned(), Rpf9NewBody::Chunked(note.clone())),
@@ -1318,6 +1321,44 @@ fn build_makes_an_archive_from_nothing_that_reopens_and_reads_back() {
             loose: resource_loose.clone(),
         }
     )]));
+}
+
+#[test]
+fn a_built_archive_keeps_the_platform_it_was_made_for_and_refuses_an_unmeasured_one() {
+    let key = Rpf9IndexKey {
+        key_id: KEY_ID,
+        iv: [0x33; 16],
+    };
+    let entries = vec![(
+        "notes.txt".to_owned(),
+        Rpf9NewBody::Chunked(text("ps5 body ", 4000)),
+    )];
+    let build_for = |platform| {
+        let plan = build(&entries, platform, &key, &keys()).expect("built");
+        let mut out = Vec::new();
+        plan.write_to(&mut Cursor::new(Vec::<u8>::new()), &mut out)
+            .expect("written");
+        out
+    };
+
+    // A PlayStation 5 archive states `p` at 0x19 and 0x07 at 0x2E, where Xbox states `z` and 0x09.
+    let ps5 = build_for(Platform::Ps5);
+    assert_eq!((ps5[0x19], ps5[0x2E]), (b'p', 0x07));
+    let xbox = build_for(Platform::XboxSeries);
+    assert_eq!((xbox[0x19], xbox[0x2E]), (b'z', 0x09));
+    assert_ne!(ps5, xbox, "the platform changes the header's bytes");
+    assert_eq!(build_for(Platform::Ps5), ps5, "a build is deterministic");
+
+    // The PlayStation 5 archive reopens, keeping the platform it was built for, and saving it to its
+    // canonical form (a copy through decrypt and re-encrypt) is byte-identical: the owned fixed point.
+    let mount = open(&ps5);
+    assert_eq!(mount.archive.toc.bytes[0x19], b'p');
+    assert_eq!(index_of(&mount, "notes.txt"), 0);
+    assert_eq!(write(&ps5, |_| {}).unwrap().1, ps5);
+
+    // A platform no GTA VI build was measured on is refused by its name.
+    let pc = build(&entries, Platform::Pc, &key, &keys()).expect_err("no PC build is measured");
+    assert!(pc.to_string().contains("PC"), "{pc}");
 }
 
 #[test]

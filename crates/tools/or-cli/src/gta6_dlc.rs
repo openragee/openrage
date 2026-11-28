@@ -9,9 +9,10 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Cursor, Write};
 use std::path::{Path, PathBuf};
 
-use or_io::container::rpf::gta6_container_write::{build, Rpf9IndexKey, Rpf9NewBody};
+use or_io::container::rpf::gta6_container_write::{build, platform_of, Rpf9IndexKey, Rpf9NewBody};
 use or_io::container::rpf::{Gta6Mount, GtaViKeys, RPF9_MAGIC};
 use or_io::gta6::names::{vocabulary_file, Vocabulary};
+use or_io::platform::Platform;
 use or_title::dlc::{
     ContentChangeSetDef, ContentChangeSetGroup, ContentDef, IncludedChangeset, RegisteredFile,
     SetupContentType, SetupData,
@@ -94,6 +95,8 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let mount =
         Gta6Mount::open_root(&mut source, &keys).map_err(|e| format!("{}: {e}", like.display()))?;
     let key = Rpf9IndexKey::of(&mount.archive.toc).map_err(|e| e.to_string())?;
+    // The pack keeps the platform its key archive states.
+    let platform = platform_of(&mount.archive.toc).map_err(|e| e.to_string())?;
 
     // `create_new` refuses an existing file, so the cleanup below only deletes a file made here.
     let created = OpenOptions::new()
@@ -102,7 +105,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         .open(&out)
         .map_err(|e| format!("{}: {e}", out.display()))?;
     let mut sink = BufWriter::new(created);
-    let written = write_pack(&src, &device, &file_types, &key, &keys, &mut sink)
+    let written = write_pack(&src, &device, &file_types, platform, &key, &keys, &mut sink)
         .and_then(|built| sink.flush().map(|()| built).map_err(|e| e.to_string()));
     let (names, registered, bytes) = match written {
         Ok(built) => built,
@@ -226,6 +229,7 @@ fn write_pack(
     src: &Path,
     device: &str,
     file_types: &BTreeMap<String, String>,
+    platform: Platform,
     key: &Rpf9IndexKey,
     keys: &GtaViKeys,
     out: &mut impl Write,
@@ -259,7 +263,7 @@ fn write_pack(
         entries.push((path, Rpf9NewBody::Chunked(text.into_bytes())));
     }
     let names = entries.iter().map(|(name, _)| name.clone()).collect();
-    let plan = build(&entries, key, keys).map_err(|e| e.to_string())?;
+    let plan = build(&entries, platform, key, keys).map_err(|e| e.to_string())?;
     let written = plan
         .write_to(&mut Cursor::new(Vec::<u8>::new()), out)
         .map_err(|e| e.to_string())?;
@@ -394,6 +398,7 @@ mod tests {
                 src,
                 device,
                 types,
+                Platform::XboxSeries,
                 &key(),
                 &fixture::keys(),
                 &mut Vec::new(),
@@ -414,7 +419,15 @@ mod tests {
         std::fs::create_dir_all(tiny.join("data")).expect("a folder");
         std::fs::write(tiny.join("data/x.meta"), b"abcde").expect("written");
         let keys = fixture::keys();
-        let written = write_pack(&tiny, DEVICE, &types(), &key(), &keys, &mut Vec::new());
+        let written = write_pack(
+            &tiny,
+            DEVICE,
+            &types(),
+            Platform::XboxSeries,
+            &key(),
+            &keys,
+            &mut Vec::new(),
+        );
         assert!(written.is_ok(), "{:?}", written.err());
 
         assert_eq!(
@@ -430,9 +443,16 @@ mod tests {
         let dir = tempfile::tempdir().expect("a folder");
         let src = source(dir.path());
         let mut built = Vec::new();
-        let (names, registered, written) =
-            write_pack(&src, DEVICE, &types(), &key(), &fixture::keys(), &mut built)
-                .expect("built");
+        let (names, registered, written) = write_pack(
+            &src,
+            DEVICE,
+            &types(),
+            Platform::XboxSeries,
+            &key(),
+            &fixture::keys(),
+            &mut built,
+        )
+        .expect("built");
         assert_eq!(registered, 2);
         assert_eq!(names.len(), registered + DOCUMENTS);
         assert_eq!(written, built.len() as u64);
@@ -523,13 +543,12 @@ mod tests {
             .min_by_key(|p| std::fs::metadata(p).map_or(u64::MAX, |m| m.len()))
             .expect("an archive at the build root");
         let mut file = File::open(&like).expect("the archive opens");
-        let key = Rpf9IndexKey::of(
-            &Gta6Mount::open_root(&mut file, &keys)
-                .expect("its table deciphers")
-                .archive
-                .toc,
-        )
-        .expect("its index key");
+        let toc = Gta6Mount::open_root(&mut file, &keys)
+            .expect("its table deciphers")
+            .archive
+            .toc;
+        let key = Rpf9IndexKey::of(&toc).expect("its index key");
+        let platform = platform_of(&toc).expect("its platform");
 
         let dir = tempfile::tempdir().expect("a folder");
         let src = dir.path().join("src");
@@ -537,7 +556,7 @@ mod tests {
         std::fs::write(src.join("data/notes.meta"), notes()).expect("written");
         let mut built = Vec::new();
         let (names, _, _) =
-            write_pack(&src, DEVICE, &types(), &key, &keys, &mut built).expect("built");
+            write_pack(&src, DEVICE, &types(), platform, &key, &keys, &mut built).expect("built");
 
         let mut mount =
             Gta6Mount::open_root(&mut Cursor::new(&built[..]), &keys).expect("the pack reopens");

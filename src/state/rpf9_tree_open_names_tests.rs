@@ -69,7 +69,8 @@ fn source(dir: &Path) -> PathBuf {
     };
     let keys = synthetic_keys().expect("the synthetic snapshot parses");
     let entries = [resource(FIRST), resource(SECOND)];
-    let plan = build(&entries, &key, &keys).expect("the archive builds");
+    let plan = build(&entries, or_io::platform::Platform::XboxSeries, &key, &keys)
+        .expect("the archive builds");
     let mut bytes = Vec::new();
     (plan.write_to(&mut Cursor::new(Vec::<u8>::new()), &mut bytes))
         .expect("the archive is laid out");

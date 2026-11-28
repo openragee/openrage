@@ -412,6 +412,7 @@ mod tests {
     };
     use or_io::gta6::hash::name_hash64;
     use or_io::gta6::headerless::NavEdge;
+    use or_io::platform::Platform;
 
     /// The cell's grid place, which the built cell states at 0xC8.
     const CELL: u32 = 256 + 512 * 256;
@@ -728,7 +729,7 @@ mod tests {
                 ((*name).to_owned(), body)
             })
             .collect();
-        let plan = build(&entries, &KEY, &keys).expect("the archive builds");
+        let plan = build(&entries, Platform::XboxSeries, &KEY, &keys).expect("the archive builds");
         let mut bytes = Vec::new();
         (plan.write_to(&mut Cursor::new(Vec::<u8>::new()), &mut bytes)).expect("laid out");
         let mount = Gta6Mount::open_root(&mut Cursor::new(&bytes), &keys).expect("it opens");

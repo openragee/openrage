@@ -97,7 +97,8 @@ fn archive(entries: &[(&str, Vec<u8>)]) -> Vec<u8> {
         key_id: KEY_ID,
         iv: [0x33; 16],
     };
-    let plan = build_archive(&entries, &key, &keys()).expect("the fixture builds");
+    let plan = build_archive(&entries, or_io::Platform::XboxSeries, &key, &keys())
+        .expect("the fixture builds");
     let mut out = Vec::new();
     plan.write_to(&mut Cursor::new(Vec::<u8>::new()), &mut out)
         .expect("the fixture writes");

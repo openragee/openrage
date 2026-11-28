@@ -41,9 +41,6 @@ const CLASS_ARCHIVE: u8 = 0x00;
 const INDEX_CIPHER_TYPE: u16 = 16;
 /// The header byte every measured header holds at `+0x2D`.
 const HEADER_2D: u8 = 0x0F;
-// ponytail: a built archive is the Xbox Series's, the one platform keys are held for; the
-// platform comes from the key set once a key set states one.
-const BUILT_FOR: Platform = Platform::XboxSeries;
 
 /// The index key a table is enciphered under: a key id the snapshot holds, and the IV.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,10 +75,26 @@ impl Rpf9IndexKey {
     }
 }
 
-/// A new archive of `entries`, each a path and a body, its table enciphered under `key`.
+/// The platform a written archive keeps: the one its source header's letter (at `+0x19`) states,
+/// refused by that letter where it is of no platform OpenRage reads.
+pub fn platform_of(toc: &Rpf9Toc) -> Result<Platform> {
+    let letter = *toc
+        .bytes
+        .get(0x19)
+        .ok_or_else(|| bad("the archive header states no platform letter"))?;
+    Platform::from_letter(letter).ok_or_else(|| {
+        bad(format!(
+            "the archive states platform letter {letter:#04X}, of no platform OpenRage reads"
+        ))
+    })
+}
+
+/// A new archive of `entries`, each a path and a body, built for `platform` and its table enciphered
+/// under `key`. The platform sets the header's letter and byte, and one not measured is refused by name.
 // Every piece is bytes, so the plan writes from any source.
 pub fn build(
     entries: &[(String, Rpf9NewBody)],
+    platform: Platform,
     key: &Rpf9IndexKey,
     keys: &GtaViKeys,
 ) -> Result<Rpf9Plan> {
@@ -127,7 +140,7 @@ pub fn build(
         columns.iter().filter(|c| c.external).count() as u16,
     );
     LE::write_u32(&mut prefix[0x30..], INDEX_KEYED_TAIL);
-    let facts = PlatformFacts::of(BUILT_FOR)?;
+    let facts = PlatformFacts::of(platform)?;
     prefix[0x19] = facts.platform.extension_letter() as u8;
     prefix[0x2D] = HEADER_2D;
     prefix[0x2E] = facts.header_word;

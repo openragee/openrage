@@ -8,6 +8,7 @@ use super::*;
 use crate::container::rpf::gta6_archive::{Gta6Archive, Gta6Cipher};
 use crate::container::rpf::gta6_chunk_table::{author, one_entry_archive, Table};
 use crate::container::rpf::gta6_container_write::{build, Rpf9IndexKey, Rpf9NewBody};
+use crate::platform::Platform;
 
 const KEY_ID: u32 = 0xDEAD_BEEF;
 const REGISTRY_ID: u64 = 0xDEAD_BEEF_0200_0000;
@@ -128,7 +129,7 @@ fn built(entries: Vec<(&str, Rpf9NewBody)>) -> Vec<u8> {
         key_id: KEY_ID,
         iv: [0x33; 16],
     };
-    let plan = build(&entries, &key, &keys()).expect("built");
+    let plan = build(&entries, Platform::XboxSeries, &key, &keys()).expect("built");
     let mut out = Vec::new();
     plan.write_to(&mut Cursor::new(Vec::<u8>::new()), &mut out)
         .expect("written");

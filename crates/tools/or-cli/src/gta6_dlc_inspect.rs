@@ -171,6 +171,7 @@ mod tests {
 
     use or_io::container::rpf::gta6_container_write::{build, Rpf9IndexKey, Rpf9NewBody};
     use or_io::container::rpf::{GTA6_EXE_ENV, GTA6_SNAPSHOT_ENV};
+    use or_io::platform::Platform;
     use or_title::dlc::{
         ContentChangeSetDef, ContentChangeSetGroup, ContentDef, IncludedChangeset, RegisteredFile,
         SetupContentType, SetupData,
@@ -244,7 +245,8 @@ mod tests {
     }
 
     fn write(dir: &Path, name: &str, entries: &[(String, Rpf9NewBody)]) -> PathBuf {
-        let plan = build(entries, &key(), &fixture::keys()).expect("the pack builds");
+        let plan = build(entries, Platform::XboxSeries, &key(), &fixture::keys())
+            .expect("the pack builds");
         let mut bytes = Vec::new();
         plan.write_to(&mut Cursor::new(Vec::<u8>::new()), &mut bytes)
             .expect("written");

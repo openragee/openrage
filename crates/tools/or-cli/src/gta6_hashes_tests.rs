@@ -337,6 +337,7 @@ fn virtual_section() -> Vec<u8> {
 fn a_clear_headerless_row_is_read_past_its_slot_and_counted() {
     use or_io::container::rpf::gta6_container_write::{build, Rpf9IndexKey, Rpf9NewBody};
     use or_io::container::rpf::{write_rpf9_resource, Rpf9Form, Rpf9Sections};
+    use or_io::platform::Platform;
     use std::io::Cursor;
 
     let loose = write_rpf9_resource(&Rpf9Sections {
@@ -355,7 +356,13 @@ fn a_clear_headerless_row_is_read_past_its_slot_and_counted() {
         iv: [0x33; 16],
     };
     let keys = keys();
-    let plan = build(&[("zq/a.ydr".to_owned(), resource)], &key, &keys).expect("it builds");
+    let plan = build(
+        &[("zq/a.ydr".to_owned(), resource)],
+        Platform::XboxSeries,
+        &key,
+        &keys,
+    )
+    .expect("it builds");
     let mut bytes = Vec::new();
     (plan.write_to(&mut Cursor::new(Vec::<u8>::new()), &mut bytes)).expect("it is laid out");
     let dir = tempfile::tempdir().expect("a temp dir");

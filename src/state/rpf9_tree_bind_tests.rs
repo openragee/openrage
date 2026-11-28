@@ -70,7 +70,8 @@ fn source(dir: &Path) -> PathBuf {
         (NOTES.to_owned(), Rpf9NewBody::Chunked(notes())),
         (PSO.to_owned(), Rpf9NewBody::Chunked(table_form_pso())),
     ];
-    let plan = build(&entries, &key, &keys).expect("the archive builds");
+    let plan = build(&entries, or_io::platform::Platform::XboxSeries, &key, &keys)
+        .expect("the archive builds");
     let mut bytes = Vec::new();
     (plan.write_to(&mut Cursor::new(Vec::<u8>::new()), &mut bytes))
         .expect("the archive is laid out");

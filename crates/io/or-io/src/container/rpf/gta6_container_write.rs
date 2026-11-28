@@ -51,7 +51,7 @@ use table::Table;
 
 #[path = "gta6_container_build.rs"]
 mod build;
-pub use build::{build, Rpf9IndexKey};
+pub use build::{build, platform_of, Rpf9IndexKey};
 use build::{column, insert_entry, set_new_body};
 
 #[path = "gta6_container_deps.rs"]

@@ -24,7 +24,7 @@ use std::io::{BufWriter, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use or_io::container::rpf::gta6_container_write::{build, Rpf9IndexKey, Rpf9NewBody};
+use or_io::container::rpf::gta6_container_write::{build, platform_of, Rpf9IndexKey, Rpf9NewBody};
 use or_io::container::rpf::{
     Gta6Entry, Gta6Mount, GtaViKeys, NameResolver, Rpf9ArchiveWriter, Rpf9Plan,
 };
@@ -265,6 +265,8 @@ fn build_from(folder: &Path, inner: &[String], options: &Options) -> Result<Stri
     let mut source = File::open(like).map_err(|e| format!("{}: {e}", like.display()))?;
     let mount = Gta6Mount::open_root(&mut source, &keys).map_err(|e| e.to_string())?;
     let key = Rpf9IndexKey::of(&mount.archive.toc).map_err(|e| e.to_string())?;
+    // The new archive keeps the platform its key archive states.
+    let platform = platform_of(&mount.archive.toc).map_err(|e| e.to_string())?;
 
     let mut files = Vec::new();
     collect_files(folder, folder, &mut files)?;
@@ -279,7 +281,7 @@ fn build_from(folder: &Path, inner: &[String], options: &Options) -> Result<Stri
         };
         entries.push((name, body));
     }
-    let plan = build(&entries, &key, &keys).map_err(|e| e.to_string())?;
+    let plan = build(&entries, platform, &key, &keys).map_err(|e| e.to_string())?;
     let written = write_plan(&plan, &mut std::io::Cursor::new(Vec::<u8>::new()), out)?;
     Ok(format!(
         "{}: {} entries, {written} bytes written. {UNSIGNED}",

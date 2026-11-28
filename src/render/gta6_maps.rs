@@ -71,7 +71,7 @@ fn run_once<F: FnOnce()>(task: &Mutex<Option<F>>) -> bool {
 
 /// Have a worker run `decode`, which fills a map's slot: no more at once than [`or_job::workers`],
 /// and the count of [`arrived`] moved once it has.
-pub(super) fn decode(decode: impl FnOnce() + Send + 'static) {
+pub(crate) fn decode(decode: impl FnOnce() + Send + 'static) {
     static POOL: OnceLock<or_job::Pool> = OnceLock::new();
     let pool = POOL.get_or_init(|| or_job::Pool::new(or_job::workers(), STACK, || {}));
     let task = Arc::new(Mutex::new(Some(decode)));

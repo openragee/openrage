@@ -209,7 +209,7 @@ pub(super) fn stated(hash: u32) -> Option<super::shading::Feed> {
     match hash {
         LAYERS => Some(super::shading::Feed::Stated(LayersHeader::AT_REST.bytes())),
         OBJECT_DATA => Some(super::shading::Feed::Stated(object_data_at_rest())),
-        _ => None,
+        _ => super::ped_skin::stated(hash),
     }
 }
 

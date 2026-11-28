@@ -369,7 +369,15 @@ pub(crate) fn cmd_scan_shading(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     for (a, b, first, pixel) in shading {
-        println!("  pass          {} + {}", first.name, pixel.name);
+        // By the numbers `rpf scan-rdna --program` takes.
+        let number = |at: usize| container.programs.iter().position(|p| p.at == at);
+        println!(
+            "  pass          {} + {} (programs {:?} and {:?})",
+            first.name,
+            pixel.name,
+            number(first.at),
+            number(pixel.at)
+        );
         if let (Ok(mesh), Ok(fragment)) = (native(&a), native(&b)) {
             let element = |e: &or_io::gta5::shaders::spirv_pack::SignatureElement| {
                 format!(

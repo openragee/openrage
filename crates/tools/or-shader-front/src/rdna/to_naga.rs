@@ -4924,7 +4924,10 @@ impl<'a> Cx<'a> {
     }
 
     /// The system value a pixel program finds in its `k`th vector register after the barycentric pair:
-    /// the position components its signature reads, in order, then the front face as plus or minus one.
+    /// the position components its signature reads, in order, then the front face: one, or nought
+    /// for a back face.
+    // ⚠ The game's programs test the facing register as a dword against nought
+    // (`v_cmp_lg_u32 0, v`), so a back face must read nought: minus one reads as a front face.
     fn system_input(&mut self, k: u8) -> Option<Handle<E>> {
         let program = self.program;
         let read: Vec<u32> = (0..4)
@@ -4949,7 +4952,7 @@ impl<'a> Cx<'a> {
         };
         let pointer = self.global(global);
         let front = self.b.load(pointer);
-        let (yes, no) = (self.b.u32(1f32.to_bits()), self.b.u32((-1f32).to_bits()));
+        let (yes, no) = (self.b.u32(1f32.to_bits()), self.b.u32(0));
         Some(self.b.select(front, yes, no))
     }
 

@@ -625,8 +625,10 @@ fn bind(
                     _ => [0; 4],
                 };
                 let first = textures.len();
-                let sliced = count.is_none() && *dimension == wgpu::TextureViewDimension::D2Array;
-                if let (true, Some(view)) = (sliced, made.slices(device, queue, images)) {
+                use wgpu::TextureViewDimension as D;
+                let sliced = count.is_none() && matches!(*dimension, D::D2Array | D::D3);
+                if let (true, Some(view)) = (sliced, made.slices(device, queue, images, *dimension))
+                {
                     textures.push(view);
                     bound.push((*binding, Bound::View(first)));
                     continue;

@@ -1383,6 +1383,41 @@ fn a_pixel_program_finds_the_position_and_the_facing_after_the_barycentrics() {
 }
 
 #[test]
+fn a_back_face_reads_nought_in_the_facing_register_as_the_game_s_dword_test_expects() {
+    // As a double-sided program flips its normal: vcc = v4 != 0; v0 = vcc ? 1.0 : 0; export v0.
+    let colour = exp(0, [0, 0, 0, 0]);
+    let words = vec![
+        vopc(op(opcodes::VOPC, "v_cmp_lg_u32"), 128, 4),
+        vop1(V_MOV, 1, F_ONE),
+        vop2(op(opcodes::VOP2, "v_cndmask_b32"), 0, 128, 1),
+        colour[0],
+        colour[1],
+        S_ENDPGM,
+    ];
+    let module = lowered(ShaderKind::Pixel, words).module;
+    let all: Vec<_> = body(&module).expressions.iter().map(|(_, e)| e).collect();
+    let literal = |e: naga::Handle<naga::Expression>| match body(&module).expressions[e] {
+        naga::Expression::Literal(naga::Literal::U32(word)) => Some(word),
+        _ => None,
+    };
+    let facing: Vec<_> = (all.iter())
+        .filter_map(|e| match e {
+            naga::Expression::Select { accept, reject, .. } => {
+                Some((literal(*accept), literal(*reject)))
+            }
+            _ => None,
+        })
+        .filter(|(accept, _)| *accept == Some(ONE))
+        .collect();
+    // Minus one is a dword that is not nought: the dword test would take a back face for a front.
+    assert!(facing.contains(&(Some(ONE), Some(0))), "{facing:?}");
+    assert!(
+        !facing.contains(&(Some(ONE), Some((-1f32).to_bits()))),
+        "{facing:?}"
+    );
+}
+
+#[test]
 fn a_buffer_is_read_by_address_with_its_stride_from_its_header_or_from_the_code() {
     // A table's buffer, four dwords at the vertex index times the stride its header states.
     let descriptor = smem(S_LOAD_X4, 4, 2, 0x20);

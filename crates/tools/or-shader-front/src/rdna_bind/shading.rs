@@ -161,6 +161,9 @@ pub enum Feed {
     PedTexture(u32),
     /// A ped component's buffer of 48 bytes, which the renderer fills from the component.
     PedComponent,
+    /// A texture of the game's own dictionaries, by the hash of its name, which the game binds
+    /// whatever is drawn ([`super::ped_skin`]).
+    GameTexture(u32),
 }
 
 /// One binding of a stage with what fills it.

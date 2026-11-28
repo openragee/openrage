@@ -350,6 +350,8 @@ fn feeds(
             },
             // A ped's component: `super::gta6_ped::fill` feeds them from the drawable's join.
             Filled::PedComponent | Filled::PedTexture(_) => continue,
+            // Fed by `game_textures` from the install's texture archive.
+            Filled::GameTexture(_) => continue,
         };
         out.insert((*group, *binding), filled);
     }
@@ -522,6 +524,7 @@ pub(crate) fn meshlets(state: &AppState) -> Option<Result<Meshlets, String>> {
         lost: &lost,
         ped: &|| crate::state::gta6_shaders::ped_assets::worn(state),
         tile: &|| crate::state::gta6_shaders::terrain_tile::worn(state),
+        game_texture: &|name| crate::state::gta6_shaders::global_textures::worn(state, name),
     };
     let (mut out, effects) = meshlets_of(drawable, models, &sources)?;
     UNDER.lock().unwrap_or_else(|p| p.into_inner()).0 = effects;
@@ -550,6 +553,33 @@ pub(crate) struct Sources<'s> {
     pub ped: &'s dyn Fn() -> Option<crate::state::gta6_shaders::ped_assets::Worn>,
     /// The terrain tile the drawable is a cell of, asked for by the first pass fed of a tile's.
     pub tile: &'s dyn Fn() -> Option<Arc<crate::state::gta6_shaders::terrain_tile::Tile>>,
+    /// The slices of the game's own texture of a name; `Err` while a worker reads it.
+    pub game_texture: &'s dyn Fn(u32) -> Result<Option<GameSlices>, ()>,
+}
+
+type GameSlices = crate::state::gta6_shaders::global_textures::Slices;
+
+/// Feed each binding of `pass` the game binds a texture of its own dictionaries to with that
+/// texture from `found`, whose slices make a volume; one still read sets `decoding`, and one no
+/// dictionary holds is left at nought.
+fn game_textures(
+    pass: &Gta6ShadingPass,
+    found: &dyn Fn(u32) -> Result<Option<GameSlices>, ()>,
+    decoding: &std::cell::Cell<bool>,
+    feeds: &mut BTreeMap<(u32, u32), Feed>,
+) {
+    for fed in pass.mesh.feeds.iter().chain(&pass.pixel.feeds) {
+        let Filled::GameTexture(name) = fed.feed else {
+            continue;
+        };
+        match found(name) {
+            Ok(Some(slices)) => {
+                feeds.insert((fed.group, fed.binding), Feed::Textures(slices.to_vec()));
+            }
+            Ok(None) => {}
+            Err(()) => decoding.set(true),
+        }
+    }
 }
 
 /// The geometries of `models` the view draws of `drawable` as surfaces of their own passes, with
@@ -619,6 +649,7 @@ pub(crate) fn meshlets_of(
         };
         let mut drawn = surface(pass, geometry, shader, &mut texture, worn, &mut tile);
         if let Some((surface, _)) = drawn.as_mut() {
+            game_textures(pass, from.game_texture, &decoding, &mut surface.feeds);
             let joined = super::gta6_ped::joined_for(pass, &mut ped, from.ped, &decoding);
             let mut ped_map = map;
             let fed = super::gta6_ped::fill(pass, joined, &mut ped_map, &mut surface.feeds);
@@ -987,5 +1018,40 @@ mod tests {
         let rgba = texel[0].as_ref().map(|image| image.rgba.clone());
         assert_eq!(rgba, Some(DefaultTexture::Flat.texel().to_vec()));
         assert!(!out.contains_key(&(1, 2)), "the feedback binds nothing");
+    }
+
+    #[test]
+    fn a_texture_the_game_binds_by_name_is_fed_its_slices_once_read() {
+        const NAME: u32 = 0xBC20_EC5C;
+        let mut pass = Arc::unwrap_or_clone(pass(&[]));
+        pass.pixel.feeds = vec![Fed {
+            group: 1,
+            binding: 30,
+            feed: Filled::GameTexture(NAME),
+            header: None,
+        }];
+        let slice = |red: u8| {
+            Some(Arc::new(Image {
+                width: 1,
+                height: 1,
+                rgba: vec![red, 0, 0, 255],
+                srgb: false,
+            }))
+        };
+        let slices: GameSlices = Arc::new(vec![slice(10), slice(20)]);
+        let fill = |found: &dyn Fn(u32) -> Result<Option<GameSlices>, ()>| {
+            let (decoding, mut feeds) = (std::cell::Cell::new(false), BTreeMap::new());
+            game_textures(&pass, found, &decoding, &mut feeds);
+            (decoding.get(), feeds.remove(&(1, 30)))
+        };
+        let (decoding, fed) = fill(&|name| Ok((name == NAME).then(|| Arc::clone(&slices))));
+        let Some(Feed::Textures(images)) = fed else {
+            panic!("the texture is not fed");
+        };
+        let reds: Vec<u8> = images.iter().flatten().map(|i| i.rgba[0]).collect();
+        assert_eq!((decoding, reds), (false, vec![10, 20]));
+        // While it is read the frame is told so, and where no dictionary holds it, nothing binds.
+        assert!(matches!(fill(&|_| Err(())), (true, None)));
+        assert!(matches!(fill(&|_| Ok(None)), (false, None)));
     }
 }

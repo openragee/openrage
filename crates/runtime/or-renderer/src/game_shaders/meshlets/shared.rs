@@ -115,14 +115,17 @@ impl Made {
         view
     }
 
-    /// One array texture whose slice `i` is `images[i]`, with its levels, made once a scene;
-    /// `None` unless there are two or more images, all of one size and colour space.
+    /// One array texture whose slice `i` is `images[i]`, with its levels, or a volume whose slice
+    /// `i` it is, of one level, as `dimension` says; made once a scene. `None` unless there are
+    /// two or more images, all of one size and colour space.
     pub(super) fn slices(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         images: &[Option<Arc<Image>>],
+        dimension: wgpu::TextureViewDimension,
     ) -> Option<wgpu::TextureView> {
+        let volume = dimension == wgpu::TextureViewDimension::D3;
         let images: Vec<&Arc<Image>> = images.iter().flatten().collect();
         let first = images.first()?;
         let alike = |i: &&Arc<Image>| {
@@ -132,14 +135,20 @@ impl Made {
         if images.len() < 2 || !images.iter().all(alike) {
             return None;
         }
-        let key: Vec<usize> = images.iter().map(|i| Arc::as_ptr(i) as usize).collect();
+        let places = images.iter().map(|i| Arc::as_ptr(i) as usize);
+        let key: Vec<usize> = places.chain([usize::from(volume)]).collect();
         if let Some((_, view)) = self.sliced.get(&key) {
             return Some(view.clone());
         }
+        // ⚠ A volume's lower levels halve its depth too, which a level made of each slice does not.
         let (mut texels, mut levels) = (Vec::new(), 1);
         for image in &images {
-            let (own, count) =
-                super::with_levels(image.width, image.height, &image.rgba, image.srgb, true);
+            let (own, count) = match volume {
+                true => (image.rgba.clone(), 1),
+                false => {
+                    super::with_levels(image.width, image.height, &image.rgba, image.srgb, true)
+                }
+            };
             texels.extend_from_slice(&own);
             levels = count;
         }
@@ -154,7 +163,10 @@ impl Made {
                 },
                 mip_level_count: levels,
                 sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
+                dimension: match volume {
+                    true => wgpu::TextureDimension::D3,
+                    false => wgpu::TextureDimension::D2,
+                },
                 format: match first.srgb {
                     true => wgpu::TextureFormat::Rgba8UnormSrgb,
                     false => wgpu::TextureFormat::Rgba8Unorm,
@@ -166,7 +178,7 @@ impl Made {
             &texels,
         );
         let view = texture.create_view(&wgpu::TextureViewDescriptor {
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            dimension: Some(dimension),
             ..Default::default()
         });
         self.uploads.textures += 1;

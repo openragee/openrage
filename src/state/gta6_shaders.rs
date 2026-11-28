@@ -1071,6 +1071,10 @@ impl super::AppState {
 #[path = "gta6_ped_assets.rs"]
 pub(crate) mod ped_assets;
 
+/// The textures of an install's texture archive the game binds by name whatever is drawn.
+#[path = "gta6_global_textures.rs"]
+pub(crate) mod global_textures;
+
 /// The terrain tile an open terrain drawable is a cell of: its record, layers and cells.
 #[path = "gta6_terrain_tile.rs"]
 pub(crate) mod terrain_tile;

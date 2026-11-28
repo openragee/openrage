@@ -621,6 +621,7 @@ pub mod frame_records;
 pub mod instances;
 pub mod ped;
 pub mod ped_layers;
+pub mod ped_skin;
 pub mod picks;
 pub mod plain;
 pub mod shading;

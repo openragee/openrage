@@ -8,10 +8,14 @@
 //! once. `Stats::gotos_out` counts the jumps left as `goto`, on the finished tree.
 //!
 //! The pass `gotos` adds the rules that take out a `goto` the above leaves: a sparse switch whose
-//! halves each end in a `return` of their own in `graph`, three choices of region in `region`,
+//! halves each end in a `return` of their own in `graph`, four choices of region in `region`,
 //! and the rewrites of the finished statements in `exits` and `tails`. ⚠ With it on, a tail of a
 //! few statements that leaves is written at each `goto` to it, so a statement may come out more
-//! than once, which `Stats::statements_out` then counts.
+//! than once, which `Stats::statements_out` then counts. So may a `switch` body of a few
+//! assignments and a statement that leaves, written again at the end of a body that runs into it.
+//!
+//! With the pass `for` on, a loop whose last `if` steps its counter in one arm and leaves in the
+//! other puts the arm that leaves first, so that the source level reads the loop as a `for`.
 //!
 //! The pass `conditions` writes an `if` whose two arms only give one variable a truth as that
 //! assignment (`x = a || b`, `x = c ? 1 : 0`), and an `if` that holds only an `if` as `a && b`.
@@ -91,8 +95,16 @@ pub fn run_in(f: cfg::Function, cx: &Context<'_>, _stats: &mut Stats) -> tree::F
             tidy(&mut body, &mut named);
         }
     }
+    // A body that runs into the next is a `goto case` in C#, whether or not a label is named.
+    if gotos {
+        exits::fallen(&mut body);
+    }
     if cx.options.on(Pass::Conditions) {
         cond::truths(&mut body);
+    }
+    // Only for the `for` it lets the source level read: the loop is no nearer the source without one.
+    if cx.options.on(Pass::For) {
+        exits::steps_last(&mut body);
     }
     plain_defaults(&mut body);
     // A void function returns by running off its end.

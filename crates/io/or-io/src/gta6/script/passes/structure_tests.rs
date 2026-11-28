@@ -1724,3 +1724,29 @@ fn a_return_an_arm_runs_on_to_is_a_guard_in_front_of_the_arm() {
         ]
     );
 }
+
+#[test]
+fn the_rest_of_an_inner_loop_laid_past_the_outer_test_is_taken_into_the_outer_loop() {
+    // 0: s0 -> 1    1: s1; p0 ? 2 : 5    2: s2 -> 3    3: s3; p1 ? 4 : 1    4: s4 -> 3    5: s5; return
+    // Block 3 sends the outer loop round, and block 4, which goes back to the inner one at 3,
+    // stands past it.
+    let blocks = vec![
+        jump(&[0], 1),
+        branch(&[1], p(0), 2, 5),
+        jump(&[2], 3),
+        branch(&[3], p(1), 4, 1),
+        jump(&[4], 3),
+        ret(&[5]),
+    ];
+    assert!(gotos(&rebuilt(blocks.clone())) > 0, "the rule ran unasked");
+    let leave = |n: u32| when(not(p(n)), vec![Stmt::Break], Vec::new());
+    let inner = Stmt::While {
+        cond: forever(),
+        body: vec![s(3), leave(1), s(4)],
+    };
+    let outer = Stmt::While {
+        cond: forever(),
+        body: vec![s(1), leave(0), s(2), inner],
+    };
+    assert_eq!(untangled(blocks), [s(0), outer, s(5), returns()]);
+}

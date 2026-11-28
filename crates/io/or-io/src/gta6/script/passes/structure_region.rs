@@ -7,10 +7,11 @@
 //! `continue` or `return`, or by a `goto`. A construct only ever changes which of those states a
 //! jump, so a shape nothing here knows still comes out as the jumps it is.
 //!
-//! The `gotos` rules choose three regions otherwise, each where the choice made without them
+//! The `gotos` rules choose four regions otherwise, each where the choice made without them
 //! leaves a `goto`: an else arm from the jumps inside a then arm, a switch that leaves past its
-//! region, a loop that takes in the tail one of its blocks leaves to. Being choices of region,
-//! they change how the result reads and never what runs.
+//! region, a loop that takes in the tail one of its blocks leaves to, and a loop that takes in
+//! the blocks past its last jump back that go back into an inner loop of it. Being choices of
+//! region, they change how the result reads and never what runs.
 
 use std::collections::HashMap;
 
@@ -367,6 +368,39 @@ impl Machine {
         }
     }
 
+    /// The last block of the loop `[h, latch]` once it takes in the blocks after it up to the last that jumps back into it, where only the loop and those blocks lead to any of them.
+    // A compiler may lay the rest of an inner loop's body past the test that sends the outer loop
+    // round: `while (true) { .. while (true) { ..; if (!more) break; rest } }` with `rest` after
+    // the outer test. Left out of the outer loop, its jump back to the inner one is a `goto`.
+    // ⚠ A block with a way in from past it, or from before the loop, ends the search. Every block
+    // taken in is entered only from the inner loop it goes back to, so that what the loop's own
+    // tests leave to, which is entered from before that inner loop, stays out.
+    fn loop_end(&self, h: BlockId, latch: BlockId) -> BlockId {
+        let (to, ..) = self.ctx();
+        let limit = to.min(latch.saturating_add(SCAN));
+        let mut end = latch;
+        // The first block the blocks past the latch go back to.
+        let mut inner = latch + 1;
+        let mut x = latch + 1;
+        while x < limit {
+            let preds = &self.preds[x];
+            if preds.is_empty() || preds.iter().any(|p| !(h..x).contains(p)) {
+                break;
+            }
+            let back = self.blocks[x].term.successors();
+            if let Some(y) = back.iter().copied().filter(|s| *s > h && *s <= latch).min() {
+                end = x;
+                inner = inner.min(y);
+            }
+            x += 1;
+        }
+        let entered = (latch + 1..=end).all(|x| self.preds[x].iter().all(|p| *p >= inner));
+        match entered {
+            true => end,
+            false => latch,
+        }
+    }
+
     /// Whether the innermost construct is a loop that took in a tail starting at `x`.
     fn tail_at(&self, x: BlockId) -> bool {
         match self.stack.last().map(|scope| &scope.kind) {
@@ -396,6 +430,7 @@ impl Machine {
         }
         let mut tail_from = None;
         if self.gotos {
+            latch = self.loop_end(h, latch);
             if let Some(end) = self.loop_tail(h, latch) {
                 tail_from = Some(latch + 1);
                 latch = end - 1;

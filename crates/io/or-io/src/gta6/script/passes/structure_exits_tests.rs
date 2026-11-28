@@ -905,3 +905,199 @@ fn a_last_body_that_runs_off_is_ended_by_its_break_and_one_that_leaves_or_loops_
         ]
     );
 }
+
+// ---- a body that runs into the next, and a loop's counter stepped last ----------------------
+
+/// `rule` over `body`, which must leave the flow as it was; the result, and whether the rule said it changed anything.
+fn kept_flow(body: Vec<Stmt>, rule: fn(&mut Vec<Stmt>) -> bool) -> (Vec<Stmt>, bool) {
+    let before = cfg::lower_body(body.clone()).expect("the body lowers");
+    let mut out = body;
+    let changed = rule(&mut out);
+    let after = cfg::lower_body(out.clone()).expect("the result lowers");
+    if let Err(why) = same_flow(&before, &after) {
+        panic!("the flow changed: {why}\n{out:#?}");
+    }
+    (out, changed)
+}
+
+/// `func_000300()`, a value that calls.
+fn called() -> Expr {
+    Expr::Call {
+        callee: Callee::Local {
+            at: 0x300,
+            name: "func_000300".to_owned(),
+        },
+        args: Vec::new(),
+        returns: None,
+    }
+}
+
+/// `switch (p0) { case 0: <first> case 1: <next> }`.
+fn two_cases(first: Vec<Stmt>, next: Vec<Stmt>) -> Vec<Stmt> {
+    vec![Stmt::Switch {
+        value: p(0),
+        cases: vec![case(&[Some(0)], first), case(&[Some(1)], next)],
+    }]
+}
+
+#[test]
+fn a_body_that_runs_into_one_that_only_leaves_ends_in_a_copy_of_it() {
+    // `case 0: s1; goto case 1; case 1: return p9; default: s2; s3; break;`
+    let switch = |first: Vec<Stmt>| Stmt::Switch {
+        value: p(0),
+        cases: vec![
+            case(&[Some(0)], first),
+            case(&[Some(1)], vec![returns()]),
+            case(&[None], vec![s(2), s(3), Stmt::Break]),
+        ],
+    };
+    let (out, changed) = kept_flow(vec![switch(vec![s(1)]), returns()], fallen);
+    assert!(changed);
+    assert_eq!(out, [switch(vec![s(1), returns()]), returns()]);
+    // The labels the next body starts with stay there, for the jumps that name them.
+    let (out, _) = kept_flow(
+        two_cases(vec![s(1)], vec![Stmt::Label(L), Stmt::Break]),
+        fallen,
+    );
+    assert_eq!(
+        out,
+        two_cases(vec![s(1), Stmt::Break], vec![Stmt::Label(L), Stmt::Break])
+    );
+}
+
+#[test]
+fn assignments_with_no_call_go_along_and_a_copy_is_copied_on_into_the_body_before() {
+    // `case 0: s1; case 1: s4; case 2: break;`: case 1 ends in `s4; break;`, which case 0 then takes too.
+    let body = vec![Stmt::Switch {
+        value: p(0),
+        cases: vec![
+            case(&[Some(0)], vec![s(1)]),
+            case(&[Some(1)], vec![s(4)]),
+            case(&[Some(2)], vec![Stmt::Break]),
+        ],
+    }];
+    let (out, changed) = kept_flow(body, fallen);
+    assert!(changed);
+    assert_eq!(
+        out,
+        [Stmt::Switch {
+            value: p(0),
+            cases: vec![
+                case(&[Some(0)], vec![s(1), s(4), Stmt::Break]),
+                case(&[Some(1)], vec![s(4), Stmt::Break]),
+                case(&[Some(2)], vec![Stmt::Break]),
+            ],
+        }]
+    );
+    // Two assignments go along; a third does not.
+    let (out, _) = kept_flow(two_cases(vec![s(1)], vec![s(5), s(6), returns()]), fallen);
+    assert_eq!(
+        out,
+        two_cases(
+            vec![s(1), s(5), s(6), returns()],
+            vec![s(5), s(6), returns()]
+        )
+    );
+    let long = two_cases(vec![s(1)], vec![s(4), s(5), s(6), returns()]);
+    assert_eq!(kept_flow(long.clone(), fallen), (long, false));
+}
+
+#[test]
+fn a_body_run_into_is_not_copied_where_it_calls_or_runs_on_nor_behind_labels_or_a_loop() {
+    let unchanged = |body: Vec<Stmt>| assert_eq!(kept_flow(body.clone(), fallen), (body, false));
+    // The next body calls: in an assignment, in what it hands back, or alone.
+    unchanged(two_cases(vec![s(1)], vec![give(T, called()), Stmt::Break]));
+    unchanged(two_cases(vec![s(1)], vec![Stmt::Return(Some(called()))]));
+    unchanged(two_cases(vec![s(1)], vec![handed(T), Stmt::Break]));
+    // The next body runs on itself.
+    unchanged(two_cases(vec![s(1)], vec![s(4)]));
+    // A body of labels alone stands above the next one, and one that ends in a loop never runs off.
+    unchanged(two_cases(vec![Stmt::Label(M)], vec![Stmt::Break]));
+    let lp = Stmt::While {
+        cond: p(2),
+        body: vec![s(3)],
+    };
+    unchanged(two_cases(vec![s(1), lp], vec![Stmt::Break]));
+    // A body that leaves runs into nothing.
+    unchanged(two_cases(vec![s(1), returns()], vec![Stmt::Break]));
+}
+
+/// `local_5`, a counter.
+const I: Var = Var::Local(5);
+
+/// `local_5 < p0`.
+fn below() -> Expr {
+    Expr::binary(ir::BinOp::Lt, Expr::Var(I), p(0))
+}
+
+/// `local_5 = local_5 + 1;`.
+fn step() -> Stmt {
+    give(I, Expr::binary(ir::BinOp::Add, Expr::Var(I), k(1)))
+}
+
+/// `local_5 = 0; while (<cond>) { s1; <last> } return p9;`.
+fn counting(cond: Expr, last: Vec<Stmt>) -> Vec<Stmt> {
+    let mut body = vec![s(1)];
+    body.extend(last);
+    vec![give(I, k(0)), Stmt::While { cond, body }, returns()]
+}
+
+#[test]
+fn a_loops_last_if_puts_the_arm_that_leaves_first_where_the_other_steps_the_counter() {
+    // `if (p1) { s2; i++; } else { s3; break; }` is `if (!p1) { s3; break; } s2; i++;`.
+    let turned = when(p(1), vec![s(2), step()], vec![s(3), Stmt::Break]);
+    let (out, changed) = kept_flow(counting(below(), vec![turned]), steps_last);
+    assert!(changed);
+    let leads = only(not(p(1)), vec![s(3), Stmt::Break]);
+    assert_eq!(out, counting(below(), vec![leads, s(2), step()]));
+    // An else that ends in an `if` both arms of which leave never runs off either; it goes inside
+    // a construct too.
+    let both = when(p(2), vec![Stmt::Break], vec![returns()]);
+    let nested = only(
+        p(4),
+        counting(below(), vec![when(p(1), vec![step()], vec![both.clone()])]),
+    );
+    let (out, _) = kept_flow(vec![nested, returns()], steps_last);
+    let first = only(not(p(1)), vec![both]);
+    assert_eq!(
+        out,
+        [
+            only(p(4), counting(below(), vec![first, step()])),
+            returns()
+        ]
+    );
+}
+
+#[test]
+fn a_loops_last_if_stays_where_its_else_runs_on_or_nothing_makes_a_for_of_the_loop() {
+    let unchanged =
+        |body: Vec<Stmt>| assert_eq!(kept_flow(body.clone(), steps_last), (body, false));
+    let leaving = || vec![s(3), Stmt::Break];
+    // The else runs on to the end of the body.
+    unchanged(counting(
+        below(),
+        vec![when(p(1), vec![step()], vec![s(3)])],
+    ));
+    // The loop does not test the counter.
+    unchanged(counting(p(0), vec![when(p(1), vec![step()], leaving())]));
+    // The then arm steps another variable, or does not end in the step.
+    let other = give(
+        Var::Local(6),
+        Expr::binary(ir::BinOp::Add, Expr::Var(Var::Local(6)), k(1)),
+    );
+    unchanged(counting(below(), vec![when(p(1), vec![other], leaving())]));
+    unchanged(counting(
+        below(),
+        vec![when(p(1), vec![step(), s(2)], leaving())],
+    ));
+    // A `continue` of the loop would go round past the step a `for` runs.
+    let mut looped = counting(below(), vec![when(p(1), vec![step()], leaving())]);
+    if let Stmt::While { body, .. } = &mut looped[1] {
+        body.insert(0, only(p(2), vec![Stmt::Continue]));
+    }
+    unchanged(looped);
+    // The counter is not set just before the loop.
+    let mut apart = counting(below(), vec![when(p(1), vec![step()], leaving())]);
+    apart.insert(1, Stmt::Label(L));
+    unchanged(apart);
+}

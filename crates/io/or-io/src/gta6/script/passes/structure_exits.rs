@@ -10,6 +10,11 @@
 //! last body. No simple statement is copied and none is dropped. ⚠ One rule moves one: the
 //! assignment of a constant to a variable no address reaches, from behind a construct whose
 //! jumps past it each assign that variable first, to in front of the construct.
+//!
+//! Two rules run once over the finished statements, apart from the rounds: [`fallen`] writes the
+//! body a `switch` body runs into at its end where that body is a few assignments with no call
+//! and a statement that leaves, so ⚠ those are written twice; [`steps_last`] puts the arm of a
+//! loop's last `if` that leaves first, so that the body ends in the step of its counter.
 
 use std::collections::{HashMap, HashSet};
 
@@ -773,6 +778,116 @@ fn closed_cases(body: &mut Vec<Stmt>) {
             work.extend(super::nested(stmt));
         }
     }
+}
+
+/// The assignments a body that another runs into may hold in front of its leaving statement to be written there too.
+const FALLEN: usize = 2;
+
+/// What `next`, a body another runs into, is written as at the end of that one: past its labels, at most [`FALLEN`] assignments of a value with no call, then one statement [`copies`] allows, and nothing else.
+fn fallen_tail(next: &[Stmt]) -> Option<Vec<Stmt>> {
+    let start = next
+        .iter()
+        .take_while(|stmt| matches!(stmt, Stmt::Label(_)))
+        .count();
+    let (last, simples) = next[start..].split_last()?;
+    let plain = simples.iter().all(|stmt| {
+        matches!(stmt, Stmt::Simple(ir::Stmt::Assign { value, .. }) if cond::cheap(Some(value)))
+    });
+    (simples.len() <= FALLEN && plain && copies(last)).then(|| next[start..].to_vec())
+}
+
+/// Whether control may run off the end of a switch's `body` into the next: it holds a statement, and does not end in a loop.
+// A body of labels alone stands above the next one's labels; a loop no `break` leaves never runs
+// off, and a copy behind it would be reached by nothing.
+fn runs_into_next(body: &[Stmt]) -> bool {
+    let held = body.iter().any(|stmt| !matches!(stmt, Stmt::Label(_)));
+    let looped = matches!(
+        body.last(),
+        Some(Stmt::While { .. } | Stmt::DoWhile { .. } | Stmt::For { .. })
+    );
+    held && !looped && runs_off(body)
+}
+
+/// `case 1: s1; goto case 2; case 2: x = 0; return;` is `case 1: s1; x = 0; return; case 2: ..`: each body that runs into one [`fallen_tail`] reads ends in a copy of it; whether one was written.
+// Running off the end of a body is entering the next, and a `break`, a `continue` or a `return`
+// leaves to one place from either, so each path still runs one copy and leaves as it did. The
+// last bodies are read first, so a copy that ends a body may be copied on into the one before.
+pub(super) fn fallen(body: &mut Vec<Stmt>) -> bool {
+    let mut changed = false;
+    let mut work: Vec<&mut Vec<Stmt>> = vec![body];
+    while let Some(list) = work.pop() {
+        for stmt in list {
+            if let Stmt::Switch { cases, .. } = &mut *stmt {
+                for at in (1..cases.len()).rev() {
+                    let Some(tail) = fallen_tail(&cases[at].body) else {
+                        continue;
+                    };
+                    let before = &mut cases[at - 1].body;
+                    if runs_into_next(before) {
+                        before.extend(tail);
+                        changed = true;
+                    }
+                }
+            }
+            work.extend(super::nested(stmt));
+        }
+    }
+    changed
+}
+
+/// Whether the `while (cond)` loop with this `body`, behind an assignment of `counter`, ends in an `if` to be turned: its then arm ends by stepping `counter`, which `cond` tests, and its else never runs off.
+// ⚠ No `continue` of the loop: it goes round past what the then arm ends in, and a `for` would
+// step there. A construct this cannot see into may hold one.
+fn turns_to_step(counter: Var, cond: &Expr, body: &[Stmt]) -> bool {
+    let Some(Stmt::If { then, els, .. }) = body.last() else {
+        return false;
+    };
+    let steps = matches!(
+        then.last(),
+        Some(Stmt::Simple(ir::Stmt::Assign { target, value }))
+            if *target == counter && cond::mentions(value, counter)
+    );
+    let held = free(body, &[]);
+    let open = held.continues == 0 && !held.opaque;
+    steps && open && cond::mentions(cond, counter) && !els.is_empty() && !runs_off(els)
+}
+
+/// `i = 0; while (c) { ..; if (t) { A; i = i + 1; } else { B } }` is `i = 0; while (c) { ..; if (!t) { B } A; i = i + 1; }` where `B` never runs off; whether one was turned.
+// The test runs once either way, `B` runs where `t` fails and leaves, and `A` runs where it
+// holds and runs on to the end of the body as it ran off the then arm. A label of `A` still
+// leads to what follows it there. The body then ends in the step a `for` takes as its own.
+pub(super) fn steps_last(body: &mut Vec<Stmt>) -> bool {
+    let mut changed = false;
+    let mut work: Vec<&mut Vec<Stmt>> = vec![body];
+    while let Some(list) = work.pop() {
+        for i in 1..list.len() {
+            let counter = match &list[i - 1] {
+                Stmt::Simple(ir::Stmt::Assign { target, .. }) => *target,
+                _ => continue,
+            };
+            let Stmt::While { cond, body } = &mut list[i] else {
+                continue;
+            };
+            if !turns_to_step(counter, cond, body) {
+                continue;
+            }
+            let moved = match body.last_mut() {
+                Some(Stmt::If { cond, then, els }) => {
+                    let test = std::mem::replace(cond, Expr::GuidEmpty);
+                    *cond = cond::negate(test);
+                    std::mem::swap(then, els);
+                    std::mem::take(els)
+                }
+                _ => continue,
+            };
+            body.extend(moved);
+            changed = true;
+        }
+        for stmt in list {
+            work.extend(super::nested(stmt));
+        }
+    }
+    changed
 }
 
 /// Writes each `goto` a rule explains as the way out it is, once over `body`; whether anything was rewritten. `private` lets assignments of its variables move.

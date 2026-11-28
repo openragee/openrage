@@ -1005,3 +1005,59 @@ fn a_list_of_labels_labels_only_what_no_natives_list_names_and_the_header_calls_
         })
     );
 }
+
+#[test]
+fn every_row_of_the_tables_a_package_ships_is_read_by_its_column_names() {
+    let (field, ty, method) = ("_wickTrim", "TallowPail", "GetWick");
+    let (text, text64) = ("wick_trim", "tallow_pail");
+    let tables = [
+        format!(
+            "field_hash64\tfield_hash32\tname\tevidence\n0x{:016X}\t0x{:08X}\t{field}\ta note\n",
+            murmur_low(field.as_bytes()),
+            folded32(field)
+        ),
+        format!(
+            "type_hash64\ttype_hash32\tname\tevidence\n0x{:016X}\t0x{:08X}\t{ty}\ta note\n",
+            murmur_low(ty.as_bytes()),
+            folded32(ty)
+        ),
+        format!(
+            "method_hash32\tname\tchance_of_accident\tevidence\trecords\n\
+             0x{:08X}\t{method}\t0.0000\ta note\t12\n",
+            kept32(method)
+        ),
+        format!(
+            "hash32\ttext\tproof\toccurrences\tsources\tother_texts_same_hash\n\
+             0x{:08X}\t{text}\ta note\t3\ta note\t\n",
+            folded32(text)
+        ),
+        format!(
+            "hash64\ttext\toccurrences\n0x{:016X}\t{text64}\t4\n",
+            name_hash64(text64.as_bytes())
+        ),
+        "native_hash64\tcell\tkind\tnative\tdistinct_large_constants\tresolved\tgta5_parameter\n\
+         0x00000000000000D1\t2\tHash\tDEMO.SET\t10\t9\tHash wick\n"
+            .to_owned(),
+        "hash\trva\tnamespace\tname\tnamed\targ_cells\treturn_cells\tfiles\tcalls\n\
+         0x00000000000000AA\t0x01020304\t\t_0x00000000000000AA\t0\t1\t0\t1\t2\n"
+            .to_owned(),
+    ];
+    let mut names = Names::default();
+    for (n, table) in tables.iter().enumerate() {
+        assert!(
+            names.read_list(&format!("table {n}"), table).is_ok(),
+            "{table}"
+        );
+    }
+    assert_eq!(
+        names.rows,
+        [(1, 0), (1, 0), (1, 0), (1, 0), (1, 0), (0, 1), (0, 1)]
+    );
+    assert_eq!(names.field_name(murmur_low(field.as_bytes())), Some(field));
+    assert_eq!(names.type_name(murmur_low(ty.as_bytes())), Some(ty));
+    assert_eq!(names.method_name(kept32(method)), Some(method));
+    assert_eq!(names.text(folded32(text)), Some(text));
+    assert_eq!(names.text64(name_hash64(text64.as_bytes())), Some(text64));
+    assert!(names.hash_slots.contains(&(0xD1, 2)));
+    assert_eq!(names.native_at(0x0102_0304), Some(0xAA));
+}

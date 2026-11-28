@@ -1,6 +1,6 @@
 //! The names a decompile may use beyond the program's own: a natives list, and lists of programs,
-//! types, methods, fields, builtins and the text of hash constants, all supplied by the user.
-//! OpenRage ships none, so every lookup may come back empty.
+//! types, methods, fields, builtins and the text of hash constants, supplied by the user or
+//! shipped beside the executable; none is in the code, so every lookup may come back empty.
 //!
 //! A names list is text, one `0xHASH name` per line. A tab-separated table whose leading columns
 //! are hashes and whose next column is the name reads the same way, under one row of column names.

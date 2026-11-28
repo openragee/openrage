@@ -316,7 +316,8 @@ fn a_natives_name_and_a_parameters_become_a_role_by_one_rule() {
         ("GET_ENTITY_COORDS", Some("entityCoords")),
         ("CREATE_VEHICLE", Some("vehicle")),
         ("IS_PED_INJURED", Some("isPedInjured")),
-        ("_GET_ID", Some("id")),
+        // A list writes a name it guessed after `_`.
+        ("_GET_ID", None),
         ("GET_OBJECT", Some("@object")),
         ("_0x00000000000000A1", None),
         ("GET_", None),
@@ -694,6 +695,10 @@ fn a_types_name_a_methods_and_a_fields_become_a_role_by_one_rule() {
         ("Vector3", Some("vector3")),
         ("Demo.String", None),
         ("type_0123456789ABCDEF", None),
+        ("Demo.Pail<Demo.Lantern>", Some("pail")),
+        ("Pail<Gourd<Lantern>, Wicket>", Some("pail")),
+        ("Demo.Map<Lantern, Wicket>.Keys", Some("keys")),
+        ("Pail<Lantern>>", None),
     ] {
         assert_eq!(type_role(name).as_deref(), role, "{name}");
     }
@@ -834,18 +839,6 @@ fn an_index_that_is_anything_more_than_a_count_keeps_its_slot_name() {
 
     // Not proved an integer.
     assert!(kept(head(2, 1), vec![plain()]));
-    // Never the index of an element: passed to a call, and one more than the index.
-    let passed = eval(native("USE", 0xA3, vec![var(index)]));
-    assert!(kept(
-        counting(1),
-        vec![counted(index, int(8), vec![passed])]
-    ));
-    let next = Expr::binary(BinOp::Add, var(index), int(1));
-    let beside = eval(intrinsic("array_get_u64", vec![var(Var::Param(0)), next]));
-    assert!(kept(
-        counting(1),
-        vec![counted(index, int(8), vec![beside])]
-    ));
     // Written by something other than the head of a `for`.
     let skipped = vec![element(index), assign(index, int(5))];
     assert!(kept(counting(1), vec![counted(index, int(8), skipped)]));
@@ -898,17 +891,41 @@ fn an_index_that_is_anything_more_than_a_count_keeps_its_slot_name() {
 }
 
 #[test]
-fn two_indices_never_share_a_letter_and_one_that_counts_at_two_depths_takes_none() {
+fn indices_side_by_side_share_a_letter_and_one_that_counts_at_two_depths_takes_none() {
     let names = Names::default();
     let cx = with(&names, &[Pass::RoleNames]);
-    let (a, b) = (Var::Local(0), Var::Local(1));
+    let (a, b, c) = (Var::Local(0), Var::Local(1), Var::Local(2));
     let over = |index: Var| counted(index, int(8), vec![element(index)]);
+    fn names_of(f: &Function) -> (Option<&str>, Option<&str>) {
+        (name_of(f, Var::Local(0)), name_of(f, Var::Local(1)))
+    }
 
-    // One loop after another: the second index is a second `i`, and one index of both is one.
-    let (f, _) = applied(counting(2), vec![over(a), over(b)], &cx);
-    assert_eq!((name_of(&f, a), name_of(&f, b)), (Some("i"), Some("i_2")));
+    // One loop after another, each declaring its own index: both are `i`, and one index of both is one.
+    let (f, did) = applied(counting(2), vec![over(a), over(b)], &cx);
+    assert_eq!((names_of(&f), did.roles), ((Some("i"), Some("i")), 2));
     let (f, did) = applied(counting(2), vec![over(a), over(a)], &cx);
     assert_eq!((name_of(&f, a), did.roles), (Some("i"), 1));
+    // A third beside them shares the name too, and one of another letter keeps its own.
+    let inside = counted(c, int(8), vec![element(c), over(a)]);
+    let (f, _) = applied(counting(3), vec![inside, over(b)], &cx);
+    assert_eq!(
+        (name_of(&f, c), name_of(&f, a), name_of(&f, b)),
+        (Some("i"), Some("j"), Some("i"))
+    );
+
+    // An index read after its loop is declared at the top, where a second `i` would meet it.
+    let read = eval(native("USE", 0xA3, vec![var(b)]));
+    let (f, _) = applied(counting(2), vec![over(a), over(b), read], &cx);
+    assert_eq!(names_of(&f), (Some("i"), Some("i_2")));
+    // A loop a construct holds is declared at the top in the form of old.
+    let guarded = tree::Stmt::Sugar(Box::new(tree::Sugar::Guarded {
+        kind: tree::Guard::Using,
+        enter: Vec::new(),
+        body: vec![over(b)],
+        exit: Vec::new(),
+    }));
+    let (f, _) = applied(counting(2), vec![over(a), guarded], &cx);
+    assert_eq!(names_of(&f), (Some("i"), Some("i_2")));
 
     // A name the function has already is not taken again.
     let mut head = counting(2);
@@ -916,17 +933,46 @@ fn two_indices_never_share_a_letter_and_one_that_counts_at_two_depths_takes_none
         info.name = Some("i".to_owned());
     }
     let (f, _) = applied(head, vec![over(a)], &cx);
-    assert_eq!((name_of(&f, a), name_of(&f, b)), (Some("i_2"), Some("i")));
+    assert_eq!(names_of(&f), (Some("i_2"), Some("i")));
+    let mut head = counting(3);
+    if let Some(info) = head.vars.get_mut(&c) {
+        info.name = Some("i".to_owned());
+    }
+    let (f, _) = applied(head, vec![over(a), over(b)], &cx);
+    assert_eq!(names_of(&f), (Some("i_2"), Some("i_2")));
 
     // `b` counts inside the loop of `a` and again outside it: neither letter is its own.
     let nested = counted(a, int(8), vec![element(a), over(b)]);
     let (f, _) = applied(counting(2), vec![nested, over(b)], &cx);
-    assert_eq!((name_of(&f, a), name_of(&f, b)), (Some("i"), None));
+    assert_eq!(names_of(&f), (Some("i"), None));
 
-    // A loop that counts nothing a letter names does not deepen the loops in it.
-    let unindexed = counted(a, int(8), vec![over(b)]);
-    let (f, _) = applied(counting(2), vec![unindexed], &cx);
-    assert_eq!((name_of(&f, a), name_of(&f, b)), (None, Some("i")));
+    // A loop that counts with no integer does not deepen the loops in it.
+    let mut untyped = counting(2);
+    untyped.vars.remove(&a);
+    let (f, _) = applied(untyped, vec![counted(a, int(8), vec![over(b)])], &cx);
+    assert_eq!(names_of(&f), (None, Some("i")));
+}
+
+#[test]
+fn an_index_that_only_counts_is_i_however_the_count_is_read() {
+    let names = Names::default();
+    let cx = with(&names, &[Pass::RoleNames]);
+    let index = Var::Local(0);
+    let passed = eval(native("USE", 0xA3, vec![var(index)]));
+    let next = Expr::binary(BinOp::Add, var(index), int(1));
+    let beside = eval(intrinsic("array_get_u64", vec![var(Var::Param(0)), next]));
+    for body in [vec![passed], vec![beside], Vec::new()] {
+        let (f, did) = applied(counting(1), vec![counted(index, int(8), body)], &cx);
+        assert_eq!((name_of(&f, index), did.roles), (Some("i"), 1));
+    }
+    // A loop that counts nothing a letter names still deepens the one in it.
+    let (outer, inner) = (Var::Local(0), Var::Local(1));
+    let nest = counted(outer, int(8), vec![counted(inner, int(4), Vec::new())]);
+    let (f, _) = applied(counting(2), vec![nest], &cx);
+    assert_eq!(
+        (name_of(&f, outer), name_of(&f, inner)),
+        (Some("i"), Some("j"))
+    );
 }
 
 #[test]
@@ -1204,6 +1250,102 @@ fn a_variable_takes_the_role_of_the_named_script_type_it_is_cast_to() {
 
     let off = named(head(1, 5), body(), &names);
     assert_eq!(name_of(&off, locals[0]), None, "with `role-names` off");
+}
+
+#[test]
+fn a_variable_fetched_once_takes_the_role_of_the_named_script_type_it_is_proved_to_hold() {
+    let mut names = Names::default();
+    names.types.insert(0xAA, "Lantern".to_owned());
+    names
+        .types
+        .insert(0xAB, "Demo.Pail<Demo.Lantern>".to_owned());
+    names.types.insert(0x8000_0051, "Demo.Flagon".to_owned());
+    let of = |kind: Kind| VarInfo {
+        kind,
+        ..VarInfo::new(Width::Cell)
+    };
+    let lantern = || Kind::Object("type_00000000000000AA".to_owned());
+    let kinds = [
+        lantern(),
+        Kind::Value {
+            ty: "type_00000000000000AB".to_owned(),
+            cells: 1,
+        },
+        lantern(),
+        // A runtime type, and a type no list names.
+        Kind::Object("type_80000051".to_owned()),
+        Kind::Object("type_00000000000000CC".to_owned()),
+        // Given a constant, given twice, and an integer.
+        lantern(),
+        lantern(),
+        Kind::I32,
+    ];
+    let mut typed = head(1, kinds.len() as u32);
+    let locals: Vec<Var> = (0..kinds.len() as u32).map(Var::Local).collect();
+    for (local, kind) in locals.iter().zip(kinds) {
+        typed.vars.insert(*local, of(kind));
+    }
+    let call = || native("_0x00000000000000A3", 0xA3, vec![var(Var::Param(0))]);
+    let load = Expr::Load {
+        ty: Scalar::I32,
+        addr: Box::new(var(Var::Param(0))),
+        offset: 0x10,
+    };
+    let body = || {
+        vec![
+            assign(locals[0], call()),
+            assign(locals[1], load.clone()),
+            assign(locals[2], Expr::cast(Scalar::I32, call())),
+            assign(locals[3], call()),
+            assign(locals[4], call()),
+            assign(locals[5], int(0)),
+            assign(locals[6], call()),
+            assign(locals[6], call()),
+            assign(locals[7], call()),
+        ]
+    };
+    let cx = with(&names, &[Pass::RoleNames]);
+    let (f, did) = applied(typed.clone(), body(), &cx);
+    let roles: Vec<Option<&str>> = locals.iter().map(|v| name_of(&f, *v)).collect();
+    let mut expected = vec![Some("lantern"), Some("pail"), Some("lantern_2")];
+    expected.extend([None; 5]);
+    assert_eq!(roles, expected);
+    assert_eq!(did.roles, 3);
+
+    // A write through its address is another value.
+    let addressed = vec![assign(locals[0], call()), fill(0)];
+    let (f, _) = applied(typed.clone(), addressed, &cx);
+    assert_eq!(name_of(&f, locals[0]), None);
+
+    // With `role-names` off none of them is named.
+    let off = named(typed, body(), &names);
+    assert!(locals.iter().all(|v| name_of(&off, *v).is_none()));
+}
+
+#[test]
+fn a_native_a_list_names_with_a_guess_gives_no_role_nor_do_its_parameters() {
+    let names = list(vec![
+        (0xF1, listed("_GET_DEMO_GUESS", &[])),
+        (0xF2, listed("_SET_DEMO_GUESS", &[("int", "index")])),
+        (0xF3, listed("GET_DEMO_SURE", &[])),
+        (0xF4, listed("SET_DEMO_SURE", &[("int", "index")])),
+    ]);
+    let (a, b) = (Var::Local(0), Var::Local(1));
+    let body = |get: u64, set: u64| {
+        vec![
+            assign(a, native("GET", get, vec![])),
+            assign(b, int(1)),
+            eval(native("SET", set, vec![var(b)])),
+        ]
+    };
+    let cx = with(&names, &[Pass::RoleNames]);
+    let (f, did) = applied(head(0, 2), body(0xF1, 0xF2), &cx);
+    assert_eq!((name_of(&f, a), name_of(&f, b), did.roles), (None, None, 0));
+    let (f, _) = applied(head(0, 2), body(0xF3, 0xF4), &cx);
+    assert_eq!(
+        (name_of(&f, a), name_of(&f, b)),
+        (Some("demoSure"), Some("index"))
+    );
 }
 
 #[test]

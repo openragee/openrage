@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use or_cli::{
@@ -453,11 +454,18 @@ fn work_with(
         .map(|(_, s, e, _)| 2 * vertex_pixel_passes(&s.file, e).len())
         .sum();
     // The effects side by side: each is its own programs, and a worker's files are its own.
+    // A worker an effect leaves once none is left to start is another's to read passes on.
+    let workers = Workers {
+        cancel,
+        spare: AtomicUsize::new(or_job::workers().saturating_sub(effects.len())),
+    };
+    let begun = AtomicUsize::new(0);
     let looked = or_job::side_by_side(
         &effects,
         or_job::workers(),
         cancel,
         |(hash, source, effect, before)| {
+            begun.fetch_add(1, Ordering::SeqCst);
             // An effect read from a whole container is kept for the next session, once.
             let kept = Some(*source)
                 .filter(|source| source.whole)
@@ -474,8 +482,11 @@ fn work_with(
                 &worn[hash],
                 before.clone(),
                 &stages,
-                cancel,
+                &workers,
             );
+            if begun.load(Ordering::SeqCst) == effects.len() {
+                workers.give(1);
+            }
             tracing::info!(
                 effect = %effect.name,
                 elapsed = ?started.elapsed(),
@@ -597,8 +608,9 @@ fn shading_passes<T: Translate>(
     held: &[u32],
     before: Option<Passes>,
     stages: &Stages,
-    cancel: &Cancel,
+    workers: &Workers<'_>,
 ) -> (Result<Passes, String>, Did) {
+    let cancel = workers.cancel;
     let mut did = Did::default();
     let mut files = HashMap::new();
     let mut container = |program: &Sgd5Program| {
@@ -607,6 +619,7 @@ fn shading_passes<T: Translate>(
     };
     let parameters = &effect.parameters;
     let listed = gta6_view_passes(&source.file, effect);
+    let techniques = or_cli::gta6_view_techniques(&source.file, effect);
     let pair_at = |at: (usize, usize)| {
         (listed.iter().copied()).find(|(first, pixel)| (first.at, pixel.at) == at)
     };
@@ -627,6 +640,7 @@ fn shading_passes<T: Translate>(
                 if forward && !passes.is_empty() {
                     break;
                 }
+                let mut taken = Vec::new();
                 for (first, pixel) in &listed {
                     if seen.contains(&first.at) {
                         continue;
@@ -634,23 +648,32 @@ fn shading_passes<T: Translate>(
                     let (Ok(mesh), Ok(fragment)) = (container(first), container(pixel)) else {
                         continue;
                     };
-                    let taken = match forward {
+                    let shades = match forward {
                         false => translate.shades(&mesh, &fragment),
                         true => translate.forward(&mesh, &fragment),
                     };
-                    if taken {
+                    if shades {
                         seen.insert(first.at);
-                        did.read += 1;
-                        let streams = translate.streams(&mesh, &first.variables, parameters);
-                        let (streams, pass) = match streams {
-                            Ok(streams) => (streams, None),
-                            Err(why) => (BTreeSet::new(), Some(Err(why))),
-                        };
-                        let at = (first.at, pixel.at);
-                        inflated.insert(at, (mesh, fragment));
-                        passes.push(Candidate { at, streams, pass });
-                        pairs.push((*first, *pixel));
+                        taken.push((*first, *pixel, mesh, fragment));
                     }
+                }
+                // Each mesh program is lowered to read its streams: side by side, on the workers
+                // the job spares.
+                let more = workers.take(taken.len().saturating_sub(1));
+                let read = or_job::side_by_side(&taken, 1 + more, cancel, |taken| {
+                    translate.streams(&taken.2, &taken.0.variables, parameters)
+                });
+                workers.give(more);
+                for ((first, pixel, mesh, fragment), streams) in taken.into_iter().zip(read) {
+                    did.read += 1;
+                    let (streams, pass) = match streams.unwrap_or_else(|| Err(stopped())) {
+                        Ok(streams) => (streams, None),
+                        Err(why) => (BTreeSet::new(), Some(Err(why))),
+                    };
+                    let at = (first.at, pixel.at);
+                    inflated.insert(at, (mesh, fragment));
+                    passes.push(Candidate { at, streams, pass });
+                    pairs.push((first, pixel));
                 }
             }
             (passes, pairs)
@@ -673,6 +696,19 @@ fn shading_passes<T: Translate>(
                 .or_insert_with(|| translate.pixel(fragment, &pixel.variables, parameters));
             let stage = stage.as_ref().map_err(|why: &String| why.clone())?;
             translate.mesh(mesh, &first.variables, parameters, stage)
+        });
+        // A forward pass takes its technique's state, and its technique's later passes.
+        let translated = translated.and_then(|translated| {
+            match forward_passes::technique_at(&techniques, pass.at) {
+                Some(its) => forward_passes::in_technique(
+                    translate,
+                    translated,
+                    its,
+                    parameters,
+                    &mut container,
+                ),
+                None => Ok(translated),
+            }
         });
         did.translated += 1;
         did.refused += usize::from(translated.is_err());
@@ -1035,12 +1071,19 @@ impl super::AppState {
 #[path = "gta6_ped_assets.rs"]
 pub(crate) mod ped_assets;
 
+/// The terrain tile an open terrain drawable is a cell of: its record, layers and cells.
+#[path = "gta6_terrain_tile.rs"]
+pub(crate) mod terrain_tile;
+
 #[path = "gta6_layer_index.rs"]
 pub(crate) mod layer_index;
 
 #[path = "gta6_shader_translator.rs"]
 mod translator;
-use translator::{Translate, Translator};
+use translator::{Translate, Translator, Workers};
+
+#[path = "gta6_forward_passes.rs"]
+mod forward_passes;
 
 #[path = "gta6_timecycle.rs"]
 pub(crate) mod timecycle;

@@ -267,6 +267,79 @@ pub fn entry_of(
         .ok_or(PipelineError::NoEntryPoint(stage))
 }
 
+/// Has the pixel stages of `module` find the clip space's `w` in their position's fourth component, as a program written for Direct3D does, on a `backend` that puts `1 / w` there.
+// ⚠ Only Direct3D 12 hands a fragment the `w` itself; Vulkan, Metal and GL hand its reciprocal. A
+// GTA VI program reads it as the pixel's distance from the camera (the foliage's near fade).
+// Rewritten where an entry point stores its position whole, the one way the lowering reads it.
+pub fn position_w_as_direct3d(module: &mut naga::Module, backend: wgpu::Backend) {
+    use naga::{BinaryOperator, Expression, Literal, Span, Statement};
+    if backend == wgpu::Backend::Dx12 {
+        return;
+    }
+    let fragments = module
+        .entry_points
+        .iter_mut()
+        .filter(|entry| entry.stage == ShaderStage::Fragment);
+    for entry in fragments {
+        let function = &mut entry.function;
+        let Some(index) = function.arguments.iter().position(|argument| {
+            matches!(
+                argument.binding,
+                Some(Binding::BuiltIn(BuiltIn::Position { .. }))
+            )
+        }) else {
+            continue;
+        };
+        let ty = function.arguments[index].ty;
+        let wanted = Expression::FunctionArgument(index as u32);
+        let Some(position) = function.expressions.fetch_if(|e| *e == wanted) else {
+            continue;
+        };
+        let expressions = &mut function.expressions;
+        let one = expressions.append(Expression::Literal(Literal::F32(1.0)), Span::UNDEFINED);
+        let parts: Vec<_> = (0..4)
+            .map(|index| {
+                expressions.append(
+                    Expression::AccessIndex {
+                        base: position,
+                        index,
+                    },
+                    Span::UNDEFINED,
+                )
+            })
+            .collect();
+        let reciprocal = expressions.append(
+            Expression::Binary {
+                op: BinaryOperator::Divide,
+                left: one,
+                right: parts[3],
+            },
+            Span::UNDEFINED,
+        );
+        let as_direct3d = expressions.append(
+            Expression::Compose {
+                ty,
+                components: vec![parts[0], parts[1], parts[2], reciprocal],
+            },
+            Span::UNDEFINED,
+        );
+        let mut stored = false;
+        for statement in function.body.iter_mut() {
+            if let Statement::Store { value, .. } = statement {
+                if *value == position {
+                    *value = as_direct3d;
+                    stored = true;
+                }
+            }
+        }
+        if stored {
+            let emitted = naga::Range::new_from_bounds(parts[0], as_direct3d);
+            let first = naga::Block::from_vec(vec![Statement::Emit(emitted)]);
+            function.body.splice(0..0, first);
+        }
+    }
+}
+
 /// A render pipeline from the vertex stage `vertex` and, when given, the pixel stage `fragment`, with `layout` or one the device derives from the modules.
 ///
 /// The vertex buffer is the packed one [`vertex_layout`] describes and the colour targets are [`fragment_targets`]'s, and a pass that writes no colour gets a depth target, since a pipeline needs one. With `depth_test`, the pipeline tests and writes depth, a nearer surface winning. A pair the device refuses is reported through the device's own error scopes and not here.

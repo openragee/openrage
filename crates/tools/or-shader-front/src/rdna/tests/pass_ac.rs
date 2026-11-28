@@ -60,9 +60,10 @@ fn a_shared_dword_is_swapped_only_where_it_holds_the_compared_value() {
 #[test]
 fn a_texel_compared_and_swapped_is_refused_by_its_own_reason() {
     let image = smem(S_LOAD_X8, 8, 2, 0x40);
-    let swap = mimg("image_atomic_cmpswap", 1, 3, 0);
+    // Four registers: a 64-bit texel, which no load and store of naga's reads whole.
+    let swap = mimg("image_atomic_cmpswap", 1, 0xF, 0);
     let mut words = vec![image[0], image[1]];
-    words.extend((0..2).map(|v| vop1(V_MOV, v, F_ONE)));
+    words.extend((0..4).map(|v| vop1(V_MOV, v, F_ONE)));
     words.extend([swap[0], swap[1], S_ENDPGM]);
     let refused = refusal(ShaderKind::Pixel, words);
     let wanted = format!("image_atomic_cmpswap: {}", to_naga::TEXEL_SWAP);

@@ -17503,3 +17503,9 @@ msgstr "이 아카이브의 프로젝트를 만드시겠습니까?"
 
 msgid "This script was decompiled alone: a function that needs what another program states has no body. A project reads every program of this archive once, which takes minutes, and keeps what they state of each other in the names folder, where every script opened after it reads it. The inspector can build it later"
 msgstr "이 스크립트는 단독으로 디컴파일되었습니다. 다른 프로그램이 정하는 내용이 필요한 함수에는 본문이 없습니다. 프로젝트는 이 아카이브의 모든 프로그램을 한 번 읽고(몇 분 걸립니다) 서로에 대해 정하는 내용을 이름 폴더에 보관하며, 이후에 여는 모든 스크립트가 이를 읽습니다. 인스펙터에서 나중에 만들 수도 있습니다"
+
+msgid "A lit one among them takes the sun with no shadow: the game's cascades are stated empty, and the editor's shadow tile is not handed to it"
+msgstr "그중 조명되는 것은 그림자 없이 태양을 받습니다. 게임의 캐스케이드는 비어 있다고 지정되고, 편집기의 그림자 타일은 전달되지 않습니다"
+
+msgid "Of the game's thirty material kinds, the standard and the translucent are lit by their own arithmetic; skin, clear coat, sheen and the rest are lit as the standard one for now"
+msgstr "게임의 서른 가지 재질 종류 중 표준과 반투명은 각자의 계산으로 조명됩니다. 피부, 클리어 코트, 광택 및 나머지는 당분간 표준처럼 조명됩니다"

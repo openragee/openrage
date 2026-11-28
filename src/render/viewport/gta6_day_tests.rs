@@ -364,3 +364,16 @@ fn each_weather_takes_a_cycle_and_without_it_the_table_or_the_curve_nothing_is_s
     assert!(!lights(&rain, WeatherState::Rain));
     assert!(sky(&rain, 9.0, WeatherState::Rain).is_none());
 }
+
+#[test]
+fn a_cycle_s_glass_remap_rows_reach_the_view_s_record_and_their_defaults_stand_in_for_none() {
+    // The cycle table's own defaults: from nought to five metres, one at both.
+    assert_eq!(glass_remap_of(&Keyframe::default()), [0.0, 5.0, 1.0, 1.0]);
+    let mut frame = Keyframe::default();
+    frame.set("indirect_light_specular_glass_remap_max_distance", 8.0);
+    frame.set("indirect_light_specular_glass_remap_min_weight", 0.25);
+    assert_eq!(glass_remap_of(&frame), [0.0, 8.0, 0.25, 1.0]);
+    let rows = "<indirect_light_specular_glass_remap_max_weight> 2 2 2 2 2 2 2 2 2 2 2 2 2</indirect_light_specular_glass_remap_max_weight>";
+    let lit = sky(&data("Rain", rows), 12.0, WeatherState::Rain).expect("lit by the cycle");
+    assert_eq!(lit.scene.glass_remap, Some([0.0, 5.0, 1.0, 2.0]));
+}

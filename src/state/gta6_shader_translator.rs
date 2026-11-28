@@ -1,6 +1,7 @@
 //! What reads a GTA VI effect's programs as shading passes: the translator, or a test's stand-in.
 
 use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use or_cli::Gta6ShadingPass;
 use or_io::gta5::shaders::sgd5::Sgd5Table;
@@ -39,6 +40,26 @@ pub(super) trait Translate: Sync {
 }
 
 pub(super) struct Translator;
+
+/// A job's stop, and the workers it spares beyond the one each effect is read on.
+pub(super) struct Workers<'c> {
+    pub(super) cancel: &'c or_job::Cancel,
+    pub(super) spare: AtomicUsize,
+}
+
+impl Workers<'_> {
+    /// Up to `wanted` of the spare workers, until [`Workers::give`] gives them back.
+    pub(super) fn take(&self, wanted: usize) -> usize {
+        let spare = (self.spare).try_update(Ordering::SeqCst, Ordering::SeqCst, |spare| {
+            Some(spare - spare.min(wanted))
+        });
+        spare.unwrap_or(0).min(wanted)
+    }
+
+    pub(super) fn give(&self, workers: usize) {
+        self.spare.fetch_add(workers, Ordering::SeqCst);
+    }
+}
 
 impl Translate for Translator {
     type Pixel = or_cli::Gta6PixelStage;

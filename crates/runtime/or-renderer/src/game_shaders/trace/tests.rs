@@ -121,6 +121,36 @@ fn a_pixel_s_sun_ray_meets_the_triangle_above_it_at_the_distance_the_arithmetic_
 }
 
 #[test]
+fn a_ray_held_off_as_the_shadow_map_holds_a_surface_leaves_the_plane_its_normal_lies_along() {
+    let view = PixelView {
+        unproject: from_above().inverse(),
+        towards: Vec3::new(0.0, -0.6, 0.8),
+        camera: Vec3::new(0.0, 0.0, 10.0),
+        disc: 0.01,
+        clouds: 1.0,
+    };
+    // The plane the pixel shows is drawn, and its targets state a normal along it, as a decal's
+    // can: pushed along that normal the ray starts on the plane and meets it at once.
+    let plane = [triangle(
+        [[-4.0, -4.0, 0.0], [4.0, -4.0, 0.0], [-4.0, 4.0, 0.0]],
+        0,
+    )];
+    let arena = SceneArena::build(&plane).unwrap();
+    let along = Vec3::NEG_Y;
+    let at = ([5, 9], (16, 16));
+    let pushed = cast_of(&view, at, (0.25, along), 0, arena.sphere())
+        .ray
+        .unwrap();
+    assert!(walked(&arena, &pushed).hit.is_some(), "{pushed:?}");
+    let lift = 0.01;
+    let held = cast_held_off(&view, at, (0.25, along), 0, arena.sphere(), lift);
+    let ray = held.ray.unwrap();
+    let start = Vec3::from(pushed.origin) + view.towards * lift;
+    assert!((Vec3::from(ray.origin) - start).length() < 1e-6, "{ray:?}");
+    assert_eq!(walked(&arena, &ray).hit, None);
+}
+
+#[test]
 fn a_still_view_casts_a_ray_a_pixel_for_sixty_four_frames_then_none_and_a_moving_one_a_quarter() {
     let size = (1920, 1080);
     let mut governor = Governor::default();

@@ -23,6 +23,11 @@ impl TextureStamp {
         texture.payload().hash(&mut hasher);
         Self(hasher.finish())
     }
+
+    /// The stamp of an upload made from what `read` identifies, where hashing its bytes would read them.
+    pub fn of_read(read: u64) -> Self {
+        Self(read)
+    }
 }
 
 /// What the viewport holds on the GPU, published to the state for the Statistics panel.

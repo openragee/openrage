@@ -45,6 +45,18 @@ pub(super) fn frames_stated(
     skies: &[(Mat4, Sky)],
     mut state: impl FnMut(&mut MeshletScene, &wgpu::Queue, usize),
 ) -> Option<Vec<Vec<u8>>> {
+    frames_on(test, model, skies, |scene, (_, queue), at| {
+        state(scene, queue, at)
+    })
+}
+
+/// [`frames_stated`], `state` handed the device as well.
+pub(super) fn frames_on(
+    test: &str,
+    model: MeshletSurface,
+    skies: &[(Mat4, Sky)],
+    mut state: impl FnMut(&mut MeshletScene, (&wgpu::Device, &wgpu::Queue), usize),
+) -> Option<Vec<Vec<u8>>> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter = match crate::instance::headless_adapter(&instance) {
         Ok(adapter) => adapter,
@@ -87,7 +99,7 @@ pub(super) fn frames_stated(
     let depth = render_target(&device, "depth", size, DEPTH, wgpu::TextureUsages::empty());
     let mut frames = Vec::new();
     for (at, (view_proj, sky)) in skies.iter().enumerate() {
-        state(&mut scene, &queue, at);
+        state(&mut scene, (&device, &queue), at);
         let lighting = Lighting {
             view_proj: *view_proj,
             sky: *sky,

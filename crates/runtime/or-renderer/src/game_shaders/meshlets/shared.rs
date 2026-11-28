@@ -45,8 +45,12 @@ type ImageKey = (
 pub(super) struct Made {
     buffers: HashMap<BytesKey, wgpu::Buffer>,
     textures: HashMap<ImageKey, (Option<Arc<Image>>, wgpu::TextureView)>,
+    /// Array textures by the places of their slices' images, which are kept with them.
+    sliced: HashMap<Vec<usize>, (Vec<Arc<Image>>, wgpu::TextureView)>,
     samplers: HashMap<bool, wgpu::Sampler>,
     pub(super) uploads: Uploads,
+    /// What the forward surfaces are handed of the frame's light, written each time it moves.
+    pub(super) frame: super::forward_frame::FrameHeld,
 }
 
 fn digests(bytes: &[u8]) -> (u64, u64) {
@@ -111,6 +115,67 @@ impl Made {
         view
     }
 
+    /// One array texture whose slice `i` is `images[i]`, with its levels, made once a scene;
+    /// `None` unless there are two or more images, all of one size and colour space.
+    pub(super) fn slices(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        images: &[Option<Arc<Image>>],
+    ) -> Option<wgpu::TextureView> {
+        let images: Vec<&Arc<Image>> = images.iter().flatten().collect();
+        let first = images.first()?;
+        let alike = |i: &&Arc<Image>| {
+            (i.width, i.height, i.srgb) == (first.width, first.height, first.srgb)
+                && i.rgba.len() == (i.width * i.height * 4) as usize
+        };
+        if images.len() < 2 || !images.iter().all(alike) {
+            return None;
+        }
+        let key: Vec<usize> = images.iter().map(|i| Arc::as_ptr(i) as usize).collect();
+        if let Some((_, view)) = self.sliced.get(&key) {
+            return Some(view.clone());
+        }
+        let (mut texels, mut levels) = (Vec::new(), 1);
+        for image in &images {
+            let (own, count) =
+                super::with_levels(image.width, image.height, &image.rgba, image.srgb, true);
+            texels.extend_from_slice(&own);
+            levels = count;
+        }
+        let texture = device.create_texture_with_data(
+            queue,
+            &wgpu::TextureDescriptor {
+                label: None,
+                size: wgpu::Extent3d {
+                    width: first.width,
+                    height: first.height,
+                    depth_or_array_layers: images.len() as u32,
+                },
+                mip_level_count: levels,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: match first.srgb {
+                    true => wgpu::TextureFormat::Rgba8UnormSrgb,
+                    false => wgpu::TextureFormat::Rgba8Unorm,
+                },
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            &texels,
+        );
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        self.uploads.textures += 1;
+        self.uploads.image_bytes += images.iter().map(|i| i.rgba.len() as u64).sum::<u64>();
+        let kept = images.iter().map(|i| Arc::clone(i)).collect();
+        self.sliced.insert(key, (kept, view.clone()));
+        Some(view)
+    }
+
     /// The scene's sampler, of a comparison or not.
     pub(super) fn sampler(&mut self, device: &wgpu::Device, comparison: bool) -> wgpu::Sampler {
         let uploads = &mut self.uploads;
@@ -122,6 +187,7 @@ impl Made {
                 address_mode_w: wgpu::AddressMode::Repeat,
                 mag_filter: wgpu::FilterMode::Linear,
                 min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::MipmapFilterMode::Linear,
                 compare: comparison.then_some(wgpu::CompareFunction::LessEqual),
                 ..Default::default()
             })
@@ -140,6 +206,7 @@ pub(super) fn digest(feeds: &BTreeMap<(u32, u32), Feed>, group: u32) -> u64 {
         match feed {
             Feed::Bytes(bytes) => (0u8, bytes).hash(&mut digest),
             Feed::View { bytes, view_proj } => (1u8, bytes, view_proj).hash(&mut digest),
+            Feed::Frame(frame) => (3u8, frame).hash(&mut digest),
             Feed::Textures(images) => {
                 2u8.hash(&mut digest);
                 for image in images {
@@ -177,53 +244,17 @@ impl MeshletScene {
             .waiting
             .iter()
             .chain(self.refused.iter().map(|(at, _)| at));
-        if !self.draws.iter().all(same) || others.max().is_some_and(|at| *at >= surfaces.len()) {
-            return Ok(None);
-        }
-        // ponytail: a scene with forward surfaces is prepared again for a late map; bind theirs
-        // here as well when a model of them shows the wait.
-        if self.over.is_some() {
+        let forward = self.over.iter().flat_map(|over| over.draws());
+        if !self.draws.iter().chain(forward).all(same)
+            || others.max().is_some_and(|at| *at >= surfaces.len())
+        {
             return Ok(None);
         }
         let mut rebound = 0;
-        for draw in &mut self.draws {
-            let surface = &surfaces[draw.at];
-            let built = Arc::clone(&draw.built);
-            let mut moved = false;
-            for ((group, bound), (was, views)) in draw.groups.iter_mut().zip(&mut draw.bound_by) {
-                let now = digest(&surface.feeds, *group);
-                if now == *was {
-                    continue;
-                }
-                let Some(Some(layout)) = built.layouts.get(*group as usize) else {
-                    continue;
-                };
-                let module = match *group % 2 {
-                    0 => &built.vertex,
-                    _ => &built.fragment,
-                };
-                let fresh = bind(
-                    device,
-                    queue,
-                    module,
-                    *group,
-                    layout,
-                    &surface.feeds,
-                    &mut self.made,
-                )?;
-                *bound = fresh.group;
-                *was = now;
-                *views = fresh.views;
-                moved = true;
-                rebound += 1;
-            }
-            if moved {
-                let views = draw
-                    .bound_by
-                    .iter()
-                    .flat_map(|(_, views)| views.iter().cloned());
-                draw.views = views.collect::<Vec<ViewWrite>>();
-            }
+        // The forward surfaces' maps too: a lit frame drawn again draws them again.
+        let over = self.over.iter_mut().flat_map(|over| over.draws_mut());
+        for draw in self.draws.iter_mut().chain(over) {
+            rebound += rebind_draw(device, queue, draw, &surfaces[draw.at], &mut self.made)?;
         }
         if rebound > 0 {
             self.made.uploads.rebound += rebound;
@@ -232,6 +263,45 @@ impl MeshletScene {
         }
         Ok(Some(rebound))
     }
+}
+
+/// Bind again each group of `draw` whose feeds in `surface` differ from those it was bound by;
+/// how many were.
+fn rebind_draw(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    draw: &mut super::Draw,
+    surface: &MeshletSurface,
+    made: &mut Made,
+) -> Result<u32, String> {
+    let built = Arc::clone(&draw.built);
+    let mut rebound = 0;
+    for ((group, bound), (was, views)) in draw.groups.iter_mut().zip(&mut draw.bound_by) {
+        let now = digest(&surface.feeds, *group);
+        if now == *was {
+            continue;
+        }
+        let Some(Some(layout)) = built.layouts.get(*group as usize) else {
+            continue;
+        };
+        let module = match *group % 2 {
+            0 => &built.vertex,
+            _ => &built.fragment,
+        };
+        let fresh = bind(device, queue, module, *group, layout, &surface.feeds, made)?;
+        *bound = fresh.group;
+        *was = now;
+        *views = fresh.views;
+        rebound += 1;
+    }
+    if rebound > 0 {
+        let views = draw
+            .bound_by
+            .iter()
+            .flat_map(|(_, views)| views.iter().cloned());
+        draw.views = views.collect::<Vec<ViewWrite>>();
+    }
+    Ok(rebound)
 }
 
 #[cfg(test)]

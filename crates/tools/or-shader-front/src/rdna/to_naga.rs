@@ -18,15 +18,19 @@ use super::Program;
 use crate::dxil::ShaderKind;
 pub use ends::{LOOP_NOT_SHOWN, LOOP_OTHER_LANES, LOOP_UNCHANGING};
 
+mod approx;
 mod buffers;
 mod ends;
 mod flow;
 mod geometry;
 mod halves;
+mod mesh;
+mod nan;
 mod trace;
 mod uniform;
 mod wave;
 
+pub use approx::{refused_for_drawing, NOT_DRAWN, TEXEL_UNLOCKED, UNORDERED};
 use flow::Flow;
 pub use geometry::{emitted, Emitted, Pair};
 use halves::Rounding;
@@ -80,7 +84,7 @@ const RAY_TRACING: &str = "a program that traces rays: it loads the nodes of an 
     of one node has a counterpart, and a ray query in the walk's place would be another program";
 /// The approximation a load of a texture of no stated kind is counted as.
 const LOADED_AS_FLOATS: &str = "an image loaded as floats";
-/// Why `image_atomic_cmpswap` is not translated.
+/// Why `image_atomic_cmpswap` of a 64-bit texel is not translated.
 pub(super) const TEXEL_SWAP: &str =
     "a texel compared and swapped: naga's update of a texel is a sum, a \
     mask, a least or a greatest value and gives back no old value, so no exchange, and no loop \
@@ -349,8 +353,8 @@ const FETCH_BASE: u32 = 4;
 const HIGH_HALVES: u32 = 32;
 /// The export target of a mesh program's primitive: three vertex numbers and a cull bit.
 const PRIM: u8 = 20;
-/// The threads of a mesh program's group, each of which may place one vertex and one primitive.
-// ponytail: every mesh program of the build was reported to state 128 threads; a program's own count belongs in `Program`.
+/// The threads of a mesh program's group, each of which may place one vertex and one
+/// primitive, where its package states none ([`super::Launch`]).
 const MESH_THREADS: u32 = 128;
 /// The lanes of the wave a mesh program was compiled for.
 const WAVE: u32 = 64;
@@ -574,6 +578,20 @@ impl Builder {
     }
 
     fn bin(&mut self, op: Bo, left: Handle<E>, right: Handle<E>) -> Handle<E> {
+        // ⚠ A shift by 32 or more is undefined on a device: a computed count is held to five
+        // bits, as the hardware's own shifts hold theirs. A stated one is a 64-bit word's.
+        let computed = !matches!(self.fun.expressions[right], E::Literal(_));
+        let right = match op {
+            Bo::ShiftLeft | Bo::ShiftRight if computed => {
+                let mask = self.u32(31);
+                self.emit(E::Binary {
+                    op: Bo::And,
+                    left: right,
+                    right: mask,
+                })
+            }
+            _ => right,
+        };
         self.emit(E::Binary { op, left, right })
     }
 
@@ -991,16 +1009,16 @@ impl Builder {
                 let value = self.mul_legacy(a, b);
                 self.bits(value)
             }
-            // ponytail: naga's min and max leave a NaN operand's result open; the hardware returns the other operand.
-            ("v_min_f32", &[a, b]) => self.fmath(Mf::Min, &[a, b]),
-            ("v_max_f32", &[a, b]) => self.fmath(Mf::Max, &[a, b]),
+            // A NaN operand gives the other ([`Builder::fminmax`]).
+            ("v_min_f32", &[a, b]) => self.fminmax(Mf::Min, a, b),
+            ("v_max_f32", &[a, b]) => self.fminmax(Mf::Max, a, b),
             ("v_min3_f32", &[a, b, c]) => {
-                let first = self.fmath(Mf::Min, &[a, b]);
-                self.fmath(Mf::Min, &[first, c])
+                let first = self.fminmax(Mf::Min, a, b);
+                self.fminmax(Mf::Min, first, c)
             }
             ("v_max3_f32", &[a, b, c]) => {
-                let first = self.fmath(Mf::Max, &[a, b]);
-                self.fmath(Mf::Max, &[first, c])
+                let first = self.fminmax(Mf::Max, a, b);
+                self.fminmax(Mf::Max, first, c)
             }
             ("v_med3_f32", &[a, b, c]) => {
                 let (low, high) = (self.fmath(Mf::Min, &[a, b]), self.fmath(Mf::Max, &[a, b]));
@@ -1557,6 +1575,8 @@ struct Cx<'a> {
     /// the first lane is the first thread of the wave.
     first_entry: BTreeMap<u32, u8>,
     mesh: Option<Mesh>,
+    /// A mesh group's memory, and whether the program stores where another invocation reads.
+    leftovers: mesh::Leftovers,
     half_slots: &'a BTreeSet<u8>,
     /// A pixel input by its parameter slot: the private variable, and whether anything interpolates it.
     attributes: BTreeMap<u8, (Handle<naga::GlobalVariable>, bool)>,
@@ -2347,6 +2367,14 @@ impl<'a> Cx<'a> {
                 self.b.flag(none)
             }
             Operand::Vgpr(n) => self.vreg(pc, n)?,
+            // ⚠ The wave that last left the ordered section, which the wait for a turn
+            // compares with a word of its own: run in no order no wave is tracked, and a wait
+            // the program enters on this nought is a loop no turn ends, which the lowering's
+            // count of loops not shown to end names.
+            Operand::PopsExitingWaveId if self.leftovers.ordered => {
+                self.note(UNORDERED);
+                self.b.u32(0)
+            }
             _ => {
                 return Err(NotTranslated::Operand {
                     pc,
@@ -2512,6 +2540,13 @@ impl<'a> Cx<'a> {
         let condition = match name {
             "s_nop" | "s_inst_prefetch" | "s_waitcnt" | "s_waitcnt_depctr" | "s_endpgm"
             | "s_code_end" | "s_branch" => return Ok(()),
+            "s_barrier" if self.leftovers.filling.is_some() => return self.mesh_barrier(),
+            // Run in no order, a pixel program's wait for its turn ends at once, and its message
+            // that its ordered section is done tells nobody anything.
+            "s_sleep" if self.leftovers.ordered => return Ok(()),
+            "s_sendmsg" if self.leftovers.ordered && matches!(inst, Inst::Sopp { imm: 7, .. }) => {
+                return Ok(())
+            }
             // The counts a mesh program announces and the wait for its other threads: each thread
             // here runs alone and says by its own exports what it placed.
             "s_sendmsg" | "s_barrier" if self.mesh.is_some() || self.pair.is_some() => {
@@ -3094,9 +3129,17 @@ impl<'a> Cx<'a> {
                     u32::from(word >> 6 & 0x1F),
                     u32::from(word >> 11) + 1,
                 );
-                // Register 25 turns on the order pixels at one place are shaded in.
+                // Register 25 turns on the order pixels at one place are shaded in. Where the
+                // program stores nothing another primitive's pixel reads, the order changes
+                // nothing; elsewhere running it in none is counted.
                 if id == 25 {
-                    return Err(NotTranslated::Pipeline(ORDERED));
+                    if !self.leftovers.ordered {
+                        return Err(NotTranslated::Pipeline(ORDERED));
+                    }
+                    if self.leftovers.stores {
+                        self.note(UNORDERED);
+                    }
+                    return Ok(());
                 }
                 let rounding = first < 2;
                 let nearest = match imm32 {
@@ -6088,6 +6131,9 @@ impl<'a> Cx<'a> {
         if *d16 {
             return Err(form(pc, inst, "16-bit data stored to an image"));
         }
+        if name == "image_atomic_cmpswap" {
+            return self.texel_swap(pc, inst);
+        }
         // An update names a dword of unsigned or signed data, or with two registers a 64-bit one.
         let update = match (name.strip_prefix("image_atomic_"), *dmask) {
             (None, 0xF) => None,
@@ -7187,13 +7233,13 @@ impl<'a> Cx<'a> {
             return Err(refused(pc, inst));
         };
         let Some(launch) = self.launch else {
-            return Err(match self.mesh {
-                // A thread stores where data it loaded says, and after the barrier another
-                // reads where its own number says: a thread run alone finds what it reads
-                // only once every thread of its group has run to the barrier.
-                Some(_) => form(pc, inst, MESH_SHARED),
-                None => refused(pc, inst),
-            });
+            // A thread stores where data it loaded says, and after the barrier another reads
+            // where its own number says: a thread run alone finds what it reads only once
+            // every thread of its group has run to the barrier.
+            if self.mesh.is_some() {
+                return self.mesh_memory(pc, inst, name);
+            }
+            return Err(refused(pc, inst));
         };
         if *gds {
             return Err(form(pc, inst, "the memory every group shares"));
@@ -7400,7 +7446,8 @@ impl<'a> Cx<'a> {
                     let (thread, group) = self.mesh_ids(mesh);
                     let value = match reg {
                         Reg::V(_) => {
-                            let threads = self.b.u32(MESH_THREADS);
+                            let threads = self.mesh_threads();
+                            let threads = self.b.u32(threads);
                             let first = self.b.bin(Bo::Multiply, group, threads);
                             self.b.bin(Bo::Add, first, thread)
                         }
@@ -7774,7 +7821,11 @@ fn lower_as(
     // memory its group shares, which the lowerings below do not come to.
     if options.arena && wave::may_be_private(program, cfg) {
         shared = wave::waves(program);
-    } else if options.arena && program.launch.is_some() && wave::tests_nodes(cfg) {
+    } else if options.arena
+        && program.kind == ShaderKind::Compute
+        && program.launch.is_some()
+        && wave::tests_nodes(cfg)
+    {
         return Err(NotTranslated::Pipeline(wave::NOT_ONE_WAVE));
     }
     // What the lowering onto the device's subgroup came to, where it stands if the one
@@ -7972,6 +8023,7 @@ fn lower_pass(
         wants_wave: false,
         first_entry: BTreeMap::new(),
         mesh: None,
+        leftovers: mesh::Leftovers::default(),
         half_slots: &options.half_slots,
         attributes: BTreeMap::new(),
         halves: BTreeMap::new(),
@@ -8008,7 +8060,10 @@ fn lower_pass(
         reads_code: (cfg.blocks.values().flat_map(|b| &b.insts))
             .any(|(_, inst)| inst.name() == "s_getpc_b64"),
         spills: spilled(walk.map_or(cfg, |walk| walk.whole)),
-        launch: program.launch,
+        // A mesh program's launch is its group's, which no compute path reads.
+        launch: program
+            .launch
+            .filter(|_| program.kind == ShaderKind::Compute),
         ids: None,
         shared: None,
         stored: BTreeSet::new(),
@@ -8037,10 +8092,11 @@ fn lower_pass(
             pos_set: cx.private("pos_set".to_owned(), flag),
         });
     }
+    cx.plan_leftovers(cfg);
     if let Some(split) = split {
         cx.pair = Some(cx.pair_declare(split));
     }
-    if program.launch.is_some() {
+    if cx.launch.is_some() {
         let ty = vector(&mut cx.module, VectorSize::Tri, Scalar::U32);
         cx.ids = Some([
             cx.private("thread".to_owned(), ty),
@@ -8124,6 +8180,7 @@ fn lower_pass(
     cx.used.clear();
     cx.defined.clear();
     cx.live_ins(&live, &handed)?;
+    cx.mesh_entry();
     match nodes {
         Some(nodes) => {
             let mut blocks: Vec<Option<Block>> =
@@ -8154,6 +8211,7 @@ fn lower_pass(
         mut module,
         b,
         mesh,
+        leftovers,
         half_slots,
         attributes,
         halves,
@@ -8412,6 +8470,7 @@ fn lower_pass(
             let binding = naga::Binding::BuiltIn(naga::BuiltIn::InstanceIndex);
             let instance = argument(&mut w, "instance_index".to_owned(), word, binding);
             store(&mut w, mesh.group, instance);
+            mesh::fill(&mut w, &mut module, &leftovers, mesh.thread, call());
             let three = w.u32(3);
             let (primitive, corner) = (
                 w.bin(Bo::Divide, vertex, three),

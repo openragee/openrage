@@ -2,6 +2,7 @@
 //! drawable's: none is embedded, so each is shown from the open document its key resolves to,
 //! and replaced and exported there.
 
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 use or_io::authoring::{FormatChoice, TextureBuildOptions};
@@ -84,6 +85,23 @@ pub fn sized_for_gta6(
     if !matches!(drawable, Some(DocPayload::Gta6Drawable(_))) {
         return listing;
     }
+    // ⚠ Asked every frame by the Outline and the Gallery, and a resolve reads what it finds: the
+    // sizes are found again only when the names asked or an open document change.
+    let mut hasher = std::hash::DefaultHasher::new();
+    (doc, super::gta6_resource::drawable_lines_stamp(state)).hash(&mut hasher);
+    // Where each open document is, which tells one session's documents from another's.
+    (state.documents.iter()).for_each(|d| std::ptr::from_ref(&d.payload).hash(&mut hasher));
+    textures
+        .iter()
+        .for_each(|t| (&t.name, t.width).hash(&mut hasher));
+    let asked = hasher.finish();
+    let mut kept = SIZED.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some((_, sizes)) = kept.as_ref().filter(|(at, _)| *at == asked) {
+        for (t, (width, height, format)) in textures.iter_mut().zip(sizes) {
+            (t.width, t.height, t.format) = (*width, *height, *format);
+        }
+        return listing;
+    }
     for t in textures.iter_mut().filter(|t| t.width == 0) {
         if let Some(entry) = open_pack_entry(state, &t.name) {
             (t.width, t.height) = (entry.width, entry.height);
@@ -97,8 +115,17 @@ pub fn sized_for_gta6(
             t.format = texture.format();
         }
     }
+    let sizes = textures
+        .iter()
+        .map(|t| (t.width, t.height, t.format))
+        .collect();
+    *kept = Some((asked, sizes));
     listing
 }
+
+/// What [`sized_for_gta6`] last found, by what it was asked: each texture's size and format.
+type Sized = Option<(u64, Vec<(u32, u32, GrcTextureFormat)>)>;
+static SIZED: std::sync::Mutex<Sized> = std::sync::Mutex::new(None);
 
 /// The directory entry an open pack holds for texture `name`, a GTA VI drawable's key by the name it is known by.
 pub fn open_pack_entry(state: &super::AppState, name: &str) -> Option<or_io::gta6::Entry> {

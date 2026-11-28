@@ -131,7 +131,7 @@ fn kept_box(
 }
 
 /// The box `positions` fill; `None` where there is none.
-fn bounds_of<'a>(
+pub(super) fn bounds_of<'a>(
     positions: impl Iterator<Item = &'a [f32; 3]>,
 ) -> Option<(glam::Vec3, glam::Vec3)> {
     positions.fold(None, |corners, position| {
@@ -367,12 +367,18 @@ pub(crate) fn said_of_own(
                     zeroed = own.zeroed,
                 ),
             };
+            if by_cycles {
+                said.push('\n');
+                said.push_str(tr!("Of the game's thirty material kinds, the standard and the translucent are lit by their own arithmetic; skin, clear coat, sheen and the rest are lit as the standard one for now"));
+            }
             if own.forward > 0 {
                 said.push('\n');
                 said.push_str(&tr!(
                     "Drawn by their forward passes, laid over the lit frame before it is toned: {count} of those surfaces",
                     count = own.forward,
                 ));
+                said.push(' ');
+                said.push_str(tr!("A lit one among them takes the sun with no shadow: the game's cascades are stated empty, and the editor's shadow tile is not handed to it"));
             }
             if let Some(why) = &own.why {
                 said.push('\n');
@@ -458,13 +464,22 @@ mod tests {
             lit.contains("the install's weather cycle") && !whole.contains("weather cycle"),
             "{lit}"
         );
+        // The game's lighting names the material kinds it lights as the standard one.
+        assert!(
+            lit.contains("lit as the standard one for now") && !whole.contains("material kinds"),
+            "{lit}"
+        );
         let laid = Own {
             forward: 1,
             ..own.clone()
         };
         let laid = said_of_own(String::new(), Some(&Ok(laid)), false);
         assert!(
-            laid.ends_with("laid over the lit frame before it is toned: 1 of those surfaces"),
+            laid.contains("laid over the lit frame before it is toned: 1 of those surfaces"),
+            "{laid}"
+        );
+        assert!(
+            laid.ends_with("the editor's shadow tile is not handed to it"),
             "{laid}"
         );
         assert!(!whole.contains("forward"), "{whole}");

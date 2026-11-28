@@ -878,6 +878,11 @@ fn math(fun: Mf, a: Value, b: Option<Value>, c: Option<Value>) -> Value {
         (Mf::Max, U(a), Some(U(b)), _) => U(a.max(b)),
         (Mf::Min, I(a), Some(I(b)), _) => I(a.min(b)),
         (Mf::Max, I(a), Some(I(b)), _) => I(a.max(b)),
+        // naga leaves a NaN operand's result open: this device gives the NaN, so that a
+        // lowering that leans on either choice shows it.
+        (Mf::Min | Mf::Max, F(a), Some(F(b)), _) if a.is_nan() || b.is_nan() => {
+            F(if a.is_nan() { a } else { b })
+        }
         (Mf::Min, F(a), Some(F(b)), _) => F(a.min(b)),
         (Mf::Max, F(a), Some(F(b)), _) => F(a.max(b)),
         (Mf::Clamp, U(a), Some(U(low)), Some(U(high))) => U(a.clamp(low, high)),

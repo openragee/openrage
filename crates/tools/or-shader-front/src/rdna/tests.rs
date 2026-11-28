@@ -14,6 +14,7 @@ mod link;
 mod pass_aa;
 mod pass_ab;
 mod pass_ac;
+mod pass_ad;
 mod pass_rt;
 mod pass_rt_body;
 mod pass_rt_query;
@@ -3228,16 +3229,6 @@ fn a_pixel_program_that_computes_with_its_interpolation_pair_reads_its_weights()
                 perspective: true,
             }))
     }));
-}
-
-#[test]
-fn a_pixel_program_shaded_in_primitive_order_is_refused_as_what_it_is() {
-    // Register 25, its first three bits, from s1.
-    let turn = sopk(op(opcodes::SOPK, "s_setreg_b32"), 1, 0x1019);
-    let RdnaError::NotTranslated(why) = refusal(ShaderKind::Pixel, vec![turn, S_ENDPGM]) else {
-        panic!("not a refusal of the lowering");
-    };
-    assert_eq!(why.name(), "a pixel program shaded in primitive order");
 }
 
 /// The most statements any one block of `block` holds, nested ones included.

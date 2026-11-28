@@ -17664,3 +17664,9 @@ msgstr "Создать проект этого архива?"
 
 msgid "This script was decompiled alone: a function that needs what another program states has no body. A project reads every program of this archive once, which takes minutes, and keeps what they state of each other in the names folder, where every script opened after it reads it. The inspector can build it later"
 msgstr "Этот скрипт декомпилирован отдельно: у функции, которой нужно то, что объявляет другая программа, нет тела. Проект один раз читает каждую программу этого архива (это занимает минуты) и сохраняет то, что они объявляют друг о друге, в папке имён, откуда его читает каждый скрипт, открытый после этого. Инспектор может создать его позже"
+
+msgid "A lit one among them takes the sun with no shadow: the game's cascades are stated empty, and the editor's shadow tile is not handed to it"
+msgstr "Освещаемая из них получает солнце без тени: каскады игры заданы пустыми, а плитка тени редактора ей не передаётся"
+
+msgid "Of the game's thirty material kinds, the standard and the translucent are lit by their own arithmetic; skin, clear coat, sheen and the rest are lit as the standard one for now"
+msgstr "Из тридцати видов материала игры стандартный и просвечивающий освещаются по собственной арифметике; кожа, лак, блеск и остальные пока освещаются как стандартный"

@@ -998,6 +998,7 @@ fn headless_gpu() -> Result<(std::sync::Arc<wgpu::Device>, std::sync::Arc<wgpu::
     }));
     let adapter = or_renderer::instance::headless_adapter(&instance)?;
     tracing::info!(backend = ?adapter.get_info().backend, adapter = %adapter.get_info().name, "the self-check's device");
+    or_cli::gta6_drawn_by_hardware(adapter.get_info().device_type != wgpu::DeviceType::Cpu);
 
     let adapter_features = adapter.features();
     let mut required_features = wgpu::Features::empty();

@@ -781,7 +781,17 @@ pub(crate) fn bounds(req: &GeometryRequest<'_>) -> Option<(Vec3, f32)> {
         return None;
     };
     let (min, max) = match (drawable_of(resource, req.selection), &**resource) {
-        (Some(d), _) => (d.box_min, d.box_max),
+        // What is drawn: a ped's part states its box where it sits on the ped, its positions
+        // elsewhere, and is drawn where they are.
+        (Some(d), _) => {
+            let level = drawn_level(d, req.state.preview_scene.lod);
+            let geometries = (level.flat_map(|model| model.geometries.iter())).flatten();
+            let read = geometries.filter_map(|geometry| geometry.positions.as_ref().ok());
+            super::gta6_shaded::bounds_of(read.flatten())
+                .map_or((d.box_min, d.box_max), |(min, max)| {
+                    (min.to_array(), max.to_array())
+                })
+        }
         (None, Resource::Bound(b)) => (b.box_min, b.box_max),
         (None, Resource::Cloth(c)) => return super::gta6_cloth::bounds(c),
         _ => return None,
@@ -789,6 +799,25 @@ pub(crate) fn bounds(req: &GeometryRequest<'_>) -> Option<(Vec3, f32)> {
     let (min, max) = (Vec3::from(min), Vec3::from(max));
     let radius = (max - min).length() / 2.0;
     (radius.is_finite() && radius > 0.0).then(|| ((min + max) / 2.0, radius))
+}
+
+/// The sphere about the drawn geometries numbered `picked`, counted across the drawn level's models in order.
+pub(crate) fn geometries_bounds(
+    state: &AppState,
+    doc: DocumentId,
+    picked: &[usize],
+) -> Option<(Vec3, f32)> {
+    let DocPayload::Gta6Drawable(resource) = &state.document(doc)?.payload else {
+        return None;
+    };
+    let drawable = drawable_of(resource, state.selection.selected(doc))?;
+    let geometries = drawn_level(drawable, state.preview_scene.lod).flat_map(|m| &m.geometries);
+    let chosen = (geometries.enumerate()).filter(|(n, _)| picked.contains(n));
+    let read = chosen.filter_map(|(_, g)| g.as_ref().ok()?.positions.as_ref().ok());
+    let (min, max) = super::gta6_shaded::bounds_of(read.flatten())?;
+    // A flat surface still needs a camera distance.
+    let radius = ((max - min).length() / 2.0).max(0.05);
+    radius.is_finite().then(|| ((min + max) / 2.0, radius))
 }
 
 #[cfg(test)]
@@ -830,6 +859,62 @@ mod tests {
             embedded: None,
             extra_skeletons: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_part_is_framed_where_its_positions_are_drawn_and_not_where_its_box_says() {
+        use crate::state::{Document, Prefs};
+        // A ped's head: its box where it sits on the ped, its positions a metre lower.
+        let mut head = drawable(vec![geometry(
+            vec![[-0.1, 0.0, 0.4], [0.1, 0.0, 0.4], [0.0, 0.0, 0.7]],
+            Vertices::default(),
+        )]);
+        (head.box_min, head.box_max) = ([-0.1, -0.1, 1.5], [0.1, 0.1, 1.8]);
+        let mut state = AppState::from_prefs(Prefs::default());
+        let payload = DocPayload::Gta6Drawable(std::sync::Arc::new(Resource::Drawable(head)));
+        (state.documents).push(Document::new(1, Some("0x10.drawable".into()), payload));
+        state.active_document = Some(1);
+        let (centre, radius) =
+            crate::render::viewport::compute_active_doc_bounds(&state).expect("framed");
+        assert!((centre.z - 0.55).abs() < 1e-5, "{centre}");
+        assert!(radius < 0.2, "{radius}");
+    }
+
+    #[test]
+    fn a_script_frames_the_geometries_it_names_counted_across_the_models_and_the_camera_goes_there()
+    {
+        use crate::state::{Document, Prefs};
+        let corner = |x: f32| vec![[x, 0.0, 0.0], [x + 1.0, 0.0, 0.0], [x, 1.0, 0.0]];
+        let mut d = drawable(vec![geometry(corner(0.0), Vertices::default())]);
+        let second = Model {
+            geometries: vec![
+                Ok(geometry(corner(10.0), Vertices::default())),
+                Ok(geometry(corner(20.0), Vertices::default())),
+            ],
+            palette: Ok(Palette::Own),
+            matrix_index: 0,
+        };
+        d.levels[0].as_mut().unwrap().push(second);
+        let mut state = AppState::from_prefs(Prefs::default());
+        let payload = DocPayload::Gta6Drawable(std::sync::Arc::new(Resource::Drawable(d)));
+        (state.documents).push(Document::new(1, Some("0x10.drawable".into()), payload));
+        state.active_document = Some(1);
+
+        let (centre, radius) = geometries_bounds(&state, 1, &[2]).expect("geometry 2 is drawn");
+        assert_eq!(centre, Vec3::new(20.5, 0.5, 0.0));
+        assert!((radius - 2f32.sqrt() / 2.0).abs() < 1e-5, "{radius}");
+        let (both, _) = geometries_bounds(&state, 1, &[0, 1]).expect("two are drawn");
+        assert_eq!(both, Vec3::new(5.5, 0.5, 0.0));
+        assert_eq!(
+            geometries_bounds(&state, 1, &[3]),
+            None,
+            "there is no fourth"
+        );
+
+        state.step_viewport_camera(Default::default());
+        state.frame_active_camera(centre, radius);
+        let camera = state.step_viewport_camera(Default::default());
+        assert_eq!(camera.target, centre, "and the next frame looks there");
     }
 
     #[test]

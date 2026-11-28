@@ -770,10 +770,22 @@ pub fn disc_point(k: u32, pixel: [u32; 2]) -> [f32; 2] {
 /// The ray the rays pass makes for `pixel` of a frame of `size` whose depth there is `depth` on a surface facing `normal`, at sample `sample`, under an arena bounded by `sphere`; the CPU's statement of the pass's own arithmetic, the ground left out.
 pub fn cast_of(
     view: &PixelView,
+    at: ([u32; 2], (u32, u32)),
+    surface: (f32, Vec3),
+    sample: u32,
+    sphere: ([f32; 3], f32),
+) -> Cast {
+    cast_held_off(view, at, surface, sample, sphere, 0.0)
+}
+
+/// [`cast_of`] of a pass whose rays start `lift` along their way ([`TracedMask::hold_off`]).
+pub fn cast_held_off(
+    view: &PixelView,
     (pixel, size): ([u32; 2], (u32, u32)),
     (depth, normal): (f32, Vec3),
     sample: u32,
     sphere: ([f32; 3], f32),
+    lift: f32,
 ) -> Cast {
     if depth <= 0.0 {
         return Cast {
@@ -802,7 +814,7 @@ pub fn cast_of(
     let down = towards.cross(across);
     let [u, v] = disc_point(sample, pixel).map(|x| x * view.disc);
     let way = (towards + u * across + v * down).normalize();
-    let origin = place + normal * (BIAS * place.distance(view.camera));
+    let origin = place + normal * (BIAS * place.distance(view.camera)) + way * lift;
     let far = origin.distance(Vec3::from(sphere.0)) + sphere.1;
     Cast {
         ray: Some(Ray {
@@ -821,7 +833,8 @@ struct TraceTile {
     first: u32, count: u32, padded: u32, slots: u32,
     width: u32, height: u32, step: u32, sample: u32,
     phase_x: u32, phase_y: u32, lanes: u32, blocks: u32,
-    left: u32, bias: f32, samples: u32, unused: u32,
+    // `lift`: how far along its way a ray starts, in the world's units.
+    left: u32, bias: f32, samples: u32, lift: f32,
     // The middle of what the arena bounds, and the distance to its farthest corner.
     centre: vec4<f32>,
 }
@@ -891,7 +904,7 @@ fn cast_at(pixel: vec2<u32>) -> Cast {
     let down = cross(towards, across);
     let d = trace_disc(traced_tile.sample, pixel) * light.shadow.y;
     let way = normalize(towards + d.x * across + d.y * down);
-    let origin = place + n * (traced_tile.bias * distance(place, light.camera.xyz));
+    let origin = place + n * (traced_tile.bias * distance(place, light.camera.xyz)) + way * traced_tile.lift;
     let reach = distance(origin, traced_tile.centre.xyz) + traced_tile.centre.w;
     return Cast(origin, way, reach, light.clouds.x);
 }
@@ -1063,6 +1076,8 @@ pub struct TracedMask {
     capped: u64,
     /// Whether the mask's tile words last written ask for the rebuild.
     rebuild: Option<bool>,
+    /// How far along its way a ray starts, in the world's units.
+    lift: f32,
 }
 
 fn storage(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
@@ -1423,7 +1438,18 @@ impl TracedMask {
             rays: 0,
             capped: 0,
             rebuild: None,
+            lift: 0.0,
         })
+    }
+
+    /// Start each ray `lift` along its way, as far as the shadow map holds a surface clear of what stands before it towards the light.
+    pub fn hold_off(&mut self, lift: f32) {
+        self.lift = lift;
+    }
+
+    /// How far along its way a ray starts.
+    pub fn lift(&self) -> f32 {
+        self.lift
     }
 
     /// The arena's number, which a caller tells a new model's from by.
@@ -1657,6 +1683,7 @@ impl TracedMask {
         key.extend([
             view.disc.to_bits(),
             view.clouds.to_bits(),
+            self.lift.to_bits(),
             size.0,
             size.1,
             self.posed,
@@ -1712,7 +1739,7 @@ impl TracedMask {
                 self.walk.left as u32,
                 BIAS.to_bits(),
                 SAMPLES,
-                0,
+                self.lift.to_bits(),
                 centre[0].to_bits(),
                 centre[1].to_bits(),
                 centre[2].to_bits(),

@@ -171,6 +171,19 @@ pub(super) fn stat(path: &Path) -> Option<(u64, u64)> {
     Some((meta.len(), modified.as_nanos() as u64))
 }
 
+/// The packs workers were asked to open, in the order asked, and each opened so far.
+#[derive(Default)]
+struct Opening {
+    asked: Vec<PathBuf>,
+    opened: Arc<Mutex<Vec<Opened>>>,
+}
+
+/// A pack a worker opened, by its path.
+type Opened = (PathBuf, Result<super::ttpf_document::TtpfDocument, String>);
+
+/// The stack a pack's header is read on.
+const OPENING_STACK: usize = 8 << 20;
+
 /// The packs under one folder, the pack each key is in, and the format code its directory states.
 #[derive(Default)]
 struct Index {
@@ -188,6 +201,8 @@ pub(super) struct PackIndex {
     /// The folder each drawable asked for is served by, found once, and the packs opened or tried, each once.
     asked: HashMap<DocumentId, Option<PathBuf>>,
     tried: HashSet<PathBuf>,
+    /// The packs a worker opens, and each it has opened, which a frame then adds as a document.
+    opening: Opening,
     /// The dictionaries the open archives' scans found, by their textures' keys.
     pub(super) dictionaries: super::gta6_dictionary_index::DictionaryIndex,
 }
@@ -437,10 +452,76 @@ fn dictionary_textures(
     Some(found)
 }
 
+/// Every key a shader of `doc`'s GTA VI drawable binds that no open document holds: a material's
+/// maps beyond its base colour, which Shaded samples and the model view's report never asks for.
+fn unheld_material_keys(state: &AppState, doc: &Document) -> Vec<u64> {
+    let DocPayload::Gta6Drawable(resource) = &doc.payload else {
+        return Vec::new();
+    };
+    // A dictionary's drawable is picked only by a selection, so every one of them is walked.
+    let drawables = (super::gta6_resource::drawable_of(resource, None).into_iter())
+        .chain(super::gta6_resource::dictionary_drawables(resource).map(|(_, d)| d));
+    let held = |key: u64| {
+        let name = format!("hash_{key:016X}");
+        (state.documents.iter()).any(|d| super::ttpf_document::holds(Some(doc), &d.payload, &name))
+    };
+    let shaders = drawables.flat_map(|drawable| &drawable.shaders);
+    let keys = shaders.flat_map(|s| s.texture_keys.iter().flatten());
+    keys.copied().filter(|key| !held(*key)).collect()
+}
+
 impl AppState {
     /// Open every pack that holds a key the active GTA VI drawable binds and nothing open holds,
     /// indexing the packs of its install or folder first, as a job; whether one opened.
     pub fn try_open_texture_pack(&mut self) -> bool {
+        let opened = self.take_opened_texture_packs();
+        self.ask_for_texture_packs();
+        opened
+    }
+
+    /// Whether a worker still opens a pack [`Self::try_open_texture_pack`] asked for.
+    #[cfg(test)]
+    pub(crate) fn texture_packs_opening(&self) -> bool {
+        !self.texture_packs.opening.asked.is_empty()
+    }
+
+    /// Add as documents, once every one asked for is in and in the order asked, the packs workers
+    /// have opened; whether one was.
+    fn take_opened_texture_packs(&mut self) -> bool {
+        let opening = &mut self.texture_packs.opening;
+        let mut opened = {
+            let mut opened = opening.opened.lock().unwrap_or_else(|p| p.into_inner());
+            if opened.len() < opening.asked.len() {
+                return false;
+            }
+            std::mem::take(&mut *opened)
+        };
+        let asked = std::mem::take(&mut opening.asked);
+        opened.sort_by_key(|(path, _)| asked.iter().position(|p| p == path));
+        let mut any = false;
+        for (path, ttpf) in opened {
+            let ttpf = match ttpf {
+                Ok(ttpf) => ttpf,
+                Err(error) => {
+                    tracing::warn!(%error, path = %path.display(), "texture pack failed to open");
+                    continue;
+                }
+            };
+            if (self.documents.iter()).any(|d| d.path.as_deref() == Some(path.as_path())) {
+                continue;
+            }
+            let id = self.alloc_doc_id();
+            let payload = DocPayload::Ttpf(Arc::new(ttpf));
+            (self.documents).push(Document::new(id, Some(path.clone()), payload));
+            self.auto_opened_texture_docs.insert(id);
+            tracing::info!(path = %path.display(), "opened the texture pack that holds a drawable's key");
+            any = true;
+        }
+        any
+    }
+
+    /// Have workers open the packs the active drawable's missing maps are in, each once.
+    fn ask_for_texture_packs(&mut self) {
         // A drawable that asked and closed reopens under another id, so its folder is walked again.
         let (documents, asked) = (&self.documents, self.texture_packs.asked.len());
         (self.texture_packs.asked).retain(|id, _| documents.iter().any(|d| d.id == *id));
@@ -448,7 +529,7 @@ impl AppState {
             self.texture_packs.forget();
         }
         let Some(doc) = self.active_document() else {
-            return false;
+            return;
         };
         let doc_id = doc.id;
         // The maps the drawable names and nothing open holds, then the tiles of its material.
@@ -459,8 +540,10 @@ impl AppState {
             false => Vec::new(),
         };
         missing.extend(super::gta6_shaders::layer_index::tile_keys(self));
+        missing.extend(super::gta6_shaders::terrain_tile::texture_keys(self));
+        missing.extend(unheld_material_keys(self, doc));
         if missing.is_empty() || !matches!(doc.payload, DocPayload::Gta6Drawable(_)) {
-            return false;
+            return;
         }
         let root = match self.texture_packs.asked.get(&doc_id) {
             Some(root) => root.clone(),
@@ -470,28 +553,25 @@ impl AppState {
         // ponytail: one index at a time, walked again when a drawable under another folder asks.
         if root.is_some() && root != self.texture_packs.root {
             self.index_texture_packs(root);
-            return false;
+            return;
         }
         let wanted: Vec<PathBuf> = {
             let built = self.texture_packs.built.lock();
             let built = built.unwrap_or_else(|p| p.into_inner());
             let Some(index) = built.as_ref() else {
-                return false;
+                return;
             };
             (missing.iter())
                 .filter_map(|key| index.keys.get(key))
                 .filter_map(|&at| index.packs.get(at as usize).cloned())
                 .collect()
-        };
-        // Every pack wanted opens in this one call, so that their maps are decoded side by side.
-        // ponytail: a pack's header is read on this thread; open it on a worker if a frame shows it.
-        let mut opened = false;
+        }; // Every pack wanted is asked for at once, so that their headers are read side by side.
         for path in wanted {
-            if self.texture_packs.tried.insert(path.clone()) && self.open_texture_pack(&path) {
-                opened = true;
+            let open = (self.documents.iter()).any(|d| d.path.as_deref() == Some(path.as_path()));
+            if self.texture_packs.tried.insert(path.clone()) && !open {
+                open_on_a_worker(&mut self.texture_packs.opening, path);
             }
         }
-        opened
     }
 
     /// The format code the directory of the indexed pack that holds `key` states, open or not.
@@ -553,6 +633,7 @@ impl AppState {
             built: Arc::clone(&built),
             asked: std::mem::take(&mut self.texture_packs.asked),
             tried: HashSet::new(),
+            opening: std::mem::take(&mut self.texture_packs.opening),
             dictionaries: std::mem::take(&mut self.texture_packs.dictionaries),
         };
         let doing = tr!(
@@ -571,25 +652,30 @@ impl AppState {
         });
         self.texture_naming.push(run);
     }
+}
 
-    /// Open the pack at `path` beside the drawable that asked for it; `false` when it is open or does not read.
-    fn open_texture_pack(&mut self, path: &Path) -> bool {
-        if (self.documents.iter()).any(|d| d.path.as_deref() == Some(path)) {
-            return false;
+/// Read the header of the pack at `path` on a worker of the bounded pool, into `opening`.
+fn open_on_a_worker(opening: &mut Opening, path: PathBuf) {
+    static POOL: std::sync::OnceLock<or_job::Pool> = std::sync::OnceLock::new();
+    let pool = POOL.get_or_init(|| or_job::Pool::new(or_job::workers(), OPENING_STACK, || {}));
+    let opened = Arc::clone(&opening.opened);
+    opening.asked.push(path.clone());
+    let open = move || {
+        let ttpf = super::ttpf_document::TtpfDocument::open(&path);
+        (opened.lock().unwrap_or_else(|p| p.into_inner())).push((path, ttpf));
+    };
+    let task = Arc::new(Mutex::new(Some(open)));
+    let theirs = Arc::clone(&task);
+    let ran = pool.run(move || {
+        if let Some(open) = theirs.lock().unwrap_or_else(|p| p.into_inner()).take() {
+            open();
         }
-        let ttpf = match super::ttpf_document::TtpfDocument::open(path) {
-            Ok(ttpf) => ttpf,
-            Err(error) => {
-                tracing::warn!(%error, path = %path.display(), "texture pack failed to open");
-                return false;
-            }
-        };
-        let id = self.alloc_doc_id();
-        let payload = DocPayload::Ttpf(Arc::new(ttpf));
-        (self.documents).push(Document::new(id, Some(path.to_path_buf()), payload));
-        self.auto_opened_texture_docs.insert(id);
-        tracing::info!(path = %path.display(), "opened the texture pack that holds a drawable's key");
-        true
+    });
+    if let Err(error) = ran {
+        tracing::warn!(%error, "no worker to open a texture pack on, so it is opened on this thread");
+        if let Some(open) = task.lock().unwrap_or_else(|p| p.into_inner()).take() {
+            open();
+        }
     }
 }
 
@@ -663,5 +749,84 @@ mod tests {
         assert_eq!(state.indexed_texture_format(colour), Some(72 << 3));
         assert_eq!(state.indexed_texture_format(colour ^ 1), None);
         assert_eq!(base(&state), Some(texture_name(colour)));
+    }
+
+    #[test]
+    fn a_material_s_map_beside_its_base_colour_opens_the_pack_that_holds_it() {
+        opens_the_map_s_pack(false);
+    }
+
+    #[test]
+    fn a_dictionary_s_map_listed_with_no_pixels_opens_the_pack_that_holds_it() {
+        opens_the_map_s_pack(true);
+    }
+
+    /// A drawable keyed a colour and a map, each in a pack of its own, opens both packs; `in_dictionary`
+    /// draws it as a ped part's dictionary does, listing the map as an entry of no pixels.
+    fn opens_the_map_s_pack(in_dictionary: bool) {
+        use std::time::{Duration, Instant};
+
+        use or_io::gta6::headerless::{Dictionary, Entry, Resource};
+
+        use crate::state::opening_a_ttpf::{drawable_keyed, drawn, named_by_the_rules, pack};
+        let (colour, map) = (0x0BAD_F00D_0000_0001u64, 0x0BAD_F00D_0000_0002u64);
+        let dir = tempfile::tempdir().expect("a scratch directory");
+        std::fs::create_dir(dir.path().join("models")).expect("a folder");
+        for (file, key) in [("colour.ttpf", colour), ("map.ttpf", map)] {
+            // The pack's first texture keyed `key`.
+            let mut bytes = pack(0xF800);
+            let at = 0x100 + 16 + 16 * 2;
+            bytes[at..at + 8].copy_from_slice(&key.to_le_bytes());
+            std::fs::write(dir.path().join(file), bytes).expect("written");
+        }
+        let mut state = AppState::new();
+        state.open_folder(dir.path().to_path_buf());
+        let mut drawable = drawable_keyed(colour);
+        drawable.shaders[0].texture_keys.push(Some(map));
+        if in_dictionary {
+            let listed = super::super::gta6_textures_resolve_and_save::dictionary_texture(
+                &texture_name(map),
+                1,
+                true,
+            );
+            let listed = (
+                listed.0,
+                listed.1.map(|entry| match entry {
+                    Entry::Texture(mut t) => {
+                        (t.width, t.height) = (0, 0);
+                        Entry::Texture(t)
+                    }
+                    other => other,
+                }),
+            );
+            let entries = vec![(0x20, Ok(Entry::Drawable(Box::new(drawable)))), listed];
+            let payload =
+                DocPayload::Gta6Drawable(Arc::new(Resource::Dictionary(Dictionary { entries })));
+            let path = dir.path().join("models").join("0x10.drawable");
+            state.insert_document(path, payload, None, None);
+            named_by_the_rules(&mut state);
+        } else {
+            drawn(&mut state, &dir.path().join("models"), drawable);
+        }
+        let opened = |state: &AppState| {
+            let mut files: Vec<String> = (state.documents.iter())
+                .filter(|d| matches!(d.payload, DocPayload::Ttpf(_)))
+                .filter_map(|d| Some(d.path.as_ref()?.file_name()?.to_str()?.to_owned()))
+                .collect();
+            files.sort();
+            files
+        };
+        let until = Instant::now() + Duration::from_secs(20);
+        while opened(&state).len() < 2 {
+            assert!(Instant::now() < until, "only {:?} opened", opened(&state));
+            // The model view asks for the base colour alone.
+            let wanted = [(None, texture_name(colour))];
+            state.texture_report =
+                super::super::texture_resolution::report(&state, None, wanted, 1);
+            named_by_the_rules(&mut state);
+            state.try_open_texture_pack();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(opened(&state), ["colour.ttpf", "map.ttpf"]);
     }
 }

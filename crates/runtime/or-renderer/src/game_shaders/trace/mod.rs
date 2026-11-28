@@ -8,7 +8,9 @@ pub mod query;
 
 pub use arena::SceneArena;
 pub use governor::{Governor, Rate, SAMPLES};
-pub use pass::{cast_of, Cast, Frame, PixelView, Role, TracedMask, View, WalkModule};
+pub use pass::{
+    cast_held_off, cast_of, Cast, Frame, PixelView, Role, TracedMask, View, WalkModule,
+};
 
 /// The variable the developer's aids are read from, which [`traced_aid`] reads too.
 const AIDS: &str = "OPENRAGE_GTA6_SHADED";

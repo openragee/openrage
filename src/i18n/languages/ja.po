@@ -17503,3 +17503,9 @@ msgstr "このアーカイブのプロジェクトを作成しますか?"
 
 msgid "This script was decompiled alone: a function that needs what another program states has no body. A project reads every program of this archive once, which takes minutes, and keeps what they state of each other in the names folder, where every script opened after it reads it. The inspector can build it later"
 msgstr "このスクリプトは単独で逆コンパイルされました。ほかのプログラムが定める内容を必要とする関数には本体がありません。プロジェクトはこのアーカイブのすべてのプログラムを一度読み込み (数分かかります)、互いについて定める内容を名前フォルダーに保存します。以後に開くスクリプトはすべてそれを読み込みます。インスペクターから後で作成することもできます"
+
+msgid "A lit one among them takes the sun with no shadow: the game's cascades are stated empty, and the editor's shadow tile is not handed to it"
+msgstr "その中の照明されるものは影なしで太陽を受けます。ゲームのカスケードは空と指定され、エディターの影タイルは渡されません"
+
+msgid "Of the game's thirty material kinds, the standard and the translucent are lit by their own arithmetic; skin, clear coat, sheen and the rest are lit as the standard one for now"
+msgstr "ゲームの30種類の材質のうち、標準と半透明はそれぞれの計算で照らされます。肌、クリアコート、シーンなどの残りは当面、標準として照らされます"

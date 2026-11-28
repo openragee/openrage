@@ -200,8 +200,14 @@ fn sites(
 }
 
 /// The function that does what `site` did for whichever of `textures` its first argument
-/// names: each texture with the number of its entry, the first of them for any other number.
-fn pick(site: &Site, expression: &E, textures: &[(u32, Handle<naga::GlobalVariable>)]) -> Function {
+/// names: each texture with the number of its entry, a slice of an array of `arrays` for a
+/// number in its range (first number, count), the first texture for any other number.
+fn pick(
+    site: &Site,
+    expression: &E,
+    textures: &[(u32, Handle<naga::GlobalVariable>)],
+    arrays: &[(u32, u32, Handle<naga::GlobalVariable>)],
+) -> Function {
     let argument = |ty| naga::FunctionArgument {
         name: None,
         ty,
@@ -225,13 +231,20 @@ fn pick(site: &Site, expression: &E, textures: &[(u32, Handle<naga::GlobalVariab
         .map(|i| expressions.append(E::FunctionArgument(i), Span::UNDEFINED))
         .collect();
     let sampler = (site.sampler).map(|s| expressions.append(E::GlobalVariable(s), Span::UNDEFINED));
-    let of = |expressions: &mut Arena<E>, texture| {
+    let literal = |n: u32| match site.signed {
+        true => E::Literal(naga::Literal::I32(n as i32)),
+        false => E::Literal(naga::Literal::U32(n)),
+    };
+    let of = |expressions: &mut Arena<E>, texture, slice: Option<Ex>| {
         let image = expressions.append(E::GlobalVariable(texture), Span::UNDEFINED);
         let mut next = passed.iter().copied();
         let mut operand = |_| next.next().unwrap_or(number);
         // `sites` took only what `rebuilt` rebuilds.
-        let value =
+        let mut value =
             rebuilt(expression, image, sampler, &mut operand).unwrap_or(E::ZeroValue(site.result));
+        if let E::ImageSample { array_index, .. } | E::ImageLoad { array_index, .. } = &mut value {
+            *array_index = slice.or(*array_index);
+        }
         let value = expressions.append(value, Span::UNDEFINED);
         let mut block = Block::new();
         block.push(
@@ -242,12 +255,34 @@ fn pick(site: &Site, expression: &E, textures: &[(u32, Handle<naga::GlobalVariab
         block
     };
     let mut body = Block::new();
-    for (entry, texture) in textures.iter().skip(1) {
-        let literal = match site.signed {
-            true => naga::Literal::I32(*entry as i32),
-            false => naga::Literal::U32(*entry),
+    for (first, count, array) in arrays {
+        let binary = |expressions: &mut Arena<E>, op, left, right| {
+            expressions.append(E::Binary { op, left, right }, Span::UNDEFINED)
         };
-        let entry = expressions.append(E::Literal(literal), Span::UNDEFINED);
+        use naga::BinaryOperator as B;
+        let (low, high) = (literal(*first), literal(first + count));
+        let low = expressions.append(low, Span::UNDEFINED);
+        let high = expressions.append(high, Span::UNDEFINED);
+        let above = binary(expressions, B::GreaterEqual, number, low);
+        let below = binary(expressions, B::Less, number, high);
+        let within = binary(expressions, B::LogicalAnd, above, below);
+        let slice = binary(expressions, B::Subtract, number, low);
+        let accept = of(expressions, *array, Some(slice));
+        body.push(
+            S::Emit(Range::new_from_bounds(above, slice)),
+            Span::UNDEFINED,
+        );
+        body.push(
+            S::If {
+                condition: within,
+                accept,
+                reject: Block::new(),
+            },
+            Span::UNDEFINED,
+        );
+    }
+    for (entry, texture) in textures.iter().skip(1) {
+        let entry = expressions.append(literal(*entry), Span::UNDEFINED);
         let condition = expressions.append(
             E::Binary {
                 op: naga::BinaryOperator::Equal,
@@ -256,7 +291,7 @@ fn pick(site: &Site, expression: &E, textures: &[(u32, Handle<naga::GlobalVariab
             },
             Span::UNDEFINED,
         );
-        let accept = of(expressions, *texture);
+        let accept = of(expressions, *texture, None);
         body.push(
             S::Emit(Range::new_from_bounds(condition, condition)),
             Span::UNDEFINED,
@@ -271,7 +306,7 @@ fn pick(site: &Site, expression: &E, textures: &[(u32, Handle<naga::GlobalVariab
         );
     }
     if let Some((_, texture)) = textures.first() {
-        body.extend_block(of(expressions, *texture));
+        body.extend_block(of(expressions, *texture, None));
     }
     function.body = body;
     function
@@ -334,11 +369,14 @@ pub(super) fn call_in_place(block: &mut Block, expressions: &Arena<E>, at: Ex, c
 /// Make the array of textures `module` binds at `at` (group, binding) one plain texture for
 /// each number of `entries`, bound in `group` from binding `first` on in that order: a sample or
 /// a load of the array's entry `n` reads the texture of the number `n`, and that of the first
-/// number for any other. `Err` says why the array is left as it is, with `module` untouched.
+/// number for any other; each of `arrays` (first number, count) is an array texture bound after
+/// them, whose slice `n - first` a number `n` in its range reads. `Err` says why the array is
+/// left as it is, with `module` untouched.
 pub fn plain_textures(
     module: &mut Module,
     at: (u32, u32),
     entries: &[u32],
+    arrays: &[(u32, u32)],
     group: u32,
     first: u32,
 ) -> Result<(), String> {
@@ -386,6 +424,38 @@ pub fn plain_textures(
         };
         textures.push((*entry, texture));
     }
+    let first_array = first + entries.len() as u32;
+    let arrays: Vec<(u32, u32, Handle<naga::GlobalVariable>)> =
+        match (arrays.is_empty(), work.types[base].inner.clone()) {
+            (true, _) => Vec::new(),
+            (false, TypeInner::Image { dim, class, .. }) => {
+                let inner = TypeInner::Image {
+                    dim,
+                    arrayed: true,
+                    class,
+                };
+                let sliced = work
+                    .types
+                    .insert(Type { name: None, inner }, Span::UNDEFINED);
+                (first_array..)
+                    .zip(arrays)
+                    .map(|(binding, (from, count))| {
+                        let global = naga::GlobalVariable {
+                            name: None,
+                            binding: Some(naga::ResourceBinding { group, binding }),
+                            ty: sliced,
+                            ..array.clone()
+                        };
+                        (
+                            *from,
+                            *count,
+                            work.global_variables.append(global, Span::UNDEFINED),
+                        )
+                    })
+                    .collect()
+            }
+            _ => return Err("an entry of the array is no image".into()),
+        };
 
     // A function is called only by one after it: the new ones come first, and the old ones move.
     let mut functions = Arena::new();
@@ -421,7 +491,7 @@ pub fn plain_textures(
             Place::Function(at) => work.functions.get_mut(moved[at]),
             Place::Entry(at) => &mut work.entry_points[at].function,
         };
-        let picked = pick(site, &function.expressions[site.at], &textures);
+        let picked = pick(site, &function.expressions[site.at], &textures, &arrays);
         // Nothing reads the entry now: it is left as a number, which an emit may hold.
         *function.expressions.get_mut(site.access) = E::Unary {
             op: naga::UnaryOperator::BitwiseNot,
@@ -475,7 +545,7 @@ fn shade(uv: vec2<f32>) -> vec4<f32> {
 
     fn lowered() -> Module {
         let mut module = naga::front::wgsl::parse_str(ARRAYED).unwrap();
-        plain_textures(&mut module, (0, 0), &[0, 3, 5], 1, 7).unwrap();
+        plain_textures(&mut module, (0, 0), &[0, 3, 5], &[], 1, 7).unwrap();
         module
     }
 
@@ -514,9 +584,30 @@ fn shade(uv: vec2<f32>) -> vec4<f32> {
         );
         let mut module = naga::front::wgsl::parse_str(&asked).unwrap();
         let before = format!("{module:?}");
-        assert!(plain_textures(&mut module, (0, 0), &[0, 3], 1, 7).is_err());
-        assert!(plain_textures(&mut module, (0, 0), &[], 1, 7).is_err());
-        assert!(plain_textures(&mut module, (0, 2), &[0], 1, 7).is_err());
+        assert!(plain_textures(&mut module, (0, 0), &[0, 3], &[], 1, 7).is_err());
+        assert!(plain_textures(&mut module, (0, 0), &[], &[], 1, 7).is_err());
+        assert!(plain_textures(&mut module, (0, 2), &[0], &[], 1, 7).is_err());
         assert_eq!(format!("{module:?}"), before);
+    }
+
+    #[test]
+    fn a_range_of_numbers_reads_the_slices_of_an_array_texture_bound_after_the_entries() {
+        let mut module = naga::front::wgsl::parse_str(ARRAYED).unwrap();
+        plain_textures(&mut module, (0, 0), &[0, 3], &[(1024, 64)], 1, 7).unwrap();
+        let arrayed: Vec<u32> = (module.global_variables.iter())
+            .filter_map(|(_, global)| match module.types[global.ty].inner {
+                TypeInner::Image { arrayed: true, .. } => {
+                    global.binding.as_ref().map(|b| b.binding)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(arrayed, [9], "after the two entries at 7 and 8");
+        let text = super::super::shading::wgsl(&module).unwrap();
+        assert!(
+            text.contains(">= 1024u") && text.contains("< 1088u"),
+            "{text}"
+        );
+        assert!(text.contains("- 1024u"), "the slice: {text}");
     }
 }

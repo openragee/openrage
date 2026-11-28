@@ -370,6 +370,7 @@ impl App {
             anyhow::anyhow!("Failed to find suitable GPU adapter: {e}. {needs}")
         })?;
         tracing::info!("Using GPU: {}", adapter.get_info().name);
+        or_cli::gta6_drawn_by_hardware(adapter.get_info().device_type != wgpu::DeviceType::Cpu);
         if or_renderer::instance::fell_back_to_fxc(adapter.get_info().backend) {
             notice_fxc(&mut self.app_state.toasts, &FXC_NOTICED);
         }

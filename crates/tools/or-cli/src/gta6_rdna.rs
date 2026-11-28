@@ -156,6 +156,32 @@ struct Stage {
     needs: BTreeMap<String, usize>,
 }
 
+/// The line of the blocks that translate with a departure a renderer does not draw with
+/// ([`rdna::NOT_DRAWN`]): counted as translated, and named here.
+fn not_drawn(out: &mut String, records: &[Record]) {
+    let carries = |record: &Record, name: &str| record.approximations.contains_key(name);
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for record in records {
+        for name in rdna::NOT_DRAWN
+            .into_iter()
+            .filter(|name| carries(record, name))
+        {
+            *counts.entry(name.to_owned()).or_default() += 1;
+        }
+    }
+    if counts.is_empty() {
+        return;
+    }
+    let total = (records.iter())
+        .filter(|record| rdna::NOT_DRAWN.iter().any(|name| carries(record, name)))
+        .count();
+    let _ = writeln!(
+        out,
+        "  not drawn     {total} translated block(s) carry a departure a renderer does not draw with"
+    );
+    ranked(out, "not drawn", &counts, TOP_REASONS);
+}
+
 /// Counts as lines, the commonest first, `top` at most.
 fn ranked(out: &mut String, label: &str, counts: &BTreeMap<String, usize>, top: usize) {
     let mut rows: Vec<_> = counts.iter().collect();
@@ -329,6 +355,7 @@ fn report(records: &[Record], run: Run) -> String {
         }
     }
     ranked(&mut out, "approximates", &approximations, TOP_REASONS);
+    not_drawn(&mut out, records);
     let tests = |record: &&Record| !record.intersections.is_empty();
     if records.iter().any(|record| tests(&record)) {
         let _ = writeln!(
@@ -667,6 +694,29 @@ mod tests {
         let line =
             "  optimiser     2 module(s): 300 of 1000 expressions left (30.0%), in 7 ms summed\n";
         assert!(text.contains(line), "{text}");
+    }
+
+    #[test]
+    fn a_block_translated_with_a_departure_no_renderer_draws_with_is_named_as_not_drawn() {
+        assert!(!report(&sample(), Run::default()).contains("not drawn"));
+        let mut records = sample();
+        for (at, name) in [
+            (0, rdna::UNORDERED),
+            (1, rdna::UNORDERED),
+            (1, rdna::TEXEL_UNLOCKED),
+        ] {
+            records[at].approximations.insert(name.to_owned(), 1);
+        }
+        records[0]
+            .approximations
+            .insert("an image loaded as floats".to_owned(), 1);
+        let text = report(&records, Run::default());
+        let has = |line: &str| assert!(text.contains(line), "no `{line}` in:\n{text}");
+        has("  not drawn     2 translated block(s) carry a departure a renderer does not draw with\n");
+        has(&format!("    not drawn {}: 2\n", rdna::UNORDERED));
+        has(&format!("    not drawn {}: 1\n", rdna::TEXEL_UNLOCKED));
+        // Still counted among the translated.
+        has("  pixel (slot 0)         4: 3 with a graph, 2 translated,");
     }
 
     #[test]

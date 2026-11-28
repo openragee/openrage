@@ -17,6 +17,7 @@ mod game_shaders;
 mod gta6_air;
 mod gta6_day;
 mod gta6_late_maps;
+mod material_maps;
 mod photo;
 pub mod pick;
 mod pick_gta6_bound;
@@ -113,6 +114,8 @@ pub(crate) struct MeshCacheKey {
     /// The model a GTA VI animation poses, whose skeleton a GTA VI drawable's meshes are joined to,
     /// and whether it holds a pose.
     gta6_posed_on: Option<(DocumentId, bool)>,
+    /// ⚠ A GTA VI terrain cell draws without its tile until a worker has read the tile's bodies.
+    terrain_tiles: u64,
 }
 
 impl MeshCacheKey {
@@ -135,6 +138,7 @@ impl MeshCacheKey {
             gta6_posed_on: crate::ui::panels::inspector::gta6_model_drawn(state).or_else(|| {
                 crate::ui::panels::inspector::gta6_posed(state).map(|p| (p.model, true))
             }),
+            terrain_tiles: crate::state::gta6_shaders::terrain_tile::reads_ended(),
         }
     }
 
@@ -249,6 +253,10 @@ pub struct RenderBridge {
     day_key: Option<(usize, u32, u32, crate::state::drivers::WeatherState)>,
 
     gpu_textures: crate::render::gpu_budget::GpuTextures<Arc<wgpu::BindGroup>>,
+    /// The maps of open packs a worker still read when the meshes were last built without them.
+    maps_waiting: Vec<(u64, bool)>,
+    /// The bytes of those maps the build of the meshes uploaded so far.
+    maps_uploaded: usize,
     /// What the draws are, when they are the dressed ped's and not a document's.
     dressed_key: Option<u64>,
     /// The bind group of each texture the dressed ped is drawn with, by the id its pixels were given.
@@ -329,6 +337,8 @@ impl RenderBridge {
             gta6_since: None,
             gta6_maps: Default::default(),
             day_key: None,
+            maps_waiting: Vec::new(),
+            maps_uploaded: 0,
             gpu_textures: crate::render::gpu_budget::GpuTextures::new(
                 crate::state::DEFAULT_GPU_TEXTURE_MIB as usize * 1024 * 1024,
             ),
@@ -611,7 +621,8 @@ impl RenderBridge {
             return;
         };
         let key = MeshCacheKey::of(state, doc_id, 0);
-        if self.mesh_cache_key == Some(key) {
+        let maps_in = !self.maps_waiting.is_empty() && material_maps::all_in(&self.maps_waiting);
+        if self.mesh_cache_key == Some(key) && !maps_in {
             return;
         }
         self.dressed_key = None;
@@ -746,6 +757,8 @@ impl RenderBridge {
     ) -> Vec<MeshDraw> {
         if texture_entry.is_none() {
             self.rebuild_texture_report(uploads, state);
+            self.maps_waiting.clear();
+            self.maps_uploaded = 0;
         }
         // ⚠ Each name once for each mesh source: binding a texture hashes every byte it stores.
         let mut bound = std::collections::HashMap::new();
@@ -801,12 +814,46 @@ impl RenderBridge {
         bump: bool,
     ) -> Option<Arc<wgpu::BindGroup>> {
         let name = name.to_ascii_lowercase();
-        let found = bound_texture(state, from, entry, &name);
         // ⚠ A normal map is uploaded linear and a colour as sRGB, so one name read both ways is two uploads.
         let key = match bump {
             true => (entry, format!("{name}\0bump")),
-            false => (entry, name),
+            false => (entry, name.clone()),
         };
+        // The viewport's map of an open GTA VI pack is read and decoded on a worker, never here.
+        let selection = || state.selection.selected(state.active_document()?.id);
+        let in_pack = entry
+            .is_none()
+            .then(|| material_maps::in_pack(state, from, selection(), &name))
+            .flatten();
+        if let Some(map) = in_pack {
+            let stamp = map.stamp();
+            if let Some(bg) = self.gpu_textures.get(&key, stamp) {
+                return Some(bg);
+            }
+            let read = map.read(bump);
+            // Past the build's share of uploads a map waits for the next build, a frame later.
+            let spent = self.maps_uploaded > material_maps::UPLOAD_BYTES;
+            let prepared = match material_maps::prepared(map, bump) {
+                Ok(prepared) if !spent => prepared?,
+                _ => {
+                    self.maps_waiting.push(read);
+                    return None;
+                }
+            };
+            self.maps_uploaded += prepared.rgba.len();
+            let (bg, bytes) = texture_upload::upload_rgba(
+                &self.device,
+                &self.queue,
+                &self.material_bgl,
+                prepared.size,
+                &prepared.rgba,
+                prepared.srgb,
+            );
+            let bg = Arc::new(bg);
+            self.gpu_textures.insert(key, bg.clone(), bytes, stamp);
+            return Some(bg);
+        }
+        let found = bound_texture(state, from, entry, &name);
         let Some((texture, stamp)) = found else {
             self.gpu_textures.remove(&key);
             return None;

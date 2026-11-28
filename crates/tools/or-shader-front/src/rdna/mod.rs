@@ -15,9 +15,10 @@ pub use cfg::{Block, Cfg, CfgError, Terminator};
 pub use decode::{decode, decode_one, DecodeError, Family, Inst, Op, Operand};
 pub use sym::{Index, IndexSource, Loc};
 pub use to_naga::{
-    arena_layout, bound_entries_checked, emitted, intersections, lower, lower_with, Emitted,
-    Intersection, Lowered, NotTranslated, Options, Pair, Region, Registers, Resource, ResourceKind,
-    LOOP_NOT_SHOWN, LOOP_OTHER_LANES, LOOP_UNCHANGING,
+    arena_layout, bound_entries_checked, emitted, intersections, lower, lower_with,
+    refused_for_drawing, Emitted, Intersection, Lowered, NotTranslated, Options, Pair, Region,
+    Registers, Resource, ResourceKind, LOOP_NOT_SHOWN, LOOP_OTHER_LANES, LOOP_UNCHANGING,
+    NOT_DRAWN, TEXEL_UNLOCKED, UNORDERED,
 };
 
 use crate::dxil::container::{Container, ContainerError};
@@ -54,7 +55,7 @@ pub struct VertexInput {
     pub component_type: u32,
 }
 
-/// What a compute package states of its launch.
+/// What a compute package states of its launch, or a mesh package of its group: the threads and the shared memory alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Launch {
     /// The scalar registers the pipeline loads; the group's numbers follow them.
@@ -166,6 +167,26 @@ fn launch(package: &[u8]) -> Launch {
     }
 }
 
+/// The bytes of memory a group's threads share, which every package states (a compute one
+/// also in its launch word, rounded up to 512), and the word whose low half is a mesh
+/// group's threads.
+const GROUP_MEMORY: usize = 0x10C;
+const MESH_GROUP: usize = 0x55C;
+
+/// A mesh package's group: its threads along the first axis, and the memory they share in dwords.
+fn mesh_group(package: &[u8]) -> Launch {
+    let word = |at: usize| {
+        (package.get(at..at + 4)).map_or(0, |w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]))
+    };
+    Launch {
+        user_registers: 0,
+        group_axes: 0,
+        group_size: false,
+        threads: [word(MESH_GROUP) & 0xFFFF, 1, 1],
+        shared_dwords: word(GROUP_MEMORY).div_ceil(4),
+    }
+}
+
 fn pixel_inputs(package: &[u8]) -> Vec<PixelInput> {
     (package.get(INPUT_TABLE..).unwrap_or_default())
         .as_chunks::<INPUT_RECORD>()
@@ -234,7 +255,11 @@ pub fn unwrap(dxbc: &[u8]) -> Result<Vec<Program>, ContainerError> {
                 vertex_inputs: vertex_inputs.clone(),
                 position_read,
                 front_face,
-                launch: (kind == ShaderKind::Compute).then(|| launch(&stage.package)),
+                launch: match kind {
+                    ShaderKind::Compute => Some(launch(&stage.package)),
+                    ShaderKind::Mesh => Some(mesh_group(&stage.package)),
+                    _ => None,
+                },
             })
         })
         .collect()

@@ -1166,6 +1166,11 @@ pub const PAST_IOS: &str =
 /// Direct3D 12 ([`instance::refused_by_driver`]), whatever adapter the check runs on.
 pub const AMD_REFUSED: &str = "on an AMD adapter under Direct3D 12 the renderer refuses it";
 
+/// Why a compute unit too large for it is not run on Direct3D 12's software adapter.
+pub const PAST_THE_SOFTWARE_ADAPTER: &str = "too large for Direct3D 12's software adapter, which \
+    computes such a compute stage wrongly, hangs or ends the process: it runs on a hardware \
+    adapter";
+
 /// An adapter's description that holds nothing but its vendor, its backend and its kind.
 fn described_as(vendor: u32, backend: wgpu::Backend, kind: wgpu::DeviceType) -> wgpu::AdapterInfo {
     wgpu::AdapterInfo {
@@ -1194,6 +1199,22 @@ fn kind_name(kind: Option<ShaderKind>) -> String {
 /// unless the check is asked to `try_refused`.
 fn kept_from(stages: &Stages, info: &wgpu::AdapterInfo, try_refused: bool) -> Option<String> {
     stages.refused_on(info).filter(|_| !try_refused)
+}
+
+/// Why `stages` are not run on the adapter `info` as `draw` asks: a compute stage past what
+/// Direct3D 12's software adapter prepares, which a dispatch of no group does not reach.
+fn unrun_on(stages: &Stages, info: &wgpu::AdapterInfo, draw: Draw) -> Option<String> {
+    let Stages::Compute(module) = stages else {
+        return None;
+    };
+    let software = info.device_type == wgpu::DeviceType::Cpu && info.backend == wgpu::Backend::Dx12;
+    let past = (draw == Draw::Run && software)
+        .then(|| rdna_bind::shading::dispatch_past_the_software_adapter(module));
+    let (stores, branches) = past.flatten()?;
+    Some(format!(
+        "{PAST_THE_SOFTWARE_ADAPTER} ({stores} stores and {branches} branches, each call counted \
+         as its body)"
+    ))
 }
 
 impl Stages {
@@ -1629,7 +1650,9 @@ fn tried(
     };
     // What the renderer refuses for the adapter's driver is not put to the driver here either,
     // unless the check is run to see what that driver does with it.
-    match kept_from(stages, &gpu.info, try_refused) {
+    let refused = kept_from(stages, &gpu.info, try_refused)
+        .or_else(|| unrun_on(stages, &gpu.info, draw).filter(|_| !try_refused));
+    match refused {
         Some(why) => (Outcome::Skipped(why), 0.0),
         None => build(gpu, stages, cache, draw),
     }

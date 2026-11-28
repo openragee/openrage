@@ -487,6 +487,60 @@ fn a_check_asked_to_try_what_the_renderer_refuses_puts_it_to_the_driver() {
     assert_eq!(kept_from(&plain.stages, &amd, false), None);
 }
 
+/// A compute stage whose one function, of `stores` stores under as many branches, is called
+/// `calls` times: small as written and large as Direct3D 12's compiler inlines it.
+fn called_often(stores: usize, calls: usize) -> naga::Module {
+    let mut text = String::from(
+        "@group(0) @binding(0) var<storage, read_write> data: array<u32>;
+fn step(x: u32) -> u32 {
+    var y = x;
+",
+    );
+    for at in 0..stores {
+        text += &format!(
+            "    if (y & {}u) != 0u {{ y = y + {at}u; }}\n",
+            1u32 << (at % 31)
+        );
+    }
+    text += "    return y;\n}\n@compute @workgroup_size(64) fn main() {\n    var z = data[0];\n";
+    text += &"    z = step(z);\n".repeat(calls);
+    text += "    data[1] = z;\n}\n";
+    wgsl(&text)
+}
+
+#[test]
+fn a_compute_stage_past_the_software_adapter_is_not_run_there_and_is_run_elsewhere() {
+    let module = called_often(100, 100);
+    // Written out it is far under the limit; inlined, it is past it.
+    let (stores, branches) = rdna_bind::shading::stores_and_branches(&module);
+    assert!(u64::from(stores) * u64::from(branches) < 100_000);
+    let past = alone(module, false).unwrap();
+    let small = alone(called_often(100, 2), false).unwrap();
+    let software = described_as(0x1414, wgpu::Backend::Dx12, wgpu::DeviceType::Cpu);
+    let note = unrun_on(&past.stages, &software, Draw::Run).expect("past the software adapter");
+    assert!(note.starts_with(PAST_THE_SOFTWARE_ADAPTER), "{note}");
+    assert_eq!(unrun_on(&small.stages, &software, Draw::Run), None);
+    // Built, or dispatched with no group, it is not prepared for a group.
+    assert_eq!(unrun_on(&past.stages, &software, Draw::No), None);
+    assert_eq!(unrun_on(&past.stages, &software, Draw::Empty), None);
+    for (backend, kind) in [
+        (wgpu::Backend::Vulkan, wgpu::DeviceType::Cpu),
+        (wgpu::Backend::Dx12, wgpu::DeviceType::DiscreteGpu),
+    ] {
+        let other = described_as(0x10DE, backend, kind);
+        assert_eq!(unrun_on(&past.stages, &other, Draw::Run), None);
+    }
+    // The check's own step skips it on the machine's software adapter, before building it.
+    for gpu in gpus() {
+        let (outcome, _) = tried(&gpu, &past, None, Draw::Run, false);
+        let software = gpu.info.device_type == wgpu::DeviceType::Cpu;
+        if software && gpu.info.backend == wgpu::Backend::Dx12 {
+            let skipped = matches!(&outcome, Outcome::Skipped(why) if why.starts_with(PAST_THE_SOFTWARE_ADAPTER));
+            assert!(skipped, "{outcome:?}");
+        }
+    }
+}
+
 /// A stage that binds `buffers` constant buffers, as its `stage` attribute and result say.
 fn many_buffers(buffers: usize, stage: &str, result: &str) -> Ready {
     let mut source = String::new();

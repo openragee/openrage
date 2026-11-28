@@ -63,7 +63,7 @@ fn a_drawable_s_key_opens_the_pack_its_folder_s_index_finds_and_a_key_no_pack_ho
     let ask = |state: &mut AppState, name: &str| {
         let wanted = [(None, name.to_string())];
         state.texture_report = super::texture_resolution::report(state, None, wanted, 1);
-        state.try_open_texture_pack()
+        opened_once_read(state)
     };
     assert!(super::texture_resolution::resolve(&state, None, None, &name).is_none());
     assert!(!ask(&mut state, &name), "the first ask starts the index");
@@ -73,6 +73,12 @@ fn a_drawable_s_key_opens_the_pack_its_folder_s_index_finds_and_a_key_no_pack_ho
         "{indexing:?}"
     );
     named_by_the_rules(&mut state);
+    let wanted = [(None, name.clone())];
+    state.texture_report = super::texture_resolution::report(&state, None, wanted, 1);
+    assert!(
+        !state.try_open_texture_pack() && state.texture_packs_opening(),
+        "the pack is read on a worker, never in the frame that asks for it"
+    );
     assert!(ask(&mut state, &name), "the pack that holds the key opens");
     assert_eq!(
         state.active_document,
@@ -146,7 +152,7 @@ fn a_key_no_pack_of_the_folder_holds_is_said_so_shown_by_no_tile_and_asked_for_b
         for opens in [false, true] {
             let wanted = [(None, name.clone())];
             state.texture_report = super::texture_resolution::report(&state, None, wanted, 1);
-            assert_eq!(state.try_open_texture_pack(), opens);
+            assert_eq!(opened_once_read(&mut state), opens);
             named_by_the_rules(&mut state);
         }
         assert_eq!(state.texture_packs_indexed(), 2, "one pack, indexed");
@@ -223,7 +229,18 @@ fn indexed(config: &Path, dir: &Path) -> (AppState, String) {
 fn holds(state: &mut AppState, key: u64) -> bool {
     let wanted = [(None, format!("hash_{key:016x}"))];
     state.texture_report = super::texture_resolution::report(state, None, wanted, 1);
-    state.try_open_texture_pack()
+    opened_once_read(state)
+}
+
+/// [`AppState::try_open_texture_pack`], asked again until the packs it has a worker open are in.
+fn opened_once_read(state: &mut AppState) -> bool {
+    let until = Instant::now() + Duration::from_secs(10);
+    let mut opened = state.try_open_texture_pack();
+    while !opened && state.texture_packs_opening() && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(2));
+        opened = state.try_open_texture_pack();
+    }
+    opened
 }
 
 /// The files the texture pack indexes of `config` are kept in.

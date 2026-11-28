@@ -43,7 +43,8 @@ const STAGE_BINDINGS: u32 = 64;
 /// of the lit frame (1 the colour, 2 the packed normal, 3 the normal, 4 the specular terms, 5
 /// the ambient ones, 6 the fourth channels); `pixel=FILE` and `mesh=FILE` draw with a stage
 /// of WGSL of one's own in place of the translated one, such as one `rpf scan-shading --wgsl`
-/// wrote, edited to store a value; `record=FILE` draws with the bytes of FILE as the record a
+/// wrote, edited to store a value, and `over=FILE` the same for a forward pass's pixel stage
+/// only; `record=FILE` draws with the bytes of FILE as the record a
 /// material's numbers head, the rest of which only the game fills; `plain-device` asks the
 /// device for no optional feature and no raised limit, as a device that has none; `unguarded`
 /// has the binder let through a stage whose loop counts to a number only the game fills, and
@@ -55,6 +56,7 @@ const STAGE_BINDINGS: u32 = 64;
 struct Aids {
     target: f32,
     pixel: Option<String>,
+    over: Option<String>,
     mesh: Option<String>,
     record: Option<String>,
     plain_device: bool,
@@ -69,6 +71,7 @@ impl Aids {
             match word.split_once('=') {
                 Some(("target", n)) => aids.target = n.parse().unwrap_or(0.0),
                 Some(("pixel", file)) => aids.pixel = Some(file.to_owned()),
+                Some(("over", file)) => aids.over = Some(file.to_owned()),
                 Some(("mesh", file)) => aids.mesh = Some(file.to_owned()),
                 Some(("record", file)) => aids.record = Some(file.to_owned()),
                 Some(("meter", "frame")) => aids.whole_frame = true,
@@ -116,7 +119,11 @@ pub fn device_needs(
     }
     // Where a backend keeps what its driver compiled of a pipeline, the passes are built with it;
     // Direct3D 12 is handed the stages `kept_dx12` compiled.
-    let kept = features & (wgpu::Features::PIPELINE_CACHE | super::kept_dx12::FEATURES);
+    // A lit forward pass blends the two colours its pixel stage exports into one target.
+    let kept = features
+        & (wgpu::Features::PIPELINE_CACHE
+            | super::kept_dx12::FEATURES
+            | wgpu::Features::DUAL_SOURCE_BLENDING);
     let raised = |asked: u32, has: u32| asked.max(has.min(STAGE_BINDINGS));
     limits.max_storage_buffers_per_shader_stage = raised(
         limits.max_storage_buffers_per_shader_stage,
@@ -161,6 +168,8 @@ pub enum Feed {
     },
     /// The texture, or each entry of an array of them; `None` is a white texel.
     Textures(Vec<Option<Arc<Image>>>),
+    /// What the frame writes of the light it is lit by, each time that light moves.
+    Frame(FrameFeed),
 }
 
 /// One geometry with the two stages that shade it.
@@ -179,7 +188,7 @@ pub struct MeshletSurface {
     // The thread of a vertex is its primitive's, and a meshlet makes none on a thread past its own.
     pub primitives: u32,
     /// How it is laid over the lit frame where it is a forward surface; `None` for a deferred one.
-    // ⚠ A pass is built once for its two stages: every surface of them is laid on alike.
+    // A pass is built once for its two stages and the way they are laid on.
     pub forward: Option<Forward>,
 }
 
@@ -191,6 +200,8 @@ struct Draw {
     at: usize,
     pipeline: wgpu::RenderPipeline,
     caster: wgpu::RenderPipeline,
+    /// A forward surface's pass into what it lets through of the frame behind it.
+    through: Option<wgpu::RenderPipeline>,
     /// By group number.
     groups: Vec<(u32, wgpu::BindGroup)>,
     meshlets: u32,
@@ -355,8 +366,24 @@ pub struct MeshletScene {
 /// The texels of a row no image fills: one row of a palette, which is as wide.
 pub const ROW: u32 = 256;
 
-/// A texture of one white texel a side, or of `image` where the view is flat, seen as `dimension`.
-// ponytail: one level; build the levels below as `stand_in::uploaded_view` does when a texture seen small shimmers.
+/// The texels of a texture of `rgba` and how many levels it has: with `colour`, every level below
+/// the first after it, each the average of four of the one above.
+fn with_levels(width: u32, height: u32, rgba: &[u8], srgb: bool, colour: bool) -> (Vec<u8>, u32) {
+    let levels = match colour {
+        true => super::mips::chain(width, height, rgba, srgb),
+        false => Vec::new(),
+    };
+    let mut texels = rgba.to_vec();
+    for (_, _, level) in &levels {
+        texels.extend_from_slice(level);
+    }
+    (texels, 1 + levels.len() as u32)
+}
+
+/// A texture of one white texel a side, or of `image` where the view is flat, seen as `dimension`,
+/// with the levels below its first where it is an image of colour.
+// ⚠ A texture repeated many times across a surface (a terrain layer, 128 times a cell) is read
+// one texel in many at a distance: with no levels below, each pixel lands on a texel of its own.
 fn view_of(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -386,6 +413,8 @@ fn view_of(
         _ => 1,
     };
     let depth = sample == wgpu::TextureSampleType::Depth;
+    let colour = image.is_some() && flat && matches!(sample, wgpu::TextureSampleType::Float { .. });
+    let (texels, levels) = with_levels(width, height, rgba, srgb, colour);
     let descriptor = wgpu::TextureDescriptor {
         label: None,
         size: wgpu::Extent3d {
@@ -393,7 +422,7 @@ fn view_of(
             height,
             depth_or_array_layers: layers,
         },
-        mip_level_count: 1,
+        mip_level_count: levels,
         sample_count: 1,
         dimension: match dimension {
             D::D1 => wgpu::TextureDimension::D1,
@@ -421,7 +450,7 @@ fn view_of(
             queue,
             &descriptor,
             wgpu::util::TextureDataOrder::default(),
-            &rgba.repeat(layers as usize),
+            &texels.repeat(layers as usize),
         )
     };
     texture.create_view(&wgpu::TextureViewDescriptor {
@@ -537,6 +566,19 @@ fn bind(
             _ => &[],
         };
         let entries = count.map_or(1, NonZeroU32::get) as usize;
+        let framed = forward_frame::bound(
+            device,
+            feed,
+            resource,
+            *count,
+            made,
+            &mut buffers,
+            &mut textures,
+        );
+        if let Some(what) = framed {
+            bound.push((*binding, what));
+            continue;
+        }
         let what = match resource {
             Resource::Uniform { size } => {
                 let mut held = bytes.to_vec();
@@ -583,6 +625,12 @@ fn bind(
                     _ => [0; 4],
                 };
                 let first = textures.len();
+                let sliced = count.is_none() && *dimension == wgpu::TextureViewDimension::D2Array;
+                if let (true, Some(view)) = (sliced, made.slices(device, queue, images)) {
+                    textures.push(view);
+                    bound.push((*binding, Bound::View(first)));
+                    continue;
+                }
                 // The entries no image fills share one white texel, and an image bound twice
                 // is one texture: the scene makes each once.
                 for entry in 0..entries {
@@ -653,6 +701,8 @@ struct Built {
     pipeline: wgpu::RenderPipeline,
     /// The pass that draws the vertex stage alone, as the light sees it.
     caster: wgpu::RenderPipeline,
+    /// A forward pass's own into what its surface lets through of the frame behind it.
+    through: Option<wgpu::RenderPipeline>,
     /// The stages it was built from, kept so that no other pair comes to lie where they do.
     _of: (Arc<naga::Module>, Arc<naga::Module>),
 }
@@ -670,9 +720,16 @@ const BUILD_STACK: usize = 64 << 20;
 
 /// The passes built so far, by the two stages a surface draws with: a pass is built once for a
 /// device, whatever models it then draws, on a worker, so that a frame never waits for one.
+/// A pass by the places of its two stages and, for a forward one, how it is laid on.
+type PassKey = (
+    usize,
+    usize,
+    Option<(wgpu::BlendState, wgpu::ColorWrites, Option<wgpu::Face>)>,
+);
+
 #[derive(Default)]
 pub struct MeshletPipelines {
-    built: std::collections::HashMap<(usize, usize), Slot>,
+    built: std::collections::HashMap<PassKey, Slot>,
     /// The folder what the driver compiled is kept in, and that once it was looked for.
     folder: Option<PathBuf>,
     compiled: Option<Option<Compiled>>,
@@ -765,10 +822,11 @@ impl MeshletPipelines {
         };
     }
 
-    fn key(surface: &MeshletSurface) -> (usize, usize) {
+    fn key(surface: &MeshletSurface) -> PassKey {
         (
             Arc::as_ptr(&surface.vertex) as usize,
             Arc::as_ptr(&surface.fragment) as usize,
+            surface.forward.as_ref().map(Forward::state),
         )
     }
 
@@ -861,22 +919,24 @@ fn build_checked(
     built
 }
 
-/// The mesh stage and the pixel stage a pass of `stages` is built from on the adapter `info`:
+/// The mesh stage and the pixel stage a pass of `stages`, `forward` or not, is built from on the adapter `info`:
 /// each as it is, or the one a developer's aid of `aids` puts in its place. `Err` says why no
 /// pass of theirs is built there.
 fn stages_drawn(
     info: &wgpu::AdapterInfo,
     stages: &(Arc<naga::Module>, Arc<naga::Module>),
     aids: &Aids,
+    forward: bool,
 ) -> Result<(naga::Module, naga::Module), String> {
     // ⚠ A loop the guard would have refused may never end, and a hardware adapter that waits on one is lost.
     if aids.unguarded && info.device_type != wgpu::DeviceType::Cpu {
         return Err("an unguarded stage is drawn on a software adapter only".to_string());
     }
-    let fragment = match &aids.pixel {
-        Some(file) => stage_of(file)?,
-        None => (*stages.1).clone(),
+    let mut fragment = match (&aids.pixel, aids.over.as_ref().filter(|_| forward)) {
+        (_, Some(file)) | (Some(file), None) => stage_of(file)?,
+        (None, None) => (*stages.1).clone(),
     };
+    super::pipeline::position_w_as_direct3d(&mut fragment, info.backend);
     let vertex = match &aids.mesh {
         Some(file) => stage_of(file)?,
         None => (*stages.0).clone(),
@@ -896,7 +956,15 @@ fn build(
     forward: Option<Forward>,
 ) -> Result<Built, String> {
     // The two stages come linked: the vertex stage gives the locations the pixel stage takes.
-    let (vertex, fragment) = stages_drawn(&device.adapter_info(), &stages, aids())?;
+    let (mut vertex, mut fragment) =
+        stages_drawn(&device.adapter_info(), &stages, aids(), forward.is_some())?;
+    if forward.as_ref().is_some_and(Forward::dual) {
+        forward::dual_sourced(&mut fragment);
+    }
+    if device.adapter_info().backend == wgpu::Backend::Dx12 {
+        super::kept_dx12::typed_literals(&mut vertex);
+        super::kept_dx12::typed_literals(&mut fragment);
+    }
     let mut targets = match &forward {
         Some(forward) => vec![Some(forward::target(forward))],
         None => formats_of(&fragment)?,
@@ -931,6 +999,7 @@ fn build(
         &vertex_entry.name,
         compiled,
     );
+    let fragment_module = shader(&fragment);
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("meshlet-pass"),
         layout: Some(&layout),
@@ -940,7 +1009,11 @@ fn build(
             compilation_options: Default::default(),
             buffers: &[],
         },
-        primitive: wgpu::PrimitiveState::default(),
+        primitive: wgpu::PrimitiveState {
+            front_face: forward::FRONT,
+            cull_mode: forward.and_then(|forward| forward.cull),
+            ..Default::default()
+        },
         depth_stencil: Some(wgpu::DepthStencilState {
             format: DEPTH,
             depth_write_enabled: Some(forward.is_none()),
@@ -950,13 +1023,23 @@ fn build(
         }),
         multisample: wgpu::MultisampleState::default(),
         fragment: Some(wgpu::FragmentState {
-            module: &shader(&fragment),
+            module: &fragment_module,
             entry_point: Some(&fragment_entry.name),
             compilation_options: Default::default(),
             targets: &targets,
         }),
         multiview_mask: None,
         cache: compiled,
+    });
+    let through = forward.as_ref().and_then(|forward| {
+        forward::through_pipeline(
+            device,
+            &layout,
+            (&vertex_module, vertex_entry.name.as_str()),
+            (&fragment_module, fragment_entry.name.as_str()),
+            forward,
+            compiled,
+        )
     });
     Ok(Built {
         formats: (targets.iter())
@@ -967,6 +1050,7 @@ fn build(
         layouts,
         pipeline,
         caster,
+        through,
         _of: stages,
     })
 }
@@ -1196,6 +1280,7 @@ fn draw_of(
         at,
         pipeline: built.pipeline.clone(),
         caster: built.caster.clone(),
+        through: built.through.clone(),
         groups: Vec::new(),
         meshlets: surface.meshlets,
         vertices: 3 * surface.primitives.min(VERTICES / 3),
@@ -1660,6 +1745,11 @@ impl MeshletScene {
         }
         if writes.light {
             self.write(queue, &self.light, 0, &light);
+            let (writes, written) = self.made.frame.write(queue, &lighting.sky);
+            self.count(|calls| {
+                calls.writes += writes;
+                calls.written += written;
+            });
         }
         self.update_traced(queue, lighting);
     }
@@ -1801,6 +1891,7 @@ impl MeshletScene {
 
 mod env_fit;
 mod forward;
+mod forward_frame;
 mod resolve;
 mod scene;
 mod shared;
@@ -1809,6 +1900,7 @@ mod sun_shadow;
 mod tone;
 mod traced;
 pub use forward::Forward;
+pub use forward_frame::FrameFeed;
 use resolve::RESOLVE;
 pub use scene::{falls_on, nine_of, Clouds, Dome, Scene};
 pub use shared::Uploads;
@@ -1828,3 +1920,7 @@ mod mask_tests;
 mod scene_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod traced_tests;
+#[cfg(test)]
+mod translucency_tests;

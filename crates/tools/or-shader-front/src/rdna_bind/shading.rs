@@ -153,6 +153,8 @@ pub enum Feed {
     Stated(Vec<u8>),
     /// The one white texel the game binds where what writes a texture is off.
     White,
+    /// A record or a texture the renderer fills from the frame it lights ([`super::forward_frame`]).
+    Frame(super::forward_frame::Frame),
     /// A buffer or a texture of the terrain's, as the game binds it for a tile with no record of its own.
     Terrain(super::terrain::Terrain),
     /// A ped component's texture of this name, picked by a number of its buffer ([`super::ped`]).
@@ -185,6 +187,10 @@ pub enum Unfed {
     Loop(u32),
     #[error("{0} of its loops are not shown to end by its translation")]
     NotShown(u32),
+    #[error("a loop of it never leaves with what the editor binds: every exit is known, and none is taken within {0} turns")]
+    Endless(u32),
+    #[error("its translation departs from the hardware where two invocations meet at one texel or pixel: {0}")]
+    Approximated(&'static str),
     #[error("it picks an entry of an array of textures or buffers by a number nothing holds to the array's length, and no device checks one")]
     Entry,
     #[error("it is too large and branches too often for the software adapter to draw ({0} stores, {1} branches), so it has not been checked there, and it stays undrawn on a hardware adapter until its owner allows a check")]
@@ -201,6 +207,8 @@ pub enum Unfed {
     Blend,
     #[error("it is a forward pass that reads 0x{0:08X}, which only the game fills: noughts there change what it draws, and what the game leaves there is not read")]
     Unread(u32),
+    #[error("it is a lit forward pass that reads 0x{0:08X}, whose like the editor's frame holds and does not hand a forward pass yet")]
+    Unwired(u32),
     #[error("it reads a terrain tile's cells (0xFE9D6ABC), which the game binds only with the tile's own record, and what a stage reads of them without one is not read")]
     TerrainCells,
     #[error("it reads back the terrain's feedback texture, which only the game keeps")]
@@ -226,8 +234,18 @@ pub struct Stage {
 }
 
 /// The buffers only the game fills whose state at rest is known, so that a loop may count up to
-/// a number of theirs: none yet.
-const AT_REST: &[u32] = &[];
+/// a number of theirs: each owner's list, read as one.
+const AT_REST: [&[u32]; 4] = [
+    super::trees::AT_REST,
+    &[super::ped_layers::DECORATIONS],
+    super::frame_records::AT_REST,
+    super::forward_frame::AT_REST,
+];
+
+/// Whether the buffer named `hash` is one of [`AT_REST`].
+fn at_rest(hash: u32) -> bool {
+    AT_REST.iter().any(|list| list.contains(&hash))
+}
 
 /// Whether the developer's aid `unguarded` of `OPENRAGE_GTA6_SHADED` is given: a count to a number
 /// only the game fills, and a resource picked by one, are then let through, for a renderer that
@@ -247,73 +265,174 @@ fn picked_feed(found: Option<Feed>, unguarded: bool) -> Result<Feed, Unbound> {
     }
 }
 
-/// Why a stage that loops is not drawn, where one of its loops may never end.
+/// How each loop of a stage ends with `feeds` bound, in the order of [`loops::loops`]; `Err`
+/// where one may never end, or ends by a number only the game fills.
+// Judged before the rewrites that follow it in `fed`, which move a binding or read it through a
+// call and change no loop, no count and no binding's writability; the watchdog is given the
+// module drawn, and refuses one whose loops are not those judged.
 fn never_ending(
     module: &naga::Module,
     feeds: &[Fed],
+    written: &BTreeSet<(u32, u32)>,
     approximations: &BTreeMap<&'static str, u32>,
-) -> Option<Unfed> {
+) -> Result<Vec<loops::Ends>, Unfed> {
     // The lowering's own count comes first: it sees the program's graph, which the module no longer shows.
     let not_shown: u32 = (approximations.iter())
         .filter(|(name, _)| name.starts_with(crate::rdna::LOOP_NOT_SHOWN))
         .map(|(_, loops)| loops)
         .sum();
     if not_shown > 0 {
-        return Some(Unfed::NotShown(not_shown));
+        return Err(Unfed::NotShown(not_shown));
     }
     if loops::loops(module) == 0 {
-        return None;
+        return Ok(Vec::new());
     }
-    let game: Vec<((u32, u32), u32)> = (feeds.iter())
-        .filter_map(|fed| match fed.feed {
-            Feed::Zero(Some(hash)) if !AT_REST.contains(&hash) => {
-                Some(((fed.group, fed.binding), hash))
-            }
-            // Filled from the component, but of a state no loop is known to end by.
-            Feed::PedComponent => Some(((fed.group, fed.binding), super::ped::COMPONENT)),
-            _ => None,
-        })
-        .collect();
+    let judged = loops::judge(module, &loop_bindings(feeds, written));
+    // The developer's aid holds every loop to the cap of one not shown to end.
     if unguarded() {
-        return None;
+        return Ok(vec![loops::Ends::Unshown; judged.ends.len()]);
     }
-    loops::counted_to(module, &game).map(Unfed::Loop)
+    for ends in &judged.ends {
+        match ends {
+            loops::Ends::Game(hash) => return Err(Unfed::Loop(*hash)),
+            loops::Ends::Runaway => return Err(Unfed::Endless(loops::MOST_TURNS)),
+            _ => {}
+        }
+    }
+    Ok(judged.ends)
+}
+
+/// Every buffer only the game fills that an exit of a loop of a fed stage hangs on.
+pub fn loops_count_to(module: &naga::Module, feeds: &[Fed]) -> Vec<u32> {
+    let judged = loops::judge(module, &loop_bindings(feeds, &BTreeSet::new()));
+    judged.hits.into_iter().collect()
+}
+
+/// Each binding of `feeds` with the words the device reads of it and, where no loop may hang on
+/// its numbers, the game's hash; `written` are the bindings the stage's lowering writes.
+fn loop_bindings(feeds: &[Fed], written: &BTreeSet<(u32, u32)>) -> Vec<loops::Binding> {
+    use loops::Words;
+    let rest = |hash| match hash {
+        super::forward_frame::VIEW_LIGHTING => {
+            Words::Places(super::forward_frame::VIEW_WORDS.to_vec())
+        }
+        _ => Words::Unknown,
+    };
+    (feeds.iter())
+        .map(|fed| {
+            let (words, game) = match &fed.feed {
+                Feed::Zero(None) => (Words::Zero, None),
+                // The game's buffers whose noughts are its state at rest.
+                Feed::Zero(Some(hash)) if at_rest(*hash) => (Words::Zero, None),
+                // Its noughts are no state of the game's: no branch is decided by them.
+                Feed::Zero(Some(hash)) => (Words::Unknown, Some(*hash)),
+                // Filled from the frame: a loop ends by it only where its count is stated.
+                Feed::Frame(frame) if at_rest(frame.hash()) => (rest(frame.hash()), None),
+                Feed::Frame(frame) => (Words::Unknown, Some(frame.hash())),
+                // Filled from the component, but of a state no loop is known to end by.
+                Feed::PedComponent => (Words::Unknown, Some(super::ped::COMPONENT)),
+                // Two words of it are stated, and no count: its noughts are no state of the game's.
+                Feed::Stated(_) if fed.feed == super::trees::frame_at_rest() => (
+                    Words::Places(super::trees::frame_words()),
+                    Some(super::trees::FRAME_RECORD),
+                ),
+                Feed::Stated(bytes) => (Words::Bytes(bytes.clone()), None),
+                _ => (Words::Unknown, None),
+            };
+            // ⚠ A header comes before what is stated; what the stage writes has no words.
+            let at = (fed.group, fed.binding);
+            let words = match fed.header.is_some() || written.contains(&at) {
+                true => Words::Unknown,
+                false => words,
+            };
+            loops::Binding { at, words, game }
+        })
+        .collect()
 }
 
 /// How many stores `module` holds and how many times it branches (an `if`, a `switch` or a
 /// loop), over all its functions: the measure of how much branching code a driver is handed.
 pub fn stores_and_branches(module: &naga::Module) -> (u32, u32) {
-    fn walk(block: &naga::Block, count: &mut (u32, u32)) {
-        use naga::Statement as S;
-        for statement in block.iter() {
-            match statement {
-                S::Store { .. } => count.0 += 1,
-                S::Block(inner) => walk(inner, count),
-                S::If { accept, reject, .. } => {
-                    count.1 += 1;
-                    walk(accept, count);
-                    walk(reject, count);
-                }
-                S::Switch { cases, .. } => {
-                    count.1 += 1;
-                    cases.iter().for_each(|case| walk(&case.body, count));
-                }
-                S::Loop {
-                    body, continuing, ..
-                } => {
-                    count.1 += 1;
-                    walk(body, count);
-                    walk(continuing, count);
-                }
-                _ => {}
-            }
-        }
-    }
     let mut count = (0, 0);
     let functions = (module.functions.iter().map(|(_, function)| function))
         .chain(module.entry_points.iter().map(|entry| &entry.function));
-    functions.for_each(|function| walk(&function.body, &mut count));
+    functions.for_each(|function| counted(&function.body, &[], &mut count));
     count
+}
+
+/// The stores and branches of `module`'s entry points, each call counted as the body it calls.
+// As Direct3D 12's compiler inlines every call.
+pub fn inlined_stores_and_branches(module: &naga::Module) -> (u32, u32) {
+    // A function calls only functions declared before it.
+    let mut called = Vec::with_capacity(module.functions.len());
+    for (_, function) in module.functions.iter() {
+        let mut count = (0, 0);
+        counted(&function.body, &called, &mut count);
+        called.push(count);
+    }
+    let mut count = (0, 0);
+    for entry in &module.entry_points {
+        counted(&entry.function.body, &called, &mut count);
+    }
+    count
+}
+
+/// Adds the stores and branches of `block` to `count`: a call as what `called` holds for the
+/// function it calls, by the function's index, and as nothing where `called` holds none.
+fn counted(block: &naga::Block, called: &[(u32, u32)], count: &mut (u32, u32)) {
+    use naga::Statement as S;
+    let add = |count: &mut (u32, u32), (stores, branches): (u32, u32)| {
+        count.0 = count.0.saturating_add(stores);
+        count.1 = count.1.saturating_add(branches);
+    };
+    for statement in block.iter() {
+        match statement {
+            S::Store { .. } => add(count, (1, 0)),
+            S::Block(inner) => counted(inner, called, count),
+            S::If { accept, reject, .. } => {
+                add(count, (0, 1));
+                counted(accept, called, count);
+                counted(reject, called, count);
+            }
+            S::Switch { cases, .. } => {
+                add(count, (0, 1));
+                (cases.iter()).for_each(|case| counted(&case.body, called, count));
+            }
+            S::Loop {
+                body, continuing, ..
+            } => {
+                add(count, (0, 1));
+                counted(body, called, count);
+                counted(continuing, called, count);
+            }
+            S::Call { function, .. } => {
+                if let Some(&body) = called.get(function.index()) {
+                    add(count, body);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The most a compute stage's stores times its branches, each call counted as the body it
+/// calls, come to where Direct3D 12's software adapter still computes it right: under the
+/// largest made-up stage that it did.
+// ⚠ Past it that adapter goes wrong while it prepares the stage for its first group (a dispatch
+// of none is safe): the made-up stages of `picked_blocks` were read back right up to 121 blocks
+// (about 2,300,000), and from 122 written with nothing or with other values, or never finished;
+// from 250 the process ends at an access violation or a heap corruption inside the adapter. No
+// barrier, local array or call is needed for it, and the variables do not count, but the blocks
+// picked by a number do: the same updates run one after another, 400 blocks of them, are right.
+// The same stages are right on a hardware adapter, under Direct3D 12 with the same compiler and
+// under Vulkan.
+const COMPUTE_CHECKED_ON_SOFTWARE: u64 = 2_000_000;
+
+/// The inlined stores and branches of a compute stage past what the software adapter runs right.
+pub fn dispatch_past_the_software_adapter(module: &naga::Module) -> Option<(u32, u32)> {
+    let (stores, branches) = inlined_stores_and_branches(module);
+    let past = u64::from(stores) * u64::from(branches) > COMPUTE_CHECKED_ON_SOFTWARE;
+    past.then_some((stores, branches))
 }
 
 /// The most a mesh stage's stores times its branches come to where Direct3D 12's software
@@ -322,13 +441,28 @@ pub fn stores_and_branches(module: &naga::Module) -> (u32, u32) {
 // draw, whatever the stage reads: a made-up stage of 4,000 masked stores and 200 branches drew
 // and one of 6,000 and 300 ended the process, as did every mesh stage past the measure that was
 // drawn (a hedge's, a trunk's, a batch of leaves'). So no such stage can be drawn there first.
-// Nothing found says one is unsafe on a hardware adapter, and none has been seen drawn on one.
+// The fault is that adapter's own: a hardware adapter runs such stages to the right answer.
 const CHECKED_ON_SOFTWARE: u64 = 800_000;
 
 /// The same for a pixel stage, most of whose branches are the `switch` that picks a texture.
 // A four-layer parallax stage of 13,681 stores and 3,515 branches ended the process after its
 // first frame; a three-layer one of 7,746 and 2,152, the largest that draws, is under it.
 const PIXEL_CHECKED_ON_SOFTWARE: u64 = 17_000_000;
+
+/// Whether the stages bound here are drawn by a hardware adapter, as the program that draws them said.
+// ponytail: one switch a process; stages bound before a device is made anew on another kind of
+// adapter are not bound again. Hand the kind to `feed` if a session ever changes adapters.
+static DRAWN_BY_HARDWARE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Says whether the adapter that draws is a hardware one: a stage past what the software adapter draws is refused only where it is not.
+pub fn drawn_by_hardware(hardware: bool) {
+    DRAWN_BY_HARDWARE.store(hardware, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether a stage is refused for its size: past what the software adapter draws, where that adapter draws it.
+fn unchecked(hardware: bool, mesh: bool, stores: u32, branches: u32) -> bool {
+    !hardware && past_the_software_adapter(mesh, stores, branches)
+}
 
 /// Whether a stage of so many stores and branches is past what the software adapter draws.
 fn past_the_software_adapter(mesh: bool, stores: u32, branches: u32) -> bool {
@@ -397,6 +531,28 @@ pub fn parameter_slots(outputs: &[SignatureElement]) -> Vec<u32> {
     slots.dedup();
     slots
 }
+
+/// [`parameter_slots`] for a mesh program that writes `written` parameters: one that writes one
+/// more, its clip distance, numbers it in the order of the registers too, so each parameter after
+/// it is one further on.
+// ⚠ A pixel stage that reads the clip distance as an input has the mesh program export it to a
+// parameter as well as to the clip; numbered past it, every parameter lands one slot early.
+pub fn mesh_slots(outputs: &[SignatureElement], written: usize) -> Vec<u32> {
+    let plain = parameter_slots(outputs);
+    let mut clipped: Vec<u32> = (outputs.iter())
+        .filter(|element| matches!(element.system_value, 0 | CLIP_DISTANCE))
+        .map(|element| element.register)
+        .collect();
+    clipped.sort_unstable();
+    clipped.dedup();
+    match written > plain.len() && clipped.len() == written {
+        true => clipped,
+        false => plain,
+    }
+}
+
+/// The system value a signature numbers the clip distances by.
+const CLIP_DISTANCE: u32 = 2;
 
 /// The parameter of a mesh program a pixel program reads at `slot`, by [`parameter_slots`].
 pub fn parameter_of(slots: &[u32], slot: u8) -> Option<u8> {
@@ -705,6 +861,57 @@ pub fn feed_within(
     fed(native, lowered, table, effect, Some(budget))
 }
 
+/// Why [`feed`] refuses a stage of `native` whose lowering binds `resources`, where its program and
+/// those bindings decide it: what the optimiser makes of the module changes none of it.
+pub fn refused_by_bindings(
+    native: &Native,
+    resources: &[Resource],
+    table: &Sgd5Table,
+    effect: &Sgd5Table,
+) -> Option<Unfed> {
+    let kind = native.program.kind;
+    let mesh = kind == ShaderKind::Mesh;
+    let picked = picks(&native.program.words);
+    let forward = super::forward::forward_of(&picked.exports).filter(|_| !mesh);
+    if kind == ShaderKind::Pixel && !deferred_targets(&picked.exports) && forward.is_none() {
+        return Some(Unfed::Targets);
+    }
+    if let Some(Err(why)) = forward.map(super::forward::Forward::blend) {
+        return Some(why);
+    }
+    let material = match material_textures(&picked, &native.records, kind, effect) {
+        Ok(material) => material,
+        Err(why) => return Some(why.into()),
+    };
+    for resource in resources {
+        let at = numbered(place(resource), kind);
+        let why = match join(at, &native.records, table) {
+            Join::Picked => {
+                let found = heap(resource, kind, &native.records, material.buffer)
+                    .or_else(|| terrain::picked(resource, kind, &native.records, table))
+                    .or_else(|| super::ped::picked(resource, kind, &native.records, table))
+                    .or_else(|| super::ped::wind_field_maps(resource, kind, &native.records, table))
+                    .or_else(|| match forward {
+                        Some(super::forward::Forward::Lit) => {
+                            super::forward::picked(resource, kind, &native.records, table)
+                        }
+                        _ => None,
+                    });
+                picked_feed(found, unguarded()).err()
+            }
+            Join::NoRecord { root, offset } => Some(Unbound::NoRecord { root, offset }),
+            Join::NoName { record } => Some(Unbound::NoName {
+                register: record.register,
+            }),
+            _ => None,
+        };
+        if let Some(why) = why {
+            return Some(why.into());
+        }
+    }
+    None
+}
+
 /// The stage and what was done to its buffers: held by its noughts to a device with default
 /// limits, or with `merging` to that budget by merges too.
 fn fed(
@@ -714,6 +921,10 @@ fn fed(
     effect: &Sgd5Table,
     merging: Option<&Budget>,
 ) -> Result<(Stage, Fitted), Unfed> {
+    // First, so that a caller that asked it before the optimiser ran is told the same.
+    if let Some(why) = refused_by_bindings(native, &lowered.resources, table, effect) {
+        return Err(why);
+    }
     let kind = native.program.kind;
     let mesh = kind == ShaderKind::Mesh;
     let stage_group = u32::from(kind == ShaderKind::Pixel);
@@ -749,6 +960,8 @@ fn fed(
     let mut feeds = Vec::with_capacity(resources.len());
     // The bindings the editor leaves at nought.
     let mut noughts = Vec::new();
+    // The bindings the stage writes, whose words no loop is judged by.
+    let mut written = BTreeSet::new();
     let mut rows = Vec::new();
     // The bindings a heap lowered to plain textures takes: past every one the stage has.
     let mut free = resources.iter().map(|r| r.binding + 1).max().unwrap_or(0);
@@ -778,9 +991,13 @@ fn fed(
             Join::Picked => {
                 let found = heap(resource, kind, &native.records, material.buffer)
                     .or_else(|| terrain::picked(resource, kind, &native.records, table))
-                    .or_else(|| {
-                        super::ped::picked(resource, kind, &native.records, table)
-                            .map(Feed::PedTexture)
+                    .or_else(|| super::ped::picked(resource, kind, &native.records, table))
+                    .or_else(|| super::ped::wind_field_maps(resource, kind, &native.records, table))
+                    .or_else(|| match forward {
+                        Some(super::forward::Forward::Lit) => {
+                            super::forward::picked(resource, kind, &native.records, table)
+                        }
+                        _ => None,
                     });
                 picked_feed(found, unguarded())?
             }
@@ -806,6 +1023,19 @@ fn fed(
                     Some(Source::View) => Feed::View(layout(named)),
                     Some(Source::Material) => Feed::Material(layout(named)),
                     Some(Source::Sampler) => Feed::Sampler,
+                    // Before the matrix told by shape: a batch's records are of its size too.
+                    Some(Source::Game(hash)) if super::trees::stated(hash).is_some() => {
+                        super::trees::stated(hash).unwrap_or(Feed::Zero(Some(hash)))
+                    }
+                    // A forward pass is handed its own records ([`super::forward::at_rest`]).
+                    Some(Source::Game(super::forward_frame::VIEW_LIGHTING))
+                        if forward.is_none() =>
+                    {
+                        super::trees::view_at_rest()
+                    }
+                    Some(Source::Game(super::trees::FRAME_RECORD)) if forward.is_none() => {
+                        super::trees::frame_at_rest()
+                    }
                     // The object's matrix, and a skinned program's bones: each element of a
                     // buffer of this size is a matrix, whichever the program takes it for.
                     Some(Source::Game(_))
@@ -859,7 +1089,7 @@ fn fed(
         };
         // Before the noughts are listed: a binding given the game's rest is no nought to merge.
         let feed = match forward {
-            Some(_) => super::forward::at_rest(feed)?,
+            Some(forward) => super::forward::at_rest(forward, feed)?,
             None => feed,
         };
         if let Feed::Heap { .. } = feed {
@@ -873,16 +1103,21 @@ fn fed(
             }
             // Entry nought, then each number's: number `i` picks entry `i + 1`; then the
             // terrain's defaults, which a layer's numbers pick.
-            let defaults = terrain::heap(layered && !array);
+            let mut defaults = terrain::heap(layered && !array);
+            let tiles = filled.contains(&Source::Game(super::trees::WORLD_TILES));
+            defaults.extend(super::trees::tile_defaults(tiles && !array, &numbers));
             let entries: Vec<u32> = (std::iter::once(0))
                 .chain(numbers.iter().map(|n| n + 1))
                 .chain(defaults.iter().map(|(entry, _)| *entry))
                 .collect();
             let at = (resource.group, resource.binding);
-            if plain_textures(&mut module, at, &entries, stage_group, free).is_ok() {
+            let layers = terrain::layer_arrays(layered && !array);
+            let ranges: Vec<(u32, u32)> = layers.iter().map(|(range, _)| *range).collect();
+            if plain_textures(&mut module, at, &entries, &ranges, stage_group, free).is_ok() {
                 let fed = std::iter::once(Feed::Blank)
                     .chain(numbers.into_iter().map(Feed::Texture))
-                    .chain(defaults.into_iter().map(|(_, feed)| feed));
+                    .chain(defaults.into_iter().map(|(_, feed)| feed))
+                    .chain(layers.into_iter().map(|(_, feed)| feed));
                 for (binding, feed) in (free..).zip(fed) {
                     feeds.push(Fed {
                         group: stage_group,
@@ -891,7 +1126,7 @@ fn fed(
                         header: None,
                     });
                 }
-                free += entries.len() as u32;
+                free += (entries.len() + ranges.len()) as u32;
                 continue;
             }
         }
@@ -911,6 +1146,9 @@ fn fed(
         if matches!(feed, Feed::Zero(_)) {
             noughts.push((group, resource.binding));
         }
+        if resource.written {
+            written.insert((group, resource.binding));
+        }
         feeds.push(Fed {
             group,
             binding: resource.binding,
@@ -918,13 +1156,20 @@ fn fed(
             header,
         });
     }
-    terrain::held(&mut module, &feeds, unguarded())?;
+    terrain::held(&mut module, &feeds)?;
+    if forward == Some(super::forward::Forward::Lit) {
+        if let Some(why) = super::forward::unestablished(&module, &feeds) {
+            return Err(why);
+        }
+    }
     let (stores, branches) = stores_and_branches(&module);
-    if !unguarded() && past_the_software_adapter(mesh, stores, branches) {
+    let hardware = DRAWN_BY_HARDWARE.load(std::sync::atomic::Ordering::Relaxed);
+    if !unguarded() && unchecked(hardware, mesh, stores, branches) {
         return Err(Unfed::Unchecked(stores, branches));
     }
-    if let Some(why) = never_ending(&module, &feeds, &approximations) {
-        return Err(why);
+    let ends = never_ending(&module, &feeds, &written, &approximations)?;
+    if let Some(name) = crate::rdna::refused_for_drawing(&approximations) {
+        return Err(Unfed::Approximated(name));
     }
     // ⚠ No backend checks an entry of a bound array: Direct3D 12 and Vulkan read whatever lies
     // past its end, or fault.
@@ -941,7 +1186,8 @@ fn fed(
         return Err(Unfed::Instanced);
     }
     if mesh {
-        to_pixel_slots(&mut module, &parameter_slots(&native.outputs));
+        let written = crate::rdna::link::written(&module);
+        to_pixel_slots(&mut module, &mesh_slots(&native.outputs, written));
     }
     whole_tables(&mut module);
     first_levels_stated(&mut module);
@@ -958,6 +1204,17 @@ fn fed(
         Some(budget) => budget::within(&mut module, &noughts, budget),
         None => budget::noughts_within(&mut module, &noughts, &Budget::DEFAULT),
     };
+    // Last: every loop of the module drawn held to its cap.
+    let caps: Vec<u32> = (ends.iter())
+        .filter_map(|ends| super::watchdog::cap(*ends))
+        .collect();
+    let watched = super::watchdog::watch(&mut module, &caps, kind == ShaderKind::Pixel)
+        .map_err(|_| Unfed::NotShown(caps.len() as u32))?;
+    tracing::debug!(
+        loops = watched.loops,
+        expressions = watched.expressions,
+        "a GTA VI stage's loops are held to their caps"
+    );
     let stage = Stage {
         module: std::sync::Arc::new(module),
         feeds,
@@ -1066,11 +1323,14 @@ mod tests {
         let module = naga::Module::default();
         let counted = |name| BTreeMap::from([(name, 2u32)]);
         for name in [crate::rdna::LOOP_OTHER_LANES, crate::rdna::LOOP_UNCHANGING] {
-            let why = never_ending(&module, &[], &counted(name));
-            assert_eq!(why, Some(Unfed::NotShown(2)));
+            let why = never_ending(&module, &[], &BTreeSet::new(), &counted(name));
+            assert_eq!(why, Err(Unfed::NotShown(2)));
         }
         let other = counted("a count over the wave's lanes read as this lane's");
-        assert_eq!(never_ending(&module, &[], &other), None);
+        assert_eq!(
+            never_ending(&module, &[], &BTreeSet::new(), &other),
+            Ok(Vec::new())
+        );
     }
 
     /// A stage of `stores` stores, an `if` around every `every` of them.
@@ -1130,6 +1390,84 @@ var x = 0.0;
         assert!(past_the_software_adapter(false, 13681, 3515));
         // The numbers are multiplied past what 32 bits hold.
         assert!(past_the_software_adapter(false, u32::MAX, u32::MAX));
+        // The refusal is the software adapter's: a hardware adapter is handed the same stage.
+        assert!(unchecked(false, true, 4020, 201) && !unchecked(true, true, 4020, 201));
+        assert!(!unchecked(false, true, 4000, 200));
+    }
+
+    #[test]
+    fn a_call_is_counted_as_the_body_it_calls_where_calls_are_inlined() {
+        let text = "fn twice(x: u32) -> u32 {
+    var y = x;
+    if y > 3u { y = y + 1u; }
+    y = y * 2u;
+    return y;
+}
+fn four(x: u32) -> u32 { return twice(twice(x)); }
+@compute @workgroup_size(1) fn main() {
+    var z = four(1u);
+    z = twice(z);
+}";
+        let module = naga::front::wgsl::parse_str(text).expect("the WGSL parses");
+        // A first value that is not a constant is a store.
+        assert_eq!(stores_and_branches(&module), (5, 1));
+        // `twice` three times over, through `four` and alone, and `main`'s own two stores.
+        assert_eq!(inlined_stores_and_branches(&module), (11, 3));
+    }
+
+    /// A made-up compute stage of `blocks` blocks that a loop picks by a number, as a dispatch
+    /// loop does: each block ten updates of a register under a test of another, a store, and the
+    /// next block chosen by a register.
+    fn picked_blocks(blocks: u32) -> naga::Module {
+        let registers = 10;
+        let mut text = String::from(
+            "@group(0) @binding(0) var<storage, read_write> data: array<u32>;
+@compute @workgroup_size(64) fn main(@builtin(local_invocation_id) thread: vec3<u32>) {
+",
+        );
+        for r in 0..registers {
+            text += &format!("var r{r} = data[{r}u * 64u + thread.x];\n");
+        }
+        text += "var next = 0u;\nloop {\nlet at = next;\n";
+        for k in 0..blocks {
+            text += &format!("if at == {k}u {{\n");
+            for s in 0..10 {
+                let (d, a, b) = (
+                    (k * 10 + s) % registers,
+                    (k * 7 + s * 3 + 1) % registers,
+                    (k * 13 + s * 5 + 2) % registers,
+                );
+                text += &format!(
+                    "if (r{a} & {}u) != 0u {{ r{d} = r{a} + (r{b} ^ {}u); }}\n",
+                    1 << s,
+                    k * 10 + s
+                );
+            }
+            text += &format!(
+                "data[{registers}u * 64u + {k}u * 64u + thread.x] = r{};\n",
+                k * 11 % registers
+            );
+            text += &format!(
+                "if (r{} & 1u) != 0u {{ next = {}u; }} else {{ next = {}u; }}\n}}\n",
+                k * 5 % registers,
+                k + 2,
+                k + 1
+            );
+        }
+        text += &format!("if at >= {blocks}u {{ break; }}\n}}\n}}\n");
+        naga::front::wgsl::parse_str(&text).expect("the WGSL parses")
+    }
+
+    #[test]
+    fn a_compute_stage_past_what_the_software_adapter_runs_is_told_by_its_inlined_size() {
+        // Read back right there at 100 blocks, and wrong at 125.
+        assert_eq!(
+            dispatch_past_the_software_adapter(&picked_blocks(100)),
+            None
+        );
+        let wrong = picked_blocks(125);
+        let past = dispatch_past_the_software_adapter(&wrong);
+        assert_eq!(past, Some(inlined_stores_and_branches(&wrong)));
     }
 
     #[test]
@@ -1232,6 +1570,34 @@ var x = 0.0;
         assert_eq!(fed("3"), Ok(()));
         assert_eq!(fed("number / 8u"), Err(Unfed::Entry));
         assert_eq!(fed("min(number, 256u)"), Err(Unfed::Entry));
+    }
+
+    #[test]
+    fn a_stage_translated_with_a_meeting_of_invocations_left_out_is_not_drawn() {
+        let fed = |approximations: BTreeMap<&'static str, u32>| {
+            let text = "@vertex fn main() -> @builtin(position) vec4<f32> {
+    return vec4<f32>(0.0);
+}";
+            let lowered = Lowered {
+                module: naga::front::wgsl::parse_str(text).expect("the WGSL parses"),
+                resources: Vec::new(),
+                approximations,
+                half_slots: Default::default(),
+                subgroups: false,
+                intersections: Vec::new(),
+                region: None,
+            };
+            feed(&bare_mesh(), lowered, &program(), &Sgd5Table::default()).map(|_| ())
+        };
+        assert_eq!(fed(BTreeMap::new()), Ok(()));
+        assert_eq!(
+            fed(BTreeMap::from([("an image loaded as floats", 1)])),
+            Ok(())
+        );
+        for name in crate::rdna::NOT_DRAWN {
+            let counted = BTreeMap::from([(name, 1)]);
+            assert_eq!(fed(counted), Err(Unfed::Approximated(name)), "{name}");
+        }
     }
 
     fn resource(code: u8, slot: u16, name_hash: u32) -> Sgd5Resource {
@@ -1482,6 +1848,21 @@ struct Words { words: array<u32> }
         // With the position alone before them, a slot is one past its parameter.
         let plain = [element("SV_Position", 0, 1), element("TEXCOORD", 1, 0)];
         assert_eq!(parameter_slots(&plain), [1]);
+        // A mesh program that writes its clip distance as a parameter too numbers it in register
+        // order: its first texture coordinate is its second parameter.
+        let clipped = [
+            element("SV_Position", 0, 1),
+            element("SV_ClipDistance", 1, 2),
+            element("TEXCOORD", 2, 0),
+            element("TEXCOORD", 3, 0),
+        ];
+        assert_eq!(
+            mesh_slots(&clipped, 2),
+            [2, 3],
+            "it writes no clip parameter"
+        );
+        assert_eq!(mesh_slots(&clipped, 3), [1, 2, 3], "it writes one");
+        assert_eq!(mesh_slots(&plain, 1), [1]);
 
         let mut module = naga::Module::default();
         let vec4 = module.types.insert(

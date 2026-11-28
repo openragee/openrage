@@ -17503,3 +17503,9 @@ msgstr "Construire le projet de cette archive ?"
 
 msgid "This script was decompiled alone: a function that needs what another program states has no body. A project reads every program of this archive once, which takes minutes, and keeps what they state of each other in the names folder, where every script opened after it reads it. The inspector can build it later"
 msgstr "Ce script a été décompilé seul : une fonction qui a besoin de ce qu'un autre programme déclare n'a pas de corps. Un projet lit une fois chaque programme de cette archive, ce qui prend des minutes, et garde ce qu'ils déclarent les uns des autres dans le dossier des noms, où chaque script ouvert ensuite le lit. L'inspecteur peut le construire plus tard"
+
+msgid "A lit one among them takes the sun with no shadow: the game's cascades are stated empty, and the editor's shadow tile is not handed to it"
+msgstr "Une surface éclairée parmi elles reçoit le soleil sans ombre : les cascades du jeu sont déclarées vides, et la tuile d'ombre de l'éditeur ne lui est pas transmise"
+
+msgid "Of the game's thirty material kinds, the standard and the translucent are lit by their own arithmetic; skin, clear coat, sheen and the rest are lit as the standard one for now"
+msgstr "Des trente sortes de matériau du jeu, la standard et la translucide sont éclairées par leur propre arithmétique ; la peau, le vernis, le lustre et les autres sont éclairés comme la standard pour l'instant"

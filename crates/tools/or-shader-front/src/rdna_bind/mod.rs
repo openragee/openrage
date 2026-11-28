@@ -5,6 +5,7 @@
 pub mod kept;
 pub mod loops;
 pub mod walk_file;
+pub mod watchdog;
 
 use std::collections::BTreeSet;
 
@@ -612,14 +613,20 @@ fn bind_alone(
     Err(Unbound::Alone)
 }
 
+pub mod batches;
 pub mod budget;
 pub mod forward;
+pub mod forward_frame;
+pub mod frame_records;
 pub mod instances;
 pub mod ped;
+pub mod ped_layers;
 pub mod picks;
 pub mod plain;
 pub mod shading;
 pub mod terrain;
+pub mod trees;
+pub mod wind;
 
 #[cfg(test)]
 mod tests;

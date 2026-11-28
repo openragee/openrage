@@ -89,6 +89,7 @@ mod tests {
             pixel: stage(Vec::new()),
             linked: Default::default(),
             forward: None,
+            then: None,
         };
         let at = |x: f32| {
             let mut placement = GTA6_IN_PLACE;

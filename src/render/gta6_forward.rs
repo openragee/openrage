@@ -1,7 +1,7 @@
 //! A GTA VI surface drawn by a forward pass, for the renderer: how its pass is laid over the lit
 //! frame, and where it stands.
 
-use or_cli::{Gta6Blend as Blend, Gta6Factor as Factor};
+use or_cli::{Gta6Blend as Blend, Gta6Faces as Faces, Gta6Factor as Factor};
 use or_io::gta6::headerless::Geometry;
 use or_renderer::game_shaders::meshlets::Forward;
 
@@ -10,6 +10,16 @@ fn factor(factor: Factor) -> wgpu::BlendFactor {
         Factor::Zero => wgpu::BlendFactor::Zero,
         Factor::One => wgpu::BlendFactor::One,
         Factor::OneMinusSourceAlpha => wgpu::BlendFactor::OneMinusSrcAlpha,
+        Factor::SecondColour => wgpu::BlendFactor::Src1,
+        Factor::SecondAlpha => wgpu::BlendFactor::Src1Alpha,
+    }
+}
+
+/// The faces a pass that draws `faces` culls, the front being those whose corners run counter-clockwise.
+fn culled(faces: Faces) -> wgpu::Face {
+    match faces {
+        Faces::Front => wgpu::Face::Back,
+        Faces::Back => wgpu::Face::Front,
     }
 }
 
@@ -26,6 +36,7 @@ pub(super) fn forward_of(blend: &Blend, geometry: &Geometry) -> Forward {
             alpha: summed(blend.alpha),
         },
         writes: wgpu::ColorWrites::from_bits_truncate(u32::from(blend.writes)),
+        cull: Some(culled(blend.faces)),
         centre: centre_of(geometry),
     }
 }
@@ -67,6 +78,7 @@ mod tests {
             colour: [Factor::One, Factor::OneMinusSourceAlpha],
             alpha: [Factor::Zero, Factor::One],
             writes: 0b0111,
+            faces: Faces::Front,
         };
         let forward = forward_of(&blend, &geometry(vec![[0.0, 0.0, 0.0], [2.0, 4.0, -6.0]]));
         assert_eq!(forward.blend.color.src_factor, wgpu::BlendFactor::One);
@@ -77,10 +89,26 @@ mod tests {
         assert_eq!(forward.blend.alpha.src_factor, wgpu::BlendFactor::Zero);
         assert_eq!(forward.blend.alpha.dst_factor, wgpu::BlendFactor::One);
         assert_eq!(forward.writes, wgpu::ColorWrites::COLOR);
+        assert_eq!(forward.cull, Some(wgpu::Face::Back));
         assert_eq!(forward.centre, glam::Vec3::new(1.0, 2.0, -3.0));
         assert_eq!(
             forward_of(&blend, &geometry(Vec::new())).centre,
             glam::Vec3::ZERO
         );
+    }
+
+    #[test]
+    fn a_lit_surface_is_laid_on_by_its_second_colour_and_a_glass_s_inside_culls_its_front() {
+        let lit = Blend {
+            colour: [Factor::One, Factor::SecondColour],
+            alpha: [Factor::One, Factor::SecondAlpha],
+            writes: 0b1111,
+            faces: Faces::Back,
+        };
+        let forward = forward_of(&lit, &geometry(Vec::new()));
+        assert_eq!(forward.blend.color.dst_factor, wgpu::BlendFactor::Src1);
+        assert_eq!(forward.blend.alpha.dst_factor, wgpu::BlendFactor::Src1Alpha);
+        assert_eq!(forward.writes, wgpu::ColorWrites::ALL);
+        assert_eq!(forward.cull, Some(wgpu::Face::Front));
     }
 }

@@ -298,13 +298,86 @@ fn sun_share(texel: vec2<i32>) -> f32 {
 }
 
 // A place on a surface: where it is in the world, the way it faces, its colour, what it
-// reflects head on and how rough it is.
+// reflects head on and how rough it is; its material's kind and how much light passes through it.
 struct Surface {
     at: vec3<f32>,
     n: vec3<f32>,
     albedo: vec3<f32>,
     f0: vec3<f32>,
     roughness: f32,
+    kind: u32,
+    through: f32,
+}
+
+// The kind GTA VI's tiled lighting picks a pixel's lighting program by: the low five bits of the
+// colour target's fourth channel as a byte, cut, not rounded.
+fn kind_of(colour_a: f32) -> u32 {
+    return u32(colour_a * 255.0) & 31u;
+}
+
+// The kind of a leaf or a sheet that lets light through; every other kind is lit as the standard
+// material, kind nought.
+const TRANSLUCENCY: u32 = 5u;
+
+// What a disc of light whose angular radius has the squared sine `size` gives a surface it stands
+// at the cosine `c` to, over what it gives one that faces it: the share of the disc above the
+// surface's horizon, each part by its cosine.
+fn disc_lit(cosine: f32, size: f32) -> f32 {
+    let s2 = min(size, 0.9999);
+    let c = clamp(cosine, -0.999, 0.999);
+    var lit = 0.0;
+    if c * c > s2 {
+        lit = clamp(c, 0.0, 1.0) * s2;
+    } else {
+        let x = sqrt(1.0 / s2 - 1.0);
+        let sin_theta = sqrt(1.0 - c * c);
+        let y = -x * c / sin_theta;
+        let below = sqrt(max(1.0 - y * y, 0.0)) * sin_theta;
+        lit = ((c * acos(y) - x * below) * s2 + atan(below / x)) / PI;
+    }
+    return max(lit, 0.0) / size;
+}
+
+// The two channels of the table GTA VI's translucency program samples at a surface's cosine to
+// the light, `n_l`, signed: what a light in front of it gives, and what a light behind it gives,
+// on the table's last row, where the first disc's sine is 1/100 and the second's 100^(-1/3).
+fn falloff(n_l: f32) -> vec2<f32> {
+    return vec2<f32>(disc_lit(n_l, 1e-4), disc_lit(-n_l, 0.04641589));
+}
+
+// What GTA VI's translucency program makes of the amount of light that passes through a leaf.
+struct Through {
+    // A profile of the amount: nought where nothing passes, and then the leaf is lit as kind
+    // nought is.
+    profile: f32,
+    // What the matte part of the sun's light is taken by where something passes.
+    matte: f32,
+    // The phase lobe's asymmetry, and what the light through the leaf is scaled by beside it.
+    g: f32,
+    scale: f32,
+}
+
+fn through_of(amount: f32) -> Through {
+    let x = clamp(2.0 * amount, 0.0, 1.0);
+    let y = clamp(2.0 * amount - 1.0, 0.0, 1.0);
+    var profile = 0.0;
+    if 0.2 * amount > 0.0 {
+        let e = exp2((0.09137069 * x * x - 0.09617967) / max(0.2 * amount, 1e-4));
+        profile = 0.25 * e * (e * e + 3.0);
+    }
+    return Through(profile, 1.0 - 0.6 * x, 0.9 * y, profile / PI * (1.0 - 0.8283803 * y));
+}
+
+// The light that passes through a leaf of `through` from the sun or the moon, before the leaf's
+// colour, the light and the table's share from behind: a Henyey-Greenstein lobe about the way to
+// the light by `v_l`, plus two, times the matte falloff's two shares `shape`.
+fn passed(through: Through, v_l: f32, shape: f32) -> f32 {
+    if through.profile <= 0.0 {
+        return 0.0;
+    }
+    let g = through.g;
+    let lobe = (1.0 - g * g) / pow(1.0 + g * g + 2.0 * g * v_l, 1.5) + 2.0;
+    return through.scale * shape * lobe;
 }
 
 // The surface the targets hold at `texel`; `clip` is where the texel stands on the frame and
@@ -314,12 +387,18 @@ fn surface_at(texel: vec2<i32>, clip: vec2<f32>, far: f32) -> Surface {
     let terms = textureLoad(specular, texel, 0);
     let world = light.unproject * vec4<f32>(clip.x, clip.y, far, 1.0);
     let kept = 1.0 - terms.rgb * terms.rgb;
+    let albedo = textureLoad(colour, texel, 0);
+    // The amount that passes: the specular target's fourth channel, less the fourth target's
+    // second.
+    let through = clamp(terms.a * (1.0 - textureLoad(ambient, texel, 0).y), 0.0, 1.0);
     return Surface(
         world.xyz / world.w,
         normal_of(packed_normal),
-        textureLoad(colour, texel, 0).rgb,
+        albedo.rgb,
         1.0 - kept * kept,
         clamp(1.0 - packed_normal.x, 0.08, 1.0),
+        kind_of(albedo.a),
+        through,
     );
 }
 
@@ -352,6 +431,11 @@ fn shade(surface: Surface, pixel: vec2<f32>) -> vec3<f32> {
     let reflected = f0 + (1.0 - f0) * pow(1.0 - v_h, 5.0);
     var gloss = facets * seen * reflected;
     var matte = vec3<f32>(1.0 / PI);
+    // A leaf lit by GTA VI's translucency program, and what passes through it.
+    let leaf = game && surface.kind == TRANSLUCENCY;
+    let through = through_of(select(0.0, surface.through, leaf));
+    let passes = through.profile > 0.0;
+    var passing = 0.0;
     if game {
         // The gloss of a light that is a disc and no point, and what the facets reflect onto
         // one another: a fit by the angle and the roughness.
@@ -367,15 +451,20 @@ fn shade(surface: Surface, pixel: vec2<f32>) -> vec3<f32> {
         let from_view = pow(1.0 - n_v, 5.0);
         let l_h = clamp(dot(l, h), 0.0, 1.0);
         let back = 2.0 * l_h * l_h * a;
-        let k = 0.5 * a - 1.0;
+        // Where light passes through a leaf the matte's grazing term is fixed at a half.
+        let k = select(0.5 * a - 1.0, -0.5, passes);
         let shape = (1.0 + k * from_light) * (1.0 + k * from_view) + back * (from_light + from_view + from_light * from_view * (back - 1.0));
         matte = vec3<f32>((1.0 - 0.3377483 * a) * shape / PI);
+        if passes {
+            matte *= through.matte;
+            passing = passed(through, dot(v, l), (1.0 + k * from_light) * (1.0 + k * from_view));
+        }
     }
     // The light from all around is a probe's nine numbers where they are stated, else the two
     // colours of the sky and the ground.
     let probed = light.around[0].w > 0.0;
     var direct = vec3<f32>(0.0);
-    if n_l > 0.0 {
+    if n_l > 0.0 || leaf {
         // A light the clouds hide goes towards what the surroundings give along its way, then
         // the mask dims it: by the model's own shadow and by the clouds', which the mask holds
         // as one share, as the game's does.
@@ -383,7 +472,14 @@ fn shade(surface: Surface, pixel: vec2<f32>) -> vec3<f32> {
         let hazed = select(surroundings(l) * PI, falls_on(l), probed) * light.clouds.w / max(open, 0.001);
         from_light += light.clouds.z * (1.0 - open) * (hazed - from_light);
         from_light *= sun_share(vec2<i32>(pixel));
-        direct = (albedo * (1.0 - reflected) * matte + gloss) * from_light * n_l;
+        if leaf {
+            // The matte falloff is the table's first share and what passes takes its second, from
+            // behind, so a leaf the light stands behind is lit through.
+            let shares = falloff(dot(n, l));
+            direct = (albedo * ((1.0 - reflected) * matte * shares.x + passing * shares.y) + gloss * n_l) * from_light;
+        } else {
+            direct = (albedo * (1.0 - reflected) * matte + gloss) * from_light * n_l;
+        }
     }
     // From all around: the sky and the ground on the colour, and along the mirrored way on the
     // gloss, less as the surface is rougher.
@@ -443,15 +539,16 @@ fn ground_at(clip: vec2<f32>) -> Met {
         return none;
     }
     let seen = light.project * vec4<f32>(at, 1.0);
-    let surface = Surface(at, vec3<f32>(0.0, 0.0, 1.0), light.laid.rgb, vec3<f32>(0.04), 1.0);
+    let surface = Surface(at, vec3<f32>(0.0, 0.0, 1.0), light.laid.rgb, vec3<f32>(0.04), 1.0, 0u, 0.0);
     return Met(surface, clamp(seen.z / seen.w, 0.0, 1.0), seen.w > 0.0);
 }
 
 // The root of the share of the directional light that reaches what the pixel shows, the
 // model's surface or the ground laid under it: what the shadow map leaves of it, times what the
 // clouds let through, as GTA VI's cascade resolve multiplies its clouds' shadow into the share
-// before it takes the root. One where the pixel shows neither, and nought on what faces away
-// from the light.
+// before it takes the root. One where the pixel shows neither. A surface that faces away from the
+// light is filtered as one that faces it at the same angle, since a leaf takes the light behind
+// it; the standard lighting reads no share where it faces away.
 @fragment fn masked(corner: Corner) -> @location(0) vec4<f32> {
     let texel = vec2<i32>(corner.at.xy);
     let far = textureLoad(depth, texel, 0);
@@ -469,10 +566,7 @@ fn ground_at(clip: vec2<f32>) -> Met {
         at = world.xyz / world.w;
         n = normal_of(textureLoad(normal, texel, 0));
     }
-    let n_l = max(dot(n, light.towards.xyz), 0.0);
-    if n_l <= 0.0 {
-        return vec4<f32>(0.0);
-    }
+    let n_l = abs(dot(n, light.towards.xyz));
     return vec4<f32>(sqrt(sunlit(at, n_l, vec2<f32>(texel)) * light.clouds.x));
 }
 

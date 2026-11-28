@@ -12,7 +12,8 @@ use or_shader_front::rdna_bind::shading::{
     feed, parameter_of, parameter_slots, sources, Source, STREAM_SLOTS,
 };
 
-pub use or_shader_front::rdna_bind::forward::{Blend, Factor};
+pub use or_shader_front::rdna_bind::forward::{Blend, Faces, Factor};
+pub use or_shader_front::rdna_bind::forward_frame::Frame;
 pub use or_shader_front::rdna_bind::kept as gta6_kept;
 pub use or_shader_front::rdna_bind::shading::{Fed, Feed, Stage};
 use or_shader_front::rdna_bind::{self, Native};
@@ -27,10 +28,54 @@ pub struct Gta6ShadingPass {
     pub linked: Linked,
     /// How it is laid over the lit frame where it is a forward pass; `None` for a deferred one.
     pub forward: Option<Blend>,
+    /// The next pass of its technique, which draws the same geometry after it.
+    pub then: Option<std::sync::Arc<Gta6ShadingPass>>,
+}
+
+/// `pass` as one of the technique `technique` whose pixel program is named `program`.
+// A forward pass takes the state that technique's list is drawn with; `Err` where that is not read.
+pub fn in_technique(
+    mut pass: Gta6ShadingPass,
+    technique: &str,
+    program: &str,
+) -> Result<Gta6ShadingPass, String> {
+    use or_shader_front::rdna_bind::forward::{faces_of, Forward};
+    if let Some(blend) = pass.forward {
+        // Only a lit pass blends with its second colour.
+        let kind = match blend.colour[1] {
+            Factor::SecondColour => Forward::Lit,
+            _ => Forward::Emissive,
+        };
+        let blend = kind
+            .blend_in(technique)
+            .map_err(|why| said("pixel", &why))?;
+        pass.forward = Some(faces_of(blend, program));
+    }
+    Ok(pass)
 }
 
 fn native(container: &[u8]) -> Result<Native, String> {
     rdna_bind::native(container).map_err(|why| why.to_string())
+}
+
+/// `native` lowered once for [`feed`] with `table` and `effect`; a lowering whose bindings `feed`
+/// refuses is not optimised, and `Err` is then `feed`'s refusal.
+fn lowered_to_feed(
+    native: &Native,
+    half_slots: &BTreeSet<u8>,
+    table: &Sgd5Table,
+    effect: &Sgd5Table,
+) -> Result<or_shader_front::rdna::Lowered, String> {
+    let refused = |lowered: &or_shader_front::rdna::Lowered| {
+        or_shader_front::rdna_bind::shading::refused_by_bindings(
+            native,
+            &lowered.resources,
+            table,
+            effect,
+        )
+        .map(|why| why.to_string())
+    };
+    rdna_bind::kept::lower_unless(native, half_slots, &refused)
 }
 
 /// Whether the inflated containers `first` and `pixel` are a mesh program and a pixel program
@@ -93,11 +138,12 @@ pub fn translate_gta6_pixel_stage(
     let pixel = native(pixel)?;
     // A forward stage whose blend no effect states is refused before it is lowered, as the
     // binder would refuse it after.
-    let forward = (forward_of(&picks(&pixel.program.words).exports))
+    let kind = forward_of(&picks(&pixel.program.words).exports);
+    let forward = kind
         .map(|forward| forward.blend().map_err(|why| said("pixel", &why)))
         .transpose()?;
-    let fragment =
-        rdna_bind::kept::lower(&pixel, &BTreeSet::new()).map_err(|why| said("pixel", &why))?;
+    let fragment = lowered_to_feed(&pixel, &BTreeSet::new(), table, effect)
+        .map_err(|why| said("pixel", &why))?;
     Ok(Gta6PixelStage {
         half_slots: fragment.half_slots.clone(),
         stage: feed(&pixel, fragment, table, effect).map_err(|why| said("pixel", &why))?,
@@ -119,7 +165,8 @@ pub fn translate_gta6_mesh_stage(
     let halves: BTreeSet<u8> = (pixel.half_slots.iter())
         .filter_map(|slot| parameter_of(&slots, *slot))
         .collect();
-    let geometry = rdna_bind::kept::lower(&first, &halves).map_err(|why| said("mesh", &why))?;
+    let geometry =
+        lowered_to_feed(&first, &halves, table, effect).map_err(|why| said("mesh", &why))?;
     let mut mesh = feed(&first, geometry, table, effect).map_err(|why| said("mesh", &why))?;
     let forward = pixel.forward;
     let mut pixel = pixel.stage.clone();
@@ -137,6 +184,7 @@ pub fn translate_gta6_mesh_stage(
         pixel,
         linked,
         forward,
+        then: None,
     })
 }
 
@@ -197,7 +245,7 @@ fn texel_loads(module: &naga::Module) -> usize {
 
 /// `rpf scan-shading`: one effect of the `SGD5` container at an offset, technique by technique:
 /// the stages of its first pass and the targets its pixel program exports, then the pass that
-/// shades a model translated, with what fills each binding.
+/// shades a model (else its first forward pass) translated, with what fills each binding.
 pub(crate) fn cmd_scan_shading(args: &[String]) -> Result<(), String> {
     use or_io::container::rpf::read_rpf9_body;
     use or_io::gta5::shaders::sgd5::Sgd5File;
@@ -213,9 +261,14 @@ pub(crate) fn cmd_scan_shading(args: &[String]) -> Result<(), String> {
         }
         _ => None,
     };
+    // As the app binds for a hardware adapter: no stage is refused for its size.
+    if let Some(at) = args.iter().position(|a| a == "--hardware") {
+        args.remove(at);
+        or_shader_front::rdna_bind::shading::drawn_by_hardware(true);
+    }
     let [path, offset, wanted] = args.as_slice() else {
         return Err(
-            "usage: rpf scan-shading <archive.rpf> <offset> <effect or 0xhash> [--wgsl <folder>] [--limit <bytes>]"
+            "usage: rpf scan-shading <archive.rpf> <offset> <effect or 0xhash> [--wgsl <folder>] [--hardware] [--limit <bytes>]"
                 .to_string(),
         );
     };
@@ -240,6 +293,7 @@ pub(crate) fn cmd_scan_shading(args: &[String]) -> Result<(), String> {
         }
     }
     let mut shading: Vec<_> = Vec::new();
+    let mut forward = None;
     for technique in &effect.techniques {
         let Some((first, pixel)) = technique_programs(&container, effect, &technique.name) else {
             println!("  {}: no pass of two programs", technique.name);
@@ -302,7 +356,13 @@ pub(crate) fn cmd_scan_shading(args: &[String]) -> Result<(), String> {
             )
         {
             shading.push((a, b, first, pixel));
+        } else if !is && forward.is_none() && is_gta6_forward_pass(&a, &b) {
+            forward = Some((a, b, first, pixel));
         }
+    }
+    // An effect no pass of which shades a model is drawn by its first forward pass, as the app has it.
+    if shading.is_empty() {
+        shading.extend(forward);
     }
     if shading.is_empty() {
         println!("  shading       no technique's first pass shades a model");
@@ -489,6 +549,11 @@ pub(crate) fn cmd_scan_shading(args: &[String]) -> Result<(), String> {
                             println!("      reads {}", reads.join(" "));
                         }
                     }
+                    let counted = or_shader_front::rdna_bind::shading::loops_count_to(
+                        &stage.module,
+                        &stage.feeds,
+                    );
+                    println!("  {word}: loops count to {counted:08X?}");
                 }
             }
         }
@@ -518,6 +583,39 @@ pub fn view_passes<'f>(
         .filter(|technique| draws_in_a_view(&technique.name))
         .filter_map(|technique| technique_programs(file, effect, &technique.name))
         .collect()
+}
+
+/// Each technique of `effect` a view draws, by name, with the two programs of each of its passes.
+// In the techniques' order, and each technique's passes in theirs.
+pub fn view_techniques<'f>(
+    file: &'f or_io::gta5::shaders::sgd5::Sgd5File,
+    effect: &or_io::gta5::shaders::sgd5::Sgd5Effect,
+) -> Vec<(
+    String,
+    Vec<(
+        &'f or_io::gta5::shaders::sgd5::Sgd5Program,
+        &'f or_io::gta5::shaders::sgd5::Sgd5Program,
+    )>,
+)> {
+    let passes = or_io::gta5::shaders::sgd5_pack::vertex_pixel_passes(file, effect);
+    let mut first = 0usize;
+    let mut out = Vec::new();
+    for technique in &effect.techniques {
+        let its = first..first + usize::from(technique.passes);
+        first = its.end;
+        if !draws_in_a_view(&technique.name) {
+            continue;
+        }
+        let pairs: Vec<_> = (passes.iter())
+            .filter(|(pass, _, _)| its.contains(pass))
+            .map(|(_, vertex, pixel)| (*vertex, *pixel))
+            .collect();
+        // A pass that binds another program, or lies off disk, leaves its technique whole or none.
+        if !pairs.is_empty() && pairs.len() == its.len() {
+            out.push((technique.name.clone(), pairs));
+        }
+    }
+    out
 }
 
 /// The pass of `passes` that draws a geometry whose vertex data is `vertex_data`: the one whose
@@ -569,8 +667,8 @@ pub fn mesh_streams(
 ) -> Result<BTreeSet<u32>, String> {
     let first = native(first)?;
     // Which slots cross as halves is the pixel stage's to say, and it moves no read of a stream.
-    let geometry =
-        rdna_bind::kept::lower(&first, &BTreeSet::new()).map_err(|why| said("mesh", &why))?;
+    let geometry = lowered_to_feed(&first, &BTreeSet::new(), table, effect)
+        .map_err(|why| said("mesh", &why))?;
     let stage = feed(&first, geometry, table, effect).map_err(|why| said("mesh", &why))?;
     Ok(stage.streams)
 }

@@ -159,6 +159,7 @@ pub use gta6_export::{scene as gta6_scene, Names as Gta6Names};
 pub use gta6_import::{replace_gta6_mesh, replace_gta6_mesh_with};
 pub use gta6_model::{replace_gta6_model, ModelLods, ModelReplace};
 pub use gta6_name_pool::listing as gta6_name_pool;
+pub use gta6_shading::Frame as Gta6Frame;
 pub use gta6_shading::{
     drawing_pass as gta6_drawing_pass, drawing_pass_at as gta6_drawing_pass_at, gta6_kept,
     held_streams as gta6_held_streams, is_gta6_shading_pass, mesh_streams as gta6_mesh_streams,
@@ -166,12 +167,17 @@ pub use gta6_shading::{
     view_passes as gta6_view_passes, Fed as Gta6Fed, Feed as Gta6Feed, Gta6PixelStage,
     Gta6ShadingPass, Stage as Gta6Stage,
 };
+pub use gta6_shading::{
+    in_technique as gta6_in_technique, view_techniques as gta6_view_techniques, Faces as Gta6Faces,
+};
 pub use gta6_shading::{is_gta6_forward_pass, Blend as Gta6Blend, Factor as Gta6Factor};
 pub use gta6_translate::{translate_gta6_program, Gta6Program, Gta6Refusal, DXIL_FRONT};
 pub use mesh::{export_scene, replace_mesh, Exported};
 pub use or_shader_front::rdna_bind::instances::{
     InstanceRecord as Gta6InstanceRecord, IDENTITY as GTA6_IN_PLACE,
 };
+pub use or_shader_front::rdna_bind::ped_layers as gta6_ped_layers;
+pub use or_shader_front::rdna_bind::shading::drawn_by_hardware as gta6_drawn_by_hardware;
 pub use or_shader_front::rdna_bind::terrain as gta6_terrain;
 pub use project_resource::check_resource_folder;
 pub use project_server::{check_build_against, check_server_folder, BuildCheck, BuildConcerns};

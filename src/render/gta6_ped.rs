@@ -4,19 +4,13 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use or_cli::gta6_ped_layers::{component_map, ComponentBuffer, Map};
 use or_cli::{Gta6Feed as Filled, Gta6ShadingPass};
 use or_io::gta6::ped_assets::PedTextures;
 use or_renderer::game_shaders::mesh::Image;
 use or_renderer::game_shaders::meshlets::Feed;
 
 use crate::state::gta6_shaders::ped_assets::Worn;
-
-/// The bytes of a ped component's buffer, and the byte of its dword 8.
-const COMPONENT_BYTES: usize = 48;
-const SAMPLES_AT: usize = 32;
-/// What the game sets dword 8 to for a component with no wrinkle map: the pixel program then
-/// samples none of the three textures it picks.
-const NO_WRINKLE: i32 = -1;
 
 /// Whether `pass` is fed anything of a ped's component.
 pub(crate) fn reads_a_component(pass: &Gta6ShadingPass) -> bool {
@@ -48,8 +42,10 @@ pub(crate) fn joined_for<'h>(
 /// Fill `feeds`, the bindings of a surface `pass` draws, with what its stages are fed of the
 /// component `joined` gives, or of one no state wears; `map` finds a texture by its key. `Err`
 /// says why the surface draws as Material.
-// A texture the join gives no key of, or no pack holds, is left unfed: it reads as noughts, as
-// the game's own default for it does, an array of layers of nought.
+// A picked texture the join gives no key of, or no pack holds, is left unfed: it reads as
+// noughts, as the game's own default for it does, an array of layers of nought. A material
+// texture the component writes takes the join's map, else the drawable's own, else the texel
+// the game resets the component's record with.
 pub(crate) fn fill(
     pass: &Gta6ShadingPass,
     joined: Option<&PedTextures>,
@@ -62,25 +58,49 @@ pub(crate) fn fill(
             state = format!("0x{:08X}", joined.state),
         ));
     }
-    for fed in pass.mesh.feeds.iter().chain(&pass.pixel.feeds) {
-        let feed = match &fed.feed {
-            Filled::PedComponent => {
-                let mut bytes = vec![0u8; COMPONENT_BYTES];
-                bytes[SAMPLES_AT..SAMPLES_AT + 4].copy_from_slice(&NO_WRINKLE.to_le_bytes());
-                Feed::Bytes(bytes)
-            }
-            Filled::PedTexture(name) => {
-                let image = joined
-                    .and_then(|joined| joined.key(*name))
-                    .and_then(&mut *map);
-                match image {
-                    Some(image) => Feed::Textures(vec![Some(image)]),
-                    None => continue,
+    let ped = reads_a_component(pass);
+    for stage in [&pass.mesh, &pass.pixel] {
+        for fed in &stage.feeds {
+            let at = (fed.group, fed.binding);
+            let feed = match &fed.feed {
+                Filled::PedComponent => Feed::Bytes(ComponentBuffer::AT_REST.bytes()),
+                Filled::PedTexture(name) => {
+                    let image = joined
+                        .and_then(|joined| joined.key(*name))
+                        .and_then(&mut *map);
+                    match image {
+                        Some(image) => Feed::Textures(vec![Some(image)]),
+                        None => continue,
+                    }
                 }
-            }
-            _ => continue,
-        };
-        feeds.insert((fed.group, fed.binding), feed);
+                Filled::Texture(number) if ped => {
+                    let stated = (stage.textures.iter())
+                        .find_map(|(n, hash)| (n == number).then_some(*hash));
+                    let Some((wears, texel)) = stated.and_then(component_map) else {
+                        continue;
+                    };
+                    let key = joined.and_then(|joined| match wears {
+                        Map::Albedo => Some(joined.albedo),
+                        Map::Normal => Some(joined.normal),
+                        Map::Named(name) => joined.key(name),
+                    });
+                    let own = matches!(feeds.get(&at), Some(Feed::Textures(images))
+                        if images.first().is_some_and(Option::is_some));
+                    match key.and_then(&mut *map) {
+                        Some(image) => Feed::Textures(vec![Some(image)]),
+                        None if own => continue,
+                        None => Feed::Textures(vec![Some(Arc::new(Image {
+                            width: 1,
+                            height: 1,
+                            rgba: texel.to_vec(),
+                            srgb: false,
+                        }))]),
+                    }
+                }
+                _ => continue,
+            };
+            feeds.insert(at, feed);
+        }
     }
     Ok(())
 }
@@ -106,6 +126,7 @@ mod tests {
             pixel: stage(feeds),
             linked: Default::default(),
             forward: None,
+            then: None,
         }
     }
 
@@ -160,12 +181,8 @@ mod tests {
         let Some(Feed::Bytes(component)) = feeds.get(&(1, 0)) else {
             panic!("the component's buffer is not fed");
         };
-        assert_eq!(component.len(), COMPONENT_BYTES);
+        assert_eq!(*component, ComponentBuffer::AT_REST.bytes());
         assert_eq!(component[32..36], (-1i32).to_le_bytes());
-        assert!(component[..32]
-            .iter()
-            .chain(&component[36..])
-            .all(|b| *b == 0));
         assert!(matches!(feeds.get(&(1, 1)), Some(Feed::Textures(images)) if images.len() == 1));
         assert!(!feeds.contains_key(&(1, 2)) && !feeds.contains_key(&(1, 3)));
 
@@ -184,6 +201,67 @@ mod tests {
             0,
             Filled::Sampler
         )])));
+    }
+
+    #[test]
+    fn a_ped_s_material_textures_take_the_join_s_maps_else_the_drawable_s_else_the_reset_texel() {
+        use or_cli::gta6_ped_layers::MB_DEFAULT;
+        // Number 0 is the albedo's slot, 1 the material map mb's, 2 one the component never writes.
+        let mut part = pass(vec![
+            fed(0, Filled::PedComponent),
+            fed(1, Filled::Texture(0)),
+            fed(2, Filled::Texture(1)),
+            fed(3, Filled::Texture(2)),
+        ]);
+        part.pixel.textures = vec![(0, 0xC8E8_C282), (1, 0x739E_3D0D), (2, 0x0CD2_7763)];
+        let image = |red| {
+            Arc::new(Image {
+                width: 1,
+                height: 1,
+                rgba: vec![red, 0, 0, 255],
+                srgb: false,
+            })
+        };
+        let mut state = joined(false);
+        state.albedo = 0xA1;
+        let mut map = |key: u64| (key == 0xA1).then(|| image(7));
+        let texel = |feeds: &BTreeMap<(u32, u32), Feed>, binding| match feeds.get(&(1, binding)) {
+            Some(Feed::Textures(images)) => images[0].as_ref().map(|i| i.rgba.clone()),
+            _ => None,
+        };
+        // What the drawable's own slots gave: nothing at all three.
+        let empty = || -> BTreeMap<(u32, u32), Feed> {
+            (1..4)
+                .map(|b| ((1, b), Feed::Textures(vec![None])))
+                .collect()
+        };
+        let mut feeds: BTreeMap<(u32, u32), Feed> = empty();
+        assert_eq!(fill(&part, Some(&state), &mut map, &mut feeds), Ok(()));
+        assert_eq!(
+            texel(&feeds, 1),
+            Some(vec![7, 0, 0, 255]),
+            "the join's albedo"
+        );
+        assert_eq!(
+            texel(&feeds, 2),
+            Some(MB_DEFAULT.to_vec()),
+            "mb's reset texel"
+        );
+        assert_eq!(
+            texel(&feeds, 3),
+            None,
+            "a slot the component does not write"
+        );
+        // The drawable's own map stands where the join gives none.
+        let mut own: BTreeMap<(u32, u32), Feed> = empty();
+        own.insert((1, 2), Feed::Textures(vec![Some(image(9))]));
+        assert_eq!(fill(&part, None, &mut |_| None, &mut own), Ok(()));
+        assert_eq!(texel(&own, 2), Some(vec![9, 0, 0, 255]));
+        // A surface fed of no component keeps its material textures as they are.
+        part.pixel.feeds.remove(0);
+        let mut building: BTreeMap<(u32, u32), Feed> = empty();
+        assert_eq!(fill(&part, None, &mut |_| None, &mut building), Ok(()));
+        assert_eq!(texel(&building, 2), None);
     }
 
     #[test]

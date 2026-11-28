@@ -1,6 +1,6 @@
-//! The buffers a terrain tile's stages read, as the game binds them for a tile whose own record
-//! is not ready yet: a record, one layer and the constants, each built once from three textures
-//! of one texel, so that a tile draws its own programs over its own geometry.
+//! The buffers a terrain tile's stages read: the record, one layer and the constants the game
+//! binds for a tile whose own record is not ready yet, each built from three textures of one
+//! texel, and a tile's own record, layers and cells once its bodies are read.
 
 use naga::{Block, Expression as E, ImageClass, ScalarKind, Statement as S, TypeInner};
 use or_io::gta5::shaders::sgd5::Sgd5Table;
@@ -31,9 +31,11 @@ pub enum DefaultTexture {
     Clear,
 }
 
-/// The first heap entry the defaults take: past every entry a material's number picks, since a
-/// number is a register's low byte and number `i` picks entry `i + 1`.
-const FIRST_ENTRY: u32 = 257;
+/// The first heap entry the defaults take: past the entries a material's numbers pick (number
+/// `i` picks entry `i + 1`, and a material states a few dozen).
+// ⚠ A stage takes a picked number to 255 at most (the heap it was written for has 256 entries):
+// an entry past 255 is never reached, and the pick reads the heap's blank entry instead.
+const FIRST_ENTRY: u32 = 128;
 
 impl DefaultTexture {
     pub const ALL: [Self; 3] = [Self::Black, Self::Flat, Self::Clear];
@@ -66,6 +68,192 @@ pub enum Terrain {
     Texture(DefaultTexture),
     /// The feedback texture the stage writes and no stage reads: its writes are taken out.
     Feedback,
+    /// The tile's 64 cells, which the game binds only with the tile's own record.
+    Cells,
+    /// The texture of the record's slot at this byte offset, picked by the number there: the
+    /// tile's own, or where the editor has none the texture the default states.
+    Slot(u32),
+    /// The tile's sub-tile texture of this kind ([`SUB_TILE_KINDS`]), an entry of the heap the
+    /// record's blocks of sub-tiles pick.
+    SubTile(u8),
+    /// The array of the drawn cell's layer textures of this kind ([`LAYER_KINDS`]): a layer's
+    /// number [`layer_entry`] picks its slice.
+    Layer(u8),
+}
+
+/// The kinds of a layer's textures, in the order its record numbers them: albedo, normal, and
+/// height with its parameters.
+pub const LAYER_KINDS: u8 = 3;
+/// The slices of each kind's array: the most layers of one cell a stage is given textures of.
+pub const LAYER_SLICES: u32 = 32;
+/// The number of slice nought of the albedo array; the normal and height arrays follow it, the
+/// last ending below the entry the world tiles' black texel takes.
+const LAYER_ENTRY: u32 = 158;
+
+/// The number a layer's record states for its texture of `kind` held at slice `slice`.
+pub fn layer_entry(kind: u8, slice: u32) -> u32 {
+    LAYER_ENTRY + u32::from(kind) * LAYER_SLICES + slice
+}
+
+/// The ranges of numbers (first, count) a layered stage reads as slices of the layer arrays,
+/// and what fills each array.
+pub(super) fn layer_arrays(layered: bool) -> Vec<((u32, u32), Feed)> {
+    match layered {
+        true => (0..LAYER_KINDS)
+            .map(|kind| {
+                let range = (layer_entry(kind, 0), LAYER_SLICES);
+                (range, Feed::Terrain(Terrain::Layer(kind)))
+            })
+            .collect(),
+        false => Vec::new(),
+    }
+}
+
+/// The dword each of a tile's cells holds from its record's making until a page of the virtual
+/// texture is mapped to it: the low byte at 0xFF is "not mapped".
+pub const UNMAPPED: u32 = 0xFF;
+/// The kinds of a tile's sub-tile textures, a block of sixteen numbers each in the record.
+pub const SUB_TILE_KINDS: u8 = 4;
+/// The heap entry a tile's sub-tile texture of kind 0 takes; the others follow it.
+const SUB_TILE_ENTRY: u32 = FIRST_ENTRY + 3;
+/// The number a record states for a slot whose texture the editor holds: an entry no heap holds,
+/// since the editor binds such a slot by the place the number is read at.
+const HELD_ENTRY: u32 = SUB_TILE_ENTRY + SUB_TILE_KINDS as u32;
+/// The record's byte offset of each slot's number; slots 0, 1, 2 and 11 are the first entries of
+/// the four blocks of sub-tiles.
+pub const SLOT_OFFSETS: [u32; 14] = [
+    64, 128, 192, 320, 324, 328, 332, 336, 340, 344, 348, 256, 352, 356,
+];
+/// The slot each kind of sub-tile stands in for where the tile has none.
+pub const KIND_SLOTS: [usize; 4] = [0, 1, 2, 11];
+
+/// The heap entry the sub-tile texture of `kind` takes.
+pub fn sub_tile_entry(kind: u8) -> u32 {
+    SUB_TILE_ENTRY + u32::from(kind)
+}
+
+/// The slot whose number the record states at byte `offset`.
+pub fn slot_at(offset: u32) -> Option<usize> {
+    SLOT_OFFSETS.iter().position(|at| *at == offset)
+}
+
+/// What the game numbers a tile's slot `slot` with while its texture is not held: the flat
+/// normal for slot 8, nought for slot 11, and the clear texel for every other.
+pub fn unheld(slot: usize) -> Option<DefaultTexture> {
+    match slot {
+        8 => Some(DefaultTexture::Flat),
+        11 => None,
+        _ => Some(DefaultTexture::Clear),
+    }
+}
+
+/// The record of a tile of its own: `corner` its south-west corner, `sub_tiled` whether its
+/// textures are in sixteen sub-tiles, `sub_tile` the one the drawn cell lies in, and `held`
+/// whether the editor holds slot `slot`'s texture (for a kind's slot, the drawn sub-tile's).
+pub fn tile_record(
+    corner: [f32; 3],
+    sub_tiled: bool,
+    sub_tile: usize,
+    held: impl Fn(usize) -> bool,
+) -> TileRecord {
+    let entry = |texture: Option<DefaultTexture>| texture.map_or(0, DefaultTexture::entry);
+    let mut sub_tiles = [[0u32; 16]; 4];
+    for (kind, block) in sub_tiles.iter_mut().enumerate() {
+        let slot = KIND_SLOTS[kind];
+        let held = held(slot).then(|| sub_tile_entry(kind as u8));
+        match sub_tiled {
+            true => {
+                *block = [DefaultTexture::Clear.entry(); 16];
+                if let Some(at) = block.get_mut(sub_tile) {
+                    *at = held.unwrap_or(DefaultTexture::Clear.entry());
+                }
+            }
+            false => block[0] = held.unwrap_or(entry(unheld(slot))),
+        }
+    }
+    let number = |slot: usize| match held(slot) {
+        true => HELD_ENTRY + slot as u32,
+        false => entry(unheld(slot)),
+    };
+    TileRecord {
+        rows: [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+        origin: origin(corner),
+        sub_tiles,
+        weights: number(3),
+        indices: number(4),
+        at_328: number(5),
+        tint_a: number(6),
+        tint_b: number(7),
+        at_340: number(8),
+        at_344: number(9),
+        at_348: number(10),
+        at_352: number(12),
+        at_356: number(13),
+        last_sub_tile: if sub_tiled { 15 } else { 0 },
+        tail: [0; 2],
+    }
+}
+
+/// A tile's corner as its record states it: x and y as whole 32 m steps toward nought plus the
+/// rest, the height, and the two steps as sixteen-bit integers packed into the fourth dword.
+fn origin([x, y, z]: [f32; 3]) -> [f32; 4] {
+    let (steps_x, steps_y) = ((x / 32.0).trunc(), (y / 32.0).trunc());
+    let packed = (steps_x as i16 as u16 as u32) | (steps_y as i16 as u16 as u32) << 16;
+    [
+        steps_x * 32.0 + (x - steps_x * 32.0),
+        steps_y * 32.0 + (y - steps_y * 32.0),
+        z,
+        f32::from_bits(packed),
+    ]
+}
+
+/// One layer of a tile of its own: the floats its material states, and the numbers of its
+/// albedo, normal and height textures, [`layer_entry`]'s where held, else [`unheld_layer`]'s.
+pub fn tile_layer(params: [f32; 28], [albedo, normal, height]: [u32; 3]) -> LayerRecord {
+    let p = params;
+    LayerRecord {
+        scale: [p[0], p[1]],
+        offset: [p[2], p[3]],
+        own_tiling: p[4],
+        tint_b_amount: p[5],
+        tint_b_gain: p[6],
+        normal_strength: p[7],
+        height_scale: p[8],
+        height_bias: p[9],
+        sharpness: p[10],
+        sixth_share: p[11],
+        tint_a_amount: p[12],
+        tint_a_gain: p[13],
+        at_56: [p[14], p[15], p[16], p[17]],
+        at_72: [p[18], p[19]],
+        at_80: p[20],
+        at_84: [p[21], p[22], p[23], p[24], p[25], p[26], p[27]].map(f32::to_bits),
+        albedo,
+        normal,
+        height,
+        at_124: 0,
+    }
+}
+
+/// The numbers the game gives a layer's albedo, normal and height until each streams in.
+pub fn unheld_layer() -> [u32; 3] {
+    [
+        DefaultTexture::Black,
+        DefaultTexture::Flat,
+        DefaultTexture::Black,
+    ]
+    .map(DefaultTexture::entry)
+}
+
+/// The default texture the default record states at byte `offset`, which a slot the editor has
+/// no texture of shows.
+pub fn default_at(offset: u32) -> Option<DefaultTexture> {
+    texture_at(RECORD, offset)
+}
+
+/// Why a stage that reads a tile's cells is not drawn for a model with no tile of its own.
+pub fn no_tile() -> String {
+    Unfed::TerrainCells.to_string()
 }
 
 /// The record of a tile, as its stages read it.
@@ -317,6 +505,7 @@ pub(super) fn buffer(hash: u32) -> Option<Feed> {
         RECORD => Terrain::Record,
         LAYERS => Terrain::Layers,
         CONSTANTS => Terrain::Constants,
+        CELLS => Terrain::Cells,
         _ => return None,
     };
     Some(Feed::Terrain(part))
@@ -375,6 +564,7 @@ pub(super) fn picked(
     let texture = texture_at(named.name_hash, *offset)?;
     Some(Feed::Terrain(match resource.kind {
         ResourceKind::StorageTexture { .. } => Terrain::Feedback,
+        _ if named.name_hash == RECORD && slot_at(*offset).is_some() => Terrain::Slot(*offset),
         _ => Terrain::Texture(texture),
     }))
 }
@@ -385,23 +575,22 @@ pub(super) fn layered(filled: &[Source]) -> bool {
     filled.contains(&Source::Game(LAYERS))
 }
 
-/// The heap entries a layered stage's heap holds besides the material's, and what fills each.
+/// The heap entries a layered stage's heap holds besides the material's, and what fills each:
+/// the defaults, then a tile's own sub-tile textures, a kind each.
 pub(super) fn heap(layered: bool) -> Vec<(u32, Feed)> {
     if !layered {
         return Vec::new();
     }
-    (DefaultTexture::ALL.into_iter())
-        .map(|texture| (texture.entry(), Feed::Terrain(Terrain::Texture(texture))))
-        .collect()
+    let defaults = (DefaultTexture::ALL.into_iter())
+        .map(|texture| (texture.entry(), Feed::Terrain(Terrain::Texture(texture))));
+    let sub_tiles = (0..SUB_TILE_KINDS)
+        .map(|kind| (sub_tile_entry(kind), Feed::Terrain(Terrain::SubTile(kind))));
+    defaults.chain(sub_tiles).collect()
 }
 
-/// `module`, fed `feeds`, held to what the terrain's defaults establish: refused where it reads
-/// the tile's cells, which the game binds only with a tile's own record, unless `unguarded`; the
-/// feedback texture's writes taken out.
-pub(super) fn held(module: &mut naga::Module, feeds: &[Fed], unguarded: bool) -> Result<(), Unfed> {
-    if !unguarded && feeds.iter().any(|fed| fed.feed == Feed::Zero(Some(CELLS))) {
-        return Err(Unfed::TerrainCells);
-    }
+/// `module`, fed `feeds`, with the feedback texture's writes taken out. A stage that reads the
+/// tile's cells is fed them; the renderer refuses it for a model with no tile of its own.
+pub(super) fn held(module: &mut naga::Module, feeds: &[Fed]) -> Result<(), Unfed> {
     for fed in feeds.iter() {
         if fed.feed == Feed::Terrain(Terrain::Feedback) {
             unwritten(module, (fed.group, fed.binding))?;

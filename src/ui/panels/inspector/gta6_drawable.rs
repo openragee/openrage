@@ -223,14 +223,55 @@ pub(super) fn draw_gta6_drawable(
                 ui.add(egui::Label::new(line.as_str()).extend());
             }
         });
-    // Each material as GTA V's material inspector lists one: a name, then what it holds.
+    draw_materials(ui, materials);
+    drop(resource);
+    head::draw(ui, state, doc_id);
+    material_edit::draw(ui, state, doc_id, selection);
+    material_layout::draw(ui, state, doc_id, selection);
+    physics_edit::draw(ui, state, doc_id, selection);
+    collision_edit::draw(ui, state, doc_id, selection);
+    bound_reshape_edit::draw(ui, state, doc_id, selection);
+    vertex_edit::draw(ui, state, doc_id, selection);
+    filter_edit::draw(ui, state, doc_id);
+}
+
+/// Each material as GTA V's material inspector lists one: a name, then what it holds; one out of
+/// view takes only its height, since a drawable lists hundreds and laying them all out every frame
+/// cost the frame tens of milliseconds.
+fn draw_materials(ui: &mut egui::Ui, materials: &[crate::state::gta6_resource::Material]) {
+    // A label does not wrap here: its height is its first line's and each further line's, measured
+    // as a label lays them out.
+    let laid = |text: egui::RichText| {
+        let text = egui::WidgetText::from(text);
+        let wrap = Some(egui::TextWrapMode::Extend);
+        (text.into_galley(ui, wrap, f32::INFINITY, egui::TextStyle::Body))
+            .size()
+            .y
+    };
+    let line = |small: bool| {
+        let style = |text: &str| match small {
+            true => egui::RichText::new(text).small(),
+            false => egui::RichText::new(text).strong(),
+        };
+        let (one, two) = (laid(style("A")), laid(style("A\nA")));
+        move |lines: f32| one + (lines - 1.0) * (two - one)
+    };
+    let (body, small) = (line(false), line(true));
+    let gap = ui.spacing().item_spacing.y;
+    let lines = |text: &str| text.lines().count().max(1) as f32;
     for (heading, rows) in materials {
         ui.add_space(crate::ui::theme::SPACING_DEFAULT);
-        ui.label(
-            egui::RichText::new(heading)
-                .strong()
-                .color(theme::TEXT_PRIMARY),
-        );
+        let labels = (rows.iter()).fold(body(lines(heading)), |high, (name, detail, _)| {
+            high + body(lines(name)) + small(lines(detail))
+        });
+        let height = labels + gap * (2 * rows.len()) as f32;
+        let room = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(1.0, height));
+        if !ui.is_rect_visible(room) {
+            ui.allocate_space(egui::vec2(0.0, height));
+            continue;
+        }
+        let heading = egui::RichText::new(heading).strong();
+        ui.label(heading.color(theme::TEXT_PRIMARY));
         for (name, detail, warn) in rows {
             ui.label(egui::RichText::new(name).strong());
             let colour = if *warn {
@@ -241,13 +282,47 @@ pub(super) fn draw_gta6_drawable(
             ui.label(egui::RichText::new(detail).small().color(colour));
         }
     }
-    drop(resource);
-    head::draw(ui, state, doc_id);
-    material_edit::draw(ui, state, doc_id, selection);
-    material_layout::draw(ui, state, doc_id, selection);
-    physics_edit::draw(ui, state, doc_id, selection);
-    collision_edit::draw(ui, state, doc_id, selection);
-    bound_reshape_edit::draw(ui, state, doc_id, selection);
-    vertex_edit::draw(ui, state, doc_id, selection);
-    filter_edit::draw(ui, state, doc_id);
+}
+
+#[cfg(test)]
+mod materials_tests {
+    use super::*;
+
+    /// The widgets laid out and the height taken by `draw` in a column `clip` high.
+    fn drawn(clip: f32, draw: impl Fn(&mut egui::Ui)) -> (usize, f32) {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut taken = 0.0;
+        let output = ctx.run_ui(Default::default(), |ui| {
+            ui.set_clip_rect(egui::Rect::from_min_size(
+                ui.cursor().min,
+                egui::vec2(800.0, clip),
+            ));
+            let top = ui.cursor().min.y;
+            draw(ui);
+            taken = ui.cursor().min.y - top;
+        });
+        let nodes = (output.platform_output.accesskit_update).map_or(0, |u| u.nodes.len());
+        (nodes, taken)
+    }
+
+    #[test]
+    fn a_material_out_of_view_takes_its_room_and_paints_nothing() {
+        let row = |i: usize| {
+            (
+                format!("slot {i}"),
+                format!("texture {i}"),
+                i.is_multiple_of(3),
+            )
+        };
+        let mut materials: Vec<_> = (0..200)
+            .map(|m| (format!("material {m}"), (0..4).map(row).collect::<Vec<_>>()))
+            .collect();
+        materials[150].1[2].1 = "a detail\nof two lines".into();
+        let (culled, height) = drawn(200.0, |ui| draw_materials(ui, &materials));
+        let (all, every) = drawn(1.0e6, |ui| draw_materials(ui, &materials));
+        assert!((height - every).abs() < 0.5, "{height} against {every}");
+        assert!(all > 1000, "{all} widgets with all of it in view");
+        assert!(culled < 100, "{culled} widgets laid out of 200 materials");
+    }
 }

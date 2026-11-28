@@ -154,6 +154,50 @@ impl Cache {
             }
         }
     }
+
+    /// [`Cache::get_or_translate`], where `refused` says why its caller refuses a lowering
+    /// whatever the optimiser makes of it: such a lowering is not optimised, and is kept under
+    /// the key of the lowering kept as it is. `Err` is that refusal.
+    pub fn get_or_translate_unless(
+        &self,
+        program: &Program,
+        options: &Options,
+        refused: &dyn Fn(&Lowered) -> Option<String>,
+    ) -> Result<(Arc<Cached>, bool), String> {
+        let key = Key::of(program, options);
+        if let Some(found) = self.get(&key) {
+            return Ok((found, true));
+        }
+        if options.unoptimised {
+            return Ok(self.get_or_translate(program, options));
+        }
+        let unoptimised = Options {
+            unoptimised: true,
+            ..options.clone()
+        };
+        let lowered_key = Key::of(program, &unoptimised);
+        let (lowering, kept) = match self.get(&lowered_key) {
+            Some(found) => (found, true),
+            None => (
+                Arc::new(Cached::of(rdna::translate_with(program, options))),
+                false,
+            ),
+        };
+        let Cached::Translated(lowered) = &*lowering else {
+            return Ok((self.put(key, (*lowering).clone()), false));
+        };
+        if let Some(why) = refused(lowered) {
+            if !kept {
+                self.put(lowered_key, (*lowering).clone());
+            }
+            return Err(why);
+        }
+        let optimised = optimised((**lowered).clone(), &key);
+        Ok((
+            self.put(key, Cached::Translated(Box::new(optimised))),
+            false,
+        ))
+    }
 }
 
 /// `lowered` with its module as the optimiser leaves it, where the validator takes the module
@@ -198,20 +242,16 @@ fn kept_in_place(lowered: &naga::Module, optimised: &naga::Module) -> Result<(),
     Ok(())
 }
 
-/// The bindings of `module`, as (group, binding), that a loop of it counts to a number of: what
-/// [`crate::rdna_bind::loops::counted_to`] finds of each alone.
-// ponytail: a walk of the module a binding, and only where it has a loop; one walk for all,
-// by the check's own bits, if a miss of a module of many bindings is found slow.
+/// The bindings of `module` an exit of a loop not shown to end hangs on, no binding's words known.
+// A proxy of the binder's verdict, which takes the feeds and judges the module it is handed: the
+// optimiser cannot make a loop the binder draws unsafe, only change which bindings it is refused by.
 fn counted_to(module: &naga::Module) -> BTreeSet<(u32, u32)> {
-    use crate::rdna_bind::loops;
-    if loops::loops(module) == 0 {
-        return BTreeSet::new();
-    }
-    (module.global_variables.iter())
+    let bound: BTreeSet<(u32, u32)> = (module.global_variables.iter())
         .filter_map(|(_, global)| global.binding.as_ref())
         .map(|binding| (binding.group, binding.binding))
-        .filter(|&at| loops::counted_to(module, &[(at, 0)]).is_some())
-        .collect()
+        .collect();
+    let bound: Vec<(u32, u32)> = bound.into_iter().collect();
+    crate::rdna_bind::loops::counted_to_each(module, &bound)
 }
 
 /// Written beside its place and moved there, so a reader never sees half a file.
@@ -571,6 +611,31 @@ mod tests {
         );
         assert!(matches!(*optimised, Cached::Translated(_)));
         assert!(matches!(*lowered, Cached::Translated(_)));
+    }
+
+    #[test]
+    fn a_lowering_its_caller_refuses_is_not_optimised_and_is_kept_as_lowered() {
+        let pixel = program(ShaderKind::Pixel, vec![S_ENDPGM]);
+        let options = Options::default();
+        let unoptimised = Options {
+            unoptimised: true,
+            ..Options::default()
+        };
+        let cache = Cache::in_memory();
+        let refuse = |_: &Lowered| Some("its bindings".to_owned());
+        let refused = cache.get_or_translate_unless(&pixel, &options, &refuse);
+        assert_eq!(refused.err().as_deref(), Some("its bindings"));
+        assert!(cache.get(&Key::of(&pixel, &options)).is_none(), "optimised");
+        let lowered = cache.get(&Key::of(&pixel, &unoptimised));
+        assert!(matches!(lowered.as_deref(), Some(Cached::Translated(_))));
+        // Taken by another caller, the lowering kept is optimised and kept as any other.
+        let (taken, kept) =
+            (cache.get_or_translate_unless(&pixel, &options, &|_| None)).expect("not refused");
+        assert!(!kept);
+        assert!(matches!(*taken, Cached::Translated(_)));
+        assert!(cache.get_or_translate(&pixel, &options).1);
+        let again = cache.get_or_translate_unless(&pixel, &options, &refuse);
+        assert!(again.is_ok_and(|(_, kept)| kept));
     }
 
     /// A compute module whose one loop counts `i` up by one and leaves where `i == exit`;

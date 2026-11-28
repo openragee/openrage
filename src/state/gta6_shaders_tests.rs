@@ -391,6 +391,7 @@ const LAID: or_cli::Gta6Blend = or_cli::Gta6Blend {
     ],
     alpha: [or_cli::Gta6Factor::Zero, or_cli::Gta6Factor::One],
     writes: 0b0111,
+    faces: or_cli::Gta6Faces::Front,
 };
 
 impl Translate for Told {
@@ -456,6 +457,7 @@ impl Translate for Told {
             pixel: stage(BTreeSet::new()),
             linked: Default::default(),
             forward: forward.then_some(LAID),
+            then: None,
         })
     }
 }
@@ -588,6 +590,7 @@ fn two_geometries_that_wear_one_effect_with_other_streams_are_each_drawn_by_the_
         layered: &|| None,
         lost: &lost,
         ped: &|| None,
+        tile: &|| None,
     };
     let (meshlets, effects) = meshlets_of(&drawable, models, &sources).expect("its shader");
     assert_eq!((meshlets.rest.as_slice(), &meshlets.why), (&[][..], &None));
@@ -777,6 +780,34 @@ fn the_effects_of_a_job_are_read_side_by_side_on_no_more_workers_than_the_machin
     };
     looked_for(&mut s, &told, &wanted);
     assert_eq!(told.passes.load(SeqCst), names.len());
+    let (most, spared) = (told.most.load(SeqCst), or_job::workers());
+    assert!(
+        most <= spared,
+        "{most} at once on a machine that spares {spared}"
+    );
+    assert!(most >= spared.min(2), "{most} at once: one after the other");
+}
+
+#[test]
+fn the_passes_of_one_effect_are_read_side_by_side_on_the_workers_the_job_spares() {
+    let dir = tempfile::tempdir().unwrap();
+    let passes: Listed = &[
+        (b"M\x01", b"P"),
+        (b"M\x01\x02", b"P"),
+        (b"M\x01\x03", b"P"),
+        (b"M\x01\x04", b"P"),
+    ];
+    let mut s = Shaders::default();
+    keep(
+        &mut s,
+        vec![Arc::new(shaded(dir.path(), &[("one_t", passes)]))],
+    );
+    let told = Told {
+        slow: true,
+        ..Told::default()
+    };
+    looked_for(&mut s, &told, &[(name_hash32(b"one_t"), holding(&[1]))]);
+    assert_eq!(told.read.load(SeqCst), passes.len());
     let (most, spared) = (told.most.load(SeqCst), or_job::workers());
     assert!(
         most <= spared,

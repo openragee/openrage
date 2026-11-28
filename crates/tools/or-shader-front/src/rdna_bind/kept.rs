@@ -44,6 +44,28 @@ pub fn lower(
     })
 }
 
+/// [`lower`], where `refused` says why the caller refuses the lowering it feeds a stage from
+/// whatever the optimiser makes of it: that lowering is not optimised, and `Err` is the refusal.
+pub fn lower_unless(
+    native: &Native,
+    half_slots: &std::collections::BTreeSet<u8>,
+    refused: &dyn Fn(&Lowered) -> Option<String>,
+) -> Result<Lowered, String> {
+    let cache = TRANSLATIONS.get_or_init(Cache::in_memory);
+    // ⚠ The second lowering `lower_by` makes states floats for the textures it loads, the kind
+    // the first declares them as where none is stated: both bind the same resources, so a
+    // refusal by its bindings of the first is the second's, and neither is optimised.
+    super::lower_by(half_slots, |options| {
+        match &*cache
+            .get_or_translate_unless(&native.program, options, refused)?
+            .0
+        {
+            Cached::Translated(lowered) => Ok((**lowered).clone()),
+            Cached::Refused { message, .. } => Err(message.clone()),
+        }
+    })
+}
+
 /// The effect containers of an archive, each with its offset there, as the bytes a file holds.
 pub fn encode_containers(containers: &[(u64, &Sgd5File)]) -> Vec<u8> {
     let mut out = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::fast());

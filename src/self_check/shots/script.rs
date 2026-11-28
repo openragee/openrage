@@ -92,6 +92,8 @@ pub(super) enum Step {
     ModelPerf(usize, String, bool),
     /// Build the passes of the open GTA VI model again from nothing, its maps decoded already.
     ModelPasses,
+    /// Frame the camera on these geometries of the open GTA VI model, counted across its drawn models.
+    ModelFrame(Vec<usize>),
 }
 
 /// Every step with its line number and text, or the first line that is wrong; a `${NAME}` in a line is the environment variable of that name.
@@ -371,6 +373,11 @@ fn parse_step(line: &str) -> Result<Step, String> {
         "compare" => super::compare::parse(rest).map(Step::Compare),
         "comparedump" => super::dumps::parse(rest).map(Step::CompareDump),
         "model" => {
+            if let ["frame", picked @ ..] = &args[..] {
+                let picked: Option<Vec<usize>> = picked.iter().map(|n| n.parse().ok()).collect();
+                return (picked.filter(|p| !p.is_empty()).map(Step::ModelFrame))
+                    .ok_or_else(|| "use `model frame GEOMETRY...`, by number from 0".into());
+            }
             let (frames, name, in_full) = match args[..] {
                 ["passes"] => return Ok(Step::ModelPasses),
                 ["perf", frames, name] => (frames, name, false),
@@ -683,7 +690,11 @@ mod tests {
             Ok(Step::ModelPerf(3, "cube-full.json".into(), true))
         );
         assert_eq!(one("model passes"), Ok(Step::ModelPasses));
+        assert_eq!(one("model frame 64 69"), Ok(Step::ModelFrame(vec![64, 69])));
         for bad in [
+            "model frame",
+            "model frame -1",
+            "model frame 6x",
             "model",
             "model perf",
             "model perf 120",

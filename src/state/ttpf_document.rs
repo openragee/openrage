@@ -838,7 +838,10 @@ pub(super) fn holds(asker: Option<&Document>, payload: &DocPayload, name: &str) 
     let gta6 = is_gta6(asker);
     match payload {
         DocPayload::Ttpf(pack) if gta6 => pack.index_of(name).is_some(),
-        DocPayload::Gta6Drawable(body) if gta6 => texture_entry(body, name).is_some(),
+        // A ped part's dictionary lists its maps as 0x0 entries whose pixels are in a pack.
+        DocPayload::Gta6Drawable(body) if gta6 => {
+            texture_entry(body, name).is_some_and(|t| t.width > 0 && t.height > 0)
+        }
         _ => false,
     }
 }

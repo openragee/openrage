@@ -18,6 +18,8 @@ pub struct Scene {
     /// How bright the sky is along each way it is gathered by, for a meter that takes the whole
     /// frame; none where no sky is computed.
     pub dome: Option<Dome>,
+    /// A cycle's glass remap rows: its least and most distances, and the weights at each.
+    pub glass_remap: Option<[f32; 4]>,
 }
 
 /// How bright the sky is along seventy-two ways over the upper half: six rings of twelve, from

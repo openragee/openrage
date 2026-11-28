@@ -293,3 +293,32 @@ fn the_backend_whose_registers_are_laid_out_here_is_the_one_the_workspace_builds
         "wgpu-hal is no longer {MIRRORED}: read its Direct3D 12 pipeline layout again before changing MIRRORED"
     );
 }
+
+#[test]
+fn a_function_of_a_choice_between_bare_floats_compiles_for_direct3d_12() {
+    // A layer chosen among constants and rounded, as a translated stage samples an array by.
+    let vertex = parsed(
+        "@vertex fn shade_vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+            return vec4<f32>(f32(i));
+        }",
+    );
+    let mut fragment = parsed(
+        "@fragment fn shade_pixel(@builtin(position) at: vec4<f32>) -> @location(0) vec4<f32> {
+            let layer = select(select(0.0, 1.0, at.x > 1.0), 2.0, at.y > 1.0);
+            return vec4<f32>(round(layer), floor(select(3.0, 4.0, at.z > 0.5)), 0.0, 1.0);
+        }",
+    );
+    typed_literals(&mut fragment);
+    let model = hlsl::ShaderModel::V6_0;
+    let written = hlsl_of((&vertex, &fragment), ShaderStage::Fragment, model).expect("written");
+    let Some(dxc) = dxc::compiler() else {
+        panic!("no DXC: set WGPU_DX12_COMPILER=dxc with dxcompiler.dll on PATH");
+    };
+    let arguments = arguments(
+        &written.entry,
+        &profile(ShaderStage::Fragment, model),
+        false,
+    );
+    let compiled = dxc.compile(&written.source, &arguments);
+    assert!(compiled.is_ok(), "{compiled:?}\n{}", written.source);
+}

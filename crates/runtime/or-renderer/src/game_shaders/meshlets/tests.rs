@@ -480,13 +480,14 @@ fn the_passes_of_a_batch_keep_what_the_driver_compiled_once_and_whole() {
 #[test]
 fn the_developer_s_aids_are_words_separated_by_commas() {
     let aids = Aids::parse(
-        "target=3, pixel=C:/a b/p.wgsl,plain-device,unknown,mesh=m.wgsl,record=r.bin,unguarded,meter=frame",
+        "target=3, pixel=C:/a b/p.wgsl,over=o.wgsl,plain-device,unknown,mesh=m.wgsl,record=r.bin,unguarded,meter=frame",
     );
     assert_eq!(
         aids,
         Aids {
             target: 3.0,
             pixel: Some("C:/a b/p.wgsl".into()),
+            over: Some("o.wgsl".into()),
             mesh: Some("m.wgsl".into()),
             record: Some("r.bin".into()),
             plain_device: true,
@@ -608,12 +609,12 @@ fn a_pass_whose_mesh_stage_nests_loops_is_refused_at_build_on_an_amd_card_under_
     let pixel = "@fragment fn main() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }";
     let stages = (Arc::new(wgsl(&nested)), Arc::new(wgsl(pixel)));
     let amd = made_up(AMD, 0x1681, Dx12);
-    let refused = stages_drawn(&amd, &stages, &Aids::default()).err();
+    let refused = stages_drawn(&amd, &stages, &Aids::default(), false).err();
     let why = refused.expect("the pass is refused");
     assert!(why.contains("AMD") && why.contains("Vulkan"), "{why}");
     // The same card under Vulkan builds it.
     let vulkan = made_up(AMD, 0x1681, Vulkan);
-    assert!(stages_drawn(&vulkan, &stages, &Aids::default()).is_ok());
+    assert!(stages_drawn(&vulkan, &stages, &Aids::default(), false).is_ok());
     // A mesh stage a developer's aid puts in its place is the one the driver is handed.
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("mesh.wgsl");
@@ -622,8 +623,108 @@ fn a_pass_whose_mesh_stage_nests_loops_is_refused_at_build_on_an_amd_card_under_
         mesh: Some(file.to_string_lossy().into_owned()),
         ..Aids::default()
     };
-    assert!(stages_drawn(&amd, &stages, &aided).is_ok());
+    assert!(stages_drawn(&amd, &stages, &aided, false).is_ok());
     let plain = (Arc::new(wgsl(&mesh("sum = at;"))), Arc::clone(&stages.1));
     std::fs::write(&file, &nested).unwrap();
-    assert!(stages_drawn(&amd, &plain, &aided).is_err());
+    assert!(stages_drawn(&amd, &plain, &aided, false).is_err());
+}
+
+#[test]
+fn the_over_aid_takes_the_place_of_a_forward_pass_s_pixel_stage_and_of_no_other() {
+    use crate::instance::made_up;
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("over.wgsl");
+    let constant =
+        "@fragment fn over() -> @location(0) vec4<f32> { return vec4<f32>(1.0, 0.0, 1.0, 1.0); }";
+    std::fs::write(&file, constant).unwrap();
+    let mesh = "@vertex fn main() -> @builtin(position) vec4<f32> { return vec4<f32>(0.0); }";
+    let pixel = "@fragment fn main() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }";
+    let stages = (Arc::new(wgsl(mesh)), Arc::new(wgsl(pixel)));
+    let aids = Aids {
+        over: Some(file.to_string_lossy().into_owned()),
+        ..Aids::default()
+    };
+    let vulkan = made_up(0x10DE, 0x2684, wgpu::Backend::Vulkan);
+    let entry = |forward| {
+        let (_, fragment) = stages_drawn(&vulkan, &stages, &aids, forward).expect("drawn");
+        fragment.entry_points[0].name.clone()
+    };
+    assert_eq!(entry(true), "over");
+    assert_eq!(entry(false), "main");
+}
+
+#[test]
+fn a_pixel_stage_finds_the_clip_space_w_in_its_position_on_every_backend() {
+    use crate::instance::made_up;
+    use naga::{BinaryOperator, Expression, Statement};
+    // As the lowering reads the position: stored whole into a private, read from there.
+    let pixel = "var<private> at: vec4<f32>;
+        @fragment fn main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+            at = position;
+            return vec4<f32>(at.w);
+        }";
+    let mesh = "@vertex fn main() -> @builtin(position) vec4<f32> { return vec4<f32>(0.0); }";
+    let stages = (Arc::new(wgsl(mesh)), Arc::new(wgsl(pixel)));
+    let stored = |backend| {
+        let (_, fragment) = stages_drawn(
+            &made_up(0x10DE, 0x2684, backend),
+            &stages,
+            &Aids::default(),
+            false,
+        )
+        .expect("drawn");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&fragment)
+        .expect("the stage drawn is valid");
+        let function = &fragment.entry_points[0].function;
+        let value = function.body.iter().find_map(|s| match s {
+            Statement::Store { value, .. } => Some(*value),
+            _ => None,
+        });
+        let w = match &function.expressions[value.expect("a store")] {
+            Expression::Compose { components, .. } => components[3],
+            other => return format!("{other:?}"),
+        };
+        match &function.expressions[w] {
+            Expression::Binary {
+                op: BinaryOperator::Divide,
+                ..
+            } => "one over w".to_owned(),
+            other => format!("{other:?}"),
+        }
+    };
+    // Vulkan, Metal and GL put one over w there, which the program is handed back as w.
+    assert_eq!(stored(wgpu::Backend::Vulkan), "one over w");
+    assert_eq!(stored(wgpu::Backend::Metal), "one over w");
+    // Direct3D 12 puts w there, as the game's own device did.
+    assert_eq!(stored(wgpu::Backend::Dx12), "FunctionArgument(0)");
+}
+
+#[test]
+fn an_image_of_colour_carries_the_levels_below_its_first_and_another_does_not() {
+    // Four texels a side: black and white in checks, which a texture seen small shows grey.
+    let rgba: Vec<u8> = (0..16u32)
+        .flat_map(|i| {
+            let v = if (i % 4 + i / 4) % 2 == 0 { 0 } else { 255 };
+            [v, v, v, 255]
+        })
+        .collect();
+    let (texels, levels) = with_levels(4, 4, &rgba, false, true);
+    assert_eq!(levels, 3, "four, two and one texels a side");
+    assert_eq!(texels.len(), 4 * (16 + 4 + 1));
+    assert_eq!(&texels[..64], &rgba[..], "the first level as it was");
+    assert_eq!(
+        &texels[64..68],
+        &[128, 128, 128, 255],
+        "the average of four"
+    );
+    let (texels, levels) = with_levels(4, 4, &rgba, false, false);
+    assert_eq!(
+        (texels.len(), levels),
+        (64, 1),
+        "an image of numbers keeps one level"
+    );
 }

@@ -74,8 +74,9 @@ fn each_default_buffer_states_its_fields_at_the_places_the_layout_gives() {
     let bias = f32::from_bits(at(&constants, offset_of!(Constants, level_bias)));
     assert_eq!(bias, 2.0);
     assert_eq!(at(&constants, offset_of!(Constants, switch)), 0);
-    // Each default sits at an entry of its own, past every entry a material's number picks.
-    assert!(black > 256 && flat > black && clear > flat);
+    // Each default sits at an entry of its own, past the entries a material's numbers pick and
+    // within the 255 a stage takes a picked number to.
+    assert!(black >= 128 && flat > black && clear > flat && clear < 256);
 }
 
 /// A made-up program's table naming, by `hashes`, the record, the layers, the constants and
@@ -256,38 +257,149 @@ fn a_terrain_stage_is_fed_the_default_buffers_and_the_textures_their_numbers_nam
         .map(|fed| (fed.binding, fed.feed.clone(), fed.header))
         .collect();
     let texture = |t| Feed::Terrain(Terrain::Texture(t));
+    let sub_tile = |k| Feed::Terrain(Terrain::SubTile(k));
+    let slot = |at: usize| Feed::Terrain(Terrain::Slot(at as u32));
     assert_eq!(
         fed,
         [
             (0, Feed::Terrain(Terrain::Record), Some(372)),
             (1, Feed::Terrain(Terrain::Layers), Some(128)),
             (2, Feed::Terrain(Terrain::Constants), None),
-            (3, texture(DefaultTexture::Clear), None),
-            (4, texture(DefaultTexture::Flat), None),
+            // A record's slots are bound by the place their number is read at.
+            (3, slot(offset_of!(TileRecord, weights)), None),
+            (4, slot(offset_of!(TileRecord, sub_tiles) + 64), None),
             (5, texture(DefaultTexture::Black), None),
-            // The heap: its blank entry, then the entries the layer's numbers pick.
+            // The heap: its blank entry, the defaults a layer's numbers pick, then a tile's
+            // sub-tile textures, which the record's blocks pick.
             (7, Feed::Blank, None),
             (8, texture(DefaultTexture::Black), None),
             (9, texture(DefaultTexture::Flat), None),
             (10, texture(DefaultTexture::Clear), None),
+            (11, sub_tile(0), None),
+            (12, sub_tile(1), None),
+            (13, sub_tile(2), None),
+            (14, sub_tile(3), None),
+            // The drawn cell's layer textures, an array a kind.
+            (15, Feed::Terrain(Terrain::Layer(0)), None),
+            (16, Feed::Terrain(Terrain::Layer(1)), None),
+            (17, Feed::Terrain(Terrain::Layer(2)), None),
         ]
     );
     let written = super::super::shading::wgsl(&stage.module).expect("the stage is valid");
-    for texture in DefaultTexture::ALL {
-        let entry = format!("== {}u", texture.entry());
+    let entries = (DefaultTexture::ALL.map(DefaultTexture::entry).into_iter())
+        .chain((0..SUB_TILE_KINDS).map(sub_tile_entry));
+    for entry in entries {
+        // A stage takes a picked number to 255 at most.
+        assert!(entry < 256, "entry {entry} is past a pick's reach");
+        let entry = format!("== {entry}u");
         assert!(written.contains(&entry), "{entry}: {written}");
     }
+    let last = layer_entry(LAYER_KINDS - 1, LAYER_SLICES - 1);
+    assert!(last < super::super::trees::TILE_BLACK_ENTRY, "{last}");
+    let range = format!(">= {}u", layer_entry(1, 0));
+    assert!(written.contains(&range), "{range}: {written}");
+    // Where no tile is given, a slot shows what the default record states there.
+    assert_eq!(
+        default_at(offset_of!(TileRecord, weights) as u32),
+        Some(DefaultTexture::Clear)
+    );
+    assert_eq!(
+        default_at(offset_of!(TileRecord, sub_tiles) as u32 + 64),
+        Some(DefaultTexture::Flat)
+    );
 }
 
 #[test]
-fn a_terrain_stage_that_reads_the_tile_s_cells_is_refused_by_name() {
-    let fed = feed(
+fn a_terrain_stage_that_reads_the_tile_s_cells_is_fed_them_at_their_place() {
+    let stage = feed(
         &native(),
         lowered(resources(true, true)),
         &table(TERRAIN),
         &Sgd5Table::default(),
+    )
+    .expect("the stage is fed");
+    let cells = (stage.feeds.iter()).find(|fed| fed.binding == 7);
+    let cells = cells.map(|fed| (fed.feed.clone(), fed.header));
+    assert_eq!(cells, Some((Feed::Terrain(Terrain::Cells), Some(4))));
+    // The heap's entries move past the cells' binding.
+    assert!((stage.feeds.iter()).any(|fed| fed.binding == 8 && fed.feed == Feed::Blank));
+}
+
+#[test]
+fn a_tile_s_own_record_states_its_corner_its_sub_tiles_and_the_numbers_of_its_slots() {
+    let corner = [-9728.0, 1536.0, -299.75];
+    // Slots 3 (weights), 7 (second tint) and kind 1 (slot 1) are held; the drawn sub-tile is 5.
+    let held = |slot: usize| matches!(slot, 1 | 3 | 7);
+    let record = tile_record(corner, true, 5, held).words();
+    let at = |offset: usize| record[offset / 4];
+    let float = |offset: usize| f32::from_bits(at(offset));
+    assert_eq!(
+        [0, 20, 40].map(float),
+        [1.0; 3],
+        "three rows of an identity"
     );
-    assert_eq!(fed.map(|_| ()), Err(Unfed::TerrainCells));
+    let origin = offset_of!(TileRecord, origin);
+    assert_eq!([0, 4, 8].map(|o| float(origin + o)), corner);
+    // The fourth dword packs the whole 32 m steps toward nought: -304 and 48.
+    assert_eq!(at(origin + 12), (-304i16 as u16 as u32) | 48 << 16);
+    let block = offset_of!(TileRecord, sub_tiles);
+    let clear = DefaultTexture::Clear.entry();
+    assert_eq!(
+        at(block + 64 + 4 * 5),
+        sub_tile_entry(1),
+        "the held kind at the drawn sub-tile"
+    );
+    assert_eq!(
+        at(block + 64 + 4 * 4),
+        clear,
+        "another sub-tile is not this view's"
+    );
+    assert_eq!(at(block + 4 * 5), clear, "a kind not held");
+    assert_eq!(at(offset_of!(TileRecord, last_sub_tile)), 15);
+    let held_number = at(offset_of!(TileRecord, weights));
+    assert!(held_number > sub_tile_entry(SUB_TILE_KINDS - 1));
+    assert_ne!(
+        at(offset_of!(TileRecord, tint_b)),
+        held_number,
+        "each held slot its own"
+    );
+    assert_eq!(at(offset_of!(TileRecord, tint_a)), clear);
+    assert_eq!(
+        at(offset_of!(TileRecord, at_340)),
+        DefaultTexture::Flat.entry()
+    );
+
+    // With no sub-tiles the first entry of each block is the slot's, and an unheld slot 11 is nought.
+    let record = tile_record(corner, false, 5, |slot| slot == 0).words();
+    let at = |offset: usize| record[offset / 4];
+    assert_eq!(at(block), sub_tile_entry(0));
+    assert_eq!(at(block + 64), clear);
+    assert_eq!(at(block + 192), 0);
+    assert_eq!(at(offset_of!(TileRecord, last_sub_tile)), 0);
+    for (slot, offset) in SLOT_OFFSETS.iter().enumerate() {
+        assert_eq!(slot_at(*offset), Some(slot));
+    }
+}
+
+#[test]
+fn a_tile_s_layer_takes_its_floats_in_record_order_and_the_default_textures() {
+    let params: [f32; 28] = std::array::from_fn(|i| i as f32 + 0.5);
+    let layer = tile_layer(params, unheld_layer()).words();
+    for (i, word) in layer[..28].iter().enumerate() {
+        assert_eq!(*word, params[i].to_bits(), "dword {i}");
+    }
+    assert_eq!(
+        layer[offset_of!(LayerRecord, albedo) / 4],
+        DefaultTexture::Black.entry()
+    );
+    assert_eq!(
+        layer[offset_of!(LayerRecord, normal) / 4],
+        DefaultTexture::Flat.entry()
+    );
+    assert_eq!(
+        layer[offset_of!(LayerRecord, height) / 4],
+        DefaultTexture::Black.entry()
+    );
 }
 
 #[test]
@@ -352,7 +464,7 @@ fn the_feedback_texture_s_writes_are_taken_out_and_a_read_of_it_is_refused() {
         header: None,
     }];
     let mut module = naga::front::wgsl::parse_str(text).unwrap();
-    assert_eq!(held(&mut module, &feeds, false), Ok(()));
+    assert_eq!(held(&mut module, &feeds), Ok(()));
     let written = super::super::shading::wgsl(&module).unwrap();
     assert!(!written.contains("textureStore"), "{written}");
 }

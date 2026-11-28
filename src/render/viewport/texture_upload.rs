@@ -47,6 +47,15 @@ pub(super) fn upload_texture(
     texture: &Texture<'_>,
     bump: bool,
 ) -> Option<(wgpu::BindGroup, usize)> {
+    let map = prepare(texture, bump)?;
+    Some(upload_rgba(
+        device, queue, layout, map.size, &map.rgba, map.srgb,
+    ))
+}
+
+/// The first level of `texture` as the viewport uploads it: decoded, shown as a preview shows its
+/// channels, and linear where it is read `bump`.
+pub(super) fn prepare(texture: &Texture<'_>, bump: bool) -> Option<super::material_maps::Prepared> {
     if !texture.has_pixel_data() || texture.width() == 0 || texture.height() == 0 {
         return None;
     }
@@ -65,14 +74,11 @@ pub(super) fn upload_texture(
             texture.format(),
             GrcTextureFormat::A8 | GrcTextureFormat::L8
         );
-    Some(upload_rgba(
-        device,
-        queue,
-        layout,
-        (rgba.width, rgba.height),
-        &rgba.data,
+    Some(super::material_maps::Prepared {
+        size: (rgba.width, rgba.height),
+        rgba: rgba.data,
         srgb,
-    ))
+    })
 }
 
 /// Make `rgba` opaque where every texel of it is fully clear: such a map hides the whole surface

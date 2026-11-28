@@ -321,6 +321,23 @@ fn clouds_of(cover: f32, frame: &Keyframe) -> Clouds {
     }
 }
 
+/// The rows a glass's weight by depth is remapped by: the least and most distances, and the
+/// weights at each, with the cycle table's own defaults.
+fn glass_remap_of(frame: &Keyframe) -> [f32; 4] {
+    let row = |end: &str, default: f32| {
+        frame.get_or(
+            &format!("indirect_light_specular_glass_remap_{end}"),
+            default,
+        )
+    };
+    [
+        row("min_distance", 0.0),
+        row("max_distance", 5.0),
+        row("min_weight", 1.0),
+        row("max_weight", 1.0),
+    ]
+}
+
 /// The sky a GTA VI model is lit by at `hours` in `weather` by the install's tables of the day,
 /// or none where `data` does not hold them. The sun and the moon stand where the game puts them
 /// and one of them lights, by its lux and the cycle's tint and multipliers, through the air the
@@ -415,6 +432,7 @@ pub(super) fn sky(data: &TimecycleData, hours: f32, weather: WeatherState) -> Op
             clouds,
             around: Some(nine_of(seen, ground)),
             dome: Some(Dome(dome)),
+            glass_remap: Some(glass_remap_of(&frame)),
             ..Scene::default()
         },
     })

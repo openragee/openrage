@@ -82,6 +82,8 @@ impl MeshletScene {
             disc: sun_shadow::words(&lighting.sky, true)[1],
             clouds: lighting.sky.scene.clouds.open,
         };
+        // A ray starts where the shadow map's test does, so what it leaves lit the ray does too.
+        traced.hold_off(sun_shadow::held_off(&lighting.sky));
         let tiles = self.mask.tiles.texture();
         traced.update(queue, &view, (size.width, size.height), tiles);
     }

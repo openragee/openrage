@@ -13,6 +13,7 @@ use std::time::Instant;
 
 use or_shader_front::dxil::ShaderKind;
 use or_shader_front::rdna::{self, Launch, Options, Program, Region};
+use or_shader_front::rdna_bind;
 use or_shader_front::rdna_corpus::Corpus;
 
 /// A made-up program: the lane's number, a dword at its own address of the group's memory and
@@ -199,6 +200,162 @@ fn a_barrier_in_a_block_of_a_graph_that_does_not_nest_runs_on_the_software_adapt
     assert!(refused.is_none(), "{refused:?}");
 }
 
+/// The made-up compute stage of `blocks` blocks of the binder's test of the software adapter's
+/// limit (`picked_blocks` in `rdna_bind::shading`), line for line.
+fn picked_blocks(blocks: u32) -> naga::Module {
+    let registers = 10;
+    let mut text = String::from(
+        "@group(0) @binding(0) var<storage, read_write> data: array<u32>;
+@compute @workgroup_size(64) fn main(@builtin(local_invocation_id) thread: vec3<u32>) {
+",
+    );
+    for r in 0..registers {
+        text += &format!("var r{r} = data[{r}u * 64u + thread.x];\n");
+    }
+    text += "var next = 0u;\nloop {\nlet at = next;\n";
+    for k in 0..blocks {
+        text += &format!("if at == {k}u {{\n");
+        for s in 0..10 {
+            let (d, a, b) = picked_registers(k, s, registers);
+            text += &format!(
+                "if (r{a} & {}u) != 0u {{ r{d} = r{a} + (r{b} ^ {}u); }}\n",
+                1 << s,
+                k * 10 + s
+            );
+        }
+        text += &format!(
+            "data[{registers}u * 64u + {k}u * 64u + thread.x] = r{};\n",
+            k * 11 % registers
+        );
+        text += &format!(
+            "if (r{} & 1u) != 0u {{ next = {}u; }} else {{ next = {}u; }}\n}}\n",
+            k * 5 % registers,
+            k + 2,
+            k + 1
+        );
+    }
+    text += &format!("if at >= {blocks}u {{ break; }}\n}}\n}}\n");
+    naga::front::wgsl::parse_str(&text).expect("the WGSL parses")
+}
+
+/// The register a block's `s`th update writes, the one it tests and the one it adds.
+fn picked_registers(k: u32, s: u32, registers: u32) -> (u32, u32, u32) {
+    let d = (k * 10 + s) % registers;
+    (
+        d,
+        (k * 7 + s * 3 + 1) % registers,
+        (k * 13 + s * 5 + 2) % registers,
+    )
+}
+
+/// [`picked_blocks`] run on `data` by the CPU, each of 64 threads in turn.
+fn picked_on_the_cpu(blocks: u32, data: &mut [u32]) {
+    let registers = 10;
+    for thread in 0..64 {
+        let mut r: Vec<u32> = (0..registers)
+            .map(|v| data[(v * 64 + thread) as usize])
+            .collect();
+        let mut next = 0;
+        while next < blocks {
+            let k = next;
+            for s in 0..10 {
+                let (d, a, b) = picked_registers(k, s, registers);
+                if r[a as usize] & (1 << s) != 0 {
+                    r[d as usize] = r[a as usize].wrapping_add(r[b as usize] ^ (k * 10 + s));
+                }
+            }
+            data[((registers + k) * 64 + thread) as usize] = r[(k * 11 % registers) as usize];
+            next = if r[(k * 5 % registers) as usize] & 1 != 0 {
+                k + 2
+            } else {
+                k + 1
+            };
+        }
+    }
+}
+
+/// The blocks of the largest made-up stage under the software adapter's limit.
+const UNDER_THE_LIMIT: u32 = 100;
+
+/// Where a child of [`a_compute_stage_under_the_software_adapter_s_limit_runs_there_to_its_answer`]
+/// dispatches the stage itself.
+const CHILD: &str = "OPENRAGE_RDNA_LIMIT_CHILD";
+
+/// The adapter computes wrongly, hangs, or ends its process on a compute stage past the limit
+/// the shader tool's check holds it to, so the stage just under it is run, in a child process,
+/// and read back against the CPU's run of it, and the next size is held past it.
+#[test]
+fn a_compute_stage_under_the_software_adapter_s_limit_runs_there_to_its_answer() {
+    let test = "a compute stage under the software adapter's limit";
+    let past = rdna_bind::shading::dispatch_past_the_software_adapter;
+    assert_eq!(past(&picked_blocks(UNDER_THE_LIMIT)), None);
+    assert!(past(&picked_blocks(UNDER_THE_LIMIT * 5 / 4)).is_some());
+    if std::env::var_os(CHILD).is_none() {
+        let name = "a_compute_stage_under_the_software_adapter_s_limit_runs_there_to_its_answer";
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([name, "--exact", "--nocapture"])
+            .env(CHILD, "1")
+            .status()
+            .expect("the child starts");
+        assert!(status.success(), "the child ended with {status}");
+        return;
+    }
+    let Some((device, queue, _)) = software(test) else {
+        return;
+    };
+    let module = picked_blocks(UNDER_THE_LIMIT);
+    let (pipeline, _) = made(&device, &module).unwrap();
+    let words = 16 * 1024;
+    let mut data: Vec<u32> = (0..words)
+        .map(|i: u32| i.wrapping_mul(0x9E37_79B9) ^ 7)
+        .collect();
+    let bytes: Vec<u8> = data.iter().flat_map(|word| word.to_le_bytes()).collect();
+    let usage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC;
+    let buffer = wgpu::util::DeviceExt::create_buffer_init(
+        &device,
+        &wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: &bytes,
+            usage,
+        },
+    );
+    let read = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: bytes.len() as u64,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let bound = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: buffer.as_entire_binding(),
+        }],
+    });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &bound, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+    }
+    encoder.copy_buffer_to_buffer(&buffer, 0, &read, 0, bytes.len() as u64);
+    queue.submit([encoder.finish()]);
+    read.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("the group runs to its end");
+    let got: Vec<u32> = (read.slice(..).get_mapped_range().as_chunks::<4>().0.iter())
+        .map(|word| u32::from_le_bytes(*word))
+        .collect();
+    picked_on_the_cpu(UNDER_THE_LIMIT, &mut data);
+    let differ = (got.iter().zip(&data))
+        .filter(|(got, want)| got != want)
+        .count();
+    assert_eq!(differ, 0, "{differ} of {words} words differ from the CPU's");
+}
+
 fn traced(program: &Program, region: Option<Region>) -> Result<rdna::Lowered, String> {
     let options = Options {
         arena: true,
@@ -288,4 +445,69 @@ fn a_walk_of_the_build_lowered_alone_is_built_on_the_software_adapter() {
         std::fs::write(&out, report).expect("what the device said, written");
         made.unwrap();
     }
+}
+
+/// A loop no exit leaves, held by the binder's watchdog, ends on the software adapter: each
+/// invocation turns its cap and finishes with what it holds.
+#[test]
+fn a_loop_that_never_ends_held_by_the_watchdog_leaves_on_the_software_adapter() {
+    let test = "a watched loop that never ends on the software adapter";
+    let Some((device, queue, _)) = software(test) else {
+        return;
+    };
+    let mut module = naga::front::wgsl::parse_str(
+        "@group(0) @binding(0) var<storage, read_write> out: array<u32, 64>;
+@compute @workgroup_size(64) fn main(@builtin(local_invocation_index) at: u32) {
+    var n: u32 = 0u;
+    loop { if out[63] == 7u { break; } n = n + 1u; }
+    out[at] = n;
+}",
+    )
+    .expect("the WGSL parses");
+    let cap = 100;
+    let watched = rdna_bind::watchdog::watch(&mut module, &[cap], false).expect("watched");
+    assert_eq!(watched.loops, 1);
+    let (pipeline, _) = made(&device, &module).unwrap();
+    let bytes = vec![0u8; 64 * 4];
+    let buffer = wgpu::util::DeviceExt::create_buffer_init(
+        &device,
+        &wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: &bytes,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        },
+    );
+    let read = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: bytes.len() as u64,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let bound = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: buffer.as_entire_binding(),
+        }],
+    });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &bound, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+    }
+    encoder.copy_buffer_to_buffer(&buffer, 0, &read, 0, bytes.len() as u64);
+    queue.submit([encoder.finish()]);
+    read.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("the group runs to its end");
+    let got: Vec<u32> = (read.slice(..).get_mapped_range().as_chunks::<4>().0.iter())
+        .map(|word| u32::from_le_bytes(*word))
+        .collect();
+    // The last invocation's store of its own turns may land after another's read of word 63,
+    // which then is no 7: every invocation turns its cap.
+    assert!(got.iter().all(|turns| *turns == cap), "{got:?}");
 }

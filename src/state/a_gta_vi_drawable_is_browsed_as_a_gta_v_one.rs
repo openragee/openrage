@@ -347,6 +347,37 @@ fn a_dictionary_s_own_texture_is_fetched_by_the_name_its_drawable_s_key_is_liste
 }
 
 #[test]
+fn a_dictionary_s_entry_of_no_pixels_does_not_hold_its_key_so_a_pack_is_asked_for_it() {
+    use or_io::gta6::headerless::{Dictionary, Entry};
+    let name = super::gta6_resource::texture_name(KEY);
+    let with = |width: u16| {
+        let (code, entry) =
+            super::gta6_textures_resolve_and_save::dictionary_texture(&name, 1, true);
+        let entry = entry.map(|entry| match entry {
+            Entry::Texture(mut t) => {
+                (t.width, t.height) = (width, width);
+                Entry::Texture(t)
+            }
+            other => other,
+        });
+        Resource::Dictionary(Dictionary {
+            entries: vec![
+                (0x20, Ok(Entry::Drawable(Box::new(drawable(false))))),
+                (code, entry),
+            ],
+        })
+    };
+    let holds = |resource| {
+        let (state, doc, _dir) = opened(resource);
+        let doc = state.document(doc).expect("open");
+        super::ttpf_document::holds(Some(doc), &doc.payload, &name)
+    };
+    assert!(holds(with(4)), "an entry with pixels holds its key");
+    // A ped part's maps are listed 0x0 in its own dictionary, their pixels in another pack.
+    assert!(!holds(with(0)));
+}
+
+#[test]
 fn the_outline_draws_a_drawable_s_rows_and_a_dictionary_s_drawables() {
     use or_io::gta6::headerless::{Dictionary, Entry};
     let dictionary = Resource::Dictionary(Dictionary {

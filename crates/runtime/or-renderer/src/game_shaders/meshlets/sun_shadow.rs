@@ -54,6 +54,13 @@ pub(super) fn words(sky: &Sky, casts: bool) -> [f32; 4] {
     [f32::from(u8::from(casts)), reach, BIAS, 1.0]
 }
 
+/// How far a surface is held clear of what stands before it towards the light, in the world's units: [`BIAS`] of the tile's depth, which is the diameter of the sphere about the box `sky` states; nought where it states none.
+pub(super) fn held_off(sky: &Sky) -> f32 {
+    sky.scene.bounds.map_or(0.0, |(min, max)| {
+        BIAS * 2.0 * sphere_of(min, max).1.max(1e-3)
+    })
+}
+
 /// The pass that draws a surface's vertex stage into the tile, and no colour.
 pub(super) fn caster(
     device: &wgpu::Device,

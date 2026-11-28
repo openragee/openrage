@@ -108,6 +108,14 @@ impl AppState {
             view.camera.yaw = yaw;
         }
     }
+
+    /// Frame the active document's camera on a sphere, as a script frames a part; nothing where it has none yet.
+    pub fn frame_active_camera(&mut self, centre: glam::Vec3, radius: f32) {
+        let view = (self.active_document).and_then(|id| self.cameras.views.get_mut(&id));
+        if let Some(view) = view {
+            view.camera.frame_sphere(centre, radius);
+        }
+    }
 }
 
 #[cfg(test)]

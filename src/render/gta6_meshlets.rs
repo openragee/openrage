@@ -10,7 +10,7 @@ use or_io::gta5::shaders::spirv_pack::ConstantBuffer;
 use or_io::gta6::headerless::{Drawable, Geometry, Model, ParameterValue, Shader};
 use or_io::hash::string_hash_str;
 use or_renderer::game_shaders::mesh::Image;
-use or_renderer::game_shaders::meshlets::{Feed, MeshletSurface, ROW, VERTICES};
+use or_renderer::game_shaders::meshlets::{Feed, FrameFeed, MeshletSurface, ROW, VERTICES};
 
 use super::gta6_layers::Material;
 use crate::state::gta6_resource::{drawable_of, effect_name};
@@ -322,6 +322,12 @@ fn feeds(
             Filled::Heap { .. } => Feed::Textures(heap.to_vec()),
             Filled::Blank | Filled::White => Feed::Textures(vec![None]),
             Filled::Stated(bytes) => Feed::Bytes(headed(*header, bytes)),
+            Filled::Frame(frame) => Feed::Frame(match frame {
+                or_cli::Gta6Frame::DirectionalLight => FrameFeed::DirectionalLight,
+                or_cli::Gta6Frame::AmbientMap => FrameFeed::AmbientMap,
+                or_cli::Gta6Frame::ViewLighting => FrameFeed::ViewLighting,
+                or_cli::Gta6Frame::EnvironmentFit => FrameFeed::EnvironmentFit,
+            }),
             Filled::HeapWords => Feed::Bytes(heap_words(heap, rows)),
             Filled::Texture(number) => {
                 Feed::Textures(vec![heap.get(*number as usize + 1).cloned().flatten()])
@@ -515,6 +521,7 @@ pub(crate) fn meshlets(state: &AppState) -> Option<Result<Meshlets, String>> {
         layered: &|| gta6_layer_index::worn(state, true),
         lost: &lost,
         ped: &|| crate::state::gta6_shaders::ped_assets::worn(state),
+        tile: &|| crate::state::gta6_shaders::terrain_tile::worn(state),
     };
     let (mut out, effects) = meshlets_of(drawable, models, &sources)?;
     UNDER.lock().unwrap_or_else(|p| p.into_inner()).0 = effects;
@@ -541,6 +548,8 @@ pub(crate) struct Sources<'s> {
     pub lost: &'s BTreeSet<u32>,
     /// What the drawable joins to as a ped's part, asked for by the first pass fed of a component.
     pub ped: &'s dyn Fn() -> Option<crate::state::gta6_shaders::ped_assets::Worn>,
+    /// The terrain tile the drawable is a cell of, asked for by the first pass fed of a tile's.
+    pub tile: &'s dyn Fn() -> Option<Arc<crate::state::gta6_shaders::terrain_tile::Tile>>,
 }
 
 /// The geometries of `models` the view draws of `drawable` as surfaces of their own passes, with
@@ -565,6 +574,7 @@ pub(crate) fn meshlets_of(
     // The layered material the drawable wears, asked for by the first pass that reads a record.
     let mut worn: Option<Option<(Arc<Index>, Material)>> = None;
     let mut ped = None;
+    let mut terrain_tile = None;
     let map = |key: u64| {
         (from.map)(key).unwrap_or_else(|()| {
             decoding.set(true);
@@ -617,6 +627,17 @@ pub(crate) fn meshlets_of(
                 out.why.get_or_insert(format!("{effect}: {why}"));
                 continue;
             }
+            if super::gta6_terrain::reads_a_tile(pass) {
+                let tile = terrain_tile.get_or_insert_with(|| (from.tile)()).clone();
+                let mut tile_map = map;
+                let feeds = &mut surface.feeds;
+                let fed = super::gta6_terrain::fill(pass, tile.as_deref(), &mut tile_map, feeds);
+                if let Err(why) = fed {
+                    out.rest.push(mesh);
+                    out.why.get_or_insert(format!("{effect}: {why}"));
+                    continue;
+                }
+            }
         }
         if let Some((surface, zeroed)) = drawn {
             let instances = super::gta6_instances::IN_PLACE;
@@ -626,6 +647,17 @@ pub(crate) fn meshlets_of(
             }
             out.zeroed += zeroed;
             effects.push(shader.name_hash);
+        }
+        // A forward technique's later passes draw the geometry again after it, in their order.
+        let mut later = pass.then.clone();
+        while let Some(next) = later {
+            if let Some((surface, _)) =
+                surface(&next, geometry, shader, &mut texture, None, &mut tile)
+            {
+                out.surfaces.push(surface);
+                out.of.push((mesh, effect.clone()));
+            }
+            later = next.then.clone();
         }
     }
     out.decoding = decoding.get();
@@ -714,6 +746,7 @@ mod tests {
             pixel: stage(&[]),
             linked: Default::default(),
             forward: None,
+            then: None,
         })
     }
 

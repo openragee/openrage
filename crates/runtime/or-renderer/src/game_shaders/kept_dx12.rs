@@ -504,6 +504,73 @@ fn store(file: &Path, bytes: &[u8]) {
     }
 }
 
+/// Names each float literal a choice hands a math function as a constant of its own.
+// ⚠ HLSL types a bare float literal as a double where no operand types it, so `floor(c ? 4.0 :
+// 3.0)` takes the double form, which DXIL has not for most of these functions, and DXC refuses
+// the stage. A named constant is written `static const float`.
+pub(super) fn typed_literals(module: &mut naga::Module) {
+    use naga::{Expression as E, Literal, Span};
+    let naga::Module {
+        types,
+        constants,
+        global_expressions,
+        functions,
+        entry_points,
+        ..
+    } = module;
+    let float = types.insert(
+        naga::Type {
+            name: None,
+            inner: naga::TypeInner::Scalar(naga::Scalar::F32),
+        },
+        Span::UNDEFINED,
+    );
+    let mut named = std::collections::HashMap::new();
+    let bodies = (functions.iter_mut().map(|(_, f)| f))
+        .chain(entry_points.iter_mut().map(|e| &mut e.function));
+    for function in bodies {
+        let mut chosen = Vec::new();
+        for (_, expression) in function.expressions.iter() {
+            if let E::Math {
+                arg,
+                arg1,
+                arg2,
+                arg3,
+                ..
+            } = *expression
+            {
+                for taken in [Some(arg), arg1, arg2, arg3].into_iter().flatten() {
+                    if let E::Select { accept, reject, .. } = function.expressions[taken] {
+                        chosen.extend([accept, reject]);
+                    }
+                }
+            }
+        }
+        while let Some(at) = chosen.pop() {
+            match function.expressions[at] {
+                E::Select { accept, reject, .. } => chosen.extend([accept, reject]),
+                E::Literal(Literal::F32(value)) => {
+                    let constant = *named.entry(value.to_bits()).or_insert_with(|| {
+                        let init = global_expressions
+                            .append(E::Literal(Literal::F32(value)), Span::UNDEFINED);
+                        let name = Some(format!("chosen_{}", constants.len()));
+                        constants.append(
+                            naga::Constant {
+                                name,
+                                ty: float,
+                                init,
+                            },
+                            Span::UNDEFINED,
+                        )
+                    });
+                    function.expressions[at] = E::Constant(constant);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 #[cfg(windows)]
 mod dxc {
     use std::path::{Path, PathBuf};

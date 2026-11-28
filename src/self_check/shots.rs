@@ -344,6 +344,16 @@ impl Shell {
                 self.model_perf(state, *frames, &out.join(name), *in_full)?;
             }
             Step::ModelPasses => self.bridge.rebuild_model_passes(),
+            Step::ModelFrame(picked) => {
+                let doc = state
+                    .active_document
+                    .ok_or("no document is open to frame")?;
+                let sphere = crate::render::gta6_drawable::geometries_bounds(state, doc, picked);
+                let (centre, radius) = sphere
+                    .ok_or_else(|| format!("the open model draws no geometry of {picked:?}"))?;
+                state.frame_active_camera(centre, radius);
+                println!("framed  {picked:?} about {centre} radius {radius}");
+            }
             Step::Compare(step) => {
                 if let Err(why) = compare::run(step, out) {
                     println!("FAILED  {why}");

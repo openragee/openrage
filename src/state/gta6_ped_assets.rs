@@ -210,10 +210,6 @@ pub(crate) fn worn(state: &crate::state::AppState) -> Option<Worn> {
     })
 }
 
-// Declared here: the state module is at its line budget.
-#[path = "gta6_skin_tones.rs"]
-pub(crate) mod skin_tones;
-
 #[cfg(test)]
 mod tests {
     use or_io::gta6::ped_assets::{TextureEntry, BASE, WRINKLE_MASK};

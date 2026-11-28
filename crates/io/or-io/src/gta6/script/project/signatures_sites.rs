@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use super::{key_of, Found, Reader, MAX_DEPTH, ROUNDS};
 use crate::gta6::script::cfg::{self, Terminator};
 use crate::gta6::script::ir::{
-    BinOp, Callee, Expr, FunctionKey, Head, Kind, Scalar, Stmt, TypeKey, UnOp, Var, Width,
+    BinOp, Callee, Expr, FunctionKey, Head, Kind, Scalar, Stmt, StoreKind, TypeKey, UnOp, Var,
+    Width,
 };
 use crate::gta6::script::print::cells_of;
 use crate::gta6::script::project::Project;
@@ -1022,4 +1023,110 @@ fn whole(e: &Expr) -> &Expr {
 
 fn is_zero(e: &Expr) -> bool {
     matches!(e, Expr::Const(c) if c.bits == 0 && !c.kind.is_float())
+}
+
+/// How one reading takes the low 32 bits of a cell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Low {
+    I32,
+    U32,
+    F32,
+    /// As four bytes stored, which says no kind.
+    Bits,
+}
+
+impl Low {
+    /// The reading of each operand of an operator that works at `at`.
+    fn at(at: &Kind) -> Option<Low> {
+        match at {
+            Kind::I32 => Some(Low::I32),
+            Kind::U32 => Some(Low::U32),
+            Kind::F32 => Some(Low::F32),
+            _ => None,
+        }
+    }
+
+    /// The reading a cast to `to` makes of what it casts.
+    fn cast(to: Scalar) -> Option<Low> {
+        match to {
+            Scalar::I32 => Some(Low::I32),
+            Scalar::U32 => Some(Low::U32),
+            Scalar::F32 => Some(Low::F32),
+            _ => None,
+        }
+    }
+}
+
+/// The parameter cells of `open` that `f` reads only as the low 32 bits of one kind, besides passing them whole to functions of a program, each with that kind; `counts` holds by cell every mention and the mentions as such an argument.
+// ⚠ Every mention counts: one that is neither such a reading nor such an argument (a value
+// stored, returned or tested whole, a copy, an item of a group, a native's argument) leaves the
+// cell out. Four bytes stored say no kind, so they stand only beside a reading that does.
+pub(super) fn read_alone(
+    f: &cfg::Function,
+    open: &BTreeSet<u32>,
+    counts: &[(u32, u32)],
+) -> Vec<(u32, Kind)> {
+    let mut found: Vec<(u32, Low)> = Vec::new();
+    for block in &f.cfg.blocks {
+        for stmt in &block.stmts {
+            if let Stmt::Store {
+                kind: StoreKind::I32,
+                value: Expr::Var(Var::Param(n)),
+                ..
+            } = stmt
+            {
+                found.push((*n, Low::Bits));
+            }
+            stmt.each_expr(&mut |top| lows(top, &mut found));
+        }
+        if let Some(e) = block.term.expr() {
+            lows(e, &mut found);
+        }
+    }
+    let mut reads: BTreeMap<u32, (u32, BTreeSet<Low>)> = BTreeMap::new();
+    for (n, low) in found {
+        if open.contains(&n) {
+            let held = reads.entry(n).or_default();
+            held.0 = held.0.saturating_add(1);
+            held.1.insert(low);
+        }
+    }
+    let alone = reads.into_iter().filter_map(|(n, (read, lows))| {
+        let (mentions, passed) = counts.get(n as usize).copied()?;
+        if read.checked_add(passed) != Some(mentions) {
+            return None;
+        }
+        let said: Vec<Low> = lows.into_iter().filter(|low| *low != Low::Bits).collect();
+        let kind = match said.as_slice() {
+            [Low::I32] => Kind::I32,
+            [Low::U32] => Kind::U32,
+            [Low::F32] => Kind::F32,
+            _ => return None,
+        };
+        Some((n, kind))
+    });
+    alone.collect()
+}
+
+/// Notes each parameter cell `top` reads, at any depth, as its low 32 bits: an operand of an operator that works at 32 bits, or what a cast to 32 bits casts.
+fn lows(top: &Expr, found: &mut Vec<(u32, Low)>) {
+    let mut note = |e: &Expr, low: Low| {
+        if let Expr::Var(Var::Param(n)) = e {
+            found.push((*n, low));
+        }
+    };
+    top.walk(&mut |e| match e {
+        Expr::Binary { op, at, l, r } if !op.is_logical() => {
+            if let Some(low) = Low::at(at) {
+                note(l, low);
+                note(r, low);
+            }
+        }
+        Expr::Cast { to, e: inner } => {
+            if let Some(low) = Low::cast(*to) {
+                note(inner, low);
+            }
+        }
+        _ => {}
+    });
 }

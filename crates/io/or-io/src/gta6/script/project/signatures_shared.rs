@@ -724,6 +724,57 @@ fn untyped(project: &Project, key: &FunctionKey, cell: u32) -> bool {
     param.is_some_and(|param| param.cells == 1 && param.kind == Kind::Unknown)
 }
 
+/// Gives each parameter cell nothing has typed that its function reads only as 32 bits of one kind that kind, where each function the cell is passed to whole reads the cell it lands in as that kind too.
+// The largest set that holds, found by taking out what fails until nothing does: down every
+// chain of calls a cell so kept is passed along, it is read only so. That is a fact of the
+// callees' code alone, whatever a caller hands: it says which 32 bits are read and as what,
+// never how the cell above them is widened, so it proves no cast at a call nor any read of the
+// whole cell, and no caller need be counted.
+pub(super) fn alone(project: &mut Project, open: &BTreeMap<FunctionKey, Open>) {
+    let facts: &Project = project;
+    let mut kept: BTreeMap<(FunctionKey, u32), Kind> = BTreeMap::new();
+    for (key, waits) in open {
+        for (cell, kind) in &waits.alone {
+            if untyped(facts, key, *cell) {
+                kept.insert((*key, *cell), kind.clone());
+            }
+        }
+    }
+    // The kept cells passed on to each kept cell, which stand or fall with it.
+    let mut users: BTreeMap<(FunctionKey, u32), Vec<(FunctionKey, u32)>> = BTreeMap::new();
+    let mut failed: Vec<(FunctionKey, u32)> = Vec::new();
+    for (key, waits) in open {
+        for (cell, callee, at) in &waits.passes {
+            let from = (*key, *cell);
+            let Some(mine) = kept.get(&from) else {
+                continue;
+            };
+            let to = (*callee, *at);
+            match kept.get(&to) {
+                Some(theirs) if theirs == mine => users.entry(to).or_default().push(from),
+                Some(_) => failed.push(from),
+                None if stated(facts, callee, *at).as_ref() == Some(mine) => {}
+                None => failed.push(from),
+            }
+        }
+    }
+    // Each cell is taken out once, and each list of those passing on to it is read once.
+    while let Some(gone) = failed.pop() {
+        if kept.remove(&gone).is_some() {
+            failed.extend(users.remove(&gone).unwrap_or_default());
+        }
+    }
+    for ((key, cell), kind) in kept {
+        let Some(held) = project.signatures.get_mut(&key) else {
+            continue;
+        };
+        let param = param_at(held, cell).and_then(|n| held.params.get_mut(n));
+        if let Some(param) = param.filter(|param| param.cells == 1 && param.kind == Kind::Unknown) {
+            param.kind = kind;
+        }
+    }
+}
+
 /// Gives each parameter cell nothing has typed the one kind the arguments of every call of its function agree on, where that is no integer.
 // A parameter passed on carries what it is to the parameter it lands in, and a parameter only
 // passed on takes what that one is, so the kinds run both ways along a chain of calls until

@@ -1438,3 +1438,62 @@ fn a_reference_a_function_whose_signature_is_not_kept_took_before_the_passes_is_
         Kind::Bool
     );
 }
+
+#[test]
+fn a_parameter_read_only_as_a_float_and_passed_on_where_it_is_read_so_is_a_float() {
+    let read = format!("Native.DEMO.USE({FLOAT});");
+    let and = |at: u32| format!("{read} func_{at:06X}(p0); return;");
+    let functions = [
+        function("void", 0x20, 1, &format!("{read} return;")),
+        function("void", 0x10, 1, &and(0x20)),
+        // Read whole by a native where it is passed on.
+        function("void", 0x40, 1, TAKES),
+        function("void", 0x30, 1, &and(0x40)),
+        // Read only as a float all round a ring of calls.
+        function("void", 0x60, 1, &and(0x70)),
+        function("void", 0x70, 1, &and(0x60)),
+        // Passed on to one that passes it on to the native.
+        function("void", 0x80, 1, &and(0x90)),
+        function("void", 0x90, 1, &and(0x40)),
+        // Handed back whole, or its address taken.
+        function("VmValue", 0xA0, 1, &format!("{read} return p0;")),
+        function(
+            "void",
+            0xB0,
+            1,
+            &format!("{read} Native.DEMO.USE(Vm.Address(parameters, 0)); func_000020(p0); return;"),
+        ),
+        // Passed on to one that only passes it on to a reading of a float.
+        function("void", 0xC0, 1, &and(0xD0)),
+        function("void", 0xD0, 1, "func_000020(p0); return;"),
+    ];
+    let project = project_of(&[listing(1, &functions)]);
+    for at in [0x20, 0x10, 0x60, 0x70, 0xC0, 0xD0] {
+        assert_eq!(param(&project, at, 0), Kind::F32, "func_{at:06X}");
+    }
+    for at in [0x30, 0x80, 0x90, 0xA0, 0xB0] {
+        assert_eq!(param(&project, at, 0), Kind::Unknown, "func_{at:06X}");
+    }
+}
+
+#[test]
+fn a_parameter_read_only_as_an_int_and_passed_on_where_it_is_read_so_is_an_int() {
+    let read = "Native.DEMO.USE(((as_i32(p0) < 5)));";
+    let functions = [
+        function("void", 0x20, 1, &format!("{read} return;")),
+        function("void", 0x10, 1, &format!("{read} func_000020(p0); return;")),
+        // Read as a float where it is passed on: two kinds are none.
+        function(
+            "void",
+            0x40,
+            1,
+            &format!("Native.DEMO.USE({FLOAT}); return;"),
+        ),
+        function("void", 0x30, 1, &format!("{read} func_000040(p0); return;")),
+    ];
+    let project = project_of(&[listing(1, &functions)]);
+    assert_eq!(param(&project, 0x20, 0), Kind::I32);
+    assert_eq!(param(&project, 0x10, 0), Kind::I32);
+    assert_eq!(param(&project, 0x40, 0), Kind::F32);
+    assert_eq!(param(&project, 0x30, 0), Kind::Unknown);
+}

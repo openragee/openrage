@@ -420,3 +420,76 @@ fn a_constant_passed_through_a_slot_is_written_as_the_kind_its_whole_line_states
     assert_eq!(passed_through_slots(&f), [vec![(Kind::F32, half)]]);
     assert_eq!(done.consts, 1);
 }
+
+/// Puts a value of several cells whose count the code does not say in place of the first argument of each call of the function at 0x20.
+fn first_of_unsaid_cells(f: &mut cfg::Function) {
+    let wide = Var::Local(3);
+    f.head.vars.insert(wide, VarInfo::new(Width::Cells));
+    for block in &mut f.cfg.blocks {
+        for stmt in &mut block.stmts {
+            stmt.each_expr_mut(&mut |top| {
+                top.walk_mut(&mut |e| {
+                    if let Expr::Call {
+                        callee: Callee::Local { at: 0x20, .. },
+                        args,
+                        ..
+                    } = e
+                    {
+                        if let Some(first) = args.first_mut() {
+                            *first = Expr::Var(wide);
+                        }
+                    }
+                });
+            });
+        }
+    }
+}
+
+#[test]
+fn an_argument_after_one_of_cells_not_said_is_matched_back_from_the_last_parameter() {
+    let of = |kind: Kind| Param { kind, cells: 1 };
+    let body = "func_000020(p0, 0x3F000000); return;";
+    let mut f = lowered("void", body);
+    first_of_unsaid_cells(&mut f);
+    let was = passed(&f);
+    // The first argument fills the first two cells: the second the third, a `float`.
+    let three = vec![of(Kind::Unknown), of(Kind::Unknown), of(Kind::F32)];
+    let done = apply(&mut f, &project(three, 0, Kind::Unknown));
+    let half = u64::from(0.5f32.to_bits());
+    assert_eq!(passed(&f), [vec![(Kind::F32, half)]]);
+    assert_eq!(done.consts, 1);
+
+    // One cell is too few for both arguments: nothing says where the second lands.
+    let mut f = lowered("void", body);
+    first_of_unsaid_cells(&mut f);
+    let done = apply(&mut f, &project(vec![of(Kind::F32)], 0, Kind::Unknown));
+    assert_eq!((passed(&f), done.consts), (was, 0));
+}
+
+#[test]
+fn a_constant_of_one_bit_written_as_a_shift_is_a_float_where_its_bits_are_ones() {
+    let one_bit = |count: i32| {
+        let one = Expr::Const(Const {
+            bits: 1,
+            kind: Kind::U64,
+        });
+        Expr::binary(
+            BinOp::Shl,
+            one,
+            Expr::cast(Scalar::I32, Expr::Const(Const::i32(count))),
+        )
+    };
+    let mut two = one_bit(30);
+    assert_eq!(written_as(&mut two, &Kind::F32, 0), 1);
+    assert_eq!(two, Expr::Const(Const::f32(2.0)));
+    // Eight is a denormal, no float a source holds; and no other kind takes a shift.
+    let mut eight = one_bit(3);
+    assert_eq!(written_as(&mut eight, &Kind::F32, 0), 0);
+    assert_eq!(eight, one_bit(3));
+    let mut one = one_bit(0);
+    assert_eq!(written_as(&mut one, &Kind::Bool, 0), 0);
+    assert_eq!(one, one_bit(0));
+    // A count past 31 is not taken.
+    let mut far = one_bit(62);
+    assert_eq!(written_as(&mut far, &Kind::F32, 0), 0);
+}

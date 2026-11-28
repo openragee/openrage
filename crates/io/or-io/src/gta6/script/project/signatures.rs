@@ -3,7 +3,7 @@
 //!
 //! A result's kind is stated only where every cell the function can hand back is widened as that
 //! kind, so that reading the result as that kind says nothing. A parameter's kind is how the
-//! function reads the cell, or how the functions it only passes the cell on to read it.
+//! function reads the cell, and how the functions it passes the cell on to read it.
 //!
 //! Then the calls say what a function's own code does not: a result of constants alone takes the
 //! kind every use of it reads, where each constant is a value of that kind; a parameter nothing
@@ -158,6 +158,7 @@ pub fn of_function_read(project: &mut Project, f: &cfg::Function, first: FirstRe
     let copied = copied_params(f);
     let mut params = Vec::new();
     let mut waiting = BTreeSet::new();
+    let mut untyped = BTreeSet::new();
     let mut cell = 0;
     while cell < head.params {
         if let Some((cells, handle)) = groups.get(&cell).copied() {
@@ -182,6 +183,11 @@ pub fn of_function_read(project: &mut Project, f: &cfg::Function, first: FirstRe
         let passed = body.cells.get(cell as usize).is_some_and(Cell::only_passed);
         if kind == Kind::Unknown && passed {
             waiting.insert(cell);
+        }
+        let info = head.vars.get(&Var::Param(cell));
+        let one = info.is_none_or(|info| info.width == Width::Cell);
+        if kind == Kind::Unknown && one && !changed.contains(&cell) {
+            untyped.insert(cell);
         }
         params.push(Param { kind, cells: 1 });
         cell += 1;
@@ -208,6 +214,11 @@ pub fn of_function_read(project: &mut Project, f: &cfg::Function, first: FirstRe
         .filter(|(n, cell)| cell.mentions == 0 && !reached(*n))
         .map(|(n, _)| n)
         .collect();
+    untyped.retain(|n| !reached(*n));
+    let counts: Vec<(u32, u32)> = (body.cells.iter())
+        .map(|cell| (cell.mentions, cell.passed))
+        .collect();
+    open.alone = sites::read_alone(f, &untyped, &counts);
     let sites = Sites::of(f, &reader);
     for (native, usage) in &sites.natives {
         *project.native_uses.entry(*native).or_insert(true) &= *usage == Usage::Truth;
@@ -269,10 +280,13 @@ pub fn settle(project: &mut Project) {
             open.insert(*key, waits);
         }
     }
+    // ⚠ Before any kind the calls agree on: those say what a cell holds, these how it is read.
+    shared::alone(project, &open);
     let shared = Shared::of(project, &open);
     results(project, &open, &shared);
     shared::truths(project, &open, &shared);
     parameters(project, &open);
+    shared::alone(project, &open);
     shared::passed(project, &open, &shared);
     shared::overridden(project, &shared);
     shared::slot_results(project, &shared);
@@ -471,6 +485,9 @@ struct Open {
     /// The virtual slots a call through which the function returns, whatever else it returns.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     handed_slots: Vec<Slot>,
+    /// Each parameter cell nothing types that the function reads only as 32 bits of one kind, besides passing it whole to functions of a program: the cell and that kind.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    alone: Vec<(u32, Kind)>,
 }
 
 /// A result one `return` hands on as its own.

@@ -14,7 +14,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::gta6::script::cfg;
 use crate::gta6::script::ir::{
-    BinOp, Callee, Expr, FunctionKey, Kind, Scalar, Stmt, TypeKey, UnOp, Var, VarInfo, Width,
+    BinOp, Callee, Const, Expr, FunctionKey, Head, Kind, Scalar, Stmt, TypeKey, UnOp, Var, VarInfo,
+    Width,
 };
 use crate::gta6::script::print::cells_of;
 use crate::gta6::script::project::signatures::{float_bits, key_of, param_at, passed_on, settled};
@@ -162,14 +163,11 @@ pub(crate) fn passed_constants(f: &mut cfg::Function, project: &Project) -> usiz
             let Some(params) = parameters_of(program, callee, project) else {
                 return;
             };
-            // The cell of the callee's parameters each argument starts at, while the arguments before it say their cells.
-            let mut at = Some(0u32);
-            for arg in args.iter_mut() {
-                let Some(cell) = at else {
-                    break;
-                };
-                at = cells_of(arg, head).and_then(|cells| cell.checked_add(cells));
-                if let Some(kind) = starting(params, cell).and_then(one_kind) {
+            let total = (params.iter()).try_fold(0u32, |sum, param| sum.checked_add(param.cells));
+            let begins = starts(args.as_slice(), head, total);
+            for (arg, start) in args.iter_mut().zip(begins) {
+                let param = start.and_then(|cell| starting(params, cell));
+                if let Some(kind) = param.and_then(one_kind) {
                     written += written_as(arg, kind, 0);
                 }
             }
@@ -196,6 +194,92 @@ fn parameters_of<'p>(program: u32, callee: &Callee, project: &'p Project) -> Opt
     settled(held).then_some(held.params.as_slice())
 }
 
+/// The cell of the callee's parameters each argument starts at, where it is known: from the first on while the arguments before it say their cells, and back from the last of `total` cells while those after it do.
+// ⚠ A call's arguments fill every parameter cell of its callee, so the last ends at the last
+// cell; the count back stands only where the cells left before it hold a cell, at least, of
+// each argument from the first whose cells are not said to the last.
+fn starts(args: &[Expr], head: &Head, total: Option<u32>) -> Vec<Option<u32>> {
+    let cells: Vec<Option<u32>> = args.iter().map(|arg| cells_of(arg, head)).collect();
+    let mut starts = Vec::with_capacity(cells.len());
+    let mut at = Some(0u32);
+    for held in &cells {
+        starts.push(at);
+        at = at.zip(*held).and_then(|(at, held)| at.checked_add(held));
+    }
+    let first = cells.iter().position(Option::is_none);
+    let last = cells.iter().rposition(Option::is_none);
+    let (Some(total), Some(first), Some(last)) = (total, first, last) else {
+        return starts;
+    };
+    let front = starts.get(first).copied().flatten();
+    for (n, start) in back_from(&cells, first, last, front, total).unwrap_or_default() {
+        if let Some(slot) = starts.get_mut(n) {
+            *slot = Some(start);
+        }
+    }
+    starts
+}
+
+/// Where each argument after `last` starts, counted back from `total`, where what is left before them holds the arguments from `first` to `last` after the cell `front` they start at.
+fn back_from(
+    cells: &[Option<u32>],
+    first: usize,
+    last: usize,
+    front: Option<u32>,
+    total: u32,
+) -> Option<Vec<(usize, u32)>> {
+    let mut end = total;
+    let mut back = Vec::new();
+    for n in (last + 1..cells.len()).rev() {
+        let held = cells.get(n).copied().flatten()?;
+        end = end.checked_sub(held)?;
+        back.push((n, end));
+    }
+    let between = (cells.get(first..=last)?.iter())
+        .try_fold(0u32, |sum, held| sum.checked_add(held.unwrap_or(1)))?;
+    (front?.checked_add(between)? <= end).then_some(back)
+}
+
+/// The cell a shift of two constants makes, where its count is below 32.
+// ⚠ As the VM shifts: the value at the operator's type, by the low 32 bits of the count.
+fn shifted(e: &Expr) -> Option<u64> {
+    let Expr::Binary {
+        op: BinOp::Shl,
+        at,
+        l,
+        r,
+    } = e
+    else {
+        return None;
+    };
+    let value = constant_cell(l)?;
+    let count = constant_cell(r)? as u32;
+    if count >= 32 {
+        return None;
+    }
+    match at {
+        Kind::I32 => Some((value as i32).wrapping_shl(count) as i64 as u64),
+        Kind::U32 => Some(u64::from((value as u32).wrapping_shl(count))),
+        Kind::I64 | Kind::U64 => Some(value.wrapping_shl(count)),
+        _ => None,
+    }
+}
+
+/// The cell of an integer constant, or of one read as an `int`.
+fn constant_cell(e: &Expr) -> Option<u64> {
+    match e {
+        Expr::Const(c) if c.kind.is_integer() => Some(c.bits),
+        Expr::Cast {
+            to: Scalar::I32,
+            e: inner,
+        } => match &**inner {
+            Expr::Const(c) if c.kind.is_integer() => Some(c.bits as i32 as i64 as u64),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// The parameter of `params` that starts at cell `cell` of a function's parameters.
 fn starting(params: &[Param], cell: u32) -> Option<&Param> {
     let mut at = 0u32;
@@ -213,8 +297,18 @@ fn starting(params: &[Param], cell: u32) -> Option<&Param> {
 
 /// Gives the constants an argument comes to the kind `kind`, where each is a value of it; returns how many took it.
 // A `float` is zero or the bits of a float a source would hold, a `bool` zero or one: any other
-// integer stays as it is written, whatever the parameter is.
+// integer stays as it is written, whatever the parameter is. A constant of one bit, which a
+// compiler writes as a shift, is the cell the shift makes.
 fn written_as(e: &mut Expr, kind: &Kind, depth: u32) -> usize {
+    if *kind == Kind::F32 {
+        if let Some(bits) = shifted(e).filter(|bits| float_bits(*bits, true)) {
+            *e = Expr::Const(Const {
+                bits,
+                kind: Kind::F32,
+            });
+            return 1;
+        }
+    }
     match e {
         Expr::Const(c) => {
             let fits = match kind {

@@ -158,3 +158,4 @@ field_hash64	field_hash32	name	evidence
 0xFA2658CF7FD88529	0x50DD075F	_radius	word search
 0xFA2D7264E64B060A	0xF22C0512	ContentId	strings list, whole names
 0xFFEC32F484359157	0x4DCD014F	t14	strings list, single parts
+0x18FEBF4628AF47BF	0x97AB9935	_faction	word search: GTA V identifiers

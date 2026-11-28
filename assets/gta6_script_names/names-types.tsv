@@ -250,3 +250,1138 @@ type_hash64	type_hash32	name	evidence
 0xFBF144981B24AEE2	0xCBD10DE1	IsActivityQuery	word search: one word + a learned last word (101)
 0xFC074B84560100A3	0xD0BB18ED	IOnConditionalUpdate	word search: I + three words (top 900)
 0xFD49CBE32EAC8BD4	0xCDB85C02	EVENT_SCENARIO_DESTROY_PROP	strings list, whole names
+0x0012BF53C2BD0655	0x002FC7FC	System.Collections.Generic.ICollection`1<ulong>	word search: generic types and GTA V identifiers, both hashes
+0x001D5665DCE280A7	0x6375CE37	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter<double>	word search: generic types and GTA V identifiers, both hashes
+0x00367721D1CA393E	0x01997AE0	System.Collections.Generic.ICollection`1<Vector4>	word search: generic types and GTA V identifiers, both hashes
+0x012316243AC66ED5	0x8E324E30	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<HashString, bool>	word search: generic types and GTA V identifiers, both hashes
+0x01A7734F0F40F4AB	0x9C0A808D	System.Collections.Generic.IList`1<MediaEntryTags>	word search: generic types and GTA V identifiers, both hashes
+0x01CD0C001A5794D7	0xF149C3C8	System.Collections.Generic.ICollection`1<IncludedKit>	word search: generic types and GTA V identifiers, both hashes
+0x021502230DB77A9B	0x9240B8D3	System.Collections.Generic.IReadOnlyCollection`1<InventoryCopyItem>	word search: generic types and GTA V identifiers, both hashes
+0x0219054CFC49B26D	0x6AB935C4	System.Collections.Generic.IEnumerable`1<InventoryItemData>	word search: generic types and GTA V identifiers, both hashes
+0x0228FF5D978BDBAB	0x20E3D8D2	System.Collections.Generic.IReadOnlyCollection`1<UnlockedTutorialSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x0257983E611A216F	0x410D19B3	System.Collections.Generic.IReadOnlyList`1<Object>	word search: generic types and GTA V identifiers, both hashes
+0x0259AA2C1CA67ADA	0xA92833A8	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<int, TxdHashString>	word search: generic types and GTA V identifiers, both hashes
+0x02722D112280ABD9	0x9974EAF8	System.Collections.Generic.IEnumerator`1<System.ValueTuple`2<InventoryItemData, float>>	word search: generic types and GTA V identifiers, both hashes
+0x02C6924FDD9BEE8F	0xE4708969	System.Collections.Generic.Dictionary`2<int, int>	word search: generic types and GTA V identifiers, both hashes
+0x02D6B3FF2F985D58	0x51E52792	System.Collections.Generic.KeyValuePair`2<float, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0x02ED0C39706B4A27	0xD1D9403A	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<InventoryItemGuid, InventoryItemGuid>>	word search: generic types and GTA V identifiers, both hashes
+0x03948134DC8B4AB7	0xF1B83534	System.Collections.Generic.Dictionary`2<int, Object>	word search: generic types and GTA V identifiers, both hashes
+0x0405116B2B2E03B5	0xB73BDFBD	System.Collections.Generic.ICollection`1<Object>	word search: generic types and GTA V identifiers, both hashes
+0x042C932852434D73	0x85C0AA81	System.Collections.Generic.IReadOnlyCollection`1<System.Type>	word search: generic types and GTA V identifiers, both hashes
+0x04516A6975BB1F60	0xA47E3A25	System.Collections.Generic.IEnumerable`1<ShopOverrideSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x047D2A3B8C8DC01B	0xB1730220	System.Collections.Generic.IReadOnlyCollection`1<AIEventType>	word search: generic types and GTA V identifiers, both hashes
+0x04A8A25E23A77DE9	0x5ED4A962	System.Collections.Generic.ICollection`1<System.ValueTuple`2<int, bool>>	word search: generic types and GTA V identifiers, both hashes
+0x05301E798D7E1CF1	0x16089C8A	System.Collections.Generic.IList`1<FlowCommandSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x058A6A4599D58C98	0x9E49D1EA	System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1<AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0x05933697A81ED13C	0x64561DD8	System.Collections.Generic.Dictionary`2+Enumerator<HashString, bool>	word search: generic types and GTA V identifiers, both hashes
+0x059725F3773BA5FE	0xC52B6E6C	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<float, int>>	word search: generic types and GTA V identifiers, both hashes
+0x066D2CB45AF64DDD	0xE30E6270	System.Collections.Generic.IReadOnlyCollection`1<HeatRequestSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x0696519B4DB78F70	0x2BF38E8B	System.Collections.Generic.ICollection`1<System.ValueTuple`2<uint, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x070D92EED85D0F9B	0xABA16292	System.Collections.Generic.IEnumerator`1<ExhaustedTutorialSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x07182BA268556FB2	0xBB30CFB8	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<HashString, float>	word search: generic types and GTA V identifiers, both hashes
+0x07978A5C213D2797	0xDEF9A63B	System.Collections.Generic.IEnumerator`1<System.Type>	word search: generic types and GTA V identifiers, both hashes
+0x07BA5DF141FBD8AE	0xC10202C3	System.Collections.Generic.IList`1<UnlockedTutorialSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x086967A9B82BAD48	0x36461006	System.Nullable`1<uint>	word search: generic types and GTA V identifiers, both hashes
+0x0881C4561DA566F7	0x97597F36	System.Collections.Generic.IEnumerator`1<HeatRequestSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x0896D691CB6C4D4B	0xECF0E73B	System.Collections.Generic.IEnumerable`1<System.ValueTuple`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x08A36BF1A2AA2477	0xDD6A61D3	System.Collections.Generic.IReadOnlyList`1<MediaEntryTags>	word search: generic types and GTA V identifiers, both hashes
+0x0944E28F4C16080E	0xC26AA362	System.Collections.Generic.IDictionary`2<HashString, bool>	word search: generic types and GTA V identifiers, both hashes
+0x0968F78D82CA0890	0x655688EC	System.Collections.Generic.Dictionary`2+ValueCollection<ulong, bool>	word search: generic types and GTA V identifiers, both hashes
+0x0990EB24D12CEDFB	0x50FFEF45	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<HashString, System.Guid>>	word search: generic types and GTA V identifiers, both hashes
+0x09C0B8C887EC6C43	0x64346CFE	System.Collections.Generic.Dictionary`2<int, AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0x09DEE5ABF2D749AD	0x9A729D7D	System.Collections.Generic.IList`1<System.ValueTuple`2<IncludedKit, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x09ED1D55B9DCDF89	0xBFD67BE2	System.Collections.Generic.IEnumerable`1<System.ValueTuple`2<uint, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x0AF68BF3F68BE948	0xD20AB534	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<HashString, Object>>	word search: generic types and GTA V identifiers, both hashes
+0x0AFDA80508C8712C	0x1681E392	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<System.Guid, int>>	word search: generic types and GTA V identifiers, both hashes
+0x0B32F6CB7A84C062	0x8A17C0B6	System.Collections.Generic.IReadOnlyList`1<AmbientObjectiveSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x0B752907CC794528	0x1E3D0828	System.Collections.Generic.IEnumerable`1<sbyte>	word search: generic types and GTA V identifiers, both hashes
+0x0B92BF27139D9381	0xC23F4E88	System.Collections.Generic.IEnumerator`1<char>	word search: generic types and GTA V identifiers, both hashes
+0x0B940374C06ACB55	0x0CDD6B91	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<InventoryItemGuid, InventoryItemGuid>>	word search: generic types and GTA V identifiers, both hashes
+0x0BA407AB82B1F6DD	0x23B7DD4F	System.Collections.Generic.IEnumerable`1<TxdHashString>	word search: generic types and GTA V identifiers, both hashes
+0x0BA73AD6734DAC3F	0x8A72C999	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<System.Guid, sbyte>>	word search: generic types and GTA V identifiers, both hashes
+0x0BC901F6DF18D010	0x66C35EC5	System.Collections.Generic.ICollection`1<System.ValueTuple`2<int, float>>	word search: generic types and GTA V identifiers, both hashes
+0x0BF2D70534EA1130	0x989A1D19	System.Nullable`1<InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0x0BF5471BEDC646B1	0x5A9186D5	System.Collections.Generic.ICollection`1<System.Threading.Tasks.Task`1<ArchetypeHashString>>	word search: generic types and GTA V identifiers, both hashes
+0x0C1A64F76F14FFBD	0x79105876	System.Collections.Generic.IReadOnlyCollection`1<Vector4>	word search: generic types and GTA V identifiers, both hashes
+0x0C2BBC391EDFBBA0	0x263D4029	System.Collections.Generic.Dictionary`2+ValueCollection<InventoryItemGuid, uint>	word search: generic types and GTA V identifiers, both hashes
+0x0C77E3FCCA633B90	0xD9386FB7	System.Collections.Generic.IList`1<long>	word search: generic types and GTA V identifiers, both hashes
+0x0C7E4CC563239C3B	0x72D07729	System.Collections.Generic.IEnumerable`1<MediaEntryTags>	word search: generic types and GTA V identifiers, both hashes
+0x0C886602831E4704	0xB76950FE	System.Collections.Generic.Dictionary`2+Enumerator<HashString, int>	word search: generic types and GTA V identifiers, both hashes
+0x0C8A18CBAB1819D2	0x6FA87A2F	System.Collections.Generic.IDictionary`2<GamerHandle, System.Threading.Tasks.TaskCompletionSource`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0x0CCE6B8BF31291B8	0xE27C033B	System.Collections.Generic.IList`1<int>	word search: generic types and GTA V identifiers, both hashes
+0x0CD5B24A1C7B8FE9	0x7C675BB0	System.Collections.Generic.IDictionary`2<HashString, HashString>	word search: generic types and GTA V identifiers, both hashes
+0x0DC725F8F7496294	0xA4AAC104	System.Collections.Generic.IEnumerator`1<System.ValueTuple`2<int, bool>>	word search: generic types and GTA V identifiers, both hashes
+0x0E1DB33D4F5433DB	0x346E6FFD	System.Collections.Generic.Dictionary`2+Enumerator<float, int>	word search: generic types and GTA V identifiers, both hashes
+0x0E27879AB88DC3FD	0xE7F67C81	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<float, int>>	word search: generic types and GTA V identifiers, both hashes
+0x0E44C2FDB2AF6800	0x41B65025	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<HashString, System.Collections.Generic.KeyValuePair`2<HashString, HashString>>>	word search: generic types and GTA V identifiers, both hashes
+0x0E67735E382E67C8	0xD58F35D1	System.Collections.Generic.Dictionary`2+KeyCollection<HashString, float>	word search: generic types and GTA V identifiers, both hashes
+0x0F0475011BB2EC65	0xBBE62630	System.Collections.Generic.Dictionary`2+Enumerator<Vector3, bool>	word search: generic types and GTA V identifiers, both hashes
+0x0F2BADD97DE226BD	0x3CE425D8	System.Collections.Generic.IReadOnlyList`1<float>	word search: generic types and GTA V identifiers, both hashes
+0x0F42DBF991981C49	0x485E7827	System.Collections.Generic.IDictionary`2<HashString, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0x0F5A3F49B6DE5EEA	0x3CA523E8	System.Collections.Generic.IEnumerator`1<System.ValueTuple`2<InventoryItemData, uint>>	word search: generic types and GTA V identifiers, both hashes
+0x0F717FE45844FA57	0x9224BA5F	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1<uint>	word search: generic types and GTA V identifiers, both hashes
+0x0F777953B2D93A89	0xF1D755DF	System.Collections.Generic.IReadOnlyDictionary`2<Vector3, bool>	word search: generic types and GTA V identifiers, both hashes
+0x0F7AADE7541129F5	0x12BDFC15	System.Threading.Tasks.Task`1<uint>	word search: generic types and GTA V identifiers, both hashes
+0x0F88A0B6ED32CF8A	0xF2DE8CAF	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<HashString, Object>>	word search: generic types and GTA V identifiers, both hashes
+0x1007A81EE0F27696	0x0938B66E	System.Collections.Generic.IEnumerator`1<System.ValueTuple`2<HashString, int>>	word search: generic types and GTA V identifiers, both hashes
+0x103D6B9D7EB8899C	0x145E1989	System.Collections.Generic.IDictionary`2<HashString, System.Collections.Generic.Dictionary`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x10693DFA05658632	0xB70C592D	System.Collections.Generic.IEnumerable`1<EVENT_ENTITY_DAMAGED>	word search: generic types and GTA V identifiers, both hashes
+0x1081650D1BA28CEB	0x820E2AFB	System.Collections.Generic.IReadOnlyCollection`1<byte>	word search: generic types and GTA V identifiers, both hashes
+0x10B9433902F616F4	0xB4426BDA	System.Runtime.CompilerServices.TaskAwaiter`1<long>	word search: generic types and GTA V identifiers, both hashes
+0x115D510F16E509AC	0x65183BC8	System.Collections.Generic.KeyValuePair`2<HashString, int>	word search: generic types and GTA V identifiers, both hashes
+0x11D56478468410CD	0xC9B32D3E	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<int, TxdHashString>>	word search: generic types and GTA V identifiers, both hashes
+0x1252EF1D98DAD8CD	0x13FE10AC	System.Collections.Generic.KeyValuePair`2<TxdHashString, System.ValueTuple`2<int, bool>>	word search: generic types and GTA V identifiers, both hashes
+0x12721153EC3C02B0	0x1F083D0A	System.Collections.Generic.ICollection`1<InventoryItemData>	word search: generic types and GTA V identifiers, both hashes
+0x12784B57DD10D393	0xCACE07BA	System.ValueTuple`2<HashString, bool>	word search: generic types and GTA V identifiers, both hashes
+0x12861156B133A24A	0xD8732496	System.Runtime.CompilerServices.TaskAwaiter`1<byte>	word search: generic types and GTA V identifiers, both hashes
+0x12A9C9740F65171B	0x4D2F1452	System.Collections.Generic.KeyValuePair`2<HashString, HashString>	word search: generic types and GTA V identifiers, both hashes
+0x12AE65E8133E8A1C	0x6AE46309	System.Collections.Generic.IEnumerator`1<BundlePathEntry>	word search: generic types and GTA V identifiers, both hashes
+0x12D18A5D4EFFF47E	0x2F9D6D53	System.Collections.Generic.IList`1<HeatRequestSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x131CDE8B3EAEB2A9	0x9C15CDCF	System.Collections.Generic.IList`1<Object>	word search: generic types and GTA V identifiers, both hashes
+0x136DC3EF3790604A	0x281968A7	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1<short>	word search: generic types and GTA V identifiers, both hashes
+0x138634D990EE6492	0x03722034	System.Collections.Generic.IReadOnlyList`1<AmbientVehicleSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x13B152E250736A79	0x6288BE72	System.ValueTuple`2<System.Guid, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0x13D695FC767FD5EE	0x26BAE875	System.Collections.Generic.IEnumerable`1<System.Enum>	word search: generic types and GTA V identifiers, both hashes
+0x13E2F5A27581F89F	0x211DBEA0	System.Collections.Generic.IReadOnlyList`1<HeatRequestSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x13F37E95B6AC4FEC	0x8D895DEF	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<int, ulong>>	word search: generic types and GTA V identifiers, both hashes
+0x13FA140457774FAC	0x68FDC122	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<int, Object>>	word search: generic types and GTA V identifiers, both hashes
+0x144B0BF56C236FD0	0xD467F300	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<HashString, Object>>	word search: generic types and GTA V identifiers, both hashes
+0x14AD55A74F16960F	0x5E9CC1CF	System.Collections.Generic.IEnumerator`1<Vector4>	word search: generic types and GTA V identifiers, both hashes
+0x14C42749A1F5C6EC	0xCFE19086	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<HashString, System.Collections.Generic.Dictionary`2<HashString, HashString>>>	word search: generic types and GTA V identifiers, both hashes
+0x14C4A030C2A07A3C	0x6A6441AB	System.Collections.Generic.Dictionary`2+Enumerator<HashString, System.Guid>	word search: generic types and GTA V identifiers, both hashes
+0x150E19F0B3273507	0xE6FCF589	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x155B6CF1EF62E76C	0x8B3D34A4	System.Collections.Generic.IDictionary`2<System.Enum, Vector2>	word search: generic types and GTA V identifiers, both hashes
+0x157D1E8EBDE5D47F	0x538AEC9D	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<int, InventoryItemGuid>>	word search: generic types and GTA V identifiers, both hashes
+0x1587805751449A82	0x8BB9FBD0	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<System.Type, System.Type>>	word search: generic types and GTA V identifiers, both hashes
+0x15B2BA6BF79DC142	0xCAEB45BD	System.Collections.Generic.IEnumerator`1<BasketballHoop>	word search: generic types and GTA V identifiers, both hashes
+0x15EB0D2CA21C8028	0x86E92CE8	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<HashString, float>>	word search: generic types and GTA V identifiers, both hashes
+0x16049AD8DC9488A5	0x5BB57327	System.Collections.Generic.Dictionary`2+Enumerator<System.Type, Object>	word search: generic types and GTA V identifiers, both hashes
+0x16715249B59D455C	0x76DE8BB9	System.Collections.Generic.IReadOnlyList`1<FlowNodeSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x16742D9FBDA1A021	0x2A109EB7	System.Runtime.CompilerServices.TaskAwaiter`1<System.Guid>	word search: generic types and GTA V identifiers, both hashes
+0x16E31E525D26D7FC	0x75A185E0	System.Nullable`1<EVENT_ENTITY_INTERACTION_COMPLETE>	word search: generic types and GTA V identifiers, both hashes
+0x16F005A924C1EA35	0x6276B637	System.Collections.Generic.Dictionary`2+Enumerator<System.Guid, bool>	word search: generic types and GTA V identifiers, both hashes
+0x171C4F9EB9FDFC3C	0x40C87CF4	System.Collections.Generic.Dictionary`2+Enumerator<int, HashString>	word search: generic types and GTA V identifiers, both hashes
+0x17264908C03B63D0	0x8958A58C	System.Collections.Generic.IDictionary`2<int, System.ValueTuple`2<int, int>>	word search: generic types and GTA V identifiers, both hashes
+0x1753A4A05EB4D3DD	0x8879559A	System.ValueTuple`2<Vector3, float>	word search: generic types and GTA V identifiers, both hashes
+0x177517F5A7E6B405	0x5CF57AB9	System.Collections.Generic.IReadOnlyDictionary`2<InventoryItemData, int>	word search: generic types and GTA V identifiers, both hashes
+0x1778E885F036BCE3	0x4E45DF49	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<System.Enum, int>	word search: generic types and GTA V identifiers, both hashes
+0x17966F56856B611D	0xADE7C7E0	System.ValueTuple`2<ILocalisedString, ILocalisedString>	word search: generic types and GTA V identifiers, both hashes
+0x180ACDE1957B82B8	0xB5324C08	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<HashString, System.Threading.Tasks.Task`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0x184D1023974D28BB	0x013CC92C	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<int, Vector3>>	word search: generic types and GTA V identifiers, both hashes
+0x1922FF3BBEB81D9E	0x04C5E374	System.Collections.Generic.IList`1<ExhaustedActionSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x1967A05026FA6E4D	0x6A36C093	System.Collections.Generic.IReadOnlyCollection`1<CarriableEntrySaveData>	word search: generic types and GTA V identifiers, both hashes
+0x19BCA74361639945	0xB67AD257	System.Collections.Generic.KeyValuePair`2<HashString, System.Threading.Tasks.Task`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0x1A4F750EE8529D50	0x15956C61	System.Collections.Generic.Dictionary`2+KeyCollection<HashString, System.Collections.Generic.KeyValuePair`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x1A8C6E130D09EF55	0x77B2A115	System.Collections.Generic.IReadOnlyList`1<GamerHandle>	word search: generic types and GTA V identifiers, both hashes
+0x1AB6EFF625F27562	0x3E505CE9	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<InventoryItemData, int>	word search: generic types and GTA V identifiers, both hashes
+0x1ACA5E4AB378F7F0	0x744DC517	System.Collections.Generic.IReadOnlyDictionary`2<TxdHashString, System.ValueTuple`2<int, bool>>	word search: generic types and GTA V identifiers, both hashes
+0x1AF5C96448EF841F	0xFC6BF932	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<int, InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0x1B2B311506ABD4CF	0xFEE28EB5	System.Collections.Generic.ICollection`1<TutorialEscalationSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x1B6040DDFBBE604D	0xA9DD79C7	System.Collections.Generic.Dictionary`2<HashString, AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0x1B67303233B02D05	0x944BBE4A	System.Collections.Generic.Dictionary`2+Enumerator<int, bool>	word search: generic types and GTA V identifiers, both hashes
+0x1BB635BEEE9868BB	0xE7D0C44E	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1<ArchetypeHashString>	word search: generic types and GTA V identifiers, both hashes
+0x1C0064A4A010EE38	0x387BAA2F	System.Collections.Generic.IReadOnlyDictionary`2<Vector3, int>	word search: generic types and GTA V identifiers, both hashes
+0x1C0B05ADE6DAAAB1	0xBCC0621F	System.Collections.Generic.IEnumerator`1<sbyte>	word search: generic types and GTA V identifiers, both hashes
+0x1C420CDB3C268BDF	0xAC95C471	System.Collections.Generic.IDictionary`2<int, AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0x1C96CD3FBD94C20F	0x42BCFE43	System.ValueTuple`2<System.Type, Object>	word search: generic types and GTA V identifiers, both hashes
+0x1C9887DF898D0756	0xD07EAA30	System.Collections.Generic.IDictionary`2<HashString, int>	word search: generic types and GTA V identifiers, both hashes
+0x1D156274FD3443BA	0x706A12FD	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<string, string>>	word search: generic types and GTA V identifiers, both hashes
+0x1D15FCBABA90925B	0x94608E2A	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<int, ulong>	word search: generic types and GTA V identifiers, both hashes
+0x1D337D217F2C9371	0x300A5832	System.Collections.Generic.IReadOnlyCollection`1<System.ValueTuple`2<HashString, bool>>	word search: generic types and GTA V identifiers, both hashes
+0x1D7FAF8D1DEDC22B	0xE62E3082	System.Collections.Generic.IReadOnlyList`1<ItemKitData>	word search: generic types and GTA V identifiers, both hashes
+0x1DF1364D403ADCAB	0x37219F4E	System.Collections.Generic.IEnumerable`1<AIEventType>	word search: generic types and GTA V identifiers, both hashes
+0x1E399684105BEAF4	0xB5E9BF57	System.Collections.Generic.IList`1<System.ValueTuple`2<InventoryItemData, uint>>	word search: generic types and GTA V identifiers, both hashes
+0x1E58FCCB2538267A	0xC15EE814	System.Collections.Generic.ICollection`1<System.Enum>	word search: generic types and GTA V identifiers, both hashes
+0x1E6126A349E4B5A8	0x9102BDC7	System.Collections.Generic.IDictionary`2<int, Object>	word search: generic types and GTA V identifiers, both hashes
+0x1EAF4019753CC1BA	0x6AF67CB6	System.Collections.Generic.IEnumerable`1<ushort>	word search: generic types and GTA V identifiers, both hashes
+0x1EE9D9A8F696BE50	0xDE8F3EAB	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<int, TxdHashString>>	word search: generic types and GTA V identifiers, both hashes
+0x1F2D1FC0A2732581	0x643BA7E4	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<HashString, System.Collections.Generic.Dictionary`2<HashString, HashString>>>	word search: generic types and GTA V identifiers, both hashes
+0x1F6B84D8C332EBD0	0x231AFBE5	System.Threading.Tasks.TaskCompletionSource`1<byte>	word search: generic types and GTA V identifiers, both hashes
+0x1FC4E4824ED4DFE1	0x8F8C63DB	System.Collections.Generic.IReadOnlyList`1<LayoutLocation>	word search: generic types and GTA V identifiers, both hashes
+0x1FF0A7F97D51E4BD	0x4AF53615	System.Collections.Generic.Dictionary`2+KeyCollection<System.Enum, Vector2>	word search: generic types and GTA V identifiers, both hashes
+0x1FF3410AD653D25D	0x03B2A525	System.Collections.Generic.IReadOnlyCollection`1<char>	word search: generic types and GTA V identifiers, both hashes
+0x20B93F9FC7A7918B	0xD4882095	System.Collections.Generic.KeyValuePair`2<System.Guid, bool>	word search: generic types and GTA V identifiers, both hashes
+0x20C0A42830EC2A9E	0xD09047A7	System.Collections.Generic.KeyValuePair`2<TxdHashString, int>	word search: generic types and GTA V identifiers, both hashes
+0x215B88ACD7E6FB28	0x9FE181E8	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<System.Type, Object>>	word search: generic types and GTA V identifiers, both hashes
+0x21D89430B1FCCA4B	0x64FF3A8B	System.Collections.Generic.IList`1<InventoryCopyItem>	word search: generic types and GTA V identifiers, both hashes
+0x22075E5D690D8BC6	0x1EF9D6D5	System.Span`1<bool>	word search: generic types and GTA V identifiers, both hashes
+0x221F55BF9E389B3C	0x88838284	System.Collections.Generic.IEnumerable`1<int>	word search: generic types and GTA V identifiers, both hashes
+0x2253AD780B983051	0x5BC3FA75	System.Collections.Generic.Dictionary`2+ValueCollection<int, HashString>	word search: generic types and GTA V identifiers, both hashes
+0x22733A058D19265A	0x8D3212F5	System.Collections.Generic.IList`1<ItemEffectSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x2276D2B733680A5F	0xB17AA2D3	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<System.Guid, bool>>	word search: generic types and GTA V identifiers, both hashes
+0x233E111A561ADDA6	0x1530D2E2	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<HashString, System.Threading.Tasks.Task`1<bool>>>	word search: generic types and GTA V identifiers, both hashes
+0x23A1CAFE40495962	0x27F1BADB	System.Collections.Generic.Dictionary`2<HashString, System.Collections.Generic.Dictionary`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x23B8BE43DAA83EB3	0x6BA6140E	System.Collections.Generic.ICollection`1<AmbientObjectiveSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x23CE35B1F27FE788	0xD6FC0A37	System.Collections.Generic.IReadOnlyList`1<System.Threading.Tasks.Task`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0x23E584FB3029535E	0x9A644C31	System.Collections.Generic.IReadOnlyDictionary`2<int, TxdHashString>	word search: generic types and GTA V identifiers, both hashes
+0x23F05A3F0704DBED	0x0F73551A	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter<int>	word search: generic types and GTA V identifiers, both hashes
+0x241BE4C67AB1CC2A	0xB2A1E20F	System.Collections.Generic.IReadOnlyDictionary`2<InventoryItemGuid, InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0x2459680D3D5C2497	0x3C39C452	System.Collections.Generic.IEnumerable`1<System.ValueTuple`2<IncludedKit, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x256401951EDD8CB5	0xF0D99951	System.Collections.Generic.KeyValuePair`2<InventoryItemData, int>	word search: generic types and GTA V identifiers, both hashes
+0x25BCDD82C2A0A9D2	0x32DFCAAA	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<HashString, float>>	word search: generic types and GTA V identifiers, both hashes
+0x25F2F89058587EE5	0xF817A282	System.Collections.Generic.IReadOnlyList`1<AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0x2640A656511AFFA2	0x8E783115	System.Collections.Generic.IReadOnlyDictionary`2<System.Guid, bool>	word search: generic types and GTA V identifiers, both hashes
+0x26A11D6953D18709	0x31561BFB	System.Collections.Generic.Dictionary`2+ValueCollection<int, ulong>	word search: generic types and GTA V identifiers, both hashes
+0x26E9CE73DBD773EA	0x28529192	System.Collections.Generic.IEnumerable`1<CarriableEntrySaveData>	word search: generic types and GTA V identifiers, both hashes
+0x278C50D99F6A392E	0x2340C81A	System.Collections.Generic.ICollection`1<System.Guid>	word search: generic types and GTA V identifiers, both hashes
+0x27A227DED89BADBA	0xED6A1DBB	System.Collections.Generic.IList`1<Vector3>	word search: generic types and GTA V identifiers, both hashes
+0x27B64962622F149A	0x8ED19530	System.Collections.Generic.IList`1<System.ValueTuple`2<uint, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x27D2685978E0DA2B	0xF76B3145	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<System.Guid, int>>	word search: generic types and GTA V identifiers, both hashes
+0x27D7968135A583C3	0x85797C1A	System.Collections.Generic.IReadOnlyCollection`1<InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0x27FF844736F9D3FA	0x62CE1649	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<System.Enum, Vector2>>	word search: generic types and GTA V identifiers, both hashes
+0x2889CB875844AB12	0x8289D1E9	System.Span`1<Vector4>	word search: generic types and GTA V identifiers, both hashes
+0x2965DDCB9A13CABD	0x67145D34	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<System.Enum, HashString>	word search: generic types and GTA V identifiers, both hashes
+0x29C4A496BD36ECD8	0xC1464BF6	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<int, System.ValueTuple`2<int, int>>>	word search: generic types and GTA V identifiers, both hashes
+0x29DA9D2F0B9DF352	0xE31354E2	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<Vector3, int>>	word search: generic types and GTA V identifiers, both hashes
+0x2A4F2246F27D7C6B	0xB41AC8A3	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<float, int>>	word search: generic types and GTA V identifiers, both hashes
+0x2A557B8B625DD03C	0x3EA6501F	System.Collections.Generic.Dictionary`2+ValueCollection<int, AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0x2B0DC315F483C220	0x6F3E7585	System.Collections.Generic.IReadOnlyDictionary`2<System.Guid, sbyte>	word search: generic types and GTA V identifiers, both hashes
+0x2B214C0C344347E1	0xE45DB2E8	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<int, int>>	word search: generic types and GTA V identifiers, both hashes
+0x2B21C8F00C81800C	0x4FCA7421	System.Nullable`1<short>	word search: generic types and GTA V identifiers, both hashes
+0x2B259014B0107B21	0x4B702354	System.Collections.Generic.Dictionary`2+Enumerator<HashString, AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0x2B472494876F9BE7	0x22D594D9	System.Collections.Generic.Dictionary`2+Enumerator<HashString, System.Collections.Generic.KeyValuePair`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x2B9412B2724D0A16	0x794B9D10	System.Collections.Generic.IEnumerator`1<ExhaustedActionSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x2BD153AF744E4A15	0xC9D4371F	System.Collections.Generic.ICollection`1<System.ValueTuple`2<System.ValueTuple`2<ILocalisedString, ILocalisedString>, int>>	word search: generic types and GTA V identifiers, both hashes
+0x2BDFE3A2F09E3D9F	0xD91CA839	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.Dictionary`2<HashString, Object>>	word search: generic types and GTA V identifiers, both hashes
+0x2C7D80F3FC32F4D1	0xE53F8C06	System.Collections.Generic.IList`1<Vector4>	word search: generic types and GTA V identifiers, both hashes
+0x2CC98292BEE8CFEB	0x84509370	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<int, ulong>	word search: generic types and GTA V identifiers, both hashes
+0x2CFBFD626D11223A	0x5531217F	System.ValueTuple`2<HashString, HashString>	word search: generic types and GTA V identifiers, both hashes
+0x2D6F5C9B14C47B98	0xCED2750F	System.Collections.Generic.KeyValuePair`2<System.Guid, int>	word search: generic types and GTA V identifiers, both hashes
+0x2D7CDADB70E13754	0x726FAEA6	System.Collections.Generic.IEnumerable`1<long>	word search: generic types and GTA V identifiers, both hashes
+0x2D95C98C220212D2	0x9756A6FE	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<int, InventoryItemGuid>>	word search: generic types and GTA V identifiers, both hashes
+0x2DB485F8F8982D20	0xCA0FB1EC	System.Collections.Generic.IEnumerable`1<ItemKitData>	word search: generic types and GTA V identifiers, both hashes
+0x2DEDC011E4178E48	0x441EF88A	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<int, AnimScene>>	word search: generic types and GTA V identifiers, both hashes
+0x2E26EF7F227C0042	0x69C01800	System.Collections.Generic.Dictionary`2+ValueCollection<HashString, int>	word search: generic types and GTA V identifiers, both hashes
+0x2E2EF6A3F1B42610	0xA13D3EED	System.Collections.Generic.IReadOnlyCollection`1<System.Threading.Tasks.TaskCompletionSource`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0x2E74D1286913B982	0x021C110A	System.Collections.Generic.ICollection`1<System.ValueTuple`2<IncludedKit, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x2ED34CCE9CE43176	0xA621E865	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<float, Vector3>>	word search: generic types and GTA V identifiers, both hashes
+0x2EFCD77C2DBE49D6	0xAF774233	System.Runtime.CompilerServices.TaskAwaiter`1<float>	word search: generic types and GTA V identifiers, both hashes
+0x2F0364474C222B7C	0x57F41F88	System.Collections.Generic.IList`1<BasketballHoop>	word search: generic types and GTA V identifiers, both hashes
+0x2F0F7C5EA376EF3D	0xF9E9A51E	System.Collections.Generic.IList`1<FlowNodeSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x2F214781454DDD4C	0x3B60E357	System.Collections.Generic.IReadOnlyList`1<InventoryBundleAttributes>	word search: generic types and GTA V identifiers, both hashes
+0x2F3E9E1BA7FC59D7	0x439EAC51	System.Collections.Generic.Dictionary`2<System.Type, System.Type>	word search: generic types and GTA V identifiers, both hashes
+0x2F9BF68253C12829	0xA0531850	System.Runtime.CompilerServices.TaskAwaiter`1<ulong>	word search: generic types and GTA V identifiers, both hashes
+0x2FC8615C1C666DD1	0x5FAECA90	System.Collections.Generic.Dictionary`2+Enumerator<InventoryItemGuid, InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0x2FC8901C9F6F1249	0x6531AF3D	System.Runtime.CompilerServices.TaskAwaiter`1<uint>	word search: generic types and GTA V identifiers, both hashes
+0x30012F141E144C28	0xBD6B1A50	System.Collections.Generic.Dictionary`2+Enumerator<ulong, bool>	word search: generic types and GTA V identifiers, both hashes
+0x30C1DCE0656BA22E	0xD834A1B6	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<int, TxdHashString>>	word search: generic types and GTA V identifiers, both hashes
+0x30CA0D3A4C0C4A0E	0xA32F8709	System.Collections.Generic.KeyValuePair`2<InventoryItemGuid, InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0x311AD6BA475430A0	0xFCC6D7F5	System.Collections.Generic.IReadOnlyCollection`1<Object>	word search: generic types and GTA V identifiers, both hashes
+0x3173DE37B4D2366F	0x5E20AF48	System.Collections.Generic.Dictionary`2+Enumerator<System.Enum, HashString>	word search: generic types and GTA V identifiers, both hashes
+0x31CE74A0695BD959	0xD26C237D	System.Runtime.CompilerServices.TaskAwaiter`1<bool>	word search: generic types and GTA V identifiers, both hashes
+0x3277C9F7F3C9D0B3	0xE6EADD93	System.Collections.Generic.Dictionary`2+ValueCollection<InventoryItemGuid, InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0x32911CB1806CD51F	0x1E1ACE71	System.Collections.Generic.IReadOnlyList`1<System.Threading.Tasks.TaskCompletionSource`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0x32ADE238F62227E0	0xDC5E3190	System.Collections.Generic.IReadOnlyList`1<ILocalisedString>	word search: generic types and GTA V identifiers, both hashes
+0x32CD509E4BD664A0	0x621EFD63	System.Collections.Generic.Dictionary`2+Enumerator<TxdHashString, int>	word search: generic types and GTA V identifiers, both hashes
+0x330C1C7DF6ACB393	0x84AD3FE7	System.Collections.Generic.IEnumerable`1<TutorialEscalationSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x332E7B7467DF3610	0xF4BDDABB	System.Collections.Generic.Dictionary`2+Enumerator<int, ulong>	word search: generic types and GTA V identifiers, both hashes
+0x334D9EF7F8651405	0x27184B25	System.Collections.Generic.KeyValuePair`2<int, ulong>	word search: generic types and GTA V identifiers, both hashes
+0x33644F74BC6C314E	0x88B8F4ED	System.Collections.Generic.Dictionary`2+Enumerator<int, Object>	word search: generic types and GTA V identifiers, both hashes
+0x3371CD13AFA70404	0x46E1004F	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<HashString, int>>	word search: generic types and GTA V identifiers, both hashes
+0x338FBAA1CF2413B7	0x4CB026CB	System.Collections.Generic.IEnumerable`1<BasketballHoop>	word search: generic types and GTA V identifiers, both hashes
+0x33A040BD3D2B4EF3	0x9A4AF7C5	System.Collections.Generic.IEnumerable`1<System.ValueTuple`2<int, int>>	word search: generic types and GTA V identifiers, both hashes
+0x344F8F747CF5A312	0x5C4DAAB5	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<int, int>>	word search: generic types and GTA V identifiers, both hashes
+0x34E9C7582F665309	0xAC4C6107	System.Collections.Generic.IEnumerable`1<System.ValueTuple`2<int, float>>	word search: generic types and GTA V identifiers, both hashes
+0x34F912891014CC6E	0xFDBE3D08	System.Collections.Generic.Dictionary`2+Enumerator<int, System.ValueTuple`2<int, int>>	word search: generic types and GTA V identifiers, both hashes
+0x351DBFBB366A913D	0x97EF400C	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<InventoryItemData, int>>	word search: generic types and GTA V identifiers, both hashes
+0x35723890D8C8B20C	0xFFA86D90	System.Collections.Generic.ICollection`1<System.Collections.Generic.Dictionary`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x3598DA810B5D953E	0x687AEF61	System.Collections.Generic.KeyValuePair`2<HashString, System.Guid>	word search: generic types and GTA V identifiers, both hashes
+0x35ABCF839177B506	0x9E3B5A4A	System.Collections.Generic.IEnumerator`1<LayoutLocation>	word search: generic types and GTA V identifiers, both hashes
+0x35B374C167C2664D	0x94375438	System.Collections.Generic.IDictionary`2<HashString, System.Collections.Generic.KeyValuePair`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x35BB224B3423747B	0x19CB5985	System.Collections.Generic.Dictionary`2<HashString, int>	word search: generic types and GTA V identifiers, both hashes
+0x3636809DB94E8B38	0xDC95B2A7	System.Collections.Generic.IList`1<DFObjectHandle>	word search: generic types and GTA V identifiers, both hashes
+0x363A97E28519CE4A	0x2E82A3BC	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<int, bool>	word search: generic types and GTA V identifiers, both hashes
+0x364D40E41CD7E214	0x1DA25EFC	System.Collections.Generic.IList`1<TimerSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x367B285D0D68FE7D	0xBA55BB81	System.Collections.Generic.IList`1<System.Collections.Generic.KeyValuePair`2<HashString, System.Guid>>	word search: generic types and GTA V identifiers, both hashes
+0x36C77D502B10B05C	0x7F2869A2	System.Collections.Generic.IReadOnlyDictionary`2<float, int>	word search: generic types and GTA V identifiers, both hashes
+0x36D93A2C40CD2E79	0xBD730A66	System.Collections.Generic.KeyValuePair`2<float, int>	word search: generic types and GTA V identifiers, both hashes
+0x3717D7993F0E3C86	0x6BCCC185	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<int, Object>>	word search: generic types and GTA V identifiers, both hashes
+0x373A8876BB8218A7	0xFF6006BC	System.Collections.Generic.IEnumerator`1<System.Threading.Tasks.TaskCompletionSource`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0x379638E2D913EFDF	0x7820D3FE	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<int, HashString>	word search: generic types and GTA V identifiers, both hashes
+0x379A8DE712B87D9B	0xCDF26077	System.Collections.Generic.IEnumerator`1<System.ValueTuple`2<uint, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x37B321268B8AFE44	0x67BAC59B	System.Collections.Generic.IReadOnlyDictionary`2<HashString, bool>	word search: generic types and GTA V identifiers, both hashes
+0x37BA83A957B95785	0xA8043DF2	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.Dictionary`2<HashString, bool>>	word search: generic types and GTA V identifiers, both hashes
+0x37E1B9444275938C	0x2C411B0F	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<int, InventoryItemGuid>>	word search: generic types and GTA V identifiers, both hashes
+0x3873DE24B6920559	0xC67C2ECB	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<System.Guid, int>>	word search: generic types and GTA V identifiers, both hashes
+0x38D02FAB1E445C6F	0x09203486	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1<double>	word search: generic types and GTA V identifiers, both hashes
+0x39574980D6009EEE	0xFDE2D875	System.Runtime.CompilerServices.TaskAwaiter`1<System.Collections.Generic.KeyValuePair`2<Object, Object>>	word search: generic types and GTA V identifiers, both hashes
+0x395F9B182AC23FCA	0xBD1F40DD	System.Collections.Generic.Dictionary`2+KeyCollection<int, System.ValueTuple`2<int, int>>	word search: generic types and GTA V identifiers, both hashes
+0x398F939B8674FDEA	0x78FAAA44	System.Collections.Generic.Dictionary`2+ValueCollection<TxdHashString, System.ValueTuple`2<int, bool>>	word search: generic types and GTA V identifiers, both hashes
+0x3A4A350351E730AA	0x294284EF	System.Collections.Generic.Dictionary`2<ulong, bool>	word search: generic types and GTA V identifiers, both hashes
+0x3A4EF5396E210330	0x57364093	System.Collections.Generic.IReadOnlyDictionary`2<HashString, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0x3A5F38A0AC570DB1	0x9371F920	System.Collections.Generic.IReadOnlyList`1<uint>	word search: generic types and GTA V identifiers, both hashes
+0x3A91AF48B1F59216	0xAE5F8B98	System.Collections.Generic.Dictionary`2+ValueCollection<string, string>	word search: generic types and GTA V identifiers, both hashes
+0x3B3A56D553BF3D04	0xC8E0DCAB	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<int, Object>>	word search: generic types and GTA V identifiers, both hashes
+0x3B3B6ADF45DF4C03	0xAB5A7C1E	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<TxdHashString, System.ValueTuple`2<int, bool>>>	word search: generic types and GTA V identifiers, both hashes
+0x3B5C3ECD49839473	0x853C7613	System.Collections.Generic.IEnumerator`1<MediaDisplaySaveData>	word search: generic types and GTA V identifiers, both hashes
+0x3BF536AEA6D2AB5F	0xF204E9FA	System.Collections.Generic.ICollection`1<TimerSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x3C14B35EEB383547	0x08CEBCE4	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<System.Guid, bool>>	word search: generic types and GTA V identifiers, both hashes
+0x3C68C41A5F2816B9	0x2C810C28	System.ValueTuple`2<bool, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0x3C7E15A146641C4F	0x3146A49A	System.Collections.Generic.ICollection`1<ItemKitData>	word search: generic types and GTA V identifiers, both hashes
+0x3CF2863996DB6DD0	0x73471F24	System.Collections.Generic.IEnumerable`1<ulong>	word search: generic types and GTA V identifiers, both hashes
+0x3CF66720A9F600DB	0xF9090F97	System.Collections.Generic.IReadOnlyCollection`1<InventoryTransferId>	word search: generic types and GTA V identifiers, both hashes
+0x3D370E9B4347E191	0x800EF1B7	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<System.Type, System.Type>>	word search: generic types and GTA V identifiers, both hashes
+0x3D5CD5CA5EAA273A	0xB54D6D75	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter<Object>	word search: generic types and GTA V identifiers, both hashes
+0x3D8F416539DDAB3F	0xD5ACB49D	System.Collections.Generic.Dictionary`2<System.Enum, int>	word search: generic types and GTA V identifiers, both hashes
+0x3DA32E8109AFA3C5	0x3DDF14A9	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<int, int>>	word search: generic types and GTA V identifiers, both hashes
+0x3DCBBDB9762D0E9A	0x144A7BB2	System.Nullable`1<System.ValueTuple`2<HashString, float>>	word search: generic types and GTA V identifiers, both hashes
+0x3E35EFDEB82A4A5E	0xCAEBBB02	System.Collections.Generic.IList`1<CarriableEntrySaveData>	word search: generic types and GTA V identifiers, both hashes
+0x3EFF60E0E9D0361E	0xBC3D0D37	System.Collections.Generic.ICollection`1<ShopOverrideSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x3F041783E441B1A3	0xE376A16A	System.Runtime.CompilerServices.TaskAwaiter`1<int>	word search: generic types and GTA V identifiers, both hashes
+0x3FCCEAD1A72B1910	0xACF2FBAC	System.Collections.Generic.Dictionary`2<InventoryItemGuid, uint>	word search: generic types and GTA V identifiers, both hashes
+0x4041FD434A2440ED	0x4D71F072	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<Vector3, int>	word search: generic types and GTA V identifiers, both hashes
+0x40B25E09B53A4769	0x7721DF46	System.ValueTuple`2<InventoryItemData, float>	word search: generic types and GTA V identifiers, both hashes
+0x40DB3EFE5776A5DC	0xADBB01C2	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter<bool>	word search: generic types and GTA V identifiers, both hashes
+0x40E056E5B9743181	0xBF520D40	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<HashString, HashString>	word search: generic types and GTA V identifiers, both hashes
+0x41EAA85DDD538964	0xDBA6FB65	System.Collections.Generic.IReadOnlyList`1<UnlockedTutorialSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x4215E0A1CA7E3897	0x20B6703D	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<HashString, float>	word search: generic types and GTA V identifiers, both hashes
+0x42635F9DE2C948F4	0x76AC1FEC	System.Collections.Generic.Dictionary`2+ValueCollection<System.Guid, sbyte>	word search: generic types and GTA V identifiers, both hashes
+0x429FE2815BF08632	0x334FEF99	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<System.Guid, int>	word search: generic types and GTA V identifiers, both hashes
+0x42C9EE595F0605CE	0x6A5E7870	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<HashString, int>	word search: generic types and GTA V identifiers, both hashes
+0x42F1E3CAE70FD3EE	0x5667DCE1	System.Runtime.CompilerServices.TaskAwaiter`1<sbyte>	word search: generic types and GTA V identifiers, both hashes
+0x42F8A56230AF873C	0x8DA4E135	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.Dictionary`2<HashString, System.Guid>>	word search: generic types and GTA V identifiers, both hashes
+0x4322A0A8F2BCFE0C	0x402C2CB3	System.Collections.Generic.IReadOnlyCollection`1<ContactSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x433C3AA3F64301CF	0xC083B25D	System.Collections.Generic.Dictionary`2+Enumerator<HashString, System.Threading.Tasks.Task`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0x437C23D87FC770D4	0x6BFF91CF	System.Collections.Generic.IReadOnlyCollection`1<DFObjectHandle>	word search: generic types and GTA V identifiers, both hashes
+0x43DEEE1505DDAFD6	0x53BA5FC0	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<GamerHandle, System.Threading.Tasks.TaskCompletionSource`1<bool>>>	word search: generic types and GTA V identifiers, both hashes
+0x43E67B79A2CF5B1B	0xF6D08291	System.Collections.Generic.IList`1<EVENT_ENTITY_DAMAGED>	word search: generic types and GTA V identifiers, both hashes
+0x43F321582BF7ED1B	0x163A5D7D	System.Collections.Generic.KeyValuePair`2<Vector3, int>	word search: generic types and GTA V identifiers, both hashes
+0x440575360D9C22BD	0xADE98B52	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<HashString, System.Threading.Tasks.Task`1<bool>>>	word search: generic types and GTA V identifiers, both hashes
+0x441E8EFB5408DB81	0x6AE818D5	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<int, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0x4466232BFC56A0CA	0x9801EA14	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<HashString, float>>	word search: generic types and GTA V identifiers, both hashes
+0x447F635AA4849E40	0xD55ACB4E	System.Collections.Generic.Dictionary`2<InventoryItemData, int>	word search: generic types and GTA V identifiers, both hashes
+0x44925A7C00B2C2FC	0x6464552A	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<GamerHandle, System.Threading.Tasks.TaskCompletionSource`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0x450060B31A24946F	0x9F8911AB	System.Collections.Generic.IReadOnlyList`1<Vector3>	word search: generic types and GTA V identifiers, both hashes
+0x45B0A40E44417ECA	0x7B2D663E	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<System.Enum, int>	word search: generic types and GTA V identifiers, both hashes
+0x4614BDEF9FD87AF7	0x79CBFE8F	System.Threading.Tasks.Task`1<short>	word search: generic types and GTA V identifiers, both hashes
+0x463A8FCF2475FFA9	0xBF1E5719	System.Collections.Generic.IEnumerable`1<GamerHandle>	word search: generic types and GTA V identifiers, both hashes
+0x463AAE58FA13D5F4	0x91EB6227	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<string, string>	word search: generic types and GTA V identifiers, both hashes
+0x464498011A7398CE	0x015A7784	System.Collections.Generic.IReadOnlyDictionary`2<HashString, HashString>	word search: generic types and GTA V identifiers, both hashes
+0x46519F5DC5204C7D	0xBA71B7CF	System.Collections.Generic.IReadOnlyDictionary`2<HashString, System.Threading.Tasks.Task`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0x4667676C6363373B	0x7F993B9D	System.Collections.Generic.IList`1<AmbientObjectiveSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x46AB3EF17DDCBAF0	0x4F968898	System.Collections.Generic.KeyValuePair`2<System.Type, System.Type>	word search: generic types and GTA V identifiers, both hashes
+0x46E54A82817FF4D1	0x8AB2BC20	System.Collections.Generic.Dictionary`2<System.Enum, Vector2>	word search: generic types and GTA V identifiers, both hashes
+0x47364FB8AEE16FAF	0x3873F3A4	System.Collections.Generic.IList`1<TutorialEscalationSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x47A523C2FE03E2DC	0x5A280C71	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.Dictionary`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x47CBC25609D14DBB	0x6816E224	System.Collections.Generic.IEnumerable`1<System.ValueTuple`2<float, int>>	word search: generic types and GTA V identifiers, both hashes
+0x47E3FD75B0DDC9A8	0xDB5A7C41	System.Collections.Generic.IEnumerator`1<InventoryBundleAttributes>	word search: generic types and GTA V identifiers, both hashes
+0x489AA2317E9554EB	0x0ADF5915	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<HashString, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0x48B3ABB7C0F1847E	0xAD58575D	System.Collections.Generic.IReadOnlyList`1<IncludedKit>	word search: generic types and GTA V identifiers, both hashes
+0x49273AAC114DD1CE	0x6E32AC9E	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<System.Enum, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x49305DE521723D6D	0x8DCF16DF	System.Collections.Generic.KeyValuePair`2<float, LayoutLocation>	word search: generic types and GTA V identifiers, both hashes
+0x49C6523F745C0A7A	0x604122CA	System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1<bool>	word search: generic types and GTA V identifiers, both hashes
+0x49F3DA2E077C1F5C	0x2D538A9C	System.Collections.Generic.IList`1<IncludedKit>	word search: generic types and GTA V identifiers, both hashes
+0x4A174D76444D84F5	0x8D199713	System.Collections.Generic.IReadOnlyList`1<TxdHashString>	word search: generic types and GTA V identifiers, both hashes
+0x4A350FFEFBA859D3	0xC96E98F9	System.Collections.Generic.IReadOnlyCollection`1<BasketballHoop>	word search: generic types and GTA V identifiers, both hashes
+0x4A3D2FEAE98093FB	0xF7532635	System.Collections.Generic.IDictionary`2<InventoryItemGuid, InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0x4A7C3ED8E1E5FF18	0xE58C8DFF	System.Collections.Generic.Dictionary`2<int, InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0x4AA6344176058E3D	0x60155050	System.Runtime.CompilerServices.TaskAwaiter`1<short>	word search: generic types and GTA V identifiers, both hashes
+0x4AABCB3E2B14AD39	0xCF8D3151	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<HashString, Object>	word search: generic types and GTA V identifiers, both hashes
+0x4BD3A04C42F928B3	0x8B5AE7BB	System.Collections.Generic.ICollection`1<int>	word search: generic types and GTA V identifiers, both hashes
+0x4BD8FF0055C70083	0x4DE83328	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1<long>	word search: generic types and GTA V identifiers, both hashes
+0x4BE16710FF1AC34B	0xA9EA8168	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<HashString, bool>>	word search: generic types and GTA V identifiers, both hashes
+0x4C70A4AB11D133BC	0x56A6BB54	System.Collections.Generic.IDictionary`2<int, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0x4C76984DFD2D966A	0xA311C0AE	System.Collections.Generic.KeyValuePair`2<GamerHandle, System.Threading.Tasks.TaskCompletionSource`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0x4C7E954F95E3A234	0x47154EA2	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<TxdHashString, System.ValueTuple`2<int, bool>>>	word search: generic types and GTA V identifiers, both hashes
+0x4CE20A381A870160	0xF4C930B4	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<HashString, System.Collections.Generic.Dictionary`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x4D5B15D808C25ABE	0xB0AE1277	System.ValueTuple`2<float, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0x4D913959664CCB6C	0xBC86265E	System.Collections.Generic.Dictionary`2+Enumerator<System.Guid, sbyte>	word search: generic types and GTA V identifiers, both hashes
+0x4DA015644BC0A7F9	0xFFB0DE54	System.Collections.Generic.IDictionary`2<ulong, bool>	word search: generic types and GTA V identifiers, both hashes
+0x4E6964DA2C0E2BEA	0x7F354EF4	System.Collections.Generic.IEnumerable`1<FlowCommandSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x4E7D4D9F9BBDC2F7	0xE39051F2	System.Collections.Generic.Dictionary`2<int, TxdHashString>	word search: generic types and GTA V identifiers, both hashes
+0x4E8153C23CBAE7EA	0xC02E8DF9	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<HashString, bool>>	word search: generic types and GTA V identifiers, both hashes
+0x4E87A2BCD95A7645	0x86F05238	System.Collections.Generic.Dictionary`2+Enumerator<InventoryItemGuid, uint>	word search: generic types and GTA V identifiers, both hashes
+0x4EA3FF3F5A0CAF96	0xE5A487BD	System.Threading.Tasks.Task`1<bool>	word search: generic types and GTA V identifiers, both hashes
+0x4F0159AFC502BCA7	0xC0E6159E	System.Collections.Generic.IReadOnlyCollection`1<SimStateSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x4F4499D779DFEAE3	0xBF46DC52	System.Nullable`1<Vector3>	word search: generic types and GTA V identifiers, both hashes
+0x4F6478336BDE952E	0x4E6A7B1F	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.Dictionary`2<HashString, bool>>	word search: generic types and GTA V identifiers, both hashes
+0x4F6B477672948DFD	0xC7641692	System.Collections.Generic.IList`1<TxdHashString>	word search: generic types and GTA V identifiers, both hashes
+0x4FD1AEA3E284ADE2	0x78F2E76F	System.Collections.Generic.IEnumerable`1<string>	word search: generic types and GTA V identifiers, both hashes
+0x4FD61417ED42D70E	0xD1FF4629	System.Collections.Generic.IReadOnlyList`1<CarriableEntrySaveData>	word search: generic types and GTA V identifiers, both hashes
+0x50835EF7B063E041	0xB81E94CA	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<InventoryItemGuid, InventoryItemGuid>>	word search: generic types and GTA V identifiers, both hashes
+0x50CFBFB1D6171B90	0x725CF86B	System.Nullable`1<UILiteralHashString>	word search: generic types and GTA V identifiers, both hashes
+0x50E6CECF0062450E	0xDD0E3B97	System.ValueTuple`2<bool, bool>	word search: generic types and GTA V identifiers, both hashes
+0x50E79294E62668A3	0x58878FEC	System.Collections.Generic.Dictionary`2+ValueCollection<System.Enum, HashString>	word search: generic types and GTA V identifiers, both hashes
+0x516A0EE8C41D0EB2	0x97609755	System.Collections.Generic.Dictionary`2+Enumerator<HashString, HashString>	word search: generic types and GTA V identifiers, both hashes
+0x516CC41088EA55F3	0xC0F23DE6	System.Collections.Generic.Dictionary`2+KeyCollection<GamerHandle, System.Threading.Tasks.TaskCompletionSource`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0x5245C00A3F871790	0xAF434DA2	System.Collections.Generic.Dictionary`2+Enumerator<HashString, System.Collections.Generic.Dictionary`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x5245FAC077A3867D	0x7F514195	System.Collections.Generic.ICollection`1<InventoryBundleAttributes>	word search: generic types and GTA V identifiers, both hashes
+0x52C7564FC4D4E1D6	0xB9CE8B96	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter<ulong>	word search: generic types and GTA V identifiers, both hashes
+0x52EA50B231ED365C	0xE0DB1240	System.Collections.Generic.IEnumerable`1<Vector4>	word search: generic types and GTA V identifiers, both hashes
+0x53051AFBC3D59692	0xE05DF7D8	System.Span`1<int>	word search: generic types and GTA V identifiers, both hashes
+0x5343186861E3BA98	0x50ED3EE2	System.Collections.Generic.IList`1<ulong>	word search: generic types and GTA V identifiers, both hashes
+0x536E8E33A1681697	0x98CC7354	System.Collections.Generic.Dictionary`2<int, System.ValueTuple`2<int, int>>	word search: generic types and GTA V identifiers, both hashes
+0x5390C1FAC74BDB6B	0xFAED0098	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<int, AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0x549C79A200C167A3	0xB8AE5075	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1<float>	word search: generic types and GTA V identifiers, both hashes
+0x54EAD9501F24EE26	0x83B11ADC	System.Collections.Generic.IEnumerable`1<ILocalisedString>	word search: generic types and GTA V identifiers, both hashes
+0x550139333C7A396D	0x3F1D7EFE	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<float, LayoutLocation>>	word search: generic types and GTA V identifiers, both hashes
+0x5505691C8B9F994E	0x4A9563F4	System.Collections.Generic.Dictionary`2+ValueCollection<Vector3, bool>	word search: generic types and GTA V identifiers, both hashes
+0x553454F2EB91569D	0x603426B8	System.ValueTuple`2<InventoryItemGuid, HashString>	word search: generic types and GTA V identifiers, both hashes
+0x55AA9900E4884C23	0x7324045C	System.Collections.Generic.Dictionary`2+ValueCollection<int, Object>	word search: generic types and GTA V identifiers, both hashes
+0x55ACBE1E551072CC	0xB76BFC55	System.Collections.Generic.Dictionary`2+KeyCollection<HashString, AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0x563C4EE546A00B24	0x454D93BA	System.Collections.Generic.IEnumerator`1<InventoryCopyItem>	word search: generic types and GTA V identifiers, both hashes
+0x56545C12F6FFC8BE	0x394D9894	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<int, Vector3>>	word search: generic types and GTA V identifiers, both hashes
+0x56A678923F367622	0xF3382B39	System.Collections.Generic.IReadOnlyList`1<System.ValueTuple`2<int, int>>	word search: generic types and GTA V identifiers, both hashes
+0x56BD546B6373CDDB	0x6C662518	System.Collections.Generic.ICollection`1<SimStateSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x57172E1A68F5DE07	0x6753B554	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<float, LayoutLocation>	word search: generic types and GTA V identifiers, both hashes
+0x575DFEAE2B8F678A	0xDA8855A7	System.ValueTuple`2<IncludedKit, HashString>	word search: generic types and GTA V identifiers, both hashes
+0x57623A8059A0FC15	0x2B0B453C	System.Collections.Generic.KeyValuePair`2<int, InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0x57859CF2DE5A74E4	0xF0542665	System.Collections.Generic.IEnumerable`1<System.Threading.Tasks.Task`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0x57913893B0E192E9	0xA06DBAAC	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<InventoryItemGuid, uint>>	word search: generic types and GTA V identifiers, both hashes
+0x57C83CB43C894031	0x99FA804B	System.Collections.Generic.Dictionary`2<int, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0x57EB6F9624D0BD04	0xE0AA5BA9	System.Collections.Generic.IReadOnlyList`1<FlowCommandSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x581AED724932DBA5	0xAD1312D5	System.Collections.Generic.IReadOnlyList`1<InventoryCopyItem>	word search: generic types and GTA V identifiers, both hashes
+0x581D65F2D126A91B	0x98998B15	System.Collections.Generic.IReadOnlyCollection`1<string>	word search: generic types and GTA V identifiers, both hashes
+0x583A4954DEB9614D	0x61B90B51	System.Collections.Generic.KeyValuePair`2<Object, Object>	word search: generic types and GTA V identifiers, both hashes
+0x5887CE252F59F837	0x2C9711CD	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1<int>	word search: generic types and GTA V identifiers, both hashes
+0x58DEBEE2054D4C1E	0xF2CB5F2A	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<TxdHashString, int>>	word search: generic types and GTA V identifiers, both hashes
+0x592F9AF01D1CF4EE	0xE3D45BF4	System.Collections.Generic.IEnumerator`1<FlowCommandSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x5933825482A0A174	0x5FEC1DB3	System.Collections.Generic.IReadOnlyCollection`1<BlockedInteractionSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x5971BCC062353BF3	0x4FF95CD3	System.Collections.Generic.IReadOnlyList`1<System.ValueTuple`2<InventoryItemData, uint>>	word search: generic types and GTA V identifiers, both hashes
+0x59781009AAF50E07	0x89E97EF9	System.Collections.Generic.IEnumerator`1<System.ValueTuple`2<System.ValueTuple`2<ILocalisedString, ILocalisedString>, int>>	word search: generic types and GTA V identifiers, both hashes
+0x597F01BF9FDD3CE2	0xE51A8DD8	System.Collections.Generic.Dictionary`2+Enumerator<int, InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0x59B5AD53A77D0C85	0xE32E9161	System.Collections.Generic.IDictionary`2<int, bool>	word search: generic types and GTA V identifiers, both hashes
+0x59BB7B0E09CAEBD7	0xF3FF5D40	System.Collections.Generic.Dictionary`2+KeyCollection<HashString, System.Threading.Tasks.Task`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0x5A12A81F0A8686C2	0x42115BD9	System.Span`1<Quaternion>	word search: generic types and GTA V identifiers, both hashes
+0x5A3D39DEEFD067C4	0x89E74AD4	System.ValueTuple`2<Vector2, Vector2>	word search: generic types and GTA V identifiers, both hashes
+0x5A965726C6216935	0x30CD1C75	System.Collections.Generic.IEnumerator`1<EVENT_ENTITY_DAMAGED>	word search: generic types and GTA V identifiers, both hashes
+0x5B22759EFC5FE4B2	0x610C0176	System.Collections.Generic.ICollection`1<System.ValueTuple`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x5B2E6999D335BA04	0xFF76D1FE	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<float, LayoutLocation>	word search: generic types and GTA V identifiers, both hashes
+0x5BFEC24CE44C4DBF	0x1ECF3B62	System.Collections.Generic.Dictionary`2+ValueCollection<InventoryItemData, int>	word search: generic types and GTA V identifiers, both hashes
+0x5C24602E9DEAC9AA	0xB9BF3478	System.Collections.Generic.IReadOnlyCollection`1<System.ValueTuple`2<HashString, int>>	word search: generic types and GTA V identifiers, both hashes
+0x5C845CCEE7748828	0x6CD9A13F	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<HashString, float>>	word search: generic types and GTA V identifiers, both hashes
+0x5D83D947F5043674	0xADA908C9	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<TxdHashString, System.ValueTuple`2<int, bool>>	word search: generic types and GTA V identifiers, both hashes
+0x5E9D86FEF7E4A9C8	0x6EBF9927	System.Collections.Generic.IReadOnlyCollection`1<System.ValueTuple`2<System.ValueTuple`2<ILocalisedString, ILocalisedString>, int>>	word search: generic types and GTA V identifiers, both hashes
+0x5EE2DB02CFA8BBFE	0x2465BF7A	System.Collections.Generic.IList`1<System.ValueTuple`2<HashString, bool>>	word search: generic types and GTA V identifiers, both hashes
+0x5F2B320D513F4C53	0x1C721745	System.Collections.Generic.IEnumerator`1<TimerSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x5F34E55A3A1605B7	0xA3AABC9E	System.Collections.Generic.IReadOnlyDictionary`2<HashString, Object>	word search: generic types and GTA V identifiers, both hashes
+0x5F4E7F859D40E502	0xE9FD2DB6	System.Collections.Generic.IReadOnlyList`1<EVENT_ENTITY_DAMAGED>	word search: generic types and GTA V identifiers, both hashes
+0x5F8876AE4A87442E	0x6788E6BB	System.Collections.Generic.IDictionary`2<System.Enum, int>	word search: generic types and GTA V identifiers, both hashes
+0x5FA266B68FCB8861	0x247BEE51	System.Threading.Tasks.Task`1<long>	word search: generic types and GTA V identifiers, both hashes
+0x5FDDBC36640A5881	0x57C4DAEC	System.Span`1<float>	word search: generic types and GTA V identifiers, both hashes
+0x5FF55A37AEB6D055	0xA24669CD	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<Vector3, bool>>	word search: generic types and GTA V identifiers, both hashes
+0x6046C09C2C491FC8	0x8B1BAEB5	System.Collections.Generic.ICollection`1<HashString>	word search: generic types and GTA V identifiers, both hashes
+0x6047819FF41DF2D3	0x25F4551F	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<TxdHashString, System.ValueTuple`2<int, bool>>>	word search: generic types and GTA V identifiers, both hashes
+0x6078D622FB2C49BA	0xDF1177E5	System.Collections.Generic.ICollection`1<ExhaustedTutorialSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x60D2AB21F0993551	0x2162B6A0	System.Collections.Generic.IReadOnlyCollection`1<System.Guid>	word search: generic types and GTA V identifiers, both hashes
+0x61126DBAEBBE7F59	0xFD28BB23	System.Collections.Generic.Dictionary`2+KeyCollection<System.Guid, bool>	word search: generic types and GTA V identifiers, both hashes
+0x6133613D854ABB52	0xC42FEDF2	System.Collections.Generic.IList`1<MediaDisplaySaveData>	word search: generic types and GTA V identifiers, both hashes
+0x61BDC5C9B57DB56F	0xA1EB5087	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<HashString, Vector3>>	word search: generic types and GTA V identifiers, both hashes
+0x621175061F08D0B4	0x81D36C2B	System.Collections.Generic.IEnumerator`1<System.ValueTuple`2<int, float>>	word search: generic types and GTA V identifiers, both hashes
+0x6255860766F8EE2A	0x1A05925E	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<int, System.ValueTuple`2<int, int>>>	word search: generic types and GTA V identifiers, both hashes
+0x626BFD4EC9D2B906	0xD8E5D1CA	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<System.Type, System.Type>>	word search: generic types and GTA V identifiers, both hashes
+0x62B9479C4C5ADA3D	0xF30D1C45	System.Collections.Generic.IReadOnlyDictionary`2<int, ulong>	word search: generic types and GTA V identifiers, both hashes
+0x62E0658AA2A695D1	0x331CB107	System.Collections.Generic.Dictionary`2+Enumerator<GamerHandle, System.Threading.Tasks.TaskCompletionSource`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0x6349297FF0913E7A	0xECF9687A	System.Collections.Generic.IEnumerable`1<IncludedKit>	word search: generic types and GTA V identifiers, both hashes
+0x64824381C78F49DA	0xD2E5F7B7	System.Collections.Generic.ICollection`1<EVENT_ENTITY_DAMAGED>	word search: generic types and GTA V identifiers, both hashes
+0x649AF3114C3E18F9	0x61110DE6	System.Collections.Generic.ICollection`1<float>	word search: generic types and GTA V identifiers, both hashes
+0x64ABD91B78CAE7B5	0x5B466CE5	System.Collections.Generic.IReadOnlyList`1<System.ValueTuple`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x652D022BD10D9896	0x57AF3647	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter<short>	word search: generic types and GTA V identifiers, both hashes
+0x65811F39A1D95D83	0x31FBC5E6	System.Collections.Generic.IEnumerable`1<System.Threading.Tasks.TaskCompletionSource`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0x65ABE7BA21908209	0x83D06F98	System.ValueTuple`2<HashString, float>	word search: generic types and GTA V identifiers, both hashes
+0x65D6D6D8F741DE6F	0x029F978C	System.Collections.Generic.IDictionary`2<InventoryItemGuid, uint>	word search: generic types and GTA V identifiers, both hashes
+0x65FD372990AE7429	0x947A5D85	System.Collections.Generic.IEnumerator`1<ILocalisedString>	word search: generic types and GTA V identifiers, both hashes
+0x6617FED8029D9E65	0x9FDE004D	System.Collections.Generic.IEnumerable`1<MediaDisplaySaveData>	word search: generic types and GTA V identifiers, both hashes
+0x661FD42E9AB2088E	0x2B592439	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<HashString, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0x662DF21D09B48BE7	0xB5526BAA	System.Span`1<IncludedKit>	word search: generic types and GTA V identifiers, both hashes
+0x665C394BAE0BADAC	0xB5AE70B3	System.Collections.Generic.IList`1<System.ValueTuple`2<HashString, int>>	word search: generic types and GTA V identifiers, both hashes
+0x6678B5A3A1E51B9D	0xE12275F5	System.ValueTuple`2<bool, float>	word search: generic types and GTA V identifiers, both hashes
+0x6755D8C2F34D240F	0x9A4793C2	System.Collections.Generic.IReadOnlyCollection`1<ItemKitData>	word search: generic types and GTA V identifiers, both hashes
+0x67EFCC3B5DEF5FE5	0x46E61F7A	System.Collections.Generic.IEnumerator`1<CarriableEntrySaveData>	word search: generic types and GTA V identifiers, both hashes
+0x6872A5DA71941FCE	0x0A56F831	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.Dictionary`2<HashString, System.Guid>>	word search: generic types and GTA V identifiers, both hashes
+0x68B084C172DAF2F5	0x1F351DF1	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1<byte>	word search: generic types and GTA V identifiers, both hashes
+0x68C7AD70D536AA29	0xD7B8F18D	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<Vector3, bool>>	word search: generic types and GTA V identifiers, both hashes
+0x68E2E497CADF01F0	0xF818D641	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<int, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x68E6826889C2EB9E	0x59E77C35	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<InventoryItemGuid, uint>	word search: generic types and GTA V identifiers, both hashes
+0x68EBD8A1A80AD65E	0xC22FA855	System.Collections.Generic.IReadOnlyDictionary`2<GamerHandle, System.Threading.Tasks.TaskCompletionSource`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0x69A6004CA62E32FF	0x33A00DCF	System.Collections.Generic.IReadOnlyDictionary`2<System.Enum, HashString>	word search: generic types and GTA V identifiers, both hashes
+0x69F8DEAA04ED7020	0xCEEAA633	System.Collections.Generic.Dictionary`2+KeyCollection<int, int>	word search: generic types and GTA V identifiers, both hashes
+0x6A4BD7281EC3B6CC	0x656F270B	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<InventoryItemGuid, uint>>	word search: generic types and GTA V identifiers, both hashes
+0x6B5CAD6D6A0242D7	0x04A1A980	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<HashString, System.Guid>	word search: generic types and GTA V identifiers, both hashes
+0x6BDDC78A1796C7C9	0x9FB676D2	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<float, LayoutLocation>>	word search: generic types and GTA V identifiers, both hashes
+0x6C26D0DE730F105C	0xFF02F8DB	System.ValueTuple`2<HashString, long>	word search: generic types and GTA V identifiers, both hashes
+0x6C26FFCADB0E3EA4	0xDAE7E747	System.Collections.Generic.IEnumerator`1<DFObjectHandle>	word search: generic types and GTA V identifiers, both hashes
+0x6C720F7843167290	0xD8F667BC	System.Collections.Generic.IEnumerator`1<InventoryTransferId>	word search: generic types and GTA V identifiers, both hashes
+0x6CCC62EC2A7DC762	0x1EB446E7	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<System.Type, System.Type>>	word search: generic types and GTA V identifiers, both hashes
+0x6CE6851B7A3238D5	0x3D7F16BD	System.Collections.Generic.IList`1<ShopOverrideSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x6D2CE5BF13414808	0x1EB0953D	System.Collections.Generic.Dictionary`2+ValueCollection<System.Guid, int>	word search: generic types and GTA V identifiers, both hashes
+0x6D6CF555685523AB	0x02461625	System.Collections.Generic.IDictionary`2<Vector3, bool>	word search: generic types and GTA V identifiers, both hashes
+0x6DC0877A93F5C6E5	0x841D522D	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<System.Enum, Vector2>	word search: generic types and GTA V identifiers, both hashes
+0x6DD01B5D6FF838B3	0x61B6AD04	System.Collections.Generic.IReadOnlyList`1<System.ValueTuple`2<InventoryItemData, float>>	word search: generic types and GTA V identifiers, both hashes
+0x6DF19F467E5E3EF3	0x1592AC50	System.Collections.Generic.IEnumerable`1<System.Threading.Tasks.Task`1<ArchetypeHashString>>	word search: generic types and GTA V identifiers, both hashes
+0x6EA9CD1A58124E9F	0xDEF58D70	System.Collections.Generic.IReadOnlyList`1<ShopOverrideSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x6ECD881FB57B4510	0x01054BD6	System.Collections.Generic.IEnumerator`1<Object>	word search: generic types and GTA V identifiers, both hashes
+0x6ED4EB70F26E3041	0x64621736	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<ulong, bool>>	word search: generic types and GTA V identifiers, both hashes
+0x6EE7CD34712790E8	0xCD71AC3F	System.Collections.Generic.ICollection`1<System.Type>	word search: generic types and GTA V identifiers, both hashes
+0x6F007E94A7EF4042	0x200B0710	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<System.Guid, bool>	word search: generic types and GTA V identifiers, both hashes
+0x6F1A3A23E6F1C4CA	0x2E92469E	System.Collections.Generic.Dictionary`2+ValueCollection<Vector3, int>	word search: generic types and GTA V identifiers, both hashes
+0x6F6D5AA0CB949944	0x605024CB	System.Collections.Generic.KeyValuePair`2<int, int>	word search: generic types and GTA V identifiers, both hashes
+0x7060B7B9D577BCA9	0x769E4201	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<int, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x709422AB32EC7C62	0x23DA255E	System.Collections.Generic.IList`1<sbyte>	word search: generic types and GTA V identifiers, both hashes
+0x70CA4A70BD5B905E	0xDE8C44D2	System.Collections.Generic.IReadOnlyDictionary`2<int, Object>	word search: generic types and GTA V identifiers, both hashes
+0x70E0A1E358E537A7	0x66937FDF	System.Collections.Generic.IReadOnlyDictionary`2<HashString, float>	word search: generic types and GTA V identifiers, both hashes
+0x71159D142C0349B7	0xB862B2AB	System.Collections.Generic.Dictionary`2<System.Type, Object>	word search: generic types and GTA V identifiers, both hashes
+0x7133A7729A9A00AA	0x3D612690	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<System.Enum, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x714C079ADEAECD6D	0x61468F83	System.Collections.Generic.ICollection`1<AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0x71C45A1E5D6404E4	0xF04E9E82	System.Collections.Generic.Dictionary`2<Vector3, bool>	word search: generic types and GTA V identifiers, both hashes
+0x71D0F9E1D918C35B	0x47DE7877	System.Collections.Generic.Dictionary`2+Enumerator<int, int>	word search: generic types and GTA V identifiers, both hashes
+0x71D5CD1F4796564C	0x86BF10EB	System.Nullable`1<System.Guid>	word search: generic types and GTA V identifiers, both hashes
+0x72211B55E40A240B	0xBC4B8EC2	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<System.Type, System.Type>	word search: generic types and GTA V identifiers, both hashes
+0x7363678993BC4D90	0xAFDD6ED5	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<System.Type, Object>	word search: generic types and GTA V identifiers, both hashes
+0x73EA4F48A388AD4F	0x2482616A	System.Collections.Generic.KeyValuePair`2<int, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0x747C933EB0C961D3	0xED45F49B	System.Collections.Generic.Dictionary`2+Enumerator<System.Guid, int>	word search: generic types and GTA V identifiers, both hashes
+0x747E4A1234431F61	0x5CC4A707	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<HashString, System.Collections.Generic.KeyValuePair`2<HashString, HashString>>>	word search: generic types and GTA V identifiers, both hashes
+0x748B68734B9662E1	0x6D82371D	System.Collections.Generic.IReadOnlyCollection`1<ExhaustedActionSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x74BF927843C8C28D	0x5AB9812A	System.Collections.Generic.Dictionary`2+KeyCollection<InventoryItemData, int>	word search: generic types and GTA V identifiers, both hashes
+0x74D840603AD64C4D	0x429E8D29	System.Collections.Generic.ICollection`1<Vector2>	word search: generic types and GTA V identifiers, both hashes
+0x74F236E8D280C914	0x4938BF90	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<InventoryItemGuid, uint>>	word search: generic types and GTA V identifiers, both hashes
+0x75B9C07C81D1B69B	0x167AC7C6	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<System.Guid, sbyte>>	word search: generic types and GTA V identifiers, both hashes
+0x75C7F33F0BB8F7AB	0x36043625	System.Collections.Generic.IReadOnlyDictionary`2<int, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0x75C9E315F3646854	0xF2747711	System.Collections.Generic.Dictionary`2<float, int>	word search: generic types and GTA V identifiers, both hashes
+0x75E8A4378F44BAE2	0xF252B545	System.Collections.Generic.IEnumerable`1<bool>	word search: generic types and GTA V identifiers, both hashes
+0x75F7C7A844FCA833	0x071F62CE	System.Collections.Generic.Dictionary`2+Enumerator<System.Enum, int>	word search: generic types and GTA V identifiers, both hashes
+0x75FD442F73E3C1CB	0xB5EC0C1A	System.Collections.Generic.ICollection`1<System.Collections.Generic.Dictionary`2<HashString, bool>>	word search: generic types and GTA V identifiers, both hashes
+0x7608518151567022	0x8F2339CD	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<System.Enum, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x7682031CD9AE5220	0x05F36271	System.Collections.Generic.IReadOnlyCollection`1<MediaEntryTags>	word search: generic types and GTA V identifiers, both hashes
+0x771AA3E35EAD0189	0x02E19DA5	System.Collections.Generic.IList`1<SimStateSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x7773771CD24EE5F2	0x89EC2991	System.Collections.Generic.KeyValuePair`2<int, System.ValueTuple`2<int, int>>	word search: generic types and GTA V identifiers, both hashes
+0x779013C1AE03DB73	0xE2C06880	System.Collections.Generic.IDictionary`2<string, string>	word search: generic types and GTA V identifiers, both hashes
+0x77999CC0AB6E0F8B	0x7D52FB34	System.Collections.Generic.ICollection`1<ContactSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x782B5C4F5A59929C	0x317225DB	System.Collections.Generic.Dictionary`2+ValueCollection<System.Enum, int>	word search: generic types and GTA V identifiers, both hashes
+0x78699A94C27966E4	0xD63B2597	System.Collections.Generic.ICollection`1<System.ValueTuple`2<HashString, int>>	word search: generic types and GTA V identifiers, both hashes
+0x78C1562B83389922	0x01257F17	System.Collections.Generic.ICollection`1<InventoryCopyItem>	word search: generic types and GTA V identifiers, both hashes
+0x78EF5EBF8BBFD0C7	0x70A05B7B	System.Collections.Generic.Dictionary`2<HashString, System.Collections.Generic.KeyValuePair`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x78FD76E18252E940	0xB902E83C	System.Collections.Generic.Dictionary`2+ValueCollection<System.Type, System.Type>	word search: generic types and GTA V identifiers, both hashes
+0x790A9B16F82C62D9	0xD49771C2	System.Collections.Generic.IReadOnlyCollection`1<ILocalisedString>	word search: generic types and GTA V identifiers, both hashes
+0x7933D64C81D66EBB	0x18EE05EE	System.ValueTuple`2<HashString, int>	word search: generic types and GTA V identifiers, both hashes
+0x794E2B9AAF0EE05D	0xFE7B97AD	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<InventoryItemGuid, InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0x79917E8453269D32	0xC5A5BE64	System.Collections.Generic.IEnumerator`1<ContactSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x79E4F58A01F4428A	0x8AFD01EA	System.ValueTuple`2<System.ValueTuple`2<ILocalisedString, ILocalisedString>, int>	word search: generic types and GTA V identifiers, both hashes
+0x79F7FDC3C0A43249	0x7A6AB978	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<System.Enum, Vector2>>	word search: generic types and GTA V identifiers, both hashes
+0x7A6680B695E64A96	0xA87664B9	System.Collections.Generic.IDictionary`2<System.Guid, int>	word search: generic types and GTA V identifiers, both hashes
+0x7AC629FCB04B96C1	0x70761CAB	System.Collections.Generic.IEnumerator`1<string>	word search: generic types and GTA V identifiers, both hashes
+0x7B0900D1BD6792BB	0xDCAEA8BC	System.Collections.Generic.KeyValuePair`2<System.Guid, sbyte>	word search: generic types and GTA V identifiers, both hashes
+0x7B190F9801471695	0x5EC3565B	System.Collections.Generic.IEnumerator`1<System.Enum>	word search: generic types and GTA V identifiers, both hashes
+0x7B31ECE9FA91D70D	0x5B8D4294	System.Collections.Generic.IReadOnlyList`1<System.ValueTuple`2<HashString, bool>>	word search: generic types and GTA V identifiers, both hashes
+0x7B91DBA816393F8F	0x274231AD	System.Collections.Generic.Dictionary`2<HashString, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0x7BD7519858CCD6A2	0x673DCF3C	System.ValueTuple`2<bool, System.Guid>	word search: generic types and GTA V identifiers, both hashes
+0x7BF183AC5BCD9F5B	0xC0CFA96F	System.Collections.Generic.ICollection`1<System.Collections.Generic.Dictionary`2<HashString, Object>>	word search: generic types and GTA V identifiers, both hashes
+0x7C134A85E17393D6	0xF4763F8C	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<int, HashString>	word search: generic types and GTA V identifiers, both hashes
+0x7C278F05D8914DBE	0xC3F83CAD	System.Collections.Generic.ICollection`1<System.ValueTuple`2<int, int>>	word search: generic types and GTA V identifiers, both hashes
+0x7C8F7B52660BE689	0x80D794F1	System.Collections.Generic.IDictionary`2<HashString, AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0x7C906B2BD2F853F3	0xDFD40A65	System.Collections.Generic.Dictionary`2<int, HashString>	word search: generic types and GTA V identifiers, both hashes
+0x7C96CA630D0513A9	0x29CF0B51	System.Collections.Generic.Dictionary`2+Enumerator<int, TxdHashString>	word search: generic types and GTA V identifiers, both hashes
+0x7CDFB77C790A998D	0xC1DB9282	System.Collections.Generic.IEnumerator`1<ushort>	word search: generic types and GTA V identifiers, both hashes
+0x7D13D7D54E25994B	0x508C3EF5	System.Collections.Generic.IEnumerator`1<int>	word search: generic types and GTA V identifiers, both hashes
+0x7DA573BB129D436F	0x7D6492CF	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<InventoryItemGuid, uint>	word search: generic types and GTA V identifiers, both hashes
+0x7DAF39068B155850	0xA526B3E0	System.ValueTuple`2<int, int>	word search: generic types and GTA V identifiers, both hashes
+0x7E59F390182B67CC	0xBE088073	System.Collections.Generic.IReadOnlyList`1<InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0x7E63264CE76F4999	0x1D698FF3	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<System.Enum, int>>	word search: generic types and GTA V identifiers, both hashes
+0x7E64B6F112AA9B7E	0xB8C7649E	System.Collections.Generic.IEnumerable`1<TimerSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x7E87CD412AD6BA3F	0x78F2CFCD	System.Collections.Generic.Dictionary`2+KeyCollection<int, ulong>	word search: generic types and GTA V identifiers, both hashes
+0x7EC63E264C5F6E1A	0xF3208798	System.Collections.Generic.IEnumerable`1<InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0x7EE151882B324F93	0x9270118F	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter<float>	word search: generic types and GTA V identifiers, both hashes
+0x7F28EEEE335348E2	0xAE4EBC55	System.Runtime.CompilerServices.TaskAwaiter`1<HashString>	word search: generic types and GTA V identifiers, both hashes
+0x7F738AFC3406792D	0xB51AB0A6	System.Collections.Generic.KeyValuePair`2<System.Enum, Vector2>	word search: generic types and GTA V identifiers, both hashes
+0x7F8DFEED5658BDD1	0x932D00D0	System.Collections.Generic.Dictionary`2+ValueCollection<float, LayoutLocation>	word search: generic types and GTA V identifiers, both hashes
+0x7F9216B097321CFF	0x10B9E0A3	System.Collections.Generic.KeyValuePair`2<System.Enum, HashString>	word search: generic types and GTA V identifiers, both hashes
+0x7FA3E8B4A97EAB75	0x262F389F	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.Dictionary`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x7FBC6D0DB2872561	0x0A337579	System.Collections.Generic.Dictionary`2+Enumerator<string, string>	word search: generic types and GTA V identifiers, both hashes
+0x804238D16A85A3DA	0xF0A986AA	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1<ScriptReservationHandle>	word search: generic types and GTA V identifiers, both hashes
+0x8091B2941FD94F49	0x69457531	System.Nullable`1<byte>	word search: generic types and GTA V identifiers, both hashes
+0x80BFC6F0BCB773B8	0xE8DB673F	System.Collections.Generic.IEnumerable`1<ExhaustedTutorialSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x80DB3402587099D6	0xFD4509FD	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<Vector3, int>>	word search: generic types and GTA V identifiers, both hashes
+0x81830C9AE94F52C1	0x86712E64	System.Collections.Generic.IReadOnlyCollection`1<HashString>	word search: generic types and GTA V identifiers, both hashes
+0x81C5CC96F4123E6C	0xB186D25D	System.Collections.Generic.IDictionary`2<float, int>	word search: generic types and GTA V identifiers, both hashes
+0x822A93159432BDA7	0xC411CC8A	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<int, ulong>>	word search: generic types and GTA V identifiers, both hashes
+0x823FACCDDEC47664	0x84CE68EA	System.Collections.Generic.KeyValuePair`2<HashString, System.Collections.Generic.Dictionary`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x8265DF5A8BA51EDC	0xDE539F3C	System.Collections.Generic.KeyValuePair`2<Vector3, bool>	word search: generic types and GTA V identifiers, both hashes
+0x831609EA36C53058	0xDC5B33E9	System.Collections.Generic.ICollection`1<System.ValueTuple`2<InventoryItemData, uint>>	word search: generic types and GTA V identifiers, both hashes
+0x83331073C8F4FA98	0x7A9269EB	System.Collections.Generic.IList`1<short>	word search: generic types and GTA V identifiers, both hashes
+0x833754F421AF4FFE	0x9C080B18	System.Collections.Generic.IReadOnlyCollection`1<ShopOverrideSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x83514211CE9C3377	0x8828CC59	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<GamerHandle, System.Threading.Tasks.TaskCompletionSource`1<bool>>>	word search: generic types and GTA V identifiers, both hashes
+0x83BCCB0B09876102	0x5279CE63	System.Collections.Generic.KeyValuePair`2<System.Type, Object>	word search: generic types and GTA V identifiers, both hashes
+0x83E06028BA73DE38	0x8009AD7B	System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1<HashString>	word search: generic types and GTA V identifiers, both hashes
+0x843D235D3AC3B741	0xA6C9F2B6	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<System.Type, Object>>	word search: generic types and GTA V identifiers, both hashes
+0x84A6122ED5CCA2BA	0x01879F25	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<System.Enum, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x84CBF1A3F78485DD	0x4966CE22	System.Collections.Generic.IReadOnlyCollection`1<System.Threading.Tasks.Task`1<ArchetypeHashString>>	word search: generic types and GTA V identifiers, both hashes
+0x84EEC90DB5126BF1	0x87C74D38	System.Collections.Generic.IDictionary`2<HashString, System.Guid>	word search: generic types and GTA V identifiers, both hashes
+0x84F5F7DFB7FA89B3	0xCF70004A	System.Collections.Generic.Dictionary`2<int, ulong>	word search: generic types and GTA V identifiers, both hashes
+0x85294BC695AAEDC9	0xA85E4378	System.Collections.Generic.IEnumerable`1<InventoryCopyItem>	word search: generic types and GTA V identifiers, both hashes
+0x85380EAD726D6C20	0x4666C11B	System.Collections.Generic.IEnumerable`1<BundlePathEntry>	word search: generic types and GTA V identifiers, both hashes
+0x855424E07EB416CB	0x3E342D7D	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<string, string>>	word search: generic types and GTA V identifiers, both hashes
+0x8556FCCD6342AEB7	0x0BD5404A	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<Vector3, int>>	word search: generic types and GTA V identifiers, both hashes
+0x8581CCFD818D6433	0x1B95D5FB	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<System.Guid, int>>	word search: generic types and GTA V identifiers, both hashes
+0x8590886721E8A5AD	0x8AA757FD	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<System.Guid, sbyte>	word search: generic types and GTA V identifiers, both hashes
+0x85AF49AE78FDBC21	0x33CD3DE8	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<int, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x85BA5388DF209765	0xEC654AAE	System.Collections.Generic.Dictionary`2+KeyCollection<HashString, Object>	word search: generic types and GTA V identifiers, both hashes
+0x85FB833DADD4548C	0x40D9726A	System.Collections.Generic.IList`1<BundlePathEntry>	word search: generic types and GTA V identifiers, both hashes
+0x86165DD863EC0A41	0x52A55F1B	System.Collections.Generic.IEnumerator`1<SimStateSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x8669A0325511F8B3	0x62414BAF	System.Collections.Generic.IEnumerator`1<ShopOverrideSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x867A6B23B4C635EA	0xE65640D2	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<HashString, System.Guid>>	word search: generic types and GTA V identifiers, both hashes
+0x86A2B3D01296D57C	0x171392C4	System.Collections.Generic.IEnumerator`1<bool>	word search: generic types and GTA V identifiers, both hashes
+0x86F2BF1B46AC2BE5	0xE71DDB9F	System.Collections.Generic.IReadOnlyDictionary`2<int, int>	word search: generic types and GTA V identifiers, both hashes
+0x86FEA4B874C9015A	0x1E900E1B	System.Collections.Generic.IReadOnlyList`1<System.ValueTuple`2<System.ValueTuple`2<ILocalisedString, ILocalisedString>, int>>	word search: generic types and GTA V identifiers, both hashes
+0x8748F830E77040D5	0x36E3E97E	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1<System.Guid>	word search: generic types and GTA V identifiers, both hashes
+0x879983A35E4AA041	0xE8AE0289	System.Collections.Generic.IReadOnlyCollection`1<IncludedKit>	word search: generic types and GTA V identifiers, both hashes
+0x87E7A52C0E20F45F	0x1218D46B	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<HashString, Object>>	word search: generic types and GTA V identifiers, both hashes
+0x8814E9C41C1EB797	0x1B908D37	System.Collections.Generic.ICollection`1<System.Threading.Tasks.TaskCompletionSource`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0x881DE889A986C78F	0xE93B63A0	System.Collections.Generic.IReadOnlyDictionary`2<HashString, System.Collections.Generic.Dictionary`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x8904ED1D25374C15	0xB3CB2FB4	System.Collections.Generic.ICollection`1<byte>	word search: generic types and GTA V identifiers, both hashes
+0x892D7F6470718437	0x9A8D6988	System.Collections.Generic.IDictionary`2<Vector3, int>	word search: generic types and GTA V identifiers, both hashes
+0x8974EF7BE6A2A62F	0x8363206B	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<Vector3, bool>	word search: generic types and GTA V identifiers, both hashes
+0x8981B494391917A6	0xB3E078E8	System.Collections.Generic.IEnumerator`1<System.ValueTuple`2<HashString, System.ValueTuple`2<ILocalisedString, ILocalisedString>>>	word search: generic types and GTA V identifiers, both hashes
+0x8987BBB364C748FF	0xD6B439CD	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.Dictionary`2<HashString, Object>>	word search: generic types and GTA V identifiers, both hashes
+0x89971D807D632C4E	0xA040DBAD	System.Collections.Generic.IList`1<ItemKitData>	word search: generic types and GTA V identifiers, both hashes
+0x89A40E9102CA3516	0xC582C9E1	System.Collections.Generic.Dictionary`2+ValueCollection<HashString, float>	word search: generic types and GTA V identifiers, both hashes
+0x8B253E1942E35F7A	0xDE76BA02	System.Collections.Generic.IEnumerator`1<System.ValueTuple`2<float, int>>	word search: generic types and GTA V identifiers, both hashes
+0x8B5CFAEDBC8E167F	0x69E893CD	System.Nullable`1<EVENT_PLAYER_PROMPT_TRIGGERED>	word search: generic types and GTA V identifiers, both hashes
+0x8B97A36E52EE6ACE	0xC7292AB3	System.Collections.Generic.IList`1<System.Guid>	word search: generic types and GTA V identifiers, both hashes
+0x8B9DE7C56EFC9E50	0xF7DE1CC3	System.Collections.Generic.Dictionary`2<InventoryItemGuid, InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0x8C25F29E05F45BC3	0x0E745D04	System.Collections.Generic.IReadOnlyCollection`1<System.ValueTuple`2<int, float>>	word search: generic types and GTA V identifiers, both hashes
+0x8C2F4C77B9EF47CB	0x88C960A1	System.Collections.Generic.IReadOnlyList`1<System.ValueTuple`2<int, float>>	word search: generic types and GTA V identifiers, both hashes
+0x8C97851F75F11521	0xA5D05499	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1<Object>	word search: generic types and GTA V identifiers, both hashes
+0x8CA3417FE19A7EC0	0x933EF4C4	System.Collections.Generic.IEnumerator`1<System.ValueTuple`2<Vector3, float>>	word search: generic types and GTA V identifiers, both hashes
+0x8CF5C66166A9810A	0x9C4295EE	System.Collections.Generic.IReadOnlyDictionary`2<int, System.ValueTuple`2<int, int>>	word search: generic types and GTA V identifiers, both hashes
+0x8D03BD0733C19840	0x589B270D	System.Span`1<ulong>	word search: generic types and GTA V identifiers, both hashes
+0x8D287DAA94EEAED5	0x9243D945	System.Collections.Generic.Dictionary`2+KeyCollection<HashString, System.Collections.Generic.Dictionary`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x8DA962E3664FFA72	0xA8DD2606	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<System.Type, Object>	word search: generic types and GTA V identifiers, both hashes
+0x8DAFC72A83EACA4C	0xF97CBB7A	System.Collections.Generic.Dictionary`2<HashString, HashString>	word search: generic types and GTA V identifiers, both hashes
+0x8DD851918FCDCCA4	0xF5E9331B	System.Threading.Tasks.Task`1<int>	word search: generic types and GTA V identifiers, both hashes
+0x8E726F6D97A8601A	0x37AEF235	System.Collections.Generic.IEnumerator`1<UnlockedTutorialSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x8E7A5A5D49310F45	0xF09ED656	System.Collections.Generic.IReadOnlyCollection`1<InventoryBundleAttributes>	word search: generic types and GTA V identifiers, both hashes
+0x8E80C4BB486A8154	0xA7483F3C	System.Collections.Generic.Dictionary`2+ValueCollection<float, int>	word search: generic types and GTA V identifiers, both hashes
+0x8E8E7E3ABB98CD1F	0xCF60B663	System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1<int>	word search: generic types and GTA V identifiers, both hashes
+0x8EA600E3695F4640	0x26B0BAA7	System.Collections.Generic.IDictionary`2<int, HashString>	word search: generic types and GTA V identifiers, both hashes
+0x8EC05563D1284FE9	0x2AD06366	System.Collections.Generic.Dictionary`2+KeyCollection<HashString, HashString>	word search: generic types and GTA V identifiers, both hashes
+0x8ECA13B9ADBA3358	0x84E0C9BE	System.Collections.Generic.KeyValuePair`2<HashString, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0x8F45B5D760ED7986	0xB69A880F	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<TxdHashString, System.ValueTuple`2<int, bool>>>	word search: generic types and GTA V identifiers, both hashes
+0x8FB3F2AB7A1B1ED9	0x0DFB88EB	System.Collections.Generic.ICollection`1<sbyte>	word search: generic types and GTA V identifiers, both hashes
+0x8FB9EAD2B37685F5	0xD81DAF5F	System.Collections.Generic.IEnumerator`1<Vector3>	word search: generic types and GTA V identifiers, both hashes
+0x8FFB6442FB842180	0x8A34FDBC	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<HashString, System.Collections.Generic.Dictionary`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x90B0E0ECF5BAC657	0x362A7A1D	System.ValueTuple`2<float, int>	word search: generic types and GTA V identifiers, both hashes
+0x90BBD1BBCB320319	0xD8C9FE7D	System.Collections.Generic.IEnumerable`1<char>	word search: generic types and GTA V identifiers, both hashes
+0x90FBB5FE72B1F64D	0x8767F5D0	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<HashString, AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0x9176ED21A3E16D24	0xD0FB7DA3	System.ValueTuple`2<bool, HashString>	word search: generic types and GTA V identifiers, both hashes
+0x9215201791570B29	0xA4D449D1	System.Collections.Generic.IReadOnlyCollection`1<System.Threading.Tasks.Task`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0x921A500219BFADED	0x7518E671	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<System.Enum, int>>	word search: generic types and GTA V identifiers, both hashes
+0x9236E44260FE1B9D	0xB700A263	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter<uint>	word search: generic types and GTA V identifiers, both hashes
+0x9256F516E6503947	0x13FAAA9A	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.Dictionary`2<HashString, bool>>	word search: generic types and GTA V identifiers, both hashes
+0x926C6C223E6DD131	0x7D8D96B5	System.Collections.Generic.IEnumerator`1<long>	word search: generic types and GTA V identifiers, both hashes
+0x9282D6681C2FA2D0	0xC275D096	System.Collections.Generic.IEnumerator`1<System.ValueTuple`2<int, int>>	word search: generic types and GTA V identifiers, both hashes
+0x928E411E1B4F339C	0x38717460	System.Collections.Generic.IReadOnlyCollection`1<System.ValueTuple`2<Vector3, float>>	word search: generic types and GTA V identifiers, both hashes
+0x929481C866CBB88A	0x0D205408	System.Collections.Generic.IReadOnlyList`1<TutorialEscalationSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x92AEE4B000D774AA	0x36612C53	System.Collections.Generic.IReadOnlyList`1<bool>	word search: generic types and GTA V identifiers, both hashes
+0x92C04D6CCF14D5FF	0x76BEF072	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<System.Enum, HashString>	word search: generic types and GTA V identifiers, both hashes
+0x92E3F22637DD057E	0x7352D1FF	System.Collections.Generic.Dictionary`2+KeyCollection<InventoryItemGuid, InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0x92FFAE80AB92F951	0xD91E9E74	System.Collections.Generic.Dictionary`2<HashString, float>	word search: generic types and GTA V identifiers, both hashes
+0x933089E5D2881731	0xE0EC42E2	System.Collections.Generic.Dictionary`2+KeyCollection<float, int>	word search: generic types and GTA V identifiers, both hashes
+0x93997827F17C70DD	0x5377EEC1	System.Runtime.CompilerServices.TaskAwaiter`1<ArchetypeHashString>	word search: generic types and GTA V identifiers, both hashes
+0x93BF369A8D63A360	0x3AD3B300	System.Collections.Generic.IReadOnlyCollection`1<System.ValueTuple`2<IncludedKit, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x93E4D3B677660D9A	0xB6EC9CD1	System.Collections.Generic.IList`1<GamerHandle>	word search: generic types and GTA V identifiers, both hashes
+0x943B26C69EB3F456	0x0B81879B	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<ulong, bool>	word search: generic types and GTA V identifiers, both hashes
+0x943D1CDD5DA661DD	0x1C42573D	System.ValueTuple`2<int, float>	word search: generic types and GTA V identifiers, both hashes
+0x946CB5B323CDFC35	0xF07F804E	System.Collections.Generic.IList`1<System.Type>	word search: generic types and GTA V identifiers, both hashes
+0x9499358DFE0D2A5C	0x7E2071AF	System.Nullable`1<ChannelSeverity>	word search: generic types and GTA V identifiers, both hashes
+0x94BB8313A2C93971	0x1D89EDBA	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<HashString, Vector3>>	word search: generic types and GTA V identifiers, both hashes
+0x94D1DF74AC63A2BB	0xEC846DD9	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter<ushort>	word search: generic types and GTA V identifiers, both hashes
+0x95014E2351AA7F02	0xA8D271D8	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<System.Enum, Vector2>	word search: generic types and GTA V identifiers, both hashes
+0x9528368CBD19FAFA	0xB106B51F	System.Collections.Generic.KeyValuePair`2<HashString, float>	word search: generic types and GTA V identifiers, both hashes
+0x9556028BA2A68D7B	0xF429632C	System.Collections.Generic.IReadOnlyCollection`1<ItemEffectSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x955FEE0D10D2C965	0x020FDDBC	System.ValueTuple`2<uint, uint>	word search: generic types and GTA V identifiers, both hashes
+0x957C155E9E447BBF	0x0BFF7B1E	System.Collections.Generic.IReadOnlyList`1<MediaDisplaySaveData>	word search: generic types and GTA V identifiers, both hashes
+0x95DDB4E119F8EBDA	0xC0E31DBA	System.Threading.Tasks.Task`1<ulong>	word search: generic types and GTA V identifiers, both hashes
+0x95FC85A73338FC3C	0x0521683E	System.Collections.Generic.IList`1<LayoutLocation>	word search: generic types and GTA V identifiers, both hashes
+0x9604CD86E0F29ED4	0x557C7B9B	System.Collections.Generic.IEnumerable`1<System.ValueTuple`2<HashString, bool>>	word search: generic types and GTA V identifiers, both hashes
+0x96715C83D3F1B8FD	0x0E4A722A	System.Collections.Generic.IReadOnlyList`1<System.Enum>	word search: generic types and GTA V identifiers, both hashes
+0x9676010DBD688D0C	0x087785F6	System.Collections.Generic.ICollection`1<InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0x967B4F4B6078F341	0x5C0AE415	System.Collections.Generic.Dictionary`2+KeyCollection<System.Type, System.Type>	word search: generic types and GTA V identifiers, both hashes
+0x9683CAB878DFD684	0x79D813CB	System.Collections.Generic.Dictionary`2+ValueCollection<int, System.ValueTuple`2<int, int>>	word search: generic types and GTA V identifiers, both hashes
+0x96AE57A4A4C20925	0xE0CA1362	System.Collections.Generic.IEnumerable`1<uint>	word search: generic types and GTA V identifiers, both hashes
+0x96BD61951C4818B3	0x12644C45	System.Collections.Generic.KeyValuePair`2<int, AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0x96CFDCF21C05DC18	0x300FFA89	System.Collections.Generic.IReadOnlyList`1<System.ValueTuple`2<uint, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x97043AE1F108D0CA	0xCE710116	System.Collections.Generic.IReadOnlyCollection`1<Vector2>	word search: generic types and GTA V identifiers, both hashes
+0x97954BB2C7951DC9	0xF98E7455	System.Collections.Generic.IReadOnlyCollection`1<long>	word search: generic types and GTA V identifiers, both hashes
+0x97AEBAD388DD1BC5	0xCC6E4E0E	System.Collections.Generic.Dictionary`2+KeyCollection<TxdHashString, System.ValueTuple`2<int, bool>>	word search: generic types and GTA V identifiers, both hashes
+0x984618ACED50E119	0xF7F2A0C9	System.Collections.Generic.IEnumerator`1<System.Guid>	word search: generic types and GTA V identifiers, both hashes
+0x985A5B3C7DD3953F	0x43A53CB6	System.Collections.Generic.IEnumerator`1<IInputAction>	word search: generic types and GTA V identifiers, both hashes
+0x986A716BEA9E258B	0x285DC407	System.ValueTuple`2<bool, long>	word search: generic types and GTA V identifiers, both hashes
+0x98DD0B254C2593AF	0x13B03DDE	System.Collections.Generic.IReadOnlyList`1<int>	word search: generic types and GTA V identifiers, both hashes
+0x98F1AA164F3F5C2C	0x5C6144AE	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<int, System.ValueTuple`2<int, int>>	word search: generic types and GTA V identifiers, both hashes
+0x996E84C852A6FF66	0xF4A78FE9	System.Collections.Generic.KeyValuePair`2<string, string>	word search: generic types and GTA V identifiers, both hashes
+0x99D1519BD14C7805	0x6920FA0F	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<int, bool>>	word search: generic types and GTA V identifiers, both hashes
+0x99DF98A0AC111191	0xD5FE0B34	System.Collections.Generic.IReadOnlyList`1<Vector2>	word search: generic types and GTA V identifiers, both hashes
+0x9A4CDEC4148A4F09	0xCB5C3202	System.Collections.Generic.Dictionary`2+ValueCollection<System.Guid, bool>	word search: generic types and GTA V identifiers, both hashes
+0x9AA15BB637FBB4C2	0x8FEF4EBC	System.Collections.Generic.Dictionary`2+Enumerator<HashString, float>	word search: generic types and GTA V identifiers, both hashes
+0x9ABCDC9ABB077834	0xBFE0155F	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<float, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0x9AF1038719200150	0xE59CA530	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<int, bool>>	word search: generic types and GTA V identifiers, both hashes
+0x9AFA2C66BDD21A7A	0xF2A86BB9	System.Collections.Generic.IReadOnlyDictionary`2<float, LayoutLocation>	word search: generic types and GTA V identifiers, both hashes
+0x9B32C48EB188E5FD	0x39EE9DD4	System.Collections.Generic.ICollection`1<System.Threading.Tasks.Task`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0x9B3BF277F76D663A	0x3916AA1B	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<int, Object>	word search: generic types and GTA V identifiers, both hashes
+0x9B6013C847AB446C	0x8CF625B1	System.Collections.Generic.Dictionary`2<int, bool>	word search: generic types and GTA V identifiers, both hashes
+0x9B6E60B8E0A270B4	0x930E801B	System.Threading.Tasks.Task`1<double>	word search: generic types and GTA V identifiers, both hashes
+0x9BA71E2E41BFC722	0xE3AD7F35	System.Collections.Generic.IReadOnlyCollection`1<float>	word search: generic types and GTA V identifiers, both hashes
+0x9BAA621B437445E0	0x05264ABC	System.Collections.Generic.IReadOnlyCollection`1<ExhaustedTutorialSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x9BC2412E435C56C0	0x7FEEA3AB	System.Collections.Generic.ICollection`1<HeatRequestSaveData>	word search: generic types and GTA V identifiers, both hashes
+0x9BDE10682D80D7A3	0x707EE953	System.Collections.Generic.ICollection`1<System.ValueTuple`2<InventoryItemData, float>>	word search: generic types and GTA V identifiers, both hashes
+0x9C2604157C4A85C3	0xEA29EC5D	System.Collections.Generic.Dictionary`2<System.Guid, bool>	word search: generic types and GTA V identifiers, both hashes
+0x9C877845E93161EC	0x867B246A	System.Collections.Generic.IEnumerable`1<float>	word search: generic types and GTA V identifiers, both hashes
+0x9CB0D142BB10E4E1	0xB055BC5B	System.Threading.Tasks.TaskCompletionSource`1<bool>	word search: generic types and GTA V identifiers, both hashes
+0x9CD37A2DE9D76652	0xF5BC47FE	System.Runtime.CompilerServices.TaskAwaiter`1<double>	word search: generic types and GTA V identifiers, both hashes
+0x9CF2B5B414219500	0x3282D0F4	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<HashString, AnimScene>>	word search: generic types and GTA V identifiers, both hashes
+0x9D01E5BA829FF5B3	0x48707285	System.Threading.Tasks.Task`1<Object>	word search: generic types and GTA V identifiers, both hashes
+0x9D9855B4F2DB84F9	0xEFEF5A04	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<System.Guid, sbyte>>	word search: generic types and GTA V identifiers, both hashes
+0x9DA9AF1BEBAA2632	0xB178B140	System.Collections.Generic.IEnumerable`1<InventoryBundleAttributes>	word search: generic types and GTA V identifiers, both hashes
+0x9DAFC3D3B85AB051	0xC435F27D	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<int, System.ValueTuple`2<int, int>>>	word search: generic types and GTA V identifiers, both hashes
+0x9DCA99FA2E3CC849	0xF212D1C3	System.Collections.Generic.IList`1<System.Threading.Tasks.Task`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0x9DE3BEB3B14C09CD	0xE6F4D0DC	System.Collections.Generic.Dictionary`2+KeyCollection<float, LayoutLocation>	word search: generic types and GTA V identifiers, both hashes
+0x9E3CC5C73F7B9FB2	0x004C10CA	System.Collections.Generic.Dictionary`2+ValueCollection<HashString, System.Collections.Generic.KeyValuePair`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x9E693BC26A03AEC0	0x315AFAEF	System.Collections.Generic.IList`1<bool>	word search: generic types and GTA V identifiers, both hashes
+0x9E886608A9418420	0x46B86ED2	System.Collections.Generic.IDictionary`2<HashString, System.Threading.Tasks.Task`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0x9E9371CF38022944	0x5D40B766	System.Collections.Generic.IReadOnlyList`1<BundlePathEntry>	word search: generic types and GTA V identifiers, both hashes
+0x9EAA561DEEA7A1F6	0x324A2E47	System.Collections.Generic.IReadOnlyDictionary`2<int, InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0x9EF8371D6001C3D7	0xDCF4906F	System.Runtime.CompilerServices.TaskAwaiter`1<ushort>	word search: generic types and GTA V identifiers, both hashes
+0x9F023A59102F4D81	0x96FE7A72	System.Collections.Generic.IEnumerator`1<MediaEntryTags>	word search: generic types and GTA V identifiers, both hashes
+0x9F07EF3E4AD183F3	0xD1FF045B	System.Collections.Generic.IEnumerable`1<DFObjectHandle>	word search: generic types and GTA V identifiers, both hashes
+0x9F4816378C9EF861	0xF4C6F877	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<HashString, System.Collections.Generic.KeyValuePair`2<HashString, HashString>>>	word search: generic types and GTA V identifiers, both hashes
+0x9F4B78AE7C97673F	0xE39FD14A	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<HashString, System.Collections.Generic.KeyValuePair`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0x9F5417EF6AE1D1A5	0x23FE473E	System.Collections.Generic.IReadOnlyCollection`1<int>	word search: generic types and GTA V identifiers, both hashes
+0x9F680ED4D0E6CA97	0x157648FA	System.Collections.Generic.ICollection`1<short>	word search: generic types and GTA V identifiers, both hashes
+0xA07DC5F46FBCE531	0x742BE359	System.Collections.Generic.IReadOnlyList`1<System.Type>	word search: generic types and GTA V identifiers, both hashes
+0xA0908C0CC83751FA	0x87E49FCF	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<int, Object>>	word search: generic types and GTA V identifiers, both hashes
+0xA0AB94F83EF2629F	0x50EE3275	System.Collections.Generic.IDictionary`2<int, int>	word search: generic types and GTA V identifiers, both hashes
+0xA0D5BEBF8FC5B013	0x53398F37	System.Collections.Generic.KeyValuePair`2<HashString, System.Collections.Generic.KeyValuePair`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0xA0DDFDBF84B6989A	0x2DF3CC8B	System.Collections.Generic.IEnumerator`1<AmbientObjectiveSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xA154937C2668AE1E	0x26AD2E64	System.Collections.Generic.Dictionary`2+ValueCollection<HashString, Object>	word search: generic types and GTA V identifiers, both hashes
+0xA19F6D81F2E4A8D4	0x18AE8ACE	System.Collections.Generic.Dictionary`2+KeyCollection<int, bool>	word search: generic types and GTA V identifiers, both hashes
+0xA1D1B2B73F3A2910	0x6812D418	System.Collections.Generic.IDictionary`2<int, InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0xA1F05FC1B4B22B69	0x568EDA22	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<HashString, System.Collections.Generic.KeyValuePair`2<HashString, HashString>>>	word search: generic types and GTA V identifiers, both hashes
+0xA239453E29DD8B93	0x18FC7D80	System.Span`1<Vector3>	word search: generic types and GTA V identifiers, both hashes
+0xA24D12D3841A5702	0xED248074	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<HashString, int>>	word search: generic types and GTA V identifiers, both hashes
+0xA25F9D7131C94D8C	0x4E7677E1	System.Collections.Generic.IEnumerable`1<Vector3>	word search: generic types and GTA V identifiers, both hashes
+0xA2734B4D39F72CB1	0xA3CC858B	System.Collections.Generic.IReadOnlyDictionary`2<System.Enum, Vector2>	word search: generic types and GTA V identifiers, both hashes
+0xA29D436BF32D1C6B	0x654337E1	System.Collections.Generic.IEnumerable`1<IInputAction>	word search: generic types and GTA V identifiers, both hashes
+0xA29FE9728E2FB5DC	0xE119345A	System.Collections.Generic.Dictionary`2+ValueCollection<TxdHashString, int>	word search: generic types and GTA V identifiers, both hashes
+0xA2D676D2BA857FD0	0x1374CD8D	System.Collections.Generic.ICollection`1<MediaEntryTags>	word search: generic types and GTA V identifiers, both hashes
+0xA2DDDD8EE25B116B	0x74175258	System.Collections.Generic.ICollection`1<System.ValueTuple`2<float, int>>	word search: generic types and GTA V identifiers, both hashes
+0xA2FF557DEB091AAD	0xA64A2661	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<HashString, System.Collections.Generic.Dictionary`2<HashString, HashString>>>	word search: generic types and GTA V identifiers, both hashes
+0xA31842AE9B3E6F56	0x6E0E8B72	System.Collections.Generic.IReadOnlyCollection`1<TutorialEscalationSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xA340CE0676F0D0FA	0xB1045897	System.Collections.Generic.Dictionary`2+ValueCollection<HashString, System.Collections.Generic.Dictionary`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0xA34B804A6D706930	0xB1E45870	System.Collections.Generic.IReadOnlyDictionary`2<System.Enum, int>	word search: generic types and GTA V identifiers, both hashes
+0xA3B511F87A5B8855	0x096F4A94	System.Collections.Generic.KeyValuePair`2<int, TxdHashString>	word search: generic types and GTA V identifiers, both hashes
+0xA3F9EFB690A0D840	0x373C22D4	System.Collections.Generic.IReadOnlyList`1<long>	word search: generic types and GTA V identifiers, both hashes
+0xA3FAF2A208B0E82B	0x84C0A323	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<TxdHashString, int>>	word search: generic types and GTA V identifiers, both hashes
+0xA435A97F5488FB9D	0x4682164E	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<System.Type, Object>>	word search: generic types and GTA V identifiers, both hashes
+0xA45C9568EF1B396A	0xDD68A8FB	System.Collections.Generic.KeyValuePair`2<HashString, AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0xA46F4D6F83F646A0	0x03DF579C	System.Collections.Generic.Dictionary`2<HashString, bool>	word search: generic types and GTA V identifiers, both hashes
+0xA4CC3FA6FCFB73F2	0x497D1F6D	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<int, ulong>>	word search: generic types and GTA V identifiers, both hashes
+0xA4DC5A5632BC6835	0x0BAE2C55	System.ValueTuple`2<bool, uint>	word search: generic types and GTA V identifiers, both hashes
+0xA52D4A61DC2C2A43	0xF9BD9770	System.Collections.Generic.KeyValuePair`2<ulong, bool>	word search: generic types and GTA V identifiers, both hashes
+0xA5521D8F07595E4D	0xFBA5D6F9	System.Collections.Generic.IReadOnlyCollection`1<MediaDisplaySaveData>	word search: generic types and GTA V identifiers, both hashes
+0xA572409EA0ECEA8D	0x3B32D447	System.Collections.Generic.IReadOnlyList`1<SimStateSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xA5AF67FF47C1B4D3	0xE4573663	System.Collections.Generic.IDictionary`2<System.Guid, sbyte>	word search: generic types and GTA V identifiers, both hashes
+0xA5BFA46CF0676B00	0x111BDCAE	System.Collections.Generic.IReadOnlyCollection`1<EVENT_ENTITY_DAMAGED>	word search: generic types and GTA V identifiers, both hashes
+0xA5E60F07F76B81D3	0x013D2060	System.Collections.Generic.IDictionary`2<HashString, Object>	word search: generic types and GTA V identifiers, both hashes
+0xA5F718528292EC81	0xEBFEBB5D	System.Collections.Generic.IEnumerator`1<ItemKitData>	word search: generic types and GTA V identifiers, both hashes
+0xA5F9A2FF2CFC19BE	0xE976342F	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<ulong, bool>>	word search: generic types and GTA V identifiers, both hashes
+0xA607645AB38DBE15	0x4A9CCAD6	System.Collections.Generic.ICollection`1<System.Collections.Generic.Dictionary`2<HashString, System.Guid>>	word search: generic types and GTA V identifiers, both hashes
+0xA62A058DA454A72E	0xC0340629	System.Collections.Generic.Dictionary`2+KeyCollection<System.Enum, HashString>	word search: generic types and GTA V identifiers, both hashes
+0xA6325BA2571976F7	0x876D7D8A	System.Collections.Generic.Dictionary`2<System.Enum, HashString>	word search: generic types and GTA V identifiers, both hashes
+0xA72EAAE8A0BD1E2C	0xA97BDCA3	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<System.Type, System.Type>	word search: generic types and GTA V identifiers, both hashes
+0xA7A7A0A43F6582B1	0x56751541	System.Collections.Generic.IList`1<BlockedInteractionSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xA7B914F6D2955590	0xDE14F62C	System.Collections.Generic.IReadOnlyDictionary`2<ulong, bool>	word search: generic types and GTA V identifiers, both hashes
+0xA7BEDDE0108CE901	0xDF5B2711	System.Collections.Generic.Dictionary`2+ValueCollection<HashString, AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0xA883BA8660448AA0	0xCAB7DA71	System.Collections.Generic.IList`1<InventoryItemData>	word search: generic types and GTA V identifiers, both hashes
+0xA8E740F30A2C6EC4	0x2671A985	System.Nullable`1<long>	word search: generic types and GTA V identifiers, both hashes
+0xA91C697191A1D717	0x80B8AD57	System.Collections.Generic.IEnumerator`1<System.ValueTuple`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0xA95C6BB67EF27366	0x347CF9D5	System.Collections.Generic.ICollection`1<BasketballHoop>	word search: generic types and GTA V identifiers, both hashes
+0xA95F61A97F44DA53	0x19CBFBFA	System.Collections.Generic.IEnumerator`1<short>	word search: generic types and GTA V identifiers, both hashes
+0xA986566B808A39C7	0xFE4D33FD	System.Collections.Generic.IEnumerable`1<System.ValueTuple`2<HashString, int>>	word search: generic types and GTA V identifiers, both hashes
+0xA9A5C1FF287F5206	0x4DC3F223	System.Collections.Generic.IList`1<System.ValueTuple`2<System.ValueTuple`2<ILocalisedString, ILocalisedString>, int>>	word search: generic types and GTA V identifiers, both hashes
+0xA9BF30B3A910C6AB	0xF59CA600	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<System.Guid, bool>>	word search: generic types and GTA V identifiers, both hashes
+0xA9EC98B4262298A1	0x6BECA4E2	System.Collections.Generic.Dictionary`2+Enumerator<System.Type, System.Type>	word search: generic types and GTA V identifiers, both hashes
+0xA9F1106C45B65657	0x19B9212E	System.Collections.Generic.IReadOnlyDictionary`2<InventoryItemGuid, uint>	word search: generic types and GTA V identifiers, both hashes
+0xAA067C5E0947BE23	0x411D54B9	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<System.Type, Object>>	word search: generic types and GTA V identifiers, both hashes
+0xAA23BC999D3B13B6	0x4E677A7F	System.Collections.Generic.Dictionary`2+Enumerator<Vector3, int>	word search: generic types and GTA V identifiers, both hashes
+0xAAA6D26F01375DDB	0x8A6767BB	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<HashString, AnimScene>>	word search: generic types and GTA V identifiers, both hashes
+0xAAB0D7B4601DB0FA	0xDEBC1EDC	System.Nullable`1<Vector2>	word search: generic types and GTA V identifiers, both hashes
+0xAADA96C4844560B0	0xA5EBE64A	System.Nullable`1<bool>	word search: generic types and GTA V identifiers, both hashes
+0xAB2AC162C267FB82	0x9D34D9F3	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<int, AnimScene>>	word search: generic types and GTA V identifiers, both hashes
+0xAB2CABC4991E0800	0x76EBEFE6	System.Collections.Generic.Dictionary`2+KeyCollection<TxdHashString, int>	word search: generic types and GTA V identifiers, both hashes
+0xAB3F35E8923304F4	0x1B83291B	System.Collections.Generic.IEnumerable`1<System.ValueTuple`2<System.ValueTuple`2<ILocalisedString, ILocalisedString>, int>>	word search: generic types and GTA V identifiers, both hashes
+0xAB886A4A3199D6F6	0xDA2F6580	System.Collections.Generic.ICollection`1<FlowCommandSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xAC5787546FFAEDE6	0xA197F580	System.Collections.Generic.Dictionary`2+ValueCollection<System.Type, Object>	word search: generic types and GTA V identifiers, both hashes
+0xAD188014A6437345	0x62C3691E	System.Collections.Generic.Dictionary`2<TxdHashString, System.ValueTuple`2<int, bool>>	word search: generic types and GTA V identifiers, both hashes
+0xAD27B50E9C25B675	0xD2290190	System.Runtime.CompilerServices.TaskAwaiter`1<AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0xAD2F24587B6223CC	0x615BAB8D	System.Threading.Tasks.Task`1<System.Guid>	word search: generic types and GTA V identifiers, both hashes
+0xAD97F47066EBD84D	0x1CF26274	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<Vector3, bool>	word search: generic types and GTA V identifiers, both hashes
+0xADBB623E6A86C6CA	0x345ED884	System.Collections.Generic.IReadOnlyList`1<ExhaustedTutorialSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xADBEB279FE409DC9	0x0FEAC0E8	System.Collections.Generic.ICollection`1<ILocalisedString>	word search: generic types and GTA V identifiers, both hashes
+0xADFB803BE3D3F7A1	0xE51EEC40	System.Collections.Generic.IDictionary`2<HashString, float>	word search: generic types and GTA V identifiers, both hashes
+0xAE61368729BFC052	0x342A58F6	System.Collections.Generic.IReadOnlyDictionary`2<float, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0xAEBC4C15A0D33FC2	0xF8C580B7	System.Collections.Generic.IReadOnlyCollection`1<System.ValueTuple`2<int, bool>>	word search: generic types and GTA V identifiers, both hashes
+0xAEEE0EFB237250FF	0xD412A1CD	System.Collections.Generic.IReadOnlyCollection`1<LayoutLocation>	word search: generic types and GTA V identifiers, both hashes
+0xAEEECEFC20F366A8	0xCB9BB392	System.Collections.Generic.Dictionary`2<Vector3, int>	word search: generic types and GTA V identifiers, both hashes
+0xAF27F2C76B92C2A4	0x9557DFD7	System.Collections.Generic.Dictionary`2+Enumerator<float, LayoutLocation>	word search: generic types and GTA V identifiers, both hashes
+0xAF7C8DD988B148DB	0x0BEC4F0A	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<System.Guid, sbyte>>	word search: generic types and GTA V identifiers, both hashes
+0xAF9DD6C792AFA922	0xC647E9C4	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<System.Guid, int>	word search: generic types and GTA V identifiers, both hashes
+0xAFD47465AE24DB69	0xA0D1C90E	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0xB0464531C26D0FC5	0x7A3ED3A0	System.Collections.Generic.KeyValuePair`2<InventoryItemGuid, uint>	word search: generic types and GTA V identifiers, both hashes
+0xB069212C52802E3B	0xE73915F8	System.Span`1<System.Guid>	word search: generic types and GTA V identifiers, both hashes
+0xB06ECF2173AA8C0E	0x0D241481	System.Collections.Generic.IList`1<System.ValueTuple`2<int, bool>>	word search: generic types and GTA V identifiers, both hashes
+0xB09F593657898E04	0xC8C53099	System.Collections.Generic.Dictionary`2+ValueCollection<HashString, bool>	word search: generic types and GTA V identifiers, both hashes
+0xB1361FFB61792BE6	0x3BCD56A3	System.Collections.Generic.Dictionary`2+KeyCollection<int, Object>	word search: generic types and GTA V identifiers, both hashes
+0xB14060355D962818	0x5E464B6D	System.Collections.Generic.IReadOnlyDictionary`2<System.Type, System.Type>	word search: generic types and GTA V identifiers, both hashes
+0xB144CBF2FA412B14	0xDE2A7D34	System.Collections.Generic.Dictionary`2+KeyCollection<HashString, System.Guid>	word search: generic types and GTA V identifiers, both hashes
+0xB1D16683F0503E16	0x34F12ACB	System.Collections.Generic.ICollection`1<ItemEffectSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xB1E882F2ED3381D1	0x4F175F5B	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<InventoryItemData, int>	word search: generic types and GTA V identifiers, both hashes
+0xB1FA0137782E12F6	0xAE81D2DC	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1<System.Collections.Generic.KeyValuePair`2<Object, Object>>	word search: generic types and GTA V identifiers, both hashes
+0xB23743EE976D1E89	0xAD180251	System.Collections.Generic.Dictionary`2<float, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0xB23BFFF27D6FEF96	0xBA0A06A5	System.ValueTuple`2<HashString, System.ValueTuple`2<ILocalisedString, ILocalisedString>>	word search: generic types and GTA V identifiers, both hashes
+0xB24B18351E5315DB	0xBDBBF261	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<int, Vector3>>	word search: generic types and GTA V identifiers, both hashes
+0xB2AD74627ABFB9EC	0x267F7E81	System.Threading.Tasks.Task`1<byte>	word search: generic types and GTA V identifiers, both hashes
+0xB2B325A7219C03CE	0xDE4C7E6B	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<InventoryItemGuid, InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0xB306DDDD7E498B07	0xDA5DEB6F	System.Collections.Generic.Dictionary`2<float, LayoutLocation>	word search: generic types and GTA V identifiers, both hashes
+0xB30E1869A3CA11B7	0x2D6655C2	System.Collections.Generic.Dictionary`2+KeyCollection<HashString, bool>	word search: generic types and GTA V identifiers, both hashes
+0xB3670BF5DD25128D	0x011F1976	System.Collections.Generic.ICollection`1<BlockedInteractionSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xB3792D5111511B27	0x72D26EDD	System.Threading.Tasks.Task`1<AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0xB384283C01C6B999	0x81A4CD7B	System.Collections.Generic.Dictionary`2+ValueCollection<HashString, HashString>	word search: generic types and GTA V identifiers, both hashes
+0xB38F4A50D8331729	0x86EF6575	System.Nullable`1<int>	word search: generic types and GTA V identifiers, both hashes
+0xB457322629853803	0x9ACCFF7E	System.Collections.Generic.Dictionary`2+KeyCollection<System.Guid, sbyte>	word search: generic types and GTA V identifiers, both hashes
+0xB494609F25B9A3B3	0x6FCF7D2F	System.Collections.Generic.IList`1<ILocalisedString>	word search: generic types and GTA V identifiers, both hashes
+0xB4CC4F2CFE71A79D	0x24C2F456	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1<sbyte>	word search: generic types and GTA V identifiers, both hashes
+0xB50BB79732AA4252	0xC9EC9146	System.ValueTuple`2<Vector3, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0xB53CF1726F8BECB1	0x77DBB586	System.Collections.Generic.IList`1<InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0xB53E67DC6BE0B100	0x57015A15	System.ValueTuple`2<bool, int>	word search: generic types and GTA V identifiers, both hashes
+0xB541B3F4395404C1	0xB4AC2689	System.Collections.Generic.ICollection`1<MediaDisplaySaveData>	word search: generic types and GTA V identifiers, both hashes
+0xB57C895DDFA0B8DB	0x79AE554F	System.Collections.Generic.ICollection`1<GamerHandle>	word search: generic types and GTA V identifiers, both hashes
+0xB5BB23668F06B6F2	0x19284B7D	System.Collections.Generic.ICollection`1<bool>	word search: generic types and GTA V identifiers, both hashes
+0xB5E2922C5628AEF4	0xAE54F36B	System.Collections.Generic.ICollection`1<LayoutLocation>	word search: generic types and GTA V identifiers, both hashes
+0xB5EC9A0B159B8571	0xE7FE16A4	System.Collections.Generic.IReadOnlyList`1<ulong>	word search: generic types and GTA V identifiers, both hashes
+0xB630FDCFE6CEBBAD	0x9E345A83	System.Collections.Generic.IList`1<System.Enum>	word search: generic types and GTA V identifiers, both hashes
+0xB631BFCBCCDE804A	0xDB00138C	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0xB64793C85238E88C	0x1FC8CCDA	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter<ScriptReservationHandle>	word search: generic types and GTA V identifiers, both hashes
+0xB64E861B832470FF	0x9B820248	System.Collections.Generic.IEnumerable`1<short>	word search: generic types and GTA V identifiers, both hashes
+0xB6DBA9404D6B47D0	0x12C0654D	System.Collections.Generic.IReadOnlyCollection`1<System.ValueTuple`2<uint, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0xB6EF590780430EDD	0xCABDD199	System.Collections.Generic.KeyValuePair`2<System.Enum, int>	word search: generic types and GTA V identifiers, both hashes
+0xB708574EE29700DC	0x7DE2F1D5	System.Collections.Generic.ICollection`1<System.ValueTuple`2<HashString, bool>>	word search: generic types and GTA V identifiers, both hashes
+0xB70E3A643704C56A	0x2ECEA628	System.Collections.Generic.IReadOnlyCollection`1<TimerSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xB73F0B1F71C2BDBA	0xB17BEBB2	System.Collections.Generic.ICollection`1<CarriableEntrySaveData>	word search: generic types and GTA V identifiers, both hashes
+0xB743D3D727D9E19F	0x238EE01B	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter<long>	word search: generic types and GTA V identifiers, both hashes
+0xB7980B3494BDE9F5	0xCC809D72	System.Collections.Generic.IReadOnlyCollection`1<IInputAction>	word search: generic types and GTA V identifiers, both hashes
+0xB7F7F5F532E757CD	0x8AF34B86	System.Collections.Generic.IList`1<string>	word search: generic types and GTA V identifiers, both hashes
+0xB7FDEFF097A5BCD6	0x1F23F7F5	System.Collections.Generic.IReadOnlyCollection`1<ushort>	word search: generic types and GTA V identifiers, both hashes
+0xB8068991E83E46F6	0x24AF0371	System.ValueTuple`2<HashString, TxdHashString>	word search: generic types and GTA V identifiers, both hashes
+0xB85EB9BB20D8C208	0x923184A7	System.Collections.Generic.IList`1<System.ValueTuple`2<int, int>>	word search: generic types and GTA V identifiers, both hashes
+0xB8A50A88612DD35F	0x19385031	System.Collections.Generic.IDictionary`2<InventoryItemData, int>	word search: generic types and GTA V identifiers, both hashes
+0xB8C1BA125F65A219	0x29D9C1AE	System.Collections.Generic.Dictionary`2+KeyCollection<int, InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0xB8D28A846A3D0FCA	0xEB4181DF	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<int, Object>	word search: generic types and GTA V identifiers, both hashes
+0xB8FC3D68BC65C01A	0xAD31EDF4	System.Collections.Generic.Dictionary`2+ValueCollection<int, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0xB911A7E9CBFFE1DF	0x9B757E45	System.Collections.Generic.IList`1<byte>	word search: generic types and GTA V identifiers, both hashes
+0xB918B4BB733AED5B	0xA3165130	System.Collections.Generic.IEnumerable`1<System.Type>	word search: generic types and GTA V identifiers, both hashes
+0xB9E9BFA0A3BC3B01	0x6A473EAD	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<ulong, bool>	word search: generic types and GTA V identifiers, both hashes
+0xBA1074FE7E24C3B6	0x09EEC547	System.Collections.Generic.Dictionary`2+ValueCollection<HashString, System.Guid>	word search: generic types and GTA V identifiers, both hashes
+0xBA8AF20A123C33AA	0x758CA166	System.Collections.Generic.IList`1<Vector2>	word search: generic types and GTA V identifiers, both hashes
+0xBB464DF5D6B002D0	0x53CCBDA2	System.ValueTuple`2<InventoryItemData, uint>	word search: generic types and GTA V identifiers, both hashes
+0xBB68A14903137050	0xC9A7286A	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<HashString, bool>	word search: generic types and GTA V identifiers, both hashes
+0xBB7A28B4AAEEAB49	0xD74433BD	System.Collections.Generic.ICollection`1<char>	word search: generic types and GTA V identifiers, both hashes
+0xBBBC346D18040981	0xA723C664	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1<bool>	word search: generic types and GTA V identifiers, both hashes
+0xBBC5CC8D2D106185	0x4A9ED803	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<string, string>>	word search: generic types and GTA V identifiers, both hashes
+0xBBDB90814C0CDAE3	0x538D47EC	System.Threading.Tasks.Task`1<ushort>	word search: generic types and GTA V identifiers, both hashes
+0xBC04EC051094BF09	0x4B1C1E2D	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<HashString, System.Guid>>	word search: generic types and GTA V identifiers, both hashes
+0xBC49310AE0B968E0	0x67E7BC55	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<HashString, System.Guid>	word search: generic types and GTA V identifiers, both hashes
+0xBC7AF422587CC107	0xEBF7EA9C	System.Collections.Generic.Dictionary`2+ValueCollection<int, InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0xBCE71AB9A316175F	0xAF6778A2	System.Collections.Generic.Dictionary`2<HashString, Object>	word search: generic types and GTA V identifiers, both hashes
+0xBD4A9C47C05E9442	0x18B46F8F	System.Collections.Generic.IReadOnlyCollection`1<uint>	word search: generic types and GTA V identifiers, both hashes
+0xBD4ACB919702B9F8	0xC17B839F	System.Nullable`1<TxdHashString>	word search: generic types and GTA V identifiers, both hashes
+0xBD92B83F7CA6E5B1	0x284149C5	System.Collections.Generic.Dictionary`2<GamerHandle, System.Threading.Tasks.TaskCompletionSource`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0xBDB82FFB5179B8B9	0x18A80B12	System.Collections.Generic.IList`1<InventoryBundleAttributes>	word search: generic types and GTA V identifiers, both hashes
+0xBE0C4D1E6A5CDB13	0x572C97B4	System.Collections.Generic.IEnumerator`1<System.ValueTuple`2<HashString, bool>>	word search: generic types and GTA V identifiers, both hashes
+0xBE3AAF32BD8C680B	0xC9C3396E	System.Collections.Generic.ICollection`1<string>	word search: generic types and GTA V identifiers, both hashes
+0xBE939F0C01E4F428	0xB683DB7C	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<int, AnimScene>>	word search: generic types and GTA V identifiers, both hashes
+0xBEBBED3DA4F933B7	0x2651A086	System.Collections.Generic.IReadOnlyList`1<Vector4>	word search: generic types and GTA V identifiers, both hashes
+0xBEC550D61004277A	0x39DCDBBA	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<int, int>	word search: generic types and GTA V identifiers, both hashes
+0xBECC6C07C1E053BC	0x07C1EEEA	System.Collections.Generic.IEnumerable`1<ItemEffectSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xBF5FBA6AB1DAFC4E	0x75B290DA	System.Collections.Generic.Dictionary`2+Enumerator<TxdHashString, System.ValueTuple`2<int, bool>>	word search: generic types and GTA V identifiers, both hashes
+0xBF7267D9B2E0AEC9	0x06E1D871	System.Collections.Generic.IReadOnlyCollection`1<bool>	word search: generic types and GTA V identifiers, both hashes
+0xBF94A64446BE5BA7	0x40D50A2B	System.Collections.Generic.IReadOnlyCollection`1<System.ValueTuple`2<InventoryItemData, float>>	word search: generic types and GTA V identifiers, both hashes
+0xBFA706540C25D5EB	0xFED7A44E	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<HashString, System.Guid>>	word search: generic types and GTA V identifiers, both hashes
+0xBFB7DD9A767CD963	0xE379C3C4	System.Collections.Generic.IEnumerable`1<System.ValueTuple`2<HashString, System.ValueTuple`2<ILocalisedString, ILocalisedString>>>	word search: generic types and GTA V identifiers, both hashes
+0xC01AC3CD25CE637D	0x42BB4F76	System.Collections.Generic.IEnumerable`1<System.ValueTuple`2<InventoryItemData, float>>	word search: generic types and GTA V identifiers, both hashes
+0xC03492084034A8B8	0x8AF5E9FC	System.Collections.Generic.IDictionary`2<System.Type, Object>	word search: generic types and GTA V identifiers, both hashes
+0xC037D4F049F98EE9	0xBF836D98	System.ValueTuple`2<float, float>	word search: generic types and GTA V identifiers, both hashes
+0xC07A59F663BDA1AB	0xD3EC6956	System.ValueTuple`2<int, HashString>	word search: generic types and GTA V identifiers, both hashes
+0xC15934712D2A713C	0x0589D21B	System.Collections.Generic.IReadOnlyCollection`1<short>	word search: generic types and GTA V identifiers, both hashes
+0xC175C80D5D5C8734	0xBF90738E	System.Collections.Generic.Dictionary`2+Enumerator<InventoryItemData, int>	word search: generic types and GTA V identifiers, both hashes
+0xC1ECDB863812A374	0x13822890	System.Collections.Generic.IReadOnlyList`1<ExhaustedActionSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xC2CD5205EA1DF702	0x64B15A2F	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<TxdHashString, int>	word search: generic types and GTA V identifiers, both hashes
+0xC2E2C67FA7E0F454	0x515E5484	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<float, LayoutLocation>>	word search: generic types and GTA V identifiers, both hashes
+0xC304B8BF04562116	0x00F57F8E	System.Collections.Generic.ICollection`1<IInputAction>	word search: generic types and GTA V identifiers, both hashes
+0xC30BCC0A9DCD2D44	0x97EBAA3B	System.Collections.Generic.IReadOnlyList`1<ItemEffectSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xC331DDAB4ADCD3C7	0xD4B98413	System.Collections.Generic.ICollection`1<long>	word search: generic types and GTA V identifiers, both hashes
+0xC33A80CA74941DA9	0x71B0B27F	System.Collections.Generic.IReadOnlyCollection`1<BundlePathEntry>	word search: generic types and GTA V identifiers, both hashes
+0xC33DCC8173F1EF8B	0xB443E2E3	System.Collections.Generic.Dictionary`2+ValueCollection<int, bool>	word search: generic types and GTA V identifiers, both hashes
+0xC3859388766E6690	0xEDCA6139	System.Collections.Generic.IReadOnlyDictionary`2<System.Guid, int>	word search: generic types and GTA V identifiers, both hashes
+0xC3F2F43A4DD6FC8D	0x3E3EC3BB	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter<System.Collections.Generic.KeyValuePair`2<Object, Object>>	word search: generic types and GTA V identifiers, both hashes
+0xC40F42786F87A318	0x20D33582	System.Collections.Generic.KeyValuePair`2<int, HashString>	word search: generic types and GTA V identifiers, both hashes
+0xC41A5DB231473F95	0xD3E68065	System.Collections.Generic.Dictionary`2+Enumerator<int, AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0xC484AABFBB9F8254	0x9751B161	System.Collections.Generic.IReadOnlyCollection`1<InventoryItemData>	word search: generic types and GTA V identifiers, both hashes
+0xC54143F6021B79B9	0xDF8452F0	System.Collections.Generic.IReadOnlyList`1<BasketballHoop>	word search: generic types and GTA V identifiers, both hashes
+0xC54EED09886E2A38	0xA55F6D56	System.Collections.Generic.IEnumerator`1<GamerHandle>	word search: generic types and GTA V identifiers, both hashes
+0xC55C0ADADBFB4729	0x050B0F08	System.Collections.Generic.ICollection`1<TxdHashString>	word search: generic types and GTA V identifiers, both hashes
+0xC579607D2DDEB576	0x79FDCF67	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1<ulong>	word search: generic types and GTA V identifiers, both hashes
+0xC5E3089E09D7FAEA	0x7A5D1CD6	System.Collections.Generic.IEnumerable`1<System.Guid>	word search: generic types and GTA V identifiers, both hashes
+0xC626AF9B1CB38828	0x9CDD31A8	System.Collections.Generic.IList`1<HashString>	word search: generic types and GTA V identifiers, both hashes
+0xC68B539389300AB9	0xD38E07E5	System.Collections.Generic.IEnumerator`1<uint>	word search: generic types and GTA V identifiers, both hashes
+0xC72F42F06B0EA06F	0xF0EB708A	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<float, int>	word search: generic types and GTA V identifiers, both hashes
+0xC7AB0C1E11D967DB	0x7430910E	System.Collections.Generic.IReadOnlyList`1<HashString>	word search: generic types and GTA V identifiers, both hashes
+0xC7E3A2BCB762BD66	0xE0FC5C1E	System.Collections.Generic.IReadOnlyDictionary`2<System.Type, Object>	word search: generic types and GTA V identifiers, both hashes
+0xC80D95CF520233F5	0x2F50AA03	System.Collections.Generic.Dictionary`2+ValueCollection<float, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0xC83A247EDEFEC455	0x73A2B5D0	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<int, System.ValueTuple`2<int, int>>>	word search: generic types and GTA V identifiers, both hashes
+0xC841862AF2A04AC8	0x56C8FF01	System.Collections.Generic.Dictionary`2<System.Guid, int>	word search: generic types and GTA V identifiers, both hashes
+0xC843D5D7F7FCE3A0	0xCE3C8590	System.Collections.Generic.IReadOnlyDictionary`2<int, AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0xC870454D114208B2	0x745B8D9A	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<HashString, AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0xC8D33388A45C0430	0xEC664AFD	System.Collections.Generic.IEnumerator`1<System.Threading.Tasks.Task`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0xC8D46A6F52E3DABA	0x56838831	System.Collections.Generic.ICollection`1<FlowNodeSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xC8EE7D99C6BB78F3	0x779DD447	System.Collections.Generic.IEnumerator`1<AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0xC97CB53D544B7EC4	0x8D28BEC0	System.Collections.Generic.IReadOnlyCollection`1<ulong>	word search: generic types and GTA V identifiers, both hashes
+0xC9A5D03528882EED	0xA93F31A3	System.Nullable`1<Vector4>	word search: generic types and GTA V identifiers, both hashes
+0xCA776AFDA9EE4F36	0x0DA59B8E	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<TxdHashString, System.ValueTuple`2<int, bool>>	word search: generic types and GTA V identifiers, both hashes
+0xCA7B8FD7A429C349	0x8E733E8C	System.Collections.Generic.IEnumerator`1<float>	word search: generic types and GTA V identifiers, both hashes
+0xCA8C0B9B1B424DF1	0x84871C70	System.Collections.Generic.KeyValuePair`2<HashString, bool>	word search: generic types and GTA V identifiers, both hashes
+0xCB1EA318F86A1DD2	0xE1DB4D3B	System.Collections.Generic.IReadOnlyDictionary`2<TxdHashString, int>	word search: generic types and GTA V identifiers, both hashes
+0xCB69D2D834CA3E0F	0xAD5426FF	System.Collections.Generic.IEnumerator`1<FlowNodeSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xCBD1C418D829A4B7	0x828507DD	System.Collections.Generic.IList`1<System.ValueTuple`2<int, float>>	word search: generic types and GTA V identifiers, both hashes
+0xCBEA41E343EADEC1	0x71DF61DB	System.Collections.Generic.IList`1<System.Threading.Tasks.TaskCompletionSource`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0xCBEC3EBE693CC27C	0xCA21C981	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<float, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0xCC5DBD9A39446C8E	0x9FD137D2	System.Collections.Generic.IEnumerable`1<System.ValueTuple`2<int, bool>>	word search: generic types and GTA V identifiers, both hashes
+0xCC5DDCC2B2298D3F	0xEF765DAB	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<float, Vector3>>	word search: generic types and GTA V identifiers, both hashes
+0xCC6FD3DF5A2E823B	0xB4B28AEB	System.Collections.Generic.Dictionary`2+ValueCollection<int, int>	word search: generic types and GTA V identifiers, both hashes
+0xCC81D19EB4AE312D	0xD7887D00	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<HashString, bool>>	word search: generic types and GTA V identifiers, both hashes
+0xCD0CF899FE24D3A5	0x119E8A63	System.Collections.Generic.ICollection`1<ushort>	word search: generic types and GTA V identifiers, both hashes
+0xCD34D6F604F2C460	0x8D171AE9	System.Collections.Generic.IEnumerable`1<FlowNodeSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xCD4986172627B0D1	0xEA01451A	System.Collections.Generic.Dictionary`2+KeyCollection<System.Type, Object>	word search: generic types and GTA V identifiers, both hashes
+0xCD871E5DAD494CF1	0x04BF2911	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<float, int>	word search: generic types and GTA V identifiers, both hashes
+0xCDC31A3E4F9A5029	0x385B9FE5	System.Collections.Generic.Dictionary`2+KeyCollection<int, AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0xCDC5FD960CA69FC6	0xDCB29DA0	System.Collections.Generic.IReadOnlyCollection`1<System.ValueTuple`2<int, int>>	word search: generic types and GTA V identifiers, both hashes
+0xCDC65A00EBDBBA95	0x5FD32952	System.Collections.Generic.IDictionary`2<TxdHashString, int>	word search: generic types and GTA V identifiers, both hashes
+0xCE0148EA5EF996C4	0xF696775C	System.Collections.Generic.IEnumerable`1<System.ValueTuple`2<InventoryItemData, uint>>	word search: generic types and GTA V identifiers, both hashes
+0xCE0A48654A676F0A	0xD46DED3D	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<TxdHashString, int>>	word search: generic types and GTA V identifiers, both hashes
+0xCE107261EA394203	0x580E0339	System.Collections.Generic.Dictionary`2+KeyCollection<float, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0xCE1E5E718CEFBF15	0x57A3F034	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter<sbyte>	word search: generic types and GTA V identifiers, both hashes
+0xCE423EF747B886CF	0x5FF86573	System.Collections.Generic.Dictionary`2+KeyCollection<HashString, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0xCEE8689074F2A47B	0xC7878B70	System.Threading.Tasks.Task`1<ScriptReservationHandle>	word search: generic types and GTA V identifiers, both hashes
+0xCEF727E9EA7ABDA0	0xCF6C3A79	System.Collections.Generic.IReadOnlyList`1<InventoryItemData>	word search: generic types and GTA V identifiers, both hashes
+0xCF7D0748CD31D2D2	0x4DB71886	System.Collections.Generic.IEnumerator`1<TutorialEscalationSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xCF7E15FD3D0946F4	0xDA5444B3	System.Collections.Generic.Dictionary`2+ValueCollection<GamerHandle, System.Threading.Tasks.TaskCompletionSource`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0xCFA4620559F19F4B	0x6343337D	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<GamerHandle, System.Threading.Tasks.TaskCompletionSource`1<bool>>>	word search: generic types and GTA V identifiers, both hashes
+0xCFAA94415D0F0666	0xD88B8210	System.Collections.Generic.IEnumerator`1<InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0xCFB2ABD7BC95969E	0xB8AAAC97	System.Collections.Generic.IReadOnlyDictionary`2<HashString, System.Collections.Generic.KeyValuePair`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0xCFC35C04F6FE5456	0xF004F7DA	System.Collections.Generic.IReadOnlyDictionary`2<HashString, AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0xCFC71005DD073D15	0x1A86F86F	System.Collections.Generic.IEnumerable`1<AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0xCFCB8E9C46029B22	0x97907983	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<System.Enum, Vector2>>	word search: generic types and GTA V identifiers, both hashes
+0xCFE0FDE32DFA48B9	0x25088B27	System.Collections.Generic.IDictionary`2<TxdHashString, System.ValueTuple`2<int, bool>>	word search: generic types and GTA V identifiers, both hashes
+0xCFF9059E94226683	0xDFEDFAA3	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<HashString, System.Collections.Generic.Dictionary`2<HashString, HashString>>>	word search: generic types and GTA V identifiers, both hashes
+0xD0200C95125F1008	0x8E102E24	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<int, int>>	word search: generic types and GTA V identifiers, both hashes
+0xD04292927B901640	0x3E890F48	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<int, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0xD071FAF048A1C523	0x222746BB	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<TxdHashString, int>>	word search: generic types and GTA V identifiers, both hashes
+0xD08304F812BE64D9	0xE4D77567	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.Dictionary`2<HashString, Object>>	word search: generic types and GTA V identifiers, both hashes
+0xD0AC980A78E05524	0x7FAF4342	System.Collections.Generic.Dictionary`2<HashString, System.Guid>	word search: generic types and GTA V identifiers, both hashes
+0xD0E3274165682B21	0x8F029A57	System.Collections.Generic.KeyValuePair`2<HashString, Object>	word search: generic types and GTA V identifiers, both hashes
+0xD1305A525F4C9606	0xFA2B4C00	System.ValueTuple`2<uint, HashString>	word search: generic types and GTA V identifiers, both hashes
+0xD16219661E20EADD	0x3D512DC4	System.Threading.Tasks.Task`1<System.Collections.Generic.KeyValuePair`2<Object, Object>>	word search: generic types and GTA V identifiers, both hashes
+0xD22C414E1728964B	0x66CEAD29	System.Collections.Generic.Dictionary`2+Enumerator<int, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0xD2533882B955806F	0xF49387D0	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<InventoryItemGuid, InventoryItemGuid>>	word search: generic types and GTA V identifiers, both hashes
+0xD2EA43AC6D86E35B	0x7189993C	System.Runtime.CompilerServices.TaskAwaiter`1<ScriptReservationHandle>	word search: generic types and GTA V identifiers, both hashes
+0xD2FA35745DEB3485	0x97341337	System.Collections.Generic.Dictionary`2+KeyCollection<string, string>	word search: generic types and GTA V identifiers, both hashes
+0xD2FE3FAA75EE4357	0xBBD5FC77	System.Collections.Generic.IEnumerable`1<HashString>	word search: generic types and GTA V identifiers, both hashes
+0xD341810856D10186	0xEB132A36	System.Collections.Generic.IReadOnlyList`1<System.Threading.Tasks.Task`1<ArchetypeHashString>>	word search: generic types and GTA V identifiers, both hashes
+0xD3436395A3E77F4A	0xC3A05404	System.Collections.Generic.ICollection`1<uint>	word search: generic types and GTA V identifiers, both hashes
+0xD35704A9803D2891	0xE8246682	System.Collections.Generic.IReadOnlyCollection`1<System.ValueTuple`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0xD36044D018AF0FC5	0x790C30F6	System.Collections.Generic.Dictionary`2+ValueCollection<System.Enum, Vector2>	word search: generic types and GTA V identifiers, both hashes
+0xD3869CF53DC3EDB6	0x71DC33BB	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<int, AnimScene>>	word search: generic types and GTA V identifiers, both hashes
+0xD3F7E2D71F26F33E	0x25C3AF98	System.Collections.Generic.IEnumerable`1<HeatRequestSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xD42DA1E0B094DD26	0x688B9D7D	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<System.Enum, Vector2>>	word search: generic types and GTA V identifiers, both hashes
+0xD437C13ADD3E04A0	0x70BF23C9	System.Collections.Generic.Dictionary`2+Enumerator<HashString, Object>	word search: generic types and GTA V identifiers, both hashes
+0xD4A58896302709C1	0xA85EDE20	System.Collections.Generic.Dictionary`2+KeyCollection<Vector3, int>	word search: generic types and GTA V identifiers, both hashes
+0xD4B988EFF6892CD1	0x0EB47D2C	System.Collections.Generic.IEnumerable`1<LayoutLocation>	word search: generic types and GTA V identifiers, both hashes
+0xD4C86D558B2C1625	0x9CC570D4	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<HashString, AnimScene>>	word search: generic types and GTA V identifiers, both hashes
+0xD5071035DE3169CB	0x3A491489	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<Vector3, int>	word search: generic types and GTA V identifiers, both hashes
+0xD510BAB8E8870EB1	0x83F61CEF	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<int, TxdHashString>	word search: generic types and GTA V identifiers, both hashes
+0xD57091E3AD79403F	0x4DA4AC41	System.Collections.Generic.ICollection`1<UnlockedTutorialSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xD583AFBDB306B582	0x7DE8B5AE	System.Collections.Generic.IEnumerator`1<byte>	word search: generic types and GTA V identifiers, both hashes
+0xD625F7610C3A6E26	0xB2288ECC	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<InventoryItemData, int>>	word search: generic types and GTA V identifiers, both hashes
+0xD65760FA53B9D1F6	0xE1AA19D5	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter<byte>	word search: generic types and GTA V identifiers, both hashes
+0xD6B942604157FDA1	0xC546B7B3	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<float, Vector3>>	word search: generic types and GTA V identifiers, both hashes
+0xD71E268DBF95C189	0xB6CCEEF4	System.Collections.Generic.Dictionary`2+KeyCollection<int, TxdHashString>	word search: generic types and GTA V identifiers, both hashes
+0xD76E07445781E186	0xF634C785	System.Collections.Generic.IEnumerable`1<byte>	word search: generic types and GTA V identifiers, both hashes
+0xD7BF5D33F98A9EF6	0xA11D1D69	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<HashString, System.Threading.Tasks.Task`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0xD804144A2FB4C95A	0xBA8FB062	System.Collections.Generic.IDictionary`2<int, TxdHashString>	word search: generic types and GTA V identifiers, both hashes
+0xD8508FCF1A37650C	0xABAA93AD	System.Collections.Generic.IReadOnlyCollection`1<AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0xD87786150927FBFD	0x8E1D0030	System.Collections.Generic.ICollection`1<ExhaustedActionSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xD8D1B44BD437AE8F	0xB05731D5	System.Collections.Generic.IReadOnlyList`1<System.ValueTuple`2<HashString, int>>	word search: generic types and GTA V identifiers, both hashes
+0xD93D7752870C380E	0x919ED0E0	System.Collections.Generic.Dictionary`2+KeyCollection<HashString, int>	word search: generic types and GTA V identifiers, both hashes
+0xD961B5E12DE1D5EE	0xAA05CD10	System.Collections.Generic.IReadOnlyCollection`1<FlowNodeSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xD98D37D78F69D7ED	0x2770275A	System.Collections.Generic.IEnumerator`1<ulong>	word search: generic types and GTA V identifiers, both hashes
+0xD99BC0AE4D1EC069	0xEC07D5F0	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<HashString, HashString>	word search: generic types and GTA V identifiers, both hashes
+0xD9D0CC8979926119	0xB9BD7888	System.Collections.Generic.IEnumerable`1<System.ValueTuple`2<Vector3, float>>	word search: generic types and GTA V identifiers, both hashes
+0xDA04CBF95C59D5F8	0x2C12AEC6	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<float, int>>	word search: generic types and GTA V identifiers, both hashes
+0xDA805663F07FCF7E	0xBAB5271B	System.Collections.Generic.IDictionary`2<int, ulong>	word search: generic types and GTA V identifiers, both hashes
+0xDB4E2A296CEFA0C4	0x3E7D92F3	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<System.Guid, bool>	word search: generic types and GTA V identifiers, both hashes
+0xDBD8203FB5C93841	0xE3CE72F8	System.Collections.Generic.Dictionary`2+ValueCollection<HashString, System.Threading.Tasks.Task`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0xDC2A613AD07122A0	0x2DC18BE6	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter<ArchetypeHashString>	word search: generic types and GTA V identifiers, both hashes
+0xDC3306868B755C71	0xAEDC2CF6	System.Collections.Generic.IReadOnlyCollection`1<AmbientObjectiveSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xDC378AE5F544F3F6	0x478FA86F	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<InventoryItemData, int>>	word search: generic types and GTA V identifiers, both hashes
+0xDC939641AE4E5D45	0xC0FDB498	System.Collections.Generic.IReadOnlyCollection`1<System.Enum>	word search: generic types and GTA V identifiers, both hashes
+0xDCA5BB2D4C76CD6D	0x7F00B939	System.Collections.Generic.IEnumerator`1<HashString>	word search: generic types and GTA V identifiers, both hashes
+0xDCC858896274F316	0xD936A42A	System.Threading.Tasks.Task`1<ArchetypeHashString>	word search: generic types and GTA V identifiers, both hashes
+0xDD0BE0AE6A8BB212	0xBDA4F3C8	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<System.Enum, int>>	word search: generic types and GTA V identifiers, both hashes
+0xDD2E5D841854612E	0x05A505DC	System.Collections.Generic.Dictionary`2+Enumerator<System.Enum, Vector2>	word search: generic types and GTA V identifiers, both hashes
+0xDDF9E8789244CD8D	0x620D5A3E	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1<ushort>	word search: generic types and GTA V identifiers, both hashes
+0xDE4F4084DF9DFFE4	0xC2EECF32	System.Collections.Generic.IReadOnlyList`1<System.ValueTuple`2<Vector3, float>>	word search: generic types and GTA V identifiers, both hashes
+0xDE50205593C12443	0xD45F932D	System.ValueTuple`2<int, bool>	word search: generic types and GTA V identifiers, both hashes
+0xDE92C083AC149C5B	0xF7AF3619	System.ValueTuple`2<HashString, System.ValueTuple`2<HashString, ILocalisedString>>	word search: generic types and GTA V identifiers, both hashes
+0xDEB1D529B8627E2C	0x1108BA60	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<System.Guid, sbyte>	word search: generic types and GTA V identifiers, both hashes
+0xDF18BFA5268549F9	0x20B3BF99	System.Collections.Generic.IReadOnlyList`1<short>	word search: generic types and GTA V identifiers, both hashes
+0xDF42BDBF99B81AA2	0xEFDCBEB6	System.Collections.Generic.IReadOnlyList`1<System.Guid>	word search: generic types and GTA V identifiers, both hashes
+0xE0372426061F6191	0xD509C6E4	System.Collections.Generic.IEnumerator`1<TxdHashString>	word search: generic types and GTA V identifiers, both hashes
+0xE03C3CA8CD6356FF	0xF1F1186F	System.Collections.Generic.IReadOnlyList`1<System.ValueTuple`2<int, bool>>	word search: generic types and GTA V identifiers, both hashes
+0xE06973207403033B	0xFC82DA3B	System.Collections.Generic.KeyValuePair`2<int, Object>	word search: generic types and GTA V identifiers, both hashes
+0xE0C17093286C6AC1	0x9195F392	System.Collections.Generic.IReadOnlyCollection`1<AmbientVehicleSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xE0E8B130253BB5EC	0xFF3F4ED4	System.Collections.Generic.IList`1<ushort>	word search: generic types and GTA V identifiers, both hashes
+0xE15D542BEB04CAF2	0x74678C62	System.Collections.Generic.IList`1<uint>	word search: generic types and GTA V identifiers, both hashes
+0xE1889A1B28414ABA	0x88B4E1F9	System.Collections.Generic.IReadOnlyList`1<string>	word search: generic types and GTA V identifiers, both hashes
+0xE18A9E6EA2ACCC49	0xB3C1CA54	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<HashString, System.Collections.Generic.KeyValuePair`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0xE1A5AEF93FACB58B	0x89CE93A1	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<int, TxdHashString>>	word search: generic types and GTA V identifiers, both hashes
+0xE1CEBB3587FA51F8	0x17985BE8	System.Collections.Generic.IDictionary`2<System.Guid, bool>	word search: generic types and GTA V identifiers, both hashes
+0xE2488CA85641F088	0x2FF08F90	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<Vector3, bool>>	word search: generic types and GTA V identifiers, both hashes
+0xE2545A8D51386E1C	0x85175135	System.Collections.Generic.KeyValuePair`2<int, bool>	word search: generic types and GTA V identifiers, both hashes
+0xE2B79B1246F33455	0x15FF2FD3	System.Threading.Tasks.Task`1<float>	word search: generic types and GTA V identifiers, both hashes
+0xE369871FD24C9D46	0xC80163C8	System.Collections.Generic.IDictionary`2<float, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0xE4145790CD699E62	0x8AC9B004	System.Collections.Generic.IEnumerator`1<AmbientVehicleSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xE44FCC688CC55DB4	0xDF9A85AE	System.Collections.Generic.Dictionary`2+Enumerator<float, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0xE488482349998EF9	0x298A2053	System.ValueTuple`2<System.Enum, System.Enum>	word search: generic types and GTA V identifiers, both hashes
+0xE4E42D767F2797A2	0x51E5EDBB	System.Collections.Generic.IReadOnlyCollection`1<FlowCommandSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xE50EDF5D11ACB523	0xAACAA084	System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter<System.Guid>	word search: generic types and GTA V identifiers, both hashes
+0xE57C4A5666F09896	0xA6E74ED2	System.Collections.Generic.IEnumerable`1<AmbientVehicleSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xE625C66AA80B5BF6	0x93FDF791	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<HashString, Object>	word search: generic types and GTA V identifiers, both hashes
+0xE6526D12CA8A2996	0x929E52DC	System.Collections.Generic.IDictionary`2<float, LayoutLocation>	word search: generic types and GTA V identifiers, both hashes
+0xE6738B659608BFC9	0xDDC6119F	System.Nullable`1<float>	word search: generic types and GTA V identifiers, both hashes
+0xE6C78DA8EAD7D6AD	0x6B8DC47E	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<GamerHandle, System.Threading.Tasks.TaskCompletionSource`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0xE6E6480873BBF001	0xC3FC104B	System.Threading.Tasks.Task`1<HashString>	word search: generic types and GTA V identifiers, both hashes
+0xE70CCC0F1F5A6631	0x012C3D8C	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<float, LayoutLocation>>	word search: generic types and GTA V identifiers, both hashes
+0xE75C1624326BF22E	0x5F3E3EF6	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<HashString, System.Threading.Tasks.Task`1<bool>>>	word search: generic types and GTA V identifiers, both hashes
+0xE77E528503FF18E0	0x31E756DA	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<ulong, bool>>	word search: generic types and GTA V identifiers, both hashes
+0xE79139E4FC7C4E44	0xBB5EF0B2	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<int, System.ValueTuple`2<int, int>>	word search: generic types and GTA V identifiers, both hashes
+0xE82A2156DEF4FCE0	0x462438E6	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<int, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0xE864A445A128715B	0x54BE681C	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<InventoryItemGuid, uint>>	word search: generic types and GTA V identifiers, both hashes
+0xE8E36783A84853F6	0x8B503E05	System.Collections.Generic.Dictionary`2+KeyCollection<int, HashString>	word search: generic types and GTA V identifiers, both hashes
+0xE8F27749DA4D3EAE	0x10F4F7F9	System.Collections.Generic.IReadOnlyList`1<ushort>	word search: generic types and GTA V identifiers, both hashes
+0xE942547C6DF5A5AA	0x3ED9669B	System.Collections.Generic.Dictionary`2<TxdHashString, int>	word search: generic types and GTA V identifiers, both hashes
+0xE99E385D8B9B4ECF	0x9E0EF4F3	System.Collections.Generic.IEnumerator`1<System.ValueTuple`2<IncludedKit, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0xEA5FBCF09DA613CA	0xE16DC426	System.Collections.Generic.IList`1<System.Threading.Tasks.Task`1<ArchetypeHashString>>	word search: generic types and GTA V identifiers, both hashes
+0xEA6A4EDB71F3D9F9	0x97F0D74F	System.Collections.Generic.IReadOnlyList`1<DFObjectHandle>	word search: generic types and GTA V identifiers, both hashes
+0xEA7941FDEC3FFF20	0x486FC8BD	System.Collections.Generic.IEnumerable`1<SimStateSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xEA8012698CDDC0E8	0xA93E26C3	System.Collections.Generic.IReadOnlyList`1<System.ValueTuple`2<IncludedKit, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0xEA81D4A1855EB8AE	0xDA49776D	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<HashString, bool>>	word search: generic types and GTA V identifiers, both hashes
+0xEAEB8DFD7CE3E157	0x326117FE	System.Collections.Generic.IList`1<System.ValueTuple`2<InventoryItemData, float>>	word search: generic types and GTA V identifiers, both hashes
+0xEAFBDEF3C73A9C53	0x2E91D240	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<HashString, int>>	word search: generic types and GTA V identifiers, both hashes
+0xEBA687598F555520	0x1B618880	System.Collections.Generic.ICollection`1<System.ValueTuple`2<Vector3, float>>	word search: generic types and GTA V identifiers, both hashes
+0xEBDBC6D6EA458591	0x9869BC00	System.Collections.Generic.ICollection`1<BundlePathEntry>	word search: generic types and GTA V identifiers, both hashes
+0xEBDC0988743A8698	0xC2628B8B	System.Collections.Generic.IDictionary`2<System.Type, System.Type>	word search: generic types and GTA V identifiers, both hashes
+0xEBE8561B730D3E41	0x7777EC0F	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<Vector3, int>>	word search: generic types and GTA V identifiers, both hashes
+0xEC07724ABC287230	0x057859F2	System.Collections.Generic.IList`1<AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0xEC38D2C7D8B83CD2	0x0D4314F8	System.Collections.Generic.IEnumerable`1<UnlockedTutorialSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xEC8713DD584134B1	0x9B125C22	System.Collections.Generic.IList`1<System.ValueTuple`2<Vector3, float>>	word search: generic types and GTA V identifiers, both hashes
+0xEEE753662C123A62	0xED856A10	System.Collections.Generic.IEnumerator`1<AIEventType>	word search: generic types and GTA V identifiers, both hashes
+0xEF053D1E1EBC7474	0x9114A3E3	System.Collections.Generic.IEnumerable`1<BlockedInteractionSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xEFDF239D65F192F4	0x5A4F5369	System.ValueTuple`2<AnimScene, AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0xEFF9511BEB9D957D	0x7DFE8809	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0xF0102D860A0A7CD2	0xC96F420E	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<int, bool>	word search: generic types and GTA V identifiers, both hashes
+0xF028ADDC9EB5E548	0x7047E90B	System.Collections.Generic.IReadOnlyCollection`1<System.ValueTuple`2<InventoryItemData, uint>>	word search: generic types and GTA V identifiers, both hashes
+0xF03C31D77A097A19	0xA1CB6530	System.Collections.Generic.IReadOnlyList`1<AIEventType>	word search: generic types and GTA V identifiers, both hashes
+0xF0A6E52C888E1526	0xA18D2B9D	System.Collections.Generic.ICollection`1<InventoryTransferId>	word search: generic types and GTA V identifiers, both hashes
+0xF0EC370A2C9D49A6	0x28262FF3	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<int, ulong>>	word search: generic types and GTA V identifiers, both hashes
+0xF10702D54DB533C7	0xD7495C9A	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<System.Guid, bool>>	word search: generic types and GTA V identifiers, both hashes
+0xF10993D865930E9D	0x5149417D	System.Collections.Generic.IList`1<float>	word search: generic types and GTA V identifiers, both hashes
+0xF12985F909C4B344	0xEB24D014	System.Collections.Generic.IList`1<System.ValueTuple`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0xF141AC1389CEB6BA	0xE10C0A52	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<float, Vector3>>	word search: generic types and GTA V identifiers, both hashes
+0xF15E1DC104FF5455	0x2EFE081E	System.Collections.Generic.Dictionary`2<System.Guid, sbyte>	word search: generic types and GTA V identifiers, both hashes
+0xF1C43D1E16E43530	0x5AB8ECA8	System.Collections.Generic.IReadOnlyList`1<TimerSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xF1E3C5D3FA709D46	0x31F68C5D	System.Collections.Generic.Dictionary`2+KeyCollection<InventoryItemGuid, uint>	word search: generic types and GTA V identifiers, both hashes
+0xF2085B24B0470BB1	0x2E89FED9	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.Dictionary`2<HashString, System.Guid>>	word search: generic types and GTA V identifiers, both hashes
+0xF2588563202EA239	0x06F8784E	System.Collections.Generic.IReadOnlyCollection`1<TxdHashString>	word search: generic types and GTA V identifiers, both hashes
+0xF296516C2197ACEC	0x2A3403CF	System.Collections.Generic.IDictionary`2<System.Enum, HashString>	word search: generic types and GTA V identifiers, both hashes
+0xF303455698F4608F	0x46E1B2CA	System.Nullable`1<HashString>	word search: generic types and GTA V identifiers, both hashes
+0xF333CFF8F9BCE2D2	0xDDE552D3	System.Collections.Generic.Dictionary`2+KeyCollection<System.Guid, int>	word search: generic types and GTA V identifiers, both hashes
+0xF3596B8BA46E55BC	0xCD8201A5	System.Collections.Generic.Dictionary`2+ValueCollection<int, TxdHashString>	word search: generic types and GTA V identifiers, both hashes
+0xF37C029164F3AAB8	0xEC1D13E2	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<int, bool>>	word search: generic types and GTA V identifiers, both hashes
+0xF3AEDDB7E88AF5A8	0x7E2431EB	System.Collections.Generic.Dictionary`2+KeyCollection<Vector3, bool>	word search: generic types and GTA V identifiers, both hashes
+0xF3B0FC69C8A28736	0xC4FCAFC8	System.Collections.Generic.IEnumerator`1<InventoryItemData>	word search: generic types and GTA V identifiers, both hashes
+0xF3B7170871764C99	0xBE9128BA	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<int, bool>>	word search: generic types and GTA V identifiers, both hashes
+0xF3BCAA14CF753F18	0xD4EDDC53	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.Dictionary`2<HashString, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0xF4273707BD15F682	0x11161AF1	System.Collections.Generic.ICollection`1<Vector3>	word search: generic types and GTA V identifiers, both hashes
+0xF45528F797468387	0xB26BDCB5	System.Collections.Generic.IList`1<ContactSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xF4AE6A31C74C603C	0x9CE5388B	System.Collections.Generic.IReadOnlyList`1<ContactSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xF4B2ABDCF7A5297D	0x2F20B5EA	System.Collections.Generic.Dictionary`2+KeyCollection<int, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0xF4F4B02876CE962C	0xB8E86D1A	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<HashString, System.Threading.Tasks.Task`1<bool>>>	word search: generic types and GTA V identifiers, both hashes
+0xF525A06A95EAD6F9	0x66FC46ED	System.Collections.Generic.IEnumerator`1<ItemEffectSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xF52CA7D7657B8453	0xE410A243	System.Nullable`1<System.ValueTuple`2<InventoryItemGuid, HashString>>	word search: generic types and GTA V identifiers, both hashes
+0xF560676BFD2BEB6B	0xA52B4066	System.Collections.Generic.IReadOnlyDictionary`2<HashString, int>	word search: generic types and GTA V identifiers, both hashes
+0xF5629CD156D54C2D	0x8AA80213	System.Span`1<uint>	word search: generic types and GTA V identifiers, both hashes
+0xF5632A9E8FD9F01E	0x72E46CD5	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<TxdHashString, int>	word search: generic types and GTA V identifiers, both hashes
+0xF582C27ED556FDB0	0x947DA945	System.Span`1<HashString>	word search: generic types and GTA V identifiers, both hashes
+0xF5D0CFB979E8B85E	0x5C326A73	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<HashString, int>	word search: generic types and GTA V identifiers, both hashes
+0xF62186E17DEAA688	0xF24E4ADF	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<int, int>	word search: generic types and GTA V identifiers, both hashes
+0xF62435052EFCBC0E	0xFD9A9274	System.Collections.Generic.IEnumerable`1<Object>	word search: generic types and GTA V identifiers, both hashes
+0xF68975D131648943	0x1446ACC8	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<ulong, bool>>	word search: generic types and GTA V identifiers, both hashes
+0xF6B0D836B927F2D5	0x138D17CB	System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<string, string>>	word search: generic types and GTA V identifiers, both hashes
+0xF6D2579EDC2F3EF5	0x5F3D08B2	System.Collections.Generic.IReadOnlyDictionary`2<int, HashString>	word search: generic types and GTA V identifiers, both hashes
+0xF6EB927ADC9392ED	0xEE31AC4F	System.Collections.Generic.IEnumerable`1<InventoryTransferId>	word search: generic types and GTA V identifiers, both hashes
+0xF740EF0A95160394	0x1DDB6C0E	System.Runtime.CompilerServices.TaskAwaiter`1<Object>	word search: generic types and GTA V identifiers, both hashes
+0xF757044B9BF5438D	0x2D30F49D	System.Collections.Generic.Dictionary`2+ValueCollection+Enumerator<int, InventoryItemGuid>	word search: generic types and GTA V identifiers, both hashes
+0xF7C88D8E7B2CEB41	0xDB49B8B8	System.Collections.Generic.IEnumerable`1<AmbientObjectiveSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xF7EEF724281B24DC	0x2E42A733	System.ValueTuple`2<HashString, ILocalisedString>	word search: generic types and GTA V identifiers, both hashes
+0xF7F128A99D037913	0x2DF4705A	System.Collections.Generic.IEnumerator`1<IncludedKit>	word search: generic types and GTA V identifiers, both hashes
+0xF812DD3548FBB356	0x5117149C	System.Collections.Generic.ICollection`1<AmbientVehicleSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xF8A086FA272D64D5	0xA398C151	System.Collections.Generic.IReadOnlyDictionary`2<HashString, System.Guid>	word search: generic types and GTA V identifiers, both hashes
+0xF8B1DAC5264F0134	0xFD39EF3A	System.Collections.Generic.IReadOnlyCollection`1<System.ValueTuple`2<float, int>>	word search: generic types and GTA V identifiers, both hashes
+0xF8B5E0506A12DA2D	0x5F4423F9	System.Collections.Generic.IReadOnlyList`1<sbyte>	word search: generic types and GTA V identifiers, both hashes
+0xF8DDDBA54AE8CBF3	0x53B5DCF7	System.Collections.Generic.IReadOnlyDictionary`2<string, string>	word search: generic types and GTA V identifiers, both hashes
+0xF8DE47834FB763B4	0x48B5FC80	System.Collections.Generic.IReadOnlyCollection`1<sbyte>	word search: generic types and GTA V identifiers, both hashes
+0xF8E76F8CD2AB5C69	0x8306D9FD	System.ValueTuple`2<TxdHashString, HashString>	word search: generic types and GTA V identifiers, both hashes
+0xF9837077CCC6B264	0x95516C30	System.Collections.Generic.Dictionary`2<HashString, System.Threading.Tasks.Task`1<bool>>	word search: generic types and GTA V identifiers, both hashes
+0xF99C1EDB7972424B	0x48E2EAF1	System.Collections.Generic.IEnumerator`1<System.Threading.Tasks.Task`1<ArchetypeHashString>>	word search: generic types and GTA V identifiers, both hashes
+0xF99F897F42077E24	0x0475F304	System.Collections.Generic.IReadOnlyList`1<BlockedInteractionSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xF9B25BB91E36AEA8	0x8B5F1903	System.Collections.Generic.IEnumerator`1<Vector2>	word search: generic types and GTA V identifiers, both hashes
+0xF9C57ACD75814EB0	0x4AA987EC	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<InventoryItemData, int>>	word search: generic types and GTA V identifiers, both hashes
+0xF9F8F43D78846B7F	0x89D928F9	Matrix3	word search: generic types and GTA V identifiers, both hashes
+0xFA51B9625606F4EE	0xE0D47FD6	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<HashString, Vector3>>	word search: generic types and GTA V identifiers, both hashes
+0xFA5FDAA751958958	0xFAC5325F	System.Collections.Generic.IEnumerable`1<ContactSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xFA6AAEAB0962845D	0x022E78AE	System.ValueTuple`2<int, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0xFA6EAF1371051E20	0x1199DDF0	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<int, AnimScene>	word search: generic types and GTA V identifiers, both hashes
+0xFA98B8DC8A3973D2	0x8435F891	System.Collections.Generic.IList`1<AmbientVehicleSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xFABE75AB30DCDDE1	0x1949AE91	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<System.Enum, int>>	word search: generic types and GTA V identifiers, both hashes
+0xFB01A2907F537523	0x57F9BCA7	System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<GamerHandle, System.Threading.Tasks.TaskCompletionSource`1<bool>>>	word search: generic types and GTA V identifiers, both hashes
+0xFB4EE69563FD9A0E	0xC758C538	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<HashString, Vector3>>	word search: generic types and GTA V identifiers, both hashes
+0xFC0C23C2BD963F44	0x93E80277	System.Collections.Generic.IList`1<ExhaustedTutorialSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xFC1A72D1CB8E2749	0x7BBBA535	System.Collections.Generic.Dictionary`2+Enumerator<HashString, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0xFC55820888553ADA	0xFF395919	System.Threading.Tasks.Task`1<sbyte>	word search: generic types and GTA V identifiers, both hashes
+0xFC642E1D9AB5226A	0x70C088A5	System.Collections.Generic.IEnumerator`1<BlockedInteractionSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xFC6EB5EEA93F3282	0xA23D2BC3	System.Collections.Generic.IReadOnlyCollection`1<Vector3>	word search: generic types and GTA V identifiers, both hashes
+0xFC8EF65445F06B5D	0x1B686195	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<int, InventoryItemGuid>>	word search: generic types and GTA V identifiers, both hashes
+0xFCA5B15ADDE0C0BC	0xF5D67B09	System.Collections.Generic.Dictionary`2+KeyCollection<System.Enum, int>	word search: generic types and GTA V identifiers, both hashes
+0xFCC13D41C9AFDE68	0x1A35107F	System.Collections.Generic.IEnumerable`1<Vector2>	word search: generic types and GTA V identifiers, both hashes
+0xFD1AFE2D26FF2DEE	0xE7A492D0	System.Collections.Generic.Dictionary`2<string, string>	word search: generic types and GTA V identifiers, both hashes
+0xFD1B8519534193AF	0x5E6BF2DD	System.Collections.Generic.Dictionary`2+ValueCollection<HashString, Vector3>	word search: generic types and GTA V identifiers, both hashes
+0xFD6AE82A6B14F897	0x776747C7	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<int, Vector3>>	word search: generic types and GTA V identifiers, both hashes
+0xFDD569C07FAFABAC	0x211B342F	System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<HashString, AnimScene>>	word search: generic types and GTA V identifiers, both hashes
+0xFE261498B0FCCF7C	0xC622A305	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<HashString, int>>	word search: generic types and GTA V identifiers, both hashes
+0xFE3FD1F1C7288553	0x082814D8	System.Collections.Generic.Dictionary`2+KeyCollection<ulong, bool>	word search: generic types and GTA V identifiers, both hashes
+0xFE41C21B6D3DC05C	0x8F3BAA34	System.Collections.Generic.IReadOnlyCollection`1<GamerHandle>	word search: generic types and GTA V identifiers, both hashes
+0xFE5DF94764090FEB	0xBF6A7D6A	System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<Vector3, bool>>	word search: generic types and GTA V identifiers, both hashes
+0xFECD8207F91645C4	0x1A46BEFA	System.Collections.Generic.IReadOnlyList`1<byte>	word search: generic types and GTA V identifiers, both hashes
+0xFF6A3B924CE8829D	0xB865BF38	System.Collections.Generic.ICollection`1<DFObjectHandle>	word search: generic types and GTA V identifiers, both hashes
+0xFFC815367C0CC4A0	0xD7AE7EA8	System.Collections.Generic.Dictionary`2+KeyCollection+Enumerator<string, string>	word search: generic types and GTA V identifiers, both hashes
+0xFFDD90EB97EF3D57	0x5BAA3020	System.Collections.Generic.IEnumerable`1<ExhaustedActionSaveData>	word search: generic types and GTA V identifiers, both hashes
+0xFFE04CA1F315B03B	0x751A931D	System.Collections.Generic.IReadOnlyDictionary`2<int, bool>	word search: generic types and GTA V identifiers, both hashes

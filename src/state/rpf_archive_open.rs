@@ -58,7 +58,9 @@ fn gta6_crypto(path: &Path) -> Option<Arc<dyn RpfCryptoProvider>> {
     let mut head = [0u8; 0x1A];
     let read = std::fs::File::open(path)
         .and_then(|mut file| std::io::Read::read_exact(&mut file, &mut head));
-    let platform = read.ok().and_then(|()| or_io::Platform::from_letter(head[0x19]));
+    let platform = read
+        .ok()
+        .and_then(|()| or_io::Platform::from_letter(head[0x19]));
     let keys = super::rpf9_scan::rpf9_table::keys_of(platform).ok()?;
     Some(Arc::new(Gta6Context {
         keys,

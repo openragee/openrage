@@ -376,7 +376,7 @@ fn parse_step(line: &str) -> Result<Step, String> {
             if let ["frame", picked @ ..] = &args[..] {
                 let picked: Option<Vec<usize>> = picked.iter().map(|n| n.parse().ok()).collect();
                 return (picked.filter(|p| !p.is_empty()).map(Step::ModelFrame))
-                    .ok_or_else(|| "use `model frame GEOMETRY...`, by number from 0".into());
+                    .ok_or_else(|| "use `model frame GEOMETRY…`, by number from 0".into());
             }
             let (frames, name, in_full) = match args[..] {
                 ["passes"] => return Ok(Step::ModelPasses),

@@ -109,7 +109,7 @@ pub struct Output {
 }
 
 /// What [`Stats::constructs`] counts, in its order: the statement constructs, the groups, then the readings of an expression.
-pub const CONSTRUCTS: [&str; 31] = [
+pub const CONSTRUCTS: [&str; 32] = [
     "hidden",
     "await",
     "yield",
@@ -141,6 +141,7 @@ pub const CONSTRUCTS: [&str; 31] = [
     "tuple",
     "event",
     "kept-delegate",
+    "is",
 ];
 
 /// What decompiling found; each `_in` is counted on what the reader made, each `_out` on what the printer was given.
@@ -466,6 +467,7 @@ fn reading(kind: ExprSugar) -> usize {
         ExprSugar::Out => 26,
         ExprSugar::Ref => 27,
         ExprSugar::Tuple => 28,
+        ExprSugar::Is => 31,
     }
 }
 

@@ -401,6 +401,39 @@ pub(crate) fn compound<'a>(
     holds.then_some((*op, &**r))
 }
 
+/// The delegate a statement's own place holds, the handler the statement joins to it or takes away from it, and whether it takes away: `place += handler`.
+// ⚠ By the names a list gives the runtime's two methods, as an event's loop is read. The place
+// is read whole by the join's first operand, at the address the statement stores to, which the
+// one statement works out once: it calls nothing.
+pub(crate) fn delegate_step(s: &ir::Stmt) -> Option<(&Expr, &Expr, bool)> {
+    let (ir::Stmt::Assign { value, .. } | ir::Stmt::Store { value, .. }) = s else {
+        return None;
+    };
+    let (held, handler, remove) = super::closures::joined(value)?;
+    let own = match (s, whole(bare(held))) {
+        (ir::Stmt::Assign { target, .. }, Expr::Var(var)) => var == target,
+        (
+            ir::Stmt::Store {
+                kind, addr, offset, ..
+            },
+            Expr::Load {
+                ty: Scalar::U64,
+                addr: from,
+                offset: read_at,
+            },
+        ) => {
+            let once = match level(addr) {
+                0 => true,
+                1 => level(handler) < 2,
+                _ => false,
+            };
+            kind.bytes() == 8 && read_at == offset && **from == *addr && once
+        }
+        _ => false,
+    };
+    own.then_some((held, handler, remove))
+}
+
 /// Whether the printer writes `s` as `x++` or `x--` already: one up or down in 32 bits.
 fn steps(s: &ir::Stmt) -> bool {
     let ir::Stmt::Assign {
@@ -423,7 +456,8 @@ fn steps(s: &ir::Stmt) -> bool {
 fn compounded(stmt: &mut Stmt, head: &Head, project: &Project) {
     match stmt {
         Stmt::Simple(s) => {
-            if compound(s, head, project, None).is_some() && !steps(s) {
+            let works = compound(s, head, project, None).is_some() || delegate_step(s).is_some();
+            if works && !steps(s) {
                 let held = std::mem::replace(s, ir::Stmt::Eval(Expr::GuidEmpty));
                 *stmt = group(Group::Compound, vec![held]);
             }
@@ -433,7 +467,9 @@ fn compounded(stmt: &mut Stmt, head: &Head, project: &Project) {
                 let Group::Field { owner } = *kind else {
                     return;
                 };
-                let works = |s: &ir::Stmt| compound(s, head, project, Some(owner)).is_some();
+                let works = |s: &ir::Stmt| {
+                    compound(s, head, project, Some(owner)).is_some() || delegate_step(s).is_some()
+                };
                 if matches!(parts.as_slice(), [s] if works(s)) {
                     *kind = Group::Compound;
                 }

@@ -16,6 +16,7 @@ use super::ir::{
 };
 use super::names::Names;
 use super::passes::closures::Inline;
+use super::passes::sugar_expressions::delegate_step;
 use super::passes::sugar_statements::enumerated;
 use super::passes::{async_await, closures};
 use super::print::{
@@ -4649,14 +4650,18 @@ impl Held<'_> {
         let (Stmt::Assign { value, .. } | Stmt::Store { value, .. }) = part else {
             return Ok(None);
         };
-        let Expr::Binary { op, l, r, .. } = value else {
-            return Ok(None);
+        // A handler joined to the delegate the place holds is `+=`, and one taken away `-=`.
+        let (op, l, r): (BinOp, &Expr, &Expr) = match (value, delegate_step(part)) {
+            (_, Some((held, handler, false))) => (BinOp::Add, held, handler),
+            (_, Some((held, handler, true))) => (BinOp::Sub, held, handler),
+            (Expr::Binary { op, l, r, .. }, None) => (*op, &**l, &**r),
+            _ => return Ok(None),
         };
         if op.is_logical() {
             return Ok(None);
         }
         // What the operator reads on its left, under its readings, and whether a field it is read as.
-        let (mut read, mut owned) = (&**l, false);
+        let (mut read, mut owned) = (l, false);
         loop {
             match read {
                 Expr::Cast { e, .. } => read = &**e,
@@ -4694,7 +4699,7 @@ impl Held<'_> {
             }
             _ => return Ok(None),
         };
-        let one = matches!(&**r, Expr::Const(c) if c.bits == 1 && !c.kind.is_float());
+        let one = matches!(r, Expr::Const(c) if c.bits == 1 && !c.kind.is_float());
         let stated = match (op, one && typed) {
             (BinOp::Add, true) => Sk::Op("++", vec![place]),
             (BinOp::Sub, true) => Sk::Op("--", vec![place]),

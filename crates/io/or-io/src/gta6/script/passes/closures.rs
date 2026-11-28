@@ -588,7 +588,7 @@ fn runtime<'a>(e: &'a Expr, ty: Option<&str>, method: &str) -> Option<&'a [Expr]
 }
 
 /// The delegate a call joins a handler to or takes one away from, the handler, and whether it is taken away.
-fn joined(e: &Expr) -> Option<(&Expr, &Expr, bool)> {
+pub(crate) fn joined(e: &Expr) -> Option<(&Expr, &Expr, bool)> {
     let (args, remove) = match runtime(e, Some("Delegate"), "Combine") {
         Some(args) => (args, false),
         None => (runtime(e, Some("Delegate"), "Remove")?, true),

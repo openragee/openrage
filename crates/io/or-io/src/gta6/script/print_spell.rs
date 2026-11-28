@@ -295,7 +295,12 @@ impl Writer<'_> {
         let Expr::Const(c) = inner else {
             return None;
         };
-        likely_float(c).map(|float| literal(&Const::f32(float)))
+        // ⚠ Never a constant of a 64-bit kind: its literal says its width, which a float's would not.
+        let narrow = matches!(c.kind, Kind::I32 | Kind::U32 | Kind::Unknown);
+        narrow
+            .then(|| likely_float(c))
+            .flatten()
+            .map(|float| literal(&Const::f32(float)))
     }
 
     /// `e` where it stands alone in a place that takes 32 bits: an `int` constant without its cast, and a float under a 32-bit reading as the float; `None` for anything else.

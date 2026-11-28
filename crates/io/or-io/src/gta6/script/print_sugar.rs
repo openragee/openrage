@@ -11,6 +11,7 @@ use crate::gta6::script::ir::{
     BinOp, Callee, Expr, ExprSugar, Head, Kind, Scalar, Stmt, StoreKind, TypeKey, Var, Width,
 };
 use crate::gta6::script::passes::closures::{self, Inline};
+use crate::gta6::script::passes::sugar_expressions::delegate_step;
 use crate::gta6::script::tree::{self, Group};
 use crate::gta6::script::{Context, Pass};
 
@@ -149,13 +150,14 @@ pub(in crate::gta6::script) fn made_in_place(
     }
     // A delegate's own binding is the one call its group holds, and runs no code.
     let quiet = quiet || matches!(kind, Group::Delegate);
-    let is = |e: &Expr| *underneath(e) == Expr::Var(var);
+    // Under the 64-bit readings alone: a source reading around the variable is written its own way.
+    let is = |e: &Expr| *bits(e) == Expr::Var(var);
     let user = match next {
         tree::Stmt::Simple(user) => user,
         tree::Stmt::Return(Some(value)) => return is(value).then_some(var),
         tree::Stmt::Sugar(sugar) => match &**sugar {
             tree::Sugar::Group {
-                kind: Group::Field { .. },
+                kind: Group::Field { .. } | Group::Compound,
                 parts,
             } => match parts.as_slice() {
                 [user] => user,
@@ -177,11 +179,26 @@ pub(in crate::gta6::script) fn made_in_place(
     if is(value) {
         return Some(var);
     }
-    let Expr::Call { args, .. } = underneath(value) else {
-        return None;
+    // An argument of a call written as a name and its arguments: an intrinsic, an operator, a
+    // property and a call made on what is made are written otherwise.
+    let (args, received) = match bits(value) {
+        Expr::Call { callee, args, .. } => match callee {
+            Callee::Native { .. } | Callee::Local { .. } | Callee::Import { .. } => (args, false),
+            Callee::Builtin { .. } | Callee::Virtual { .. } => (args, true),
+            Callee::Intrinsic { .. } => return None,
+        },
+        Expr::Sugar {
+            kind: ExprSugar::Method,
+            e,
+        } => match &**e {
+            Expr::Call { args, .. } => (args, true),
+            _ => return None,
+        },
+        _ => return None,
     };
     let at = args.iter().position(is)?;
-    (quiet && !args[..at].iter().any(runs_code)).then_some(var)
+    let placed = !(received && at == 0);
+    (quiet && placed && !args[..at].iter().any(runs_code)).then_some(var)
 }
 
 /// `user` with `value` in the place of the one mention of `name`, where that mention stands as a whole value: after `= `, `(`, `, ` or `return `, and before `,`, `)` or the end.
@@ -199,7 +216,7 @@ fn put_in(user: &str, name: &str, value: &str) -> Option<String> {
     }
     let at = found?;
     let (before, after) = (&user[..at], &user[at + name.len()..]);
-    let opens = ["= ", "(", ", ", "return "]
+    let opens = ["+= ", "-= ", "= ", "(", ", ", "return "]
         .iter()
         .any(|open| before.ends_with(open));
     let closes = after.is_empty() || after.starts_with(',') || after.starts_with(')');
@@ -325,6 +342,10 @@ impl Writer<'_> {
                     kind: Group::Field { owner },
                     parts,
                 } => self.field_store(*owner, parts)?.0,
+                tree::Sugar::Group {
+                    kind: Group::Compound,
+                    parts,
+                } => self.compound(parts)?.0,
                 _ => return None,
             },
             _ => return None,
@@ -737,14 +758,18 @@ impl Writer<'_> {
         let (Stmt::Assign { value, .. } | Stmt::Store { value, .. }) = part else {
             return None;
         };
-        let Expr::Binary { op, at, l, r } = value else {
-            return None;
+        // A handler joined to the delegate the place holds is `+=`, and one taken away `-=`.
+        let (op, at, l, r): (BinOp, &Kind, &Expr, &Expr) = match (value, delegate_step(part)) {
+            (_, Some((held, handler, false))) => (BinOp::Add, &Kind::Unknown, held, handler),
+            (_, Some((held, handler, true))) => (BinOp::Sub, &Kind::Unknown, held, handler),
+            (Expr::Binary { op, at, l, r }, None) => (*op, at, &**l, &**r),
+            _ => return None,
         };
         if op.is_logical() {
             return None;
         }
         // What the operator reads on its left, under its readings and the field it is read as.
-        let (mut read, mut owner) = (&**l, None);
+        let (mut read, mut owner) = (l, None);
         loop {
             match read {
                 Expr::Cast { e, .. } => read = &**e,
@@ -788,7 +813,7 @@ impl Writer<'_> {
             _ => return None,
         };
         let whole = matches!(at, Kind::I64 | Kind::U64 | Kind::Unknown);
-        let one = matches!(&**r, Expr::Const(c) if c.bits == 1 && !c.kind.is_float());
+        let one = matches!(r, Expr::Const(c) if c.bits == 1 && !c.kind.is_float());
         // ⚠ `p->f_10++` is the step of an `int` there, never one of a whole cell.
         let text = match (op, one && typed) {
             (BinOp::Add, true) => format!("{}++", wrap(place, binds, POSTFIX)),

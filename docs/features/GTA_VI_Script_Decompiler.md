@@ -143,7 +143,9 @@ was.
   start function nothing written calls goes with it; `lambdas`, `delegates`, `events`, `foreach`, `using`, `lock`,
   `compound`, `initialisers`, `null-ops`, `concat`, `ref-out`. A `using` is written only of a
   variable disposed, where it is not null, on every way out of the statements after it, and a
-  `lock` only of a monitor left on every way out. C# also disposes and leaves where a fault ends
+  `lock` only of a monitor left on every way out. `compound` also writes `place += h` and
+  `place -= h` for a call of the runtime's `Delegate.Combine` or `Delegate.Remove`, by the names
+  a list gives them, whose first operand is what the place it stores to holds. C# also disposes and leaves where a fault ends
   the block; a program states no exception region, so no fault is caught there and the two read
   alike. A lambda bound once and outside
   every loop, whose body jumps nowhere back, is written as `=>` where it is bound, whatever its

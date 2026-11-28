@@ -437,10 +437,13 @@ fn an_object_made_then_constructed_apart_reads_as_the_two_statements_at_the_sour
             simple(Stmt::Eval(builtin(&ctor, vec![local(1), p(0)]))),
         ]
     };
-    // The object is read by the call alone, so it is written where the call takes it.
+    // The call is made on the object, so the object keeps its statement.
     let (text, read) = round_trip(&function(pair()));
-    let apart = "    type_0123456789ABCDEF.Ctor(new type_0123456789ABCDEF(), p0);\n";
-    assert!(text.contains(apart), "{text}");
+    let apart = "    local_1 = new type_0123456789ABCDEF();\n    type_0123456789ABCDEF.Ctor(local_1, p0);\n";
+    assert!(
+        text.contains("type_0123456789ABCDEF.Ctor(local_1, p0);"),
+        "{text}"
+    );
     assert_eq!(read, Ok(()), "{text}");
     assert_eq!(source_says(pair(), apart), Ok(true));
     let one = "    local_1 = new type_0123456789ABCDEF(p0);\n";
@@ -1475,5 +1478,72 @@ fn what_a_group_makes_is_written_where_the_next_statement_reads_it_alone() {
     ]);
     let (text, read) = round_trip(&seen);
     assert!(text.contains("p0.f_38 = local_1;"), "{text}");
+    assert_eq!(read, Ok(()), "{text}");
+}
+
+#[test]
+fn a_handler_joined_to_the_delegate_its_place_holds_reads_as_the_place_added_to() {
+    let own = 0x1122_3344;
+    let field = || Expr::Load {
+        ty: Scalar::U64,
+        addr: boxed(p(0)),
+        offset: 0x30,
+    };
+    let stepped = |join: &str, handler: Expr| {
+        construct(Sugar::Group {
+            kind: Group::Compound,
+            parts: vec![Stmt::Store {
+                kind: StoreKind::U64,
+                addr: p(0),
+                offset: 0x30,
+                value: builtin(join, vec![field(), handler]),
+            }],
+        })
+    };
+    let added = function(vec![stepped("Demo.Delegate.Combine", p(1))]);
+    reads_back_alone(&added, "p0.f_30 += p1;", "p0.f_30 -= p1;");
+    reads_back_alone(&added, "p0.f_30 += p1;", "p0.f_38 += p1;");
+    let taken = function(vec![stepped("Demo.Delegate.Remove", p(1))]);
+    reads_back_alone(&taken, "p0.f_30 -= p1;", "p0.f_30 -= p0;");
+    // A delegate made just before and read by the join alone is written as the handler.
+    let ctor = format!("{}.Ctor", a_type().name);
+    let bound = construct(Sugar::Group {
+        kind: Group::Delegate,
+        parts: vec![
+            set(Var::Local(1), Expr::NewObject(a_type())),
+            Stmt::Eval(builtin(
+                &ctor,
+                vec![
+                    local(1),
+                    p(0),
+                    Expr::FunctionRef {
+                        program: own,
+                        at: 0x80,
+                    },
+                ],
+            )),
+        ],
+    });
+    let made = function(vec![bound, stepped("Demo.Delegate.Combine", local(1))]);
+    reads_back_alone(
+        &made,
+        "p0.f_30 += p0.func_000080;",
+        "p0.f_30 += p1.func_000080;",
+    );
+    // A join of what another place holds is the call it is.
+    let other = function(vec![construct(Sugar::Group {
+        kind: Group::Compound,
+        parts: vec![Stmt::Store {
+            kind: StoreKind::U64,
+            addr: p(0),
+            offset: 0x38,
+            value: builtin("Demo.Delegate.Combine", vec![field(), p(1)]),
+        }],
+    })]);
+    let (text, read) = round_trip(&other);
+    assert!(
+        text.contains("Demo.Delegate.Combine(p0.f_30, p1)"),
+        "{text}"
+    );
     assert_eq!(read, Ok(()), "{text}");
 }

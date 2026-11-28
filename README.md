@@ -150,7 +150,7 @@ just test         # every test of the workspace: about twenty minutes
 
 No game file is committed. OpenRage works on an install the user owns and takes the keys it can from that install's executable, and the suites that read real files skip on a clean checkout, which is not a pass ([staging a corpus](crates/io/or-io-verify/tests/fixtures/README.md)).
 
-The repository is mirrored on [Radicle](https://radicle.xyz) as `rad:zhdibp82Y5a4zqi44zZuJA6mt8tm`, which follows GitHub within about ten minutes: `rad clone rad:zhdibp82Y5a4zqi44zZuJA6mt8tm`.
+The repository is mirrored on [Radicle](https://radicle.network/nodes/oak.radicle.garden/rad:zhdibp82Y5a4zqi44zZuJA6mt8tm) as `rad:zhdibp82Y5a4zqi44zZuJA6mt8tm`, which follows GitHub within about ten minutes: `rad clone rad:zhdibp82Y5a4zqi44zZuJA6mt8tm`.
 
 ## Repository layout
 

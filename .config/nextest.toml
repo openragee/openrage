@@ -304,6 +304,7 @@ not (
   | binary_id(=or-io::gta6_rows_with_no_kind)
   | binary_id(=or-io::gta6_rows_stored_or_deflated)
   | binary_id(=or-io::gta6_awc_in_extent)
+  | binary_id(=or-media::gta6_audio_census)
   | binary_id(=or-title::a_gta_vi_archive_mounts_like_any_other)
   | (binary_id(=or-title::the_water_file_of_an_install) & (
       test(/^a_real_install::/)

@@ -333,6 +333,28 @@ fn a_program_that_does_not_inflate_to_its_stated_size_is_refused() {
 }
 
 #[test]
+fn open_for_reads_the_xbox_build_and_refuses_an_unmeasured_platform_by_name() {
+    let bytes = built(0).bytes;
+    assert!(Sgd5File::open_for(&bytes, Platform::XboxSeries).is_ok());
+    for platform in [
+        Platform::Ps5,
+        Platform::Pc,
+        Platform::Ps4,
+        Platform::XboxOne,
+    ] {
+        match Sgd5File::open_for(&bytes, platform) {
+            Err(Sgd5Error::PlatformNotMeasured { platform: refused }) => {
+                assert_eq!(refused, platform);
+                assert!(Sgd5Error::PlatformNotMeasured { platform }
+                    .to_string()
+                    .contains(platform.label()));
+            }
+            other => panic!("{platform:?} was not refused by name: {other:?}"),
+        }
+    }
+}
+
+#[test]
 fn every_cut_of_a_container_is_refused_and_none_panics() {
     let built = built(0);
     let trailer = built

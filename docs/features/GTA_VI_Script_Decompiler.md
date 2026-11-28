@@ -94,9 +94,11 @@ was.
   `role-names` names a variable by what a list names: the native or method whose result it
   holds, the native parameter it is passed as, the field it is read from or the one field it is
   only ever stored to, the type of the object it holds, or the script type it is proved to hold
-  where a call or a load gives it its one value. A native whose listed name starts with `_` is a
-  guess and names nothing. An integer that only the heads of `for` loops write is `i`, `j` or `k`
-  by depth, and loops side by side that each declare it in their head share the letter.
+  where a call or a load gives it its one value, or the method a delegate it holds is bound to.
+  A native whose listed name starts with `_` is a guess and names nothing. A variable given an
+  array's length is `length`, and the element a `foreach` reads is the singular of the field it
+  goes through, else `item`. An integer that only the heads of `for` loops write is `i`, `j` or
+  `k` by depth, and loops side by side that each declare it in their head share the letter.
 - **Classes**: `fields`, `classes`, `receivers`, `constructors`, `operators`. An access through a
   variable the kinds pass proves holds an object of a script type is a field of that type, where
   the bytes lie in the type and no field the layouts state overlaps them; such a field is
@@ -122,8 +124,10 @@ was.
   method, `async Task<T>` where its state machine gives the task a value, `async Task` where the
   kick-off hands back its builder's task and `async void` otherwise, and writes what is awaited in place, `await f(a)`, where the variable it was kept in
   is used nowhere else; a state machine whose step function is read into its kick-off is left
-  out where the project holds the program, no program of it imports this one and nothing else
-  written names the machine, and a start function nothing written calls goes with it; `lambdas`, `delegates`, `events`, `foreach`, `using`, `lock`,
+  out where the project holds the program and nothing else written names the machine, and, in a
+  program another imports, only where the project proves no other program reaches its methods,
+  its start function or its type (a project written before this proves nothing of the kind); a
+  start function nothing written calls goes with it; `lambdas`, `delegates`, `events`, `foreach`, `using`, `lock`,
   `compound`, `initialisers`, `null-ops`, `concat`, `ref-out`. A `using` is written only of a
   variable disposed, where it is not null, on every way out of the statements after it, and a
   `lock` only of a monitor left on every way out. C# also disposes and leaves where a fault ends
@@ -132,9 +136,12 @@ was.
   every loop, whose body jumps nowhere back, is written as `=>` where it is bound, whatever its
   length; any other is written by its function's name. A closure class every lambda of which is
   written in place, or that has none, and whose object reaches nothing but those lambdas, is left
-  out. A field given once a variable that keeps its value reads as that variable; any other field
-  of one cell the class states is a local of its own, named as the field, that the function and
-  its lambdas read and write; `--no lambdas` writes it. `events`, `concat`, `using` and `lock`
+  out where the project holds the program, and, in a program another imports, only where the
+  project proves no other program names its type or reaches its lambdas. A field given once a variable that keeps its value reads as that variable; any other field
+  of one cell the class states is a local of its own, named as the field, or by a new slot past
+  the frame's where that name is taken, that the function and its lambdas read and write;
+  `--no lambdas` writes it. A lambda's variable that would hide its binder's object is written as
+  its slot name followed by the lambda's offset, `local_0_00277D`. `events`, `concat`, `using` and `lock`
   read a call only by the name a user's list gives it, so without such a list they rebuild
   nothing. An
   address handed to a call is written `ref x` where the callee is proved to reach `x` alone and
@@ -170,6 +177,25 @@ programs, and with `-o <folder>` writes:
 
 The export prints a line of counts a program and a total; `--summary` prints in their place the
 programs that failed and the total's counts as a table, a count a row.
+
+`--changed-since <folder>` compares each source, as text and nothing else, with the one the
+export in that folder wrote of the same program, which its `scripts.json` says: a program is
+paired by its hash where each export states it once, any other by the name of its file. With
+`-o`, only a source that differs is written, so the folder holds what changed, while `index.md`
+and `scripts.json` still list every program, each with how it compares; such a folder lacks the
+sources that were the same, so the earlier export compared with is a whole one. The export prints a line
+for each source whose code changed, from the first line that differs, each that is new, each whose
+earlier copy did not read, each the earlier folder holds and this export writes no more, and then
+how many compare each way. A source that differs only in the comments it opens with, which name
+the lists, the counts and the passes, is counted and not named, since a list or a pass that
+changes changes every header. Nothing of the earlier export is kept, so comparing two builds of
+the game or two versions of OpenRage is reading that short list.
+
+`--function` takes a function by its offset or by its name: the one `--functions` prints, or the
+one a list gives the method it is, alone or after the name of its class (`Class.Method`), where a
+name two functions carry chooses neither. `--class` adds every method with code of one of the
+program's own types, named as a list names it or by the `type_` hash a source writes; a type
+whose methods hold no code here, and a name two types carry, are refused.
 
 `script decompile <src> --project <file>` decompiles one program with a project an export wrote,
 and a `project.json` beside a program file is read without being named unless `--alone` is given.
@@ -300,11 +326,11 @@ with the key snapshot `rpf9` takes).
 | Command | Does |
 |---|---|
 | `script <src> [--functions\|--natives\|--strings] [--json] [--offset <n> --limit <n>]` | the facts of one program; `--functions` by pages |
-| `script disasm <src> [--function <f>]` | an instruction listing with targets resolved |
-| `script decompile <src> [--function <f>] [--level <l>] [--no <pass>] [--project <file>\|auto\|--alone] [--labels <file>] [--with-classes]` | source; with `--function`, the types that hold no code of it are left out unless `--with-classes` |
+| `script disasm <src> [--function <f>] [--class <c>]` | an instruction listing with targets resolved |
+| `script decompile <src> [--function <f>] [--class <c>] [--level <l>] [--no <pass>] [--project <file>\|auto\|--alone] [--labels <file>] [--with-classes]` | source; with `--function` or `--class`, the types that hold no code of what is asked are left out unless `--with-classes` |
 | `script check <file-or-folder>` | decodes each program and fails on one that does not |
 | `script list <archive.rpf>` | the programs an archive holds |
-| `script export <build\|archive\|folder> [-o <folder>] [--threads <n>] [--labels <file>] [--summary]` | every program, with its project and an index |
+| `script export <build\|archive\|folder> [-o <folder>] [--threads <n>] [--labels <file>] [--summary] [--changed-since <folder>]` | every program, with its project and an index; with `--changed-since`, only the sources that differ from an earlier export's, and a list of them |
 | `script passes` | the passes and their levels |
 | `script names-search <program\|folder>... [--words <file>]... [-o <file>]` | a names list of the type, field and program names a word search proves, each by two hashes of the name |
 | `script natives --unnamed <program\|folder>... [--project <file>]` | each native no list names, with its calls and the kinds of their arguments, so that a list can be written where it names most |
@@ -327,17 +353,19 @@ its own: the inspector counts the functions written, and **Stop decompiling** st
 one it is writing, the script keeping the source it had. A decompile another one replaces, or
 whose script is closed, is stopped too.
 
-A script read from an archive and decompiled alone has the project of that archive built as its
-job as soon as it is open: on a thread of its own the job reads every program of that archive and
-of the archives nested in it, builds their project as `script export` does, writes it as the
-names folder's `project.json` in place of the one there, and decompiles the script again with it.
-The inspector counts the programs found and read, and **Stop building the project** stops it
-before anything is written. One build runs at a time, a script of another archive waiting for it,
-and an archive is built once a session: a script of it opened once the build is done is
-decompiled with the project written, and **Build project from this archive** builds it again,
-after a build that was stopped or failed or for a script opened while it ran. A function picked
-in the outline while the project is being built is not decompiled: pick it again once the build
-is done.
+Over the first script read from an archive and decompiled alone, the editor asks once a session
+whether to build that archive's project. A build is the script's job: on a thread of its own it
+reads every program of that archive and of the archives nested in it, builds their project as
+`script export` does, writes it as the names folder's `project.json` in place of the one there,
+and decompiles the script again with it. The inspector counts the programs found and read, and
+**Stop building the project** stops it before anything is written. Once the answer was to build,
+a script of another archive decompiled alone has that archive's project built the same way; after
+**Not now** nothing is built until **Build project from this archive** is pressed. One build runs
+at a time, a script of another archive waiting for it, and an archive is built once a session: a
+script of it opened once the build is done is decompiled with the project written, and the
+button builds it again, after a build that was stopped or failed or for a script opened while it
+ran. A function picked in the outline while the project is being built is not decompiled: pick it
+again once the build is done.
 
 The text editor shows the source with highlighting, and **Go to definition** and **Find
 references** follow the name under the caret within the script. The outline lists the source's

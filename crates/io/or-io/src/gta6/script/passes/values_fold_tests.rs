@@ -277,3 +277,97 @@ fn a_value_stays_where_its_reader_evaluates_something_first_or_another_reads_it(
         assert_eq!(f.cfg, read(V, body).cfg, "{body}");
     }
 }
+
+/// One cell, and a value of two cells.
+const BUILT: &str = "VmValue v_000010_0 = default; VmValues v_000020_2 = null!;";
+
+/// A temporary of two cells given zeroes and written through its own address, `BETWEEN` first.
+const BUILDS: &str = "v_000020_2 = zero_slots(2); BETWEEN store_i32(Vm.Address(v_000020_2, 0), 0x0, 5); zero_bytes(byte_offset(Vm.Address(v_000020_2, 0), 8), 8);";
+
+/// What `GET(p0)` gives, held in a temporary before [`BUILDS`] and stored into the built value after, then `after`.
+fn built(between: &str, after: &str) -> String {
+    let builds = BUILDS.replace("BETWEEN", between);
+    format!("v_000010_0 = Native.DEMO.GET(p0); {builds} store_i32(Vm.Address(v_000020_2, 0), 0x4, v_000010_0); {after}")
+}
+
+/// The same with the call made where the temporary was read.
+fn built_in_place(after: &str) -> String {
+    let builds = BUILDS.replace("BETWEEN", "");
+    format!("{builds} store_i32(Vm.Address(v_000020_2, 0), 0x4, Native.DEMO.GET(p0)); {after}")
+}
+
+/// The blocks [`fold`] makes of `body`, with `escape` on or off.
+fn folded(body: &str, finer: bool) -> cfg::Cfg {
+    let mut f = read(BUILT, body);
+    fold(&mut f, finer);
+    f.cfg
+}
+
+#[test]
+fn a_value_moves_past_the_writes_of_a_temporary_no_one_holds_the_address_of_yet() {
+    let passed = "Native.DEMO.USE3(p0, v_000020_2[0], v_000020_2[1]); return;";
+    assert_eq!(
+        folded(&built("", passed), true),
+        read(BUILT, &built_in_place(passed)).cfg
+    );
+    // Handed on after the value is read, the address is in no hands before it.
+    let handed = "Native.DEMO.USE(Vm.Address(v_000020_2, 0)); return;";
+    assert_eq!(
+        folded(&built("", handed), true),
+        read(BUILT, &built_in_place(handed)).cfg
+    );
+    // Without `escape`, the temporary is memory a call may reach.
+    let body = built("", passed);
+    assert_eq!(folded(&body, false), read(BUILT, &body).cfg);
+}
+
+#[test]
+fn a_value_stays_before_the_writes_of_a_temporary_whose_address_someone_may_hold() {
+    for body in [
+        // Kept in a local before the read.
+        built(
+            "local_5 = Vm.Address(v_000020_2, 0);",
+            "Native.DEMO.USE2(local_5, local_5); return;",
+        ),
+        // Handed on in a loop: the round before handed it to a callee that may still hold it.
+        format!(
+            "while (((as_u32(p1) == 0))) {{ {} }} return;",
+            built("", "Native.DEMO.USE(Vm.Address(v_000020_2, 0));")
+        ),
+        // The value reads the temporary the statements write.
+        built("", "return;").replace(
+            "Native.DEMO.GET(p0)",
+            "Native.DEMO.GET(load_i32(Vm.Address(v_000020_2, 0), 0x0))",
+        ),
+    ] {
+        assert_eq!(folded(&body, true), read(BUILT, &body).cfg, "{body}");
+    }
+}
+
+#[test]
+fn a_block_on_a_way_that_comes_back_to_it_circles() {
+    let f = read(
+        "",
+        "local_1 = 1; while (((as_u32(p1) == 0))) { local_1 = 2; } Native.DEMO.USE(local_1); return;",
+    );
+    let circles = circling(&f.cfg);
+    let holding = |value: u64| {
+        (f.cfg.blocks.iter()).position(|block| {
+            (block.stmts.iter()).any(|stmt| {
+                matches!(stmt, Stmt::Assign { value: Expr::Const(c), .. } if c.bits == value)
+            })
+        })
+    };
+    // The block before the loop runs once; the loop's body comes back to itself.
+    assert_eq!(holding(1).map(|b| circles[b]), Some(false), "{circles:?}");
+    assert_eq!(holding(2).map(|b| circles[b]), Some(true), "{circles:?}");
+    let called = (f.cfg.blocks.iter()).position(|block| {
+        (block.stmts.iter()).any(|stmt| matches!(stmt, Stmt::Eval(Expr::Call { .. })))
+    });
+    assert_eq!(called.map(|b| circles[b]), Some(false), "{circles:?}");
+    let straight = read("", "local_1 = 1; Native.DEMO.USE(local_1); return;");
+    assert_eq!(
+        circling(&straight.cfg),
+        vec![false; straight.cfg.blocks.len()]
+    );
+}

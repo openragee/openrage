@@ -15,7 +15,7 @@ use crate::gta6::script::ir::{BinOp, Const, Expr, Scalar, Stmt, StoreKind, Var, 
 use crate::gta6::script::{Context, Pass, Stats};
 
 use self::flow::Set;
-use super::values::effects::{each_top, evaluated, stored, sure_loads, Effects, Facts};
+use super::values::effects::{each_top, evaluated, stored, sure_loads, Effects, Facts, Place};
 use super::values::fold::{across, constant, low_clears};
 
 /// The names this file's rewrites are switched by.
@@ -36,6 +36,9 @@ const STEPS: usize = 64;
 /// The most nodes a statement may evaluate for a read in it to be weighed against the read before it.
 const NODES: usize = 4096;
 
+/// The most clears of a block that are kept in mind while the statements after them are weighed.
+const CLEARS: usize = 16;
+
 /// Where a statement stands: its block and its place there, the terminator past the last statement.
 type Site = (BlockId, usize);
 
@@ -46,7 +49,8 @@ type Site = (BlockId, usize);
 // A temporary that is zeroed and filled through its own address is no memory at all: `cells`.
 // `forward` also moves a temporary's value to its one read in a later block (`across`), and
 // writes a clear of the low bytes of a local whose upper bytes stay zero as `local = 0`, and reads
-// a temporary given zero cells whose address only clears it as those zeroes (`zeroed`).
+// a temporary given zero cells whose address only clears it as those zeroes (`zeroed`), and
+// removes a clear of bytes an earlier clear left zero (`cleared_again`).
 // `dead-loads` also drops a branch whose arms meet where its test cannot fault, and a read kept
 // for nothing that the next statement makes first.
 pub fn run(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) -> bool {
@@ -56,6 +60,7 @@ pub fn run(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) -> bool 
     }
     let mut changed = false;
     if options.on(Pass::Forward) {
+        changed |= cleared_again(f);
         changed |= cells(f);
         changed |= zeroed(f);
         changed |= stores(f, options.on(Pass::Escape));
@@ -108,6 +113,73 @@ fn cut(kind: StoreKind, value: Expr) -> Expr {
         StoreKind::I32 => Expr::cast(Scalar::U32, value),
         StoreKind::U64 | StoreKind::Ref => value,
     }
+}
+
+/// What a clear through a variable's own address covers: the variable, its bytes from the variable's first as a range, and the place they are in.
+fn clear_of(stmt: &Stmt) -> Option<(Var, (u64, u64), Place)> {
+    let Stmt::ZeroBytes {
+        addr: Expr::AddrOf { var, cell },
+        bytes,
+    } = stmt
+    else {
+        return None;
+    };
+    let from = 8 * u64::from(*cell);
+    let lo = |n: u32| n.saturating_add(*cell);
+    let hi = |n: u32| lo(n).saturating_add(((*bytes).max(1) - 1) / 8);
+    let place = match *var {
+        Var::Local(n) => Place::Frame {
+            params: false,
+            lo: lo(n),
+            hi: hi(n),
+        },
+        Var::Param(n) => Place::Frame {
+            params: true,
+            lo: lo(n),
+            hi: hi(n),
+        },
+        Var::Global { .. } => return None,
+        temporary => Place::Temp(temporary),
+    };
+    Some((*var, (from, from + u64::from(*bytes)), place))
+}
+
+/// Removes each clear through a variable's own address of bytes that a clear before it in the block left zero, where nothing between may have written them.
+// `zero_bytes(&local_6, 4); v = local_6; zero_bytes(&local_6, 4);`: the second clear writes the
+// zeroes the bytes already hold, and through the variable's own address it cannot fault.
+// ⚠ A variable a call or a store through a pointer may reach is written by any of them.
+fn cleared_again(f: &mut cfg::Function) -> bool {
+    let facts = Facts::of(f);
+    let mut changed = false;
+    for block in &mut f.cfg.blocks {
+        // The clears whose bytes are still zero.
+        let mut standing: Vec<(Var, (u64, u64), Place)> = Vec::new();
+        let old = std::mem::take(&mut block.stmts);
+        for stmt in old {
+            let clear = clear_of(&stmt);
+            let again = clear.is_some_and(|(var, (from, to), _)| {
+                (standing.iter())
+                    .any(|(held, (lo, hi), _)| *held == var && *lo <= from && to <= *hi)
+            });
+            if again {
+                changed = true;
+                continue;
+            }
+            let effects = Effects::of_stmt(&facts, &stmt);
+            standing.retain(|(.., place)| {
+                let reached = facts.exposed(*place) && effects.writes_memory();
+                !effects.writes(*place) && !reached
+            });
+            if let Some(clear) = clear {
+                if standing.len() >= CLEARS {
+                    standing.remove(0);
+                }
+                standing.push(clear);
+            }
+            block.stmts.push(stmt);
+        }
+    }
+    changed
 }
 
 /// A temporary of one cell that a block zeroes and then fills through the temporary's own address.

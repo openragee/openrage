@@ -559,3 +559,46 @@ fn a_temporary_given_zeroes_stays_where_something_may_write_it_otherwise_or_a_re
         stays(&[Pass::Forward], &body);
     }
 }
+
+/// [`CLEAR`], `local_3` copied, `between`, then `second`, and the copy and `local_3` read.
+fn cleared_twice(between: &str, second: &str) -> String {
+    format!(
+        "{CLEAR} v_000010_0 = local_3; {between} {second} Native.DEMO.USE2(v_000010_0, local_3); return;"
+    )
+}
+
+/// Whether [`cleared_again`] changes `body`, and the blocks it leaves.
+fn again(body: &str) -> (bool, cfg::Cfg) {
+    let mut f = read(body);
+    let changed = cleared_again(&mut f);
+    (changed, f.cfg)
+}
+
+#[test]
+fn a_clear_of_bytes_a_clear_before_it_left_zero_goes() {
+    let once = read(&cleared_twice("", "")).cfg;
+    assert_eq!(again(&cleared_twice("", CLEAR)), (true, once.clone()));
+    // Fewer of the bytes cleared are zero too.
+    let fewer = "zero_bytes(Vm.Address(locals, 3), 2);";
+    assert_eq!(again(&cleared_twice("", fewer)), (true, once));
+    // The name switched off, both clears stay.
+    stays(&[Pass::DeadLoads], &cleared_twice("", CLEAR));
+}
+
+#[test]
+fn a_clear_stays_where_its_bytes_may_have_been_written_since_or_it_reaches_further() {
+    for body in [
+        // Written by its name.
+        cleared_twice("local_3 = p0;", CLEAR),
+        // Written through its own address.
+        cleared_twice("store_u8(Vm.Address(locals, 3), 0x1, 7);", CLEAR),
+        // Handed to a callee, which may write it.
+        cleared_twice("Native.DEMO.USE(Vm.Address(locals, 3));", CLEAR),
+        // Bytes the first clear did not cover.
+        cleared_twice("", "zero_bytes(Vm.Address(locals, 3), 8);"),
+        // The bytes of another variable.
+        cleared_twice("", "zero_bytes(Vm.Address(locals, 4), 4);"),
+    ] {
+        assert_eq!(again(&body), (false, read(&body).cfg), "{body}");
+    }
+}

@@ -659,14 +659,211 @@ fn guarded(top: &Expr, var: Var) -> bool {
     guarded
 }
 
+/// Where a temporary's address first goes to anyone but a load or a store.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Hand {
+    /// Only loads and stores go through it, there or moved by a constant.
+    Never,
+    /// From this statement of a block no way comes back to, and in no other block.
+    From(BlockId, usize),
+    /// In more than one block, in a block on a way that comes back to it, or where nothing tells.
+    Anywhere,
+}
+
+/// The temporaries whose address no one holds before some statement, for a value to be moved past what writes them there.
+// A temporary's address handed to a call, kept in a variable or worked on is in other hands from
+// there on; a load or a store through it, or through it moved by a constant, hands it to no one.
+// Before the first statement that hands it on, in a block that runs at most once, nothing but the
+// statements that name the temporary reads or writes it: a call or a load moved past a write of
+// it cannot tell the write was there. With `escape` off, no temporary is taken so.
+struct Unheld {
+    on: bool,
+    hands: HashMap<Var, Hand>,
+}
+
+/// The temporary `addr` is the address of, there or moved by a constant.
+fn own_temporary(addr: &Expr) -> Option<Var> {
+    let inner = match addr {
+        Expr::ByteOffset { addr, offset } if matches!(**offset, Expr::Const(_)) => &**addr,
+        other => other,
+    };
+    match inner {
+        Expr::AddrOf { var, .. } if var.is_temporary() => Some(*var),
+        _ => None,
+    }
+}
+
+/// Whether `top` reads `var` or takes its address.
+fn mentioned(top: &Expr, var: Var) -> bool {
+    let mut found = false;
+    top.walk(&mut |e| {
+        found |= matches!(e, Expr::Var(named) | Expr::AddrOf { var: named, .. } if *named == var);
+    });
+    found
+}
+
+/// Which blocks lie on a way that comes back to them; a block the entry does not reach is taken to.
+// Taken in reverse post-order, each block not yet gathered gathers the blocks that lead to it and
+// that no earlier one gathered: those are the blocks it shares a cycle with.
+fn circling(cfg: &cfg::Cfg) -> Vec<bool> {
+    let n = cfg.blocks.len();
+    let preds = cfg.predecessors();
+    let mut part = vec![usize::MAX; n];
+    let mut sizes: Vec<usize> = Vec::new();
+    for root in cfg.reverse_post_order() {
+        match part.get_mut(root) {
+            Some(slot) if *slot == usize::MAX => *slot = sizes.len(),
+            _ => continue,
+        }
+        let mut size = 0usize;
+        let mut stack = vec![root];
+        while let Some(x) = stack.pop() {
+            size += 1;
+            for p in preds.get(x).into_iter().flatten() {
+                if let Some(slot) = part.get_mut(*p) {
+                    if *slot == usize::MAX {
+                        *slot = sizes.len();
+                        stack.push(*p);
+                    }
+                }
+            }
+        }
+        sizes.push(size);
+    }
+    (0..n)
+        .map(|b| {
+            let own = (cfg.blocks.get(b)).is_some_and(|block| block.term.successors().contains(&b));
+            match part.get(b).and_then(|id| sizes.get(*id)) {
+                Some(size) => *size > 1 || own,
+                None => true,
+            }
+        })
+        .collect()
+}
+
+impl Unheld {
+    fn of(cfg: &cfg::Cfg, on: bool) -> Unheld {
+        let mut hands: HashMap<Var, Hand> = HashMap::new();
+        if !on {
+            return Unheld { on, hands };
+        }
+        for (b, block) in cfg.blocks.iter().enumerate() {
+            for k in 0..=block.stmts.len() {
+                // Each address of a temporary the site names, and each one a load or a store uses.
+                let stmt = block.stmts.get(k);
+                let mut through: Vec<Var> = (stmt.and_then(stored))
+                    .and_then(|(addr, ..)| own_temporary(addr))
+                    .into_iter()
+                    .collect();
+                let mut named: Vec<Var> = Vec::new();
+                let mut see = |top: &Expr| {
+                    top.walk(&mut |e| match e {
+                        Expr::AddrOf { var, .. } if var.is_temporary() => named.push(*var),
+                        Expr::Load { addr, .. } | Expr::LoadBytes { addr, .. } => {
+                            through.extend(own_temporary(addr));
+                        }
+                        _ => {}
+                    });
+                };
+                match stmt {
+                    Some(stmt) => stmt.each_expr(&mut see),
+                    None => {
+                        if let Some(e) = block.term.expr() {
+                            see(e);
+                        }
+                    }
+                }
+                for var in &named {
+                    let count = |vars: &[Var]| vars.iter().filter(|seen| *seen == var).count();
+                    if count(&named) <= count(&through) {
+                        continue;
+                    }
+                    let hand = hands.entry(*var).or_insert(Hand::Never);
+                    *hand = match *hand {
+                        Hand::Never => Hand::From(b, k),
+                        Hand::From(at, first) if at == b => Hand::From(at, first),
+                        _ => Hand::Anywhere,
+                    };
+                }
+            }
+        }
+        let circles = circling(cfg);
+        for hand in hands.values_mut() {
+            if let Hand::From(b, _) = *hand {
+                if circles.get(b).copied().unwrap_or(true) {
+                    *hand = Hand::Anywhere;
+                }
+            }
+        }
+        Unheld { on, hands }
+    }
+
+    /// Whether `stmt`, at `site`, writes nothing but a temporary no one holds the address of before `until`, a later site of its block, and `value`, which does `moving`, may pass the rest of what it does.
+    // ⚠ `value` must name the temporary nowhere: it would read what the statement writes.
+    fn lets_pass(
+        &self,
+        facts: &Facts,
+        stmt: &Stmt,
+        (value, moving): (&Expr, &Effects),
+        site: (BlockId, usize),
+        until: usize,
+    ) -> bool {
+        if !self.on {
+            return false;
+        }
+        let (var, rest): (Option<Var>, [Option<&Expr>; 2]) = match stmt {
+            Stmt::Assign {
+                target,
+                value: given,
+            } => (
+                Some(*target).filter(|var| var.is_temporary()),
+                [Some(given), None],
+            ),
+            Stmt::Store {
+                addr, value: given, ..
+            }
+            | Stmt::StoreBytes {
+                addr, value: given, ..
+            } => (own_temporary(addr), [Some(addr), Some(given)]),
+            Stmt::ZeroBytes { addr, .. } => (own_temporary(addr), [Some(addr), None]),
+            _ => (None, [None, None]),
+        };
+        let Some(var) = var else {
+            return false;
+        };
+        let unheld = match self.hands.get(&var).copied().unwrap_or(Hand::Never) {
+            Hand::Never => true,
+            Hand::From(b, from) => b == site.0 && from >= until,
+            Hand::Anywhere => false,
+        };
+        if !unheld || mentioned(value, var) {
+            return false;
+        }
+        let mut parts = rest.into_iter().flatten();
+        let Some(first) = parts.next() else {
+            return false;
+        };
+        let mut effects = Effects::of_expr(facts, first);
+        for part in parts {
+            part.walk(&mut |e| effects.node(facts, e));
+        }
+        moving.may_cross(&effects.placed(site))
+    }
+}
+
 /// Whether a value that does `moving`, assigned by statement `i` of block `b`, may be evaluated at site `k` instead: past every statement between the two.
 fn crosses(
     facts: &Facts,
+    unheld: &Unheld,
     stmts: &[Option<Stmt>],
     effects: &mut [Option<Effects>],
     moving: &Effects,
     (b, i, k): (BlockId, usize, usize),
 ) -> bool {
+    let value = match stmts.get(i) {
+        Some(Some(Stmt::Assign { value, .. })) => Some(value),
+        _ => None,
+    };
     let mut passed = 0;
     for j in i + 1..k {
         let Some(Some(stmt)) = stmts.get(j) else {
@@ -680,7 +877,12 @@ fn crosses(
             return false;
         };
         let crossed = slot.get_or_insert_with(|| Effects::of_stmt(facts, stmt).placed((b, j)));
-        if !moving.may_cross(crossed) {
+        if moving.may_cross(crossed) {
+            continue;
+        }
+        let apart =
+            value.is_some_and(|value| unheld.lets_pass(facts, stmt, (value, moving), (b, j), k));
+        if !apart {
             return false;
         }
     }
@@ -733,7 +935,7 @@ fn worked(stmt: &Stmt) -> Option<Var> {
 // ⚠ Only what `x->f |= m` evaluates once in C# is written twice: no call and no allocation in
 // the address, and none in `m` where the address reads memory.
 fn moved_twice(
-    facts: &Facts,
+    (facts, unheld): (&Facts, &Unheld),
     stmts: &mut [Option<Stmt>],
     effects: &mut [Option<Effects>],
     (b, i, var, k): (BlockId, usize, Var, usize),
@@ -753,7 +955,7 @@ fn moved_twice(
     let fits = depth(stored) + depth(value) <= DEPTH;
     let moving = Effects::of_expr(facts, value);
     let pure = !moving.call && !moving.alloc && !moving.store;
-    if !steady || !fits || !pure || !crosses(facts, stmts, effects, &moving, (b, i, k)) {
+    if !steady || !fits || !pure || !crosses(facts, unheld, stmts, effects, &moving, (b, i, k)) {
         return false;
     }
 
@@ -795,7 +997,7 @@ fn fills(facts: &Facts, head: &Head, target: Var, value: &Expr) -> bool {
 
 /// Moves the value statement `i` of block `b` assigns to `var` into site `k`, the one place that reads it, where nothing between forbids.
 fn moved(
-    facts: &Facts,
+    (facts, unheld): (&Facts, &Unheld),
     stmts: &mut [Option<Stmt>],
     term: &mut Terminator,
     effects: &mut [Option<Effects>],
@@ -805,7 +1007,7 @@ fn moved(
         return false;
     };
     let moving = Effects::of_expr(facts, value);
-    if !crosses(facts, stmts, effects, &moving, (b, i, k)) {
+    if !crosses(facts, unheld, stmts, effects, &moving, (b, i, k)) {
         return false;
     }
 
@@ -855,7 +1057,7 @@ fn moved(
 
 /// Folds one block; `emptied` takes each local of several cells whose one assignment and one read are gone.
 fn fold_block(
-    facts: &Facts,
+    (facts, unheld): (&Facts, &Unheld),
     head: &Head,
     b: BlockId,
     block: &mut Block,
@@ -886,7 +1088,7 @@ fn fold_block(
         wanted.sort_unstable_by_key(|(i, _)| std::cmp::Reverse(*i));
         for (i, var) in wanted {
             if moved(
-                facts,
+                (facts, unheld),
                 &mut stmts,
                 &mut block.term,
                 &mut effects,
@@ -905,7 +1107,7 @@ fn fold_block(
         };
         let held = through.and_then(|var| pointers.get(&var).map(|i| (*i, var)));
         if let Some((i, var)) = held {
-            if moved_twice(facts, &mut stmts, &mut effects, (b, i, var, k)) {
+            if moved_twice((facts, unheld), &mut stmts, &mut effects, (b, i, var, k)) {
                 pointers.remove(&var);
                 changed = true;
             }
@@ -939,16 +1141,20 @@ fn fold_block(
 }
 
 /// Moves the value of each temporary that is assigned once and read once into the expression that reads it; `finer` tells two accesses apart as [`Facts::finer`] does.
+// With `finer`, a value also moves past what writes a temporary no one holds the address of yet
+// (`Unheld`): `v = f(); t = default; store_i32(&t, 0, 5); store_bytes(&t, 4, 16, v);` is
+// `t = default; store_i32(&t, 0, 5); store_bytes(&t, 4, 16, f());`.
 pub(super) fn fold(f: &mut cfg::Function, finer: bool) -> bool {
     let facts = match finer {
         true => Facts::finer(f),
         false => Facts::of(f),
     };
+    let unheld = Unheld::of(&f.cfg, finer);
     let head = &f.head;
     let mut emptied = Vec::new();
     let mut changed = false;
     for (b, block) in f.cfg.blocks.iter_mut().enumerate() {
-        changed |= fold_block(&facts, head, b, block, &mut emptied);
+        changed |= fold_block((&facts, &unheld), head, b, block, &mut emptied);
     }
     // A local of several cells that nothing names any more is no variable of the function.
     for var in emptied {

@@ -8,7 +8,7 @@ const CLOSED: u64 = 0xB2;
 const STORY_ONLY: u64 = 0xC3;
 
 /// A selector that opens a door by day, and by night from 22 to 6 closes it and opens the other.
-fn door() -> Selector {
+pub(in crate::index) fn door() -> Selector {
     Selector {
         key: 1,
         default: 10,
@@ -51,7 +51,7 @@ fn story() -> Selector {
 }
 
 /// `selector` of the mode bit `mode` in a layer the level loads.
-fn at_start(mode: u8, selector: Selector) -> Placed {
+pub(in crate::index) fn at_start(mode: u8, selector: Selector) -> Placed {
     Placed {
         mode,
         layer: (7, 0),
@@ -238,4 +238,38 @@ fn a_request_taken_of_a_fresh_game_is_kept_apart_from_what_the_data_proves() {
         (Assumed::default(), 0),
         "no file, nothing taken"
     );
+}
+
+#[test]
+fn a_game_shape_archive_that_does_not_open_is_said_and_one_that_opens_is_not() {
+    use or_io::gta6::hash::name_hash64;
+    use or_title::gta6_mount::table::{Entry, Table};
+    use or_title::gta6_mount::Registry;
+
+    let folder = tempfile::tempdir().expect("a scratch folder");
+    let every = vec![folder.path().join("common.rpf")];
+    let registered = "platform:/levels/gameshapes/town.rpf";
+    let pack = super::super::mount::tests::pack("core", &[registered], true);
+    let entry = Entry {
+        word: name_hash64(b"levels/gameshapes/town"),
+        name: None,
+        offset: 0x1000,
+        stored: 16,
+        stated: 16,
+        kind: 0,
+        ciphered: false,
+        chunks: 0,
+    };
+    let mount = Mount {
+        registry: Registry::of(vec![(every[0].clone(), pack)]),
+        tables: vec![(0, Table::of_entries(vec![entry]))],
+    };
+    let opened = || {
+        let (found, _, opened) = selectors(&mount, &every, &Cancel::new()).expect("not cancelled");
+        assert!(found.is_empty(), "the archive holds no world state");
+        opened
+    };
+    assert!(!opened(), "there is no such file");
+    std::fs::write(&every[0], vec![0; 0x2000]).expect("the archive");
+    assert!(opened());
 }

@@ -34,14 +34,14 @@ pub(super) struct Placed {
     pub selector: Selector,
 }
 
-/// Every selector of the game-shape archives the packs register, with its layer, and the places their nodes name; `None` once `cancel` is set.
+/// Every selector of the game-shape archives the packs register, with its layer, the places their nodes name, and whether each such archive opened; `None` once `cancel` is set.
 pub(super) fn selectors(
     mounted: &Mount,
     every: &[PathBuf],
     cancel: &Cancel,
-) -> Option<(Vec<Placed>, Vec<Place>)> {
+) -> Option<(Vec<Placed>, Vec<Place>, bool)> {
     let listed = mounted.listed(every, every);
-    let (mut found, mut places) = (Vec::new(), Vec::new());
+    let (mut found, mut places, mut opened) = (Vec::new(), Vec::new(), true);
     for (mode, archive, entry, registered) in
         gta6_mount::game_shapes(&mounted.registry.packs, &listed)
     {
@@ -61,11 +61,12 @@ pub(super) fn selectors(
             }
             Ok(None) => return None,
             Err(error) => {
+                opened = false;
                 tracing::warn!(path = %path.display(), %error, "a game-shape archive was not read")
             }
         }
     }
-    Some((found, places))
+    Some((found, places, opened))
 }
 
 /// What a scan of a game-shape archive finds: its world-state bodies, and its layer manifest's layers when it finds one.
@@ -247,4 +248,4 @@ pub(super) fn switches(
 
 #[cfg(test)]
 #[path = "index_states_tests.rs"]
-mod tests;
+pub(super) mod tests;

@@ -15,8 +15,12 @@ the view took the whole height starts over once from this one; the other workspa
 
 The first visit builds an index of the install as a job, **GTA VI world index**, with progress and
 Stop; until the index is held the view is a plain backdrop. The index is kept in the configuration
-folder under `gta6_world`, and is built again only when an archive's size or modification time
-changes, or from **Build the index again**. A folder that holds no GTA VI files fails the job, and
+folder under `worlds/gta6`. A later start opens no archive while the install stands as it was; an
+archive whose size or modification time changed is read again, and it alone, and **Build the index
+again** reads them all. The first start of a build that keeps the index there deletes the one an
+earlier build kept under `gta6_world` and builds it again, once, which took about three minutes on
+the build measured ([the figures](../reference/Crate_Reference.md#domain-crates)); so does the
+first start after an update that changes what the index holds. A folder that holds no GTA VI files fails the job, and
 the view, the panel and the job list say that no GTA VI files were found in it and that the folder
 to name is the one GTA VI is installed in, which holds its `.rpf` archives.
 
@@ -67,8 +71,10 @@ configuration they pick loads in turn: a layer only a mission, a script or a sys
 nothing at rest. A rule on the player reads as a new game: no wanted level, nothing unlocked, nothing
 held, no time yet spent in a configuration. Of two requests on one selector the higher priority
 wins, the first made of equal ones. What a fresh game is taken to have beyond the data, the requests
-its scripts make and the flags it starts with, is read from `fresh_game.json` beside the kept index
-in the configuration folder when one is there; a group it switches is marked inferred in the list,
+its scripts make and the flags it starts with, is read from `fresh_game.json` in `worlds/gta6` of
+the configuration folder when one is there, whichever GTA VI install is shown: one written beside
+an index an earlier build kept under `gta6_world` is moved there at the first start, and a change
+to the file works the groups out again at the next start with no archive read; a group it switches is marked inferred in the list,
 and **Only what the data proves** leaves it out. The same section lists the groups,
 and a group ticked there streams its maps in; from then on the hour no longer sets them, until
 **The game's own groups** puts them back.

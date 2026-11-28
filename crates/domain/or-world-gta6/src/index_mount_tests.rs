@@ -13,7 +13,7 @@ fn document(xml: &str) -> Document {
 
 /// A level pack of the device `device` whose one set registers `files` as archives, and is a set
 /// of the level where `level` says so.
-fn pack(device: &str, files: &[&str], level: bool) -> Vec<Document> {
+pub(in crate::index) fn pack(device: &str, files: &[&str], level: bool) -> Vec<Document> {
     let files: String = (files.iter())
         .map(|f| format!("<Item><filename>{f}</filename><fileType>RPF_FILE</fileType></Item>"))
         .collect();

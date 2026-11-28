@@ -84,7 +84,7 @@ const MOST_RESTARTS: u32 = 3;
 
 /// How a build of the index ended.
 enum Built {
-    Index(Box<WorldIndex>, Option<Places>),
+    Index(Arc<WorldIndex>, Option<Places>),
     Stopped,
     Failed(String),
 }
@@ -232,7 +232,7 @@ pub fn viewer() -> MutexGuard<'static, Viewer> {
 }
 
 impl Viewer {
-    /// Show the install at `root`: the index kept of it where one stands, else one built on a worker.
+    /// Show the install at `root`: its index is taken on a worker from the one kept, and the archives that changed since are read again.
     pub fn open(&mut self, root: &Path) {
         if self.root.as_deref() == Some(root) {
             return;
@@ -253,7 +253,7 @@ impl Viewer {
         self.start(true);
     }
 
-    /// Take the index kept of the install on a worker, unless `afresh`, else build one there.
+    /// Take the index of the install on a worker: from the one kept, with only the archives that changed read again, or with every archive read where `afresh`.
     fn start(&mut self, afresh: bool) {
         let Some(root) = self.root.clone() else {
             return;
@@ -278,10 +278,6 @@ impl Viewer {
         );
         std::thread::spawn(move || {
             let build = || {
-                let kept = (crate::state::prefs::config_root())
-                    .map(|config| index::kept_at(&config, &root));
-                let held =
-                    (kept.as_ref().filter(|_| !afresh)).and_then(|file| WorldIndex::kept(file));
                 let places = |cancel: &Cancel| {
                     let (packs, keys, formats, dictionaries) = places(cancel, &Progress::new())?;
                     Some(Places {
@@ -291,7 +287,7 @@ impl Viewer {
                         dictionaries,
                     })
                 };
-                // ⚠ A folder with no game builds an index of nothing, which is no world: it is not kept, and says so.
+                // ⚠ A folder with no game links an index of nothing, which is no world: it is not kept, and says so.
                 let no_game = || {
                     Built::Failed(
                         tr!(
@@ -301,23 +297,11 @@ impl Viewer {
                         .to_string(),
                     )
                 };
-                match held {
-                    Some(index) if index.report.maps == 0 => no_game(),
-                    Some(index) => Built::Index(Box::new(index), places(&cancel)),
-                    None => {
-                        let fresh = kept.as_deref().map(index::fresh_beside);
-                        match index::build(&root, fresh.as_deref(), &cancel, &progress) {
-                            Ok(Some(index)) if index.report.maps == 0 => no_game(),
-                            Ok(Some(index)) => {
-                                if let Some(Err(error)) = kept.map(|file| index.keep(&file)) {
-                                    tracing::warn!(%error, "the world index was not kept");
-                                }
-                                Built::Index(Box::new(index), places(&cancel))
-                            }
-                            Ok(None) => Built::Stopped,
-                            Err(why) => Built::Failed(why),
-                        }
-                    }
+                match index::open(&root, afresh, &cancel, &progress) {
+                    Ok(Some(opened)) if opened.index.report.maps == 0 => no_game(),
+                    Ok(Some(opened)) => Built::Index(opened.index, places(&cancel)),
+                    Ok(None) => Built::Stopped,
+                    Err(why) => Built::Failed(why),
                 }
             };
             let failed = Built::Failed(tr!("It stopped on an internal error").to_string());
@@ -327,7 +311,7 @@ impl Viewer {
         self.build = Some(build);
     }
 
-    fn take(&mut self, index: WorldIndex, places: Option<Places>) {
+    fn take(&mut self, index: Arc<WorldIndex>, places: Option<Places>) {
         let places = places.map(Arc::new);
         if let Some(places) = places.clone() {
             sky_night::read(Arc::clone(&places));
@@ -352,7 +336,6 @@ impl Viewer {
             self.camera.position = middle + Vec3::Z * START_HEIGHT;
             self.cuts += 1;
         }
-        let index = Arc::new(index);
         self.lights = Some(lights::Lights::new(Arc::clone(&index)));
         let shared = Arc::clone(&index);
         let held = Arc::clone(&self.held);
@@ -394,7 +377,7 @@ impl Viewer {
                     archetypes = grouped(index.report.archetypes),
                     models = grouped(index.report.models),
                 );
-                self.take(*index, places);
+                self.take(index, places);
                 (Outcome::Done(Then::Nothing), said)
             }
             Built::Stopped => (

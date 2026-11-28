@@ -1,25 +1,27 @@
 //! The index of a GTA VI install the world viewer streams from: the maps each pack registers with
 //! their boxes, each archetype by its word, and where each model's body lies. It is built by one
-//! pass over the world's archives on every core, and kept in the configuration folder while the
-//! archives' sizes and modification times stand.
+//! pass over the world's archives on every core, and kept in the configuration folder by the
+//! kept file every title shares: an archive is read again when its size or modification time
+//! changes, and no other is.
 //!
 //! ⚠ A map's entities are not in it: a map's body is read when the map streams in.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::PathBuf;
 
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
-use or_io::container::rpf::GtaViKeys;
-use or_job::{Cancel, Progress};
 use or_title::gta6_mount::{self, HeldBack, MapFact, Mode, SCRIPT_MANAGED};
 use or_world::streaming::MapBox;
 
-#[path = "index_keep.rs"]
-mod keep;
+#[path = "index_install.rs"]
+mod install;
 #[path = "index_mount.rs"]
 mod mount;
+#[path = "index_open.rs"]
+mod open;
+#[path = "index_rows.rs"]
+mod rows;
 #[path = "index_scan.rs"]
 mod scan;
 #[path = "index_states.rs"]
@@ -27,8 +29,9 @@ mod states;
 use or_io::gta6::map::index_types as types;
 use or_io::gta6::map::lights_index;
 
-pub use keep::{fresh_beside, kept_at};
+pub use install::{Linked, RULES};
 pub use mount::keys;
+pub use open::{build, fresh_at, kept_at, open, Opened, GAME, TITLE};
 pub use types::ALL_HOURS;
 
 /// A map of the index.
@@ -242,8 +245,6 @@ pub struct WorldIndex {
     /// The places the world-state data names with an outline, and the points of the outlines.
     places: Vec<PlaceRow>,
     outlines: Vec<[f32; 2]>,
-    /// A word of the file of what a fresh game is taken to have that the index was built with; 0 for none.
-    assumed: u64,
     pub report: Report,
     by_name: HashMap<u32, u32>,
     groups: Vec<Group>,
@@ -464,135 +465,6 @@ fn counted(maps: &[MapRow]) -> Report {
         report.minigames += in_mode(Mode::Minigames);
     }
     report
-}
-
-/// Read the registration documents under `root`, bind what the packs register to the bodies of the
-/// world's archives and index them, with what the file `fresh` takes of a fresh game where there is
-/// one; `None` once `cancel` is set.
-pub fn build(
-    root: &Path,
-    fresh: Option<&Path>,
-    snapshot: Option<&GtaViKeys>,
-    cancel: &Cancel,
-    progress: &Progress,
-) -> Result<Option<WorldIndex>, String> {
-    let stopped = || cancel.is_set();
-    let every = mount::archives_under(root);
-    let Some(mounted) = mount::read(&every, snapshot, &stopped) else {
-        return Ok(None);
-    };
-    let archives = mounted.archives(root, &every);
-    let total: u64 = (archives.iter())
-        .filter_map(|p| std::fs::metadata(p).ok())
-        .map(|m| m.len())
-        .sum();
-    let done = AtomicU64::new(0);
-    let reached = |step: u64| {
-        let now = done.fetch_add(step, Ordering::Relaxed) + step;
-        progress.reached(now.min(total), total);
-    };
-
-    let mut index = WorldIndex {
-        archives: archives.clone(),
-        ..WorldIndex::default()
-    };
-    let mut facts = Vec::new();
-    // Where each map-types body lies: its archive and the nested archive that holds it.
-    let mut types_at: HashSet<(u32, u64)> = HashSet::new();
-    let mut keys: HashMap<u32, Vec<BodyRow>> = HashMap::new();
-    let mut unread = 0;
-    let mut claims = Vec::new();
-    let mut words: Vec<(u32, u64)> = Vec::new();
-    for (at, path) in archives.iter().enumerate() {
-        let archive = at as u32;
-        let shard = match scan::scan_archive(path, cancel, &reached) {
-            Ok(Some(shard)) => shard,
-            Ok(None) => return Ok(None),
-            Err(error) => {
-                tracing::warn!(path = %path.display(), %error, "an archive was not indexed");
-                continue;
-            }
-        };
-        let nested = shard.nested();
-        types_at.extend(
-            (shard.types.iter())
-                .filter_map(|offset| Some((archive, scan::container_of(&nested, *offset)?))),
-        );
-        for (mut row, parents, holds) in shard.maps {
-            row.archive = archive;
-            row.parents_from = index.parents.len() as u32;
-            row.parents_len = parents.len() as u32;
-            index.parents.extend(parents);
-            facts.push(MapFact {
-                archive,
-                container: scan::container_of(&nested, row.offset),
-                name: row.name,
-                block: row.block,
-                flags: row.flags,
-                holds,
-            });
-            index.maps.push(row);
-        }
-        index.archetypes.extend(shard.archetypes);
-        index.lights.extend(shard.lights);
-        words.extend(shard.words);
-        (index.models).extend(shard.models.into_iter().map(|(word, offset)| BodyRow {
-            word,
-            offset,
-            archive,
-            pad: 0,
-        }));
-        (index.interiors).extend(shard.interiors.into_iter().map(|(word, offset)| BodyRow {
-            word,
-            offset,
-            archive,
-            pad: 0,
-        }));
-        for (offset, codes) in shard.keys {
-            for code in codes {
-                keys.entry(code).or_default().push(BodyRow {
-                    word: 0,
-                    offset,
-                    archive,
-                    pad: 0,
-                });
-            }
-        }
-        unread += shard.unread;
-        claims.extend(shard.slod);
-    }
-    index.slod = or_io::gta6::map::stream::grass::slod::solve(&claims);
-    let Some((selectors, places)) = states::selectors(&mounted, &every, cancel) else {
-        return Ok(None);
-    };
-    index.lay_places(places);
-    let (assumed, word) = fresh.map_or_else(Default::default, states::assumed);
-    index.switches = states::switches(&words, &selectors, &assumed);
-    index.assumed = word;
-
-    let bound = mounted.bind(&every, &archives, &facts);
-    place(&mut index.maps, &facts, &bound.modes);
-    index.dictionaries = dictionaries(&index.archetypes, &keys);
-    let (sets_read, sets_unread, sets_ciphered) = (mounted.registry.level_pack())
-        .map_or((0, 0, 0), |pack| {
-            (pack.sets.len(), pack.unread.len(), pack.ciphered.len())
-        });
-    index.report = Report {
-        packs: mounted.registry.packs.len() as u64,
-        sets_read: sets_read as u64,
-        sets_unread: sets_unread as u64,
-        sets_ciphered: sets_ciphered as u64,
-        named_archives: bound.named_archives as u64,
-        bound_archives: bound.bound_archives as u64,
-        by_table: u64::from(bound.by_table),
-        disagree: bound.disagree as u64,
-        permanent_named: bound.permanent_named as u64,
-        permanent_found: bound.permanent.intersection(&types_at).count() as u64,
-        selectors: selectors.len() as u64,
-        unread,
-        ..counted(&index.maps)
-    };
-    Ok(Some(index.finish()))
 }
 
 /// The one dictionary body that holds a drawable under every name the archetypes of a dictionary

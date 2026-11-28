@@ -1669,12 +1669,13 @@ the oriented box of a placed object are the object's own, as data a person edits
 behaviour ([R71b](../direction/Roadmap.md#r71b-the-gta-vi-world-behind-the-contract), its second
 part): it states no title yet, and `or-worlds` lists none for it. `index` is the index of an install the
 World screen streams from (`WorldIndex`: the maps each pack registers with their boxes, each
-archetype by its word, where each model's body lies), with its kept file
-(`crates/domain/or-world-gta6/src/index_keep.rs`), the mount binding that reads the registration
+archetype by its word, where each model's body lies), with what the core's kept file holds of it
+(`crates/domain/or-world-gta6/src/index_install.rs`, `crates/domain/or-world-gta6/src/index_rows.rs`
+and `crates/domain/or-world-gta6/src/index_open.rs`), the mount binding that reads the registration
 documents (`crates/domain/or-world-gta6/src/index_mount.rs`), the scan of an archive
 (`crates/domain/or-world-gta6/src/index_scan.rs`) and the world states
-(`crates/domain/or-world-gta6/src/index_states.rs`). ⚠ `index::build` is handed the key snapshot
-and `index::keys` the configuration folder: the crate takes neither from the app, and
+(`crates/domain/or-world-gta6/src/index_states.rs`). ⚠ `index::open` and `index::build` are handed the key snapshot,
+and `index::open` and `index::keys` the configuration folder: the crate takes neither from the app, and
 `src/state/gta6_worldview/index_shell.rs` is where the app gives its own. `occluders` streams
 the occluders of the maps near a view through the core's `Pool`; `material` is a model's
 material record (`CpuMaterial`, `Family`); `lights_law` is the law of a local light as the nested volumes that
@@ -1690,12 +1691,75 @@ written before it, and failed with the key snapshot kept from `index::build`. Th
 `src/state/gta6_worldview/index_shell.rs` (the configuration folder and key snapshot it opens with,
 and `land_and_water`) and every file of the viewer that names the renderer or the app. ⚠ A line a
 moved file logs below an error no longer reaches the terminal, and one below `info` no longer
-reaches the Log panel: both are filtered by crate (`src/diagnostics/mod.rs`). Left: parts 3 to 5;
+reaches the Log panel: both are filtered by crate (`src/diagnostics/mod.rs`). Left: parts 4 and 5;
 the adapter's title and its line in `or-worlds`, which wait for the readers a title opens
 with, since an `Entry` of the registry is a title and can state none without one; and the pool's workers keeping their open files in the contract's `Worker`. The
 contract as built changes the later parts: the world thread is rewritten around the core's driver,
 so GTA VI's rules go to its rows' gates, its body and its policy, and the kit, which opens a world
 through the title's own `open`, passes only with the last part.
+
+**or-world-gta6, the index on the core's kept file.** The third part of
+[R71b](../direction/Roadmap.md#r71b-the-gta-vi-world-behind-the-contract) deleted the adapter's own
+kept file. `index::open` is what the World screen calls: it takes the index from
+`worlds/gta6/` of the configuration folder through `or_world::kept`, and `index::build` reads
+every archive and keeps nothing.
+
+- **The inputs.** Every archive under the install's root is an input with its size and
+  modification time, and `fresh_game.json` is the one other input where the file is there. No
+  archive is opened to list them, and the mount is read only when rows or the derived section are
+  asked for, so a start the kept file serves opens no archive
+  (`a_second_start_opens_no_archive`).
+- **An archive's section** (`Rows`) holds what a scan found in it, names unresolved: its maps with
+  their parents' names, its archetypes, lights, model and interior bodies, dictionary codes and
+  far stand-in claims. An archive the mount names none of the world's has a section that says it
+  was not read. An archive that changed is read again and no other is
+  (`a_changed_archive_alone_is_read_again`).
+- **The derived section** holds what the archives decide together: which inputs are the world's,
+  each map's modes from the mount's binding, the far stand-ins, the switches, the places with
+  their outlines, the dictionaries and the report. A changed `fresh_game.json` makes it again and
+  scans no archive (`a_changed_fresh_game_derives_again_and_scans_no_archive`). ⚠ An archive the
+  mount newly names the world's, whose own stamp stands, is read while this section is made and its
+  rows are kept in it (`an_archive_the_mount_newly_names_is_read_though_it_did_not_change`).
+- **The link** runs after every load: it lays the rows end to end in the world's order, places
+  each map and gives the core's `Index` a row for each map name, with `Linked` riding on it: the
+  `WorldIndex` the viewer's readers stream from
+  (`the_linked_index_names_each_map_once_with_its_parents_its_gate_and_its_archive`,
+  `an_index_built_with_nothing_kept_is_the_index_the_kept_file_links`).
+- **An archive that does not open** gives the world nothing at that open and is read again at
+  the next, by `Section::in_part` (`an_archive_that_did_not_open_is_read_again_at_the_next_open`).
+  The derived section has no stamp of its own, so it says the same of itself where an archive it
+  reads did not open, and is then made again at the next open with no archive of the world read:
+  an archive the mount newly names
+  (`an_archive_the_mount_newly_names_that_did_not_open_is_read_again_at_the_next_open`) and the
+  archive of the world states
+  (`world_states_whose_archive_did_not_open_are_read_again_at_the_next_open`,
+  `a_game_shape_archive_that_does_not_open_is_said_and_one_that_opens_is_not`).
+  ⚠ While it stays unreadable every start reads it again and writes the kept file again.
+- **What an earlier build left.** The first open of an install deletes the index kept under
+  `gta6_world/` and moves `fresh_game.json` from beside it to `worlds/gta6/`, where one file now
+  serves every GTA VI install; a file already there stands and the old one is left
+  (`an_old_kept_file_is_deleted_and_its_fresh_game_moved`,
+  `a_fresh_game_already_at_its_new_place_stands_and_the_old_one_is_left`). The folder is left,
+  since the Map screen keeps its own files in it.
+- **What is refused.** A kept file of another version of the rules or of another title, and one
+  cut short, are refused and the index is built again
+  (`a_kept_file_of_other_rules_or_another_title_is_refused_and_built_again`,
+  `a_truncated_kept_file_is_refused_and_built_again`). A kept file that reads whole and whose
+  sections do not link, which no later open would mend, is deleted and every archive read, once
+  (`a_kept_file_whose_sections_do_not_link_is_deleted_and_the_index_built_again`,
+  `the_rows_of_a_section_whose_tables_count_other_maps_are_refused`). An index of no map is not
+  kept (`an_index_of_no_map_is_not_kept`).
+
+⚠ `index::RULES` is the version of what a section holds and of what a scan reads: a change to
+either takes another number, and every person's index is then built again at their next start.
+Measured on the GTA VI build of this machine, 2026-11-27, by
+`the_world_reads_as_its_reference_says` with the kept file's folder named
+(`OPENRAGE_GTA6_WORLD_INDEX_KEPT`): with nothing kept the index was held after 167 s, every one
+of the 22 archives under the root asked for its rows, and a file of 124,689,946 bytes was
+written; at the second start it was held after 1.0 s with no archive read. The 961 digests held
+built afresh, through the new kept file and on the second start, and 37 of them failed once with
+the link's far stand-ins zeroed. The same test at the revision before took 181 s to hold an index
+built afresh, on a machine other lanes were building on.
 
 **The world core.** The modules of `or-world` listed here name no game and are what every title's
 world sits behind ([R71a](../direction/Roadmap.md#r71a-the-world-contract-the-conformance-kit-and-the-fake-title),
@@ -1755,8 +1819,17 @@ still GTA V's model, which moves to its adapter in R71n.
   no stamp. The file is named by `WorldSpec::identity`, in which a path is written quoted, so
   that no install's name reads as another world's layer. It is written beside itself under a
   name of its writer's own and moved over the file that stood, so two writers at once leave a
-  whole file of one of them (`two_writers_at_once_leave_a_whole_file_of_one_of_them`). GTA V's adapter keeps its rows by
-  it; GTA VI's own kept file stands until R71b.
+  whole file of one of them (`two_writers_at_once_leave_a_whole_file_of_one_of_them`). GTA V's adapter and GTA VI's keep their rows by
+  it. ⚠ A stamp is taken before the rows are read, so a title that could read an archive only
+  in part says so with `Section::in_part`: the rows are kept, the stamp is not, and the next open
+  reads that archive again
+  (`an_archive_read_in_part_keeps_no_stamp_and_is_read_again_at_the_next_open`). The derived
+  section says the same of itself, and is then kept beside an input of no name and no stamp, so
+  that the next open makes it again and reads no archive
+  (`a_derived_section_made_in_part_is_made_again_at_the_next_open_and_no_archive_is_read`). GTA VI's
+  adapter calls it and GTA V's does not: a file of a GTA V archive that did not open stays unread
+  until the archive changes. `kept::refresh_with` is `refresh` for a world that is no
+  `WorldInstall` yet, which GTA VI's is not.
 - `sentence` is `Sentence`, the key of a text a title shows a person, made by `sentence!` alone
   (`the_key_of_a_sentence_is_made_by_its_macro_alone`); the language gate reads the core and
   every adapter crate for that macro

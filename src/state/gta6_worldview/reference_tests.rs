@@ -37,6 +37,8 @@ const BUILD_ENV: &str = "OPENRAGE_GTA6_BUILD";
 const WRITE_ENV: &str = "OPENRAGE_GTA6_WORLD_DIGESTS_WRITE";
 /// Names the reference the world is held to.
 const HELD_ENV: &str = "OPENRAGE_GTA6_WORLD_DIGESTS";
+/// Names a configuration folder: the index is then opened through the file kept there, as a start of the viewer opens it, in place of one built afresh.
+const KEPT_ENV: &str = "OPENRAGE_GTA6_WORLD_INDEX_KEPT";
 
 /// The first line of a reference file.
 const HEAD: &str = "# GTA VI world reference digests 1";
@@ -637,13 +639,37 @@ fn digests(root: &Path) -> Digests {
     let script = stops(SCRIPT).expect("the reference script states its shots");
     assert!(!script.is_empty(), "the reference script takes no shot");
 
-    // The index, built afresh as the viewer builds it.
-    let built = index::build(root, None, &Cancel::new(), &Progress::new());
-    let index = Arc::new(
-        built
-            .expect("the index is built")
-            .expect("no build is cancelled"),
-    );
+    // The index, built afresh, or opened through its kept file where a configuration folder is named.
+    let kept = std::env::var_os(KEPT_ENV).filter(|folder| !folder.is_empty());
+    let index = match kept.map(PathBuf::from) {
+        None => {
+            let built = index::build(root, None, &Cancel::new(), &Progress::new());
+            Arc::new(
+                built
+                    .expect("the index is built")
+                    .expect("no build is cancelled"),
+            )
+        }
+        Some(config) => {
+            let (keys, job) = (index::keys(), (Cancel::new(), Progress::new()));
+            let opened = or_world_gta6::index::open(
+                root,
+                Some(&config),
+                keys.as_ref(),
+                false,
+                &job.0,
+                &job.1,
+            )
+            .expect("the index opens")
+            .expect("no open is cancelled");
+            let served = opened
+                .kept
+                .as_ref()
+                .map(|k| (&k.verdict, k.read.len(), k.derived));
+            said(&format!("the kept file served {served:?}"));
+            opened.index
+        }
+    };
     for (name, rows, bytes) in index.tables() {
         out.insert(
             format!("index.{name}"),

@@ -13,7 +13,27 @@ pub(crate) fn keys() -> Option<GtaViKeys> {
     or_world_gta6::index::keys(crate::state::prefs::config_root().as_deref())
 }
 
+/// [`or_world_gta6::index::open`] with the configuration folder and the key snapshot of this run.
+pub fn open(
+    root: &Path,
+    afresh: bool,
+    cancel: &Cancel,
+    progress: &Progress,
+) -> Result<Option<Opened>, String> {
+    let config = crate::state::prefs::config_root();
+    let keys = keys();
+    or_world_gta6::index::open(
+        root,
+        config.as_deref(),
+        keys.as_ref(),
+        afresh,
+        cancel,
+        progress,
+    )
+}
+
 /// [`or_world_gta6::index::build`] with the key snapshot of this run.
+#[cfg(test)]
 pub fn build(
     root: &Path,
     fresh: Option<&Path>,

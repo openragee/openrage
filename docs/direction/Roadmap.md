@@ -557,7 +557,7 @@ lettered as they were written, and [the plan's table](Unified_World_Plan.md#the-
 their order: R71a stands on nothing, R71m's measures run beside it, and R71d puts GTA V behind the
 contract before R71b's move begins. A row takes the default beside its question in [the rulings
 asked](Unified_World_Plan.md#asked-of-the-owner). R71a and R71d are built, R71m's measures are taken
-and two of R71b's five parts are built.
+and three of R71b's five parts are built.
 
 - [ ] [R71 One world for every title](#r71-one-world-for-every-title) — the plan of 2026-11-26, in the parts below; R71a is built, R71m's measures are taken and no other part is started here, and the GTA VI World screen and the headless GTA V world of R70 are what it starts from
   - [x] [R71a The world contract the conformance kit and the fake title](#r71a-the-world-contract-the-conformance-kit-and-the-fake-title)
@@ -10715,7 +10715,7 @@ world; [R71c](#r71c-one-world-session-one-frame-host-and-panels-by-capability) m
 files into its adapter; [R71i](#r71i-one-edit-stack-for-every-title) is the one edit stack and [R71j](#r71j-the-world-tools-built-once) the tools the screen rows
 of [R70](#r70-the-gta-v-world-editor) are built on; [R71k](#r71k-red-dead-redemption-2) is RDR2, and [R71l](#r71l-leftovers-and-the-ledger-of-what-was-deleted) ends with
 every ledger empty or ruled on. A part's Done when is its check, and its brief says the rest.
-R71a and R71d are built, R71m's measures are taken and two of R71b's five parts are built.
+R71a and R71d are built, R71m's measures are taken and three of R71b's five parts are built.
 
 ### R71a The world contract the conformance kit and the fake title
 
@@ -10763,11 +10763,11 @@ function that selects a frame split into the mechanics every title shares and GT
 the model, texture and look readers, whose outputs are rewritten on the core's
 ([brief](Unified_World_Plan.md#the-gta-vi-world-behind-the-contract-r71b)).
 
-**Where it stands.** Parts 1 and 2 are built: the reference
+**Where it stands.** Parts 1 to 3 are built: the reference
 ([how a part makes and compares one](../guides/Development_Workflow.md#the-reference-of-the-gta-vi-world-screen)),
-and the closed move, after which the digests held (961 of 961,
+the closed move, and the index on the core's kept file, after which the digests held (961 of 961,
 `the_world_reads_as_its_reference_says`, 2026-11-27); the shots were not run, and the adapter
-states no title yet. What moved where and what is left are under "or-world-gta6" in
+states no title yet. The detail is under "or-world-gta6" in
 [Crate_Reference.md](../reference/Crate_Reference.md#domain-crates).
 
 **Depends on.** [R71a](#r71a-the-world-contract-the-conformance-kit-and-the-fake-title); from its second part

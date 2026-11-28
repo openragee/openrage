@@ -640,7 +640,10 @@ OPENRAGE_GTA6_WORLD_DIGESTS=REFERENCE.txt cargo nextest run --profile all -p ope
 ```
 
 The suite is `src/state/gta6_worldview/reference_tests.rs`, of the slow tier. It builds the
-install's index afresh and digests each of its tables; the models of archetypes evenly spaced
+install's index afresh, or, with `OPENRAGE_GTA6_WORLD_INDEX_KEPT` naming a folder, opens it
+through the file kept there as a start of the viewer does, so that a second run with the same
+folder holds the index read back, and says what the kept file served. It digests each of the
+index's tables; the models of archetypes evenly spaced
 among those the index places, in the order of their words; textures of the packs evenly spaced in
 the order of their keys, and some of those the digested models name; the selection, the lights,
 the occluders and the day at each shot of the script; and the selection over maps evenly spaced

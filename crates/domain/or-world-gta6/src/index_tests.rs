@@ -273,62 +273,6 @@ fn the_mount_gives_a_map_its_modes_its_hold_and_its_group() {
 }
 
 #[test]
-fn a_kept_index_reads_back_as_it_was_until_an_archive_changes() {
-    let dir = tempfile::tempdir().expect("a scratch folder");
-    let archive = dir.path().join("levels.rpf");
-    std::fs::write(&archive, b"made up").expect("the archive");
-    let index = made_up(archive.clone());
-    let file = kept_at(dir.path(), dir.path());
-    index.keep(&file).expect("kept");
-
-    let read = WorldIndex::kept(&file).expect("the kept index");
-    assert_eq!(read.archives, index.archives);
-    assert_eq!(read.maps, index.maps);
-    assert_eq!(read.parents, index.parents);
-    assert_eq!(read.archetypes, index.archetypes);
-    assert_eq!(read.models, index.models);
-    assert_eq!(read.dictionaries, index.dictionaries);
-    assert_eq!(read.interiors, index.interiors);
-    assert_eq!(read.interior(600), Some(&body(600, 0, 0x600)));
-    assert_eq!(read.interior(601), None);
-    assert_eq!(read.report, index.report);
-    assert_eq!(read.map_named(22), Some(1));
-    // The groups are worked out again from the maps, and an archetype keeps its hours.
-    assert_eq!(read.groups(), index.groups());
-    assert_eq!(read.groups().len(), 1);
-    assert_eq!(read.archetype(100).map(|a| a.hours), Some(0xF0));
-    // A group keeps its word and its hours at rest, an archetype its load flags.
-    assert_eq!(read.groups()[0].word, 0xABC);
-    assert_eq!(read.default_on_in(2.0, 1, true), [77]);
-    assert_eq!(read.default_on_in(1.0, 1, true), Vec::<u32>::new());
-    assert_eq!(
-        read.default_on_in(1.0, 1, false),
-        [77],
-        "what is taken of a fresh game is kept too"
-    );
-    assert_eq!(read.archetype(100).map(|a| a.load_flags), Some(0x0001_0081));
-    assert_eq!(read.slod, index.slod);
-
-    // A kept index cut short is refused, never read as fewer rows.
-    let whole = std::fs::read(&file).expect("the kept bytes");
-    std::fs::write(&file, &whole[..whole.len() - 9]).expect("cut");
-    assert!(WorldIndex::kept(&file).is_none());
-    std::fs::write(&file, &whole).expect("whole again");
-    assert!(WorldIndex::kept(&file).is_some());
-
-    // What a fresh game is taken to have, written beside it, takes another build.
-    let fresh = fresh_beside(&file);
-    std::fs::write(&fresh, b"{}").expect("the fresh game");
-    assert!(WorldIndex::kept(&file).is_none());
-    std::fs::remove_file(&fresh).expect("gone");
-    assert!(WorldIndex::kept(&file).is_some());
-
-    // An archive of another size is another archive: its index is built again.
-    std::fs::write(&archive, b"made up, and longer").expect("the archive");
-    assert!(WorldIndex::kept(&file).is_none());
-}
-
-#[test]
 fn a_body_lies_in_the_last_nested_archive_whose_names_have_not_ended_it() {
     // The archive's own header at 0, one nested archive ended at 500, one that states no end.
     let archives = [(0, None), (100, Some(500)), (1000, None)];

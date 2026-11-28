@@ -597,3 +597,214 @@ fn a_file_that_cannot_be_replaced_is_left_with_nothing_written_beside_it() {
         .collect();
     assert_eq!(beside, ["kept.index"]);
 }
+
+/// An indexer of one archive, whose rows read in part while it is shut.
+#[derive(Default)]
+struct Halting {
+    shut: std::sync::atomic::AtomicBool,
+    reads: std::sync::atomic::AtomicUsize,
+}
+
+impl WorldIndexer for Halting {
+    fn rules(&self) -> u32 {
+        1
+    }
+
+    fn rows(&self, _archive: usize, out: &mut Section) -> Result<(), WorldError> {
+        use std::sync::atomic::Ordering;
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        let shut = self.shut.load(Ordering::Relaxed);
+        out.put_u8(u8::from(!shut));
+        if shut {
+            out.in_part();
+        }
+        Ok(())
+    }
+
+    fn whole(&self, _archives: &[Section], _out: &mut Section) -> Result<(), WorldError> {
+        Ok(())
+    }
+
+    fn link(&self, archives: &[Section], _whole: &Section) -> Result<Index, WorldError> {
+        let read = archives[0].reader().u8()?;
+        let row = crate::model::MapRow {
+            name: u64::from(read),
+            label: String::new(),
+            boxes: None,
+            parents: Vec::new(),
+            gate: crate::model::Gate::Always,
+            archive: 0,
+        };
+        Ok(Index::new(vec![row])?)
+    }
+
+    fn placements(
+        &self,
+        _index: &Index,
+        _map: crate::model::MapId,
+        _out: &mut Vec<crate::model::PlacementRow>,
+    ) -> Result<(), WorldError> {
+        Err(WorldError::Lacks("placement rows"))
+    }
+}
+
+#[test]
+fn an_archive_read_in_part_keeps_no_stamp_and_is_read_again_at_the_next_open() {
+    use std::sync::atomic::Ordering;
+    let folder = tempfile::tempdir().expect("a scratch folder");
+    let file = folder.path().join("kept.index");
+    let world = FakeTitle::spec();
+    let stamp = Some(Stamp {
+        size: 10,
+        modified: 20,
+    });
+    let inputs = || Inputs {
+        archives: vec![Input {
+            name: "one".into(),
+            stamp,
+        }],
+        others: Vec::new(),
+    };
+    let indexer = Halting::default();
+    indexer.shut.store(true, Ordering::Relaxed);
+    let open = || refresh_with("halting", &world, inputs(), &indexer, &file).expect("it opens");
+    let kept_stamp = || {
+        let kept = Kept::open(&file, 1)
+            .expect("it reads")
+            .expect("it is there");
+        kept.head.inputs.archives[0].stamp
+    };
+
+    let (index, report) = open();
+    assert_eq!(index.maps()[0].name, 0, "what could be read is linked");
+    assert_eq!(report.read, [0]);
+    assert_eq!(
+        kept_stamp(),
+        None,
+        "the stamp taken before the read is not kept"
+    );
+
+    // The archive stands as it was, and its rows are asked for again all the same.
+    indexer.shut.store(false, Ordering::Relaxed);
+    let (index, report) = open();
+    assert_eq!((index.maps()[0].name, report.read), (1, vec![0]));
+    assert!(matches!(report.verdict, Verdict::Changed));
+    assert_eq!(kept_stamp(), stamp);
+    let (_, report) = open();
+    assert!(matches!(report.verdict, Verdict::Current));
+    assert_eq!(indexer.reads.load(Ordering::Relaxed), 2);
+}
+
+/// An indexer of one archive, whose derived section is made in part while it is shut.
+#[derive(Default)]
+struct Wavering {
+    shut: std::sync::atomic::AtomicBool,
+    reads: std::sync::atomic::AtomicUsize,
+    derived: std::sync::atomic::AtomicUsize,
+}
+
+impl WorldIndexer for Wavering {
+    fn rules(&self) -> u32 {
+        1
+    }
+
+    fn rows(&self, _archive: usize, _out: &mut Section) -> Result<(), WorldError> {
+        self.reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn whole(&self, _archives: &[Section], out: &mut Section) -> Result<(), WorldError> {
+        use std::sync::atomic::Ordering;
+        self.derived.fetch_add(1, Ordering::Relaxed);
+        let shut = self.shut.load(Ordering::Relaxed);
+        out.put_u8(u8::from(!shut));
+        if shut {
+            out.in_part();
+        }
+        Ok(())
+    }
+
+    fn link(&self, _archives: &[Section], whole: &Section) -> Result<Index, WorldError> {
+        let row = crate::model::MapRow {
+            name: u64::from(whole.reader().u8()?),
+            label: String::new(),
+            boxes: None,
+            parents: Vec::new(),
+            gate: crate::model::Gate::Always,
+            archive: 0,
+        };
+        Ok(Index::new(vec![row])?)
+    }
+
+    fn placements(
+        &self,
+        _index: &Index,
+        _map: crate::model::MapId,
+        _out: &mut Vec<crate::model::PlacementRow>,
+    ) -> Result<(), WorldError> {
+        Err(WorldError::Lacks("placement rows"))
+    }
+}
+
+#[test]
+fn a_derived_section_made_in_part_is_made_again_at_the_next_open_and_no_archive_is_read() {
+    use std::sync::atomic::Ordering;
+    let folder = tempfile::tempdir().expect("a scratch folder");
+    let file = folder.path().join("kept.index");
+    let world = FakeTitle::spec();
+    let stamp = Some(Stamp {
+        size: 10,
+        modified: 20,
+    });
+    // With another input and with none: neither says a section made in part stands.
+    for others in [Vec::new(), vec![("else", stamp)]] {
+        let inputs = || Inputs {
+            archives: vec![Input {
+                name: "one".into(),
+                stamp,
+            }],
+            others: (others.iter())
+                .map(|(name, stamp)| Input {
+                    name: (*name).into(),
+                    stamp: *stamp,
+                })
+                .collect(),
+        };
+        let _ = std::fs::remove_file(&file);
+        let indexer = Wavering::default();
+        indexer.shut.store(true, Ordering::Relaxed);
+        let open =
+            || refresh_with("wavering", &world, inputs(), &indexer, &file).expect("it opens");
+        let counts = || {
+            (
+                indexer.reads.load(Ordering::Relaxed),
+                indexer.derived.load(Ordering::Relaxed),
+            )
+        };
+
+        let (index, _) = open();
+        assert_eq!(index.maps()[0].name, 0, "what could be made is linked");
+        assert_eq!(counts(), (1, 1));
+        // While it is made in part it is made at every open, from the rows kept.
+        let (_, report) = open();
+        assert!(report.derived && report.read.is_empty());
+        assert_eq!(counts(), (1, 2));
+
+        indexer.shut.store(false, Ordering::Relaxed);
+        let (index, report) = open();
+        assert_eq!(index.maps()[0].name, 1);
+        assert!(matches!(report.verdict, Verdict::Changed));
+        assert!(report.derived && report.read.is_empty());
+        let (index, report) = open();
+        assert_eq!(index.maps()[0].name, 1);
+        assert!(matches!(report.verdict, Verdict::Current));
+        assert_eq!(counts(), (1, 3));
+        let kept = (Kept::open(&file, 1).expect("it reads")).expect("it is there");
+        assert_eq!(
+            kept.head.inputs,
+            inputs(),
+            "the inputs alone, once it is whole"
+        );
+    }
+}

@@ -4,14 +4,16 @@
 //!
 //! ⚠ An archive whose stamp stands as kept is not read again, and its section is the kept one
 //! byte for byte; the section derived across archives is made again when any input changed. An
-//! input with no stamp is read at every open: nothing says it stands.
+//! input with no stamp is read at every open: nothing says it stands. Stamps are taken before the
+//! rows are read, so an archive whose rows a title could read only in part keeps no stamp, and a
+//! derived section made in part is made again at the next open ([`Section::in_part`]).
 
 use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use crate::contract::{WorldError, WorldInstall, WorldSpec};
+use crate::contract::{WorldError, WorldIndexer, WorldInstall, WorldSpec};
 use crate::model::Index;
 
 const MAGIC: [u8; 4] = *b"ORWK";
@@ -103,6 +105,8 @@ pub enum SectionError {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Section {
     bytes: Vec<u8>,
+    /// Not written: it says of rows just read that they are to be read again.
+    part: bool,
 }
 
 impl Section {
@@ -112,6 +116,11 @@ impl Section {
 
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
+    }
+
+    /// Say these rows are what could be read of something that did not read whole: they are kept, and the next open reads them again, an archive's by its stamp not being kept and the derived section whatever stands.
+    pub fn in_part(&mut self) {
+        self.part = true;
     }
 
     pub fn put_u8(&mut self, value: u8) {
@@ -317,6 +326,7 @@ impl Kept {
                 for _ in 0..=archives.len() {
                     sections.push(Section {
                         bytes: body.bytes()?.to_vec(),
+                        part: false,
                     });
                 }
                 body.end()?;
@@ -420,8 +430,18 @@ pub fn refresh(
     install: &dyn WorldInstall,
     file: &Path,
 ) -> Result<(Index, Report), WorldError> {
-    let indexer = install.indexer();
-    let (rules, now, identity) = (indexer.rules(), install.inputs(), world.identity());
+    refresh_with(title, world, install.inputs(), install.indexer(), file)
+}
+
+/// [`refresh`] for a world that is no [`WorldInstall`] yet: its inputs as they stand now, and what reads their rows.
+pub fn refresh_with(
+    title: &str,
+    world: &WorldSpec,
+    mut now: Inputs,
+    indexer: &dyn WorldIndexer,
+    file: &Path,
+) -> Result<(Index, Report), WorldError> {
+    let (rules, identity) = (indexer.rules(), world.identity());
     let (kept, mut verdict) = match Kept::open(file, rules) {
         Ok(None) => (None, Verdict::Absent),
         Ok(Some(kept)) if kept.head.title != title || kept.head.world != identity => {
@@ -456,7 +476,7 @@ pub fn refresh(
             at.push_back((input.stamp, section));
         }
     }
-    let mut read = Vec::new();
+    let (mut read, mut in_part) = (Vec::new(), Vec::new());
     let mut archives = Vec::with_capacity(now.archives.len());
     for (at, input) in now.archives.iter().enumerate() {
         let same = (carried.get_mut(&input.name).and_then(VecDeque::pop_front))
@@ -467,6 +487,9 @@ pub fn refresh(
                 let mut section = Section::new();
                 indexer.rows(at, &mut section)?;
                 read.push(at);
+                if section.part {
+                    in_part.push(at);
+                }
                 section
             }
         });
@@ -489,6 +512,19 @@ pub fn refresh(
         derived,
         not_kept: None,
     };
+    // ⚠ The stamps were taken before the rows were read: one of an archive read in part would
+    // say rows stand that were never read.
+    for at in in_part {
+        now.archives[at].stamp = None;
+    }
+    // ⚠ Nothing of the head says of the derived section alone that it does not stand: one made in
+    // part is kept beside an input of no name and no stamp, which no open finds as it was.
+    if whole.part {
+        now.others.push(Input {
+            name: String::new(),
+            stamp: None,
+        });
+    }
     if !matches!(report.verdict, Verdict::Current) {
         let kept = Kept {
             head: Head {

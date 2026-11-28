@@ -233,4 +233,4 @@ pub(super) fn archives_under(root: &Path) -> Vec<PathBuf> {
 
 #[cfg(test)]
 #[path = "index_mount_tests.rs"]
-mod tests;
+pub(super) mod tests;

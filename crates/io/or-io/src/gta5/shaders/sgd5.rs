@@ -933,7 +933,7 @@ pub fn class_of(kind: u8) -> Option<usize> {
 
 enum Item {
     Count(u32),
-    Program(Sgd5Program),
+    Program(Box<Sgd5Program>),
     Gap,
 }
 
@@ -952,7 +952,7 @@ fn walk(b: &[u8], mut at: usize) -> Read<(Vec<Item>, Vec<Sgd5Gap>, EffectsAt)> {
         let step = if piece_starts(b, at) {
             Err(Sgd5Error::NotOnDisk { at })
         } else if is_program(b, at) {
-            program(b, at).map(|(next, p)| (next, Item::Program(p)))
+            program(b, at).map(|(next, p)| (next, Item::Program(Box::new(p))))
         } else {
             u32_at(b, at).and_then(|c| match c {
                 c if c > MAX_COUNT => Err(invalid(
@@ -1120,7 +1120,7 @@ fn banks(items: Vec<Item>, effects_at: &EffectsAt) -> Read<Banked> {
     }
     let programs = (items.into_iter().zip(assigned))
         .filter_map(|(item, (bank, index))| match item {
-            Item::Program(p) => Some(Sgd5Program { bank, index, ..p }),
+            Item::Program(p) => Some(Sgd5Program { bank, index, ..*p }),
             _ => None,
         })
         .collect();

@@ -1,3 +1,5 @@
+use crate::ui::panels::text_editor::script_view::ScriptAsk;
+
 use super::*;
 
 /// A source written by hand in the shapes a decompile writes; nothing of a game.
@@ -705,12 +707,15 @@ fn a_project_is_built_only_for_a_script_of_an_archive_and_a_pick_waits_for_it() 
     let archive = folder.path().join("demo_archive.rpf");
     std::fs::write(&archive, [0u8; 16]).expect("written");
     let of_archive = Gta6ScriptDocument {
-        archive: Some(archive),
+        archive: Some(archive.clone()),
         ..large
     };
     let id = a_script_in(&mut state, of_archive);
     state.build_gta6_project(id);
     let job = state.gta6_script_job(id).expect("the build's job");
+    // A build begun by hand is the archive's one build of the session too.
+    let offered = state.panels.peek::<super::jobs::Offered>();
+    assert!(offered.is_some_and(|offered| offered.0.contains(&archive)));
     let building = Arc::clone(job.building.as_ref().expect("a job that builds"));
     assert!(!building.built());
     // A pick while the project is built is no new job.
@@ -740,11 +745,17 @@ fn a_script_of_an_archive_decompiled_alone_has_its_project_built_once_as_its_job
     let mut with = of(&archive);
     with.read.project = Some(folder.path().join("project.json"));
     let read_with = a_script_in(&mut state, with);
+    state.panels.get::<ScriptAsk>().project_wanted = true;
     state.build_wanted_gta6_project();
     assert!(state.gta6_script_job(read_with).is_none());
 
     // The file is no archive, so the build fails on its thread; here only its job is looked at.
     let id = a_script_in(&mut state, of(&archive));
+    // Nothing is built unasked while the session's question was not answered to build.
+    state.panels.get::<ScriptAsk>().project_wanted = false;
+    state.build_wanted_gta6_project();
+    assert!(state.gta6_script_job(id).is_none());
+    state.panels.get::<ScriptAsk>().project_wanted = true;
     state.build_wanted_gta6_project();
     let job = state
         .gta6_script_job(id)

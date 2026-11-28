@@ -128,6 +128,8 @@ impl AppState {
             return;
         };
         let script = Arc::clone(script);
+        // Built once a session: no script of the archive begins it again unasked.
+        self.panels.get::<Offered>().0.insert(archive.clone());
         let ask = script.ask();
         let asked = ask.clone();
         let building = Arc::new(Building::default());
@@ -203,9 +205,14 @@ impl AppState {
         }
     }
 
-    /// Build the project of the archive an open script was read from and decompiled alone, as that script's job: one build at a time, each archive once a session.
+    /// Build the project of the archive an open script was read from and decompiled alone, as that script's job, once the session's question was answered to build: one build at a time, each archive once a session.
     // ⚠ A build stopped or failed is not begun again: the inspector's button begins it.
     pub(super) fn build_wanted_gta6_project(&mut self) {
+        // A build reads every program of an archive on every core for minutes: never unasked.
+        let asked = self.panels.peek::<ScriptAsk>();
+        if !asked.is_some_and(|asked| asked.project_wanted) {
+            return;
+        }
         let jobs = self.panels.peek::<Jobs>();
         if jobs.is_some_and(|jobs| jobs.0.values().any(|job| job.building.is_some())) {
             return;

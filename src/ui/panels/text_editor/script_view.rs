@@ -23,6 +23,8 @@ pub struct ScriptAsk {
     pub landed: Vec<(DocumentId, u32)>,
     /// Whether this session asked to build a project, which it asks once.
     pub project_asked: bool,
+    /// Whether the answer was to build: only then is the project of a script's archive built unasked.
+    pub project_wanted: bool,
 }
 
 impl PanelState for ScriptAsk {
@@ -143,7 +145,8 @@ fn ask_project(
     let Some(build) = answer else {
         return;
     };
-    app_state.panels.get::<ScriptAsk>().project_asked = true;
+    let asked = app_state.panels.get::<ScriptAsk>();
+    (asked.project_asked, asked.project_wanted) = (true, build);
     if build {
         app_state.build_gta6_project(doc_id);
     }

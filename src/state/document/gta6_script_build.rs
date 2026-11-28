@@ -74,8 +74,12 @@ pub(super) fn build(
     progress: &Progress,
 ) -> Result<PathBuf, String> {
     let keys = crate::state::rpf9_scan::rpf9_table::keys()?;
-    let bodies = programs(archive, &keys, building, progress)?;
-    let project = project_of(&bodies, building, progress)?;
+    let (bodies, unread) = programs(archive, &keys, building, progress)?;
+    let mut project = project_of(&bodies, building, progress)?;
+    // ⚠ An entry that did not read may be a program that reaches any other.
+    if unread {
+        index::left_unread(&mut project);
+    }
     // ⚠ A stop asked while the project settles or is saved still writes nothing.
     if progress.stopped() {
         return Err(stopped());
@@ -101,6 +105,8 @@ struct Walk<'a> {
     building: &'a Building,
     progress: &'a Progress,
     bodies: Vec<Vec<u8>>,
+    /// Whether an entry did not decipher, a nested archive did not open, or a body that starts as a program does did not read.
+    unread: bool,
 }
 
 impl Walk<'_> {
@@ -114,32 +120,38 @@ impl Walk<'_> {
             if entry.cipher.is_some() {
                 // An entry that does not decipher, or is no program, is no part of the project.
                 let read = mount.read_entry_decrypted(&mut self.file, entry, self.keys);
-                if let Ok(bytes) = read {
-                    if bytes.starts_with(&[0; 8]) && Program::read(&bytes).is_ok() {
-                        self.building.found.fetch_add(1, Ordering::Relaxed);
-                        self.bodies.push(bytes);
-                    }
+                match read {
+                    Ok(bytes) if bytes.starts_with(&[0; 8]) => match Program::read(&bytes) {
+                        Ok(_) => {
+                            self.building.found.fetch_add(1, Ordering::Relaxed);
+                            self.bodies.push(bytes);
+                        }
+                        Err(_) => self.unread = true,
+                    },
+                    Ok(_) => {}
+                    Err(_) => self.unread = true,
                 }
             } else if depth > 0 {
                 let nested = mount.entry_begins_archive(&mut self.file, entry);
                 if !nested.unwrap_or(false) {
                     continue;
                 }
-                if let Ok(nested) = mount.open_nested(&mut self.file, entry, self.keys) {
-                    self.walk(&nested, depth - 1);
+                match mount.open_nested(&mut self.file, entry, self.keys) {
+                    Ok(nested) => self.walk(&nested, depth - 1),
+                    Err(_) => self.unread = true,
                 }
             }
         }
     }
 }
 
-/// The body of each program of the archive at `archive` and of the archives nested in it, in the order of their entries.
+/// The body of each program of the archive at `archive` and of the archives nested in it, in the order of their entries, and whether some entry did not read.
 fn programs(
     archive: &Path,
     keys: &GtaViKeys,
     building: &Building,
     progress: &Progress,
-) -> Result<Vec<Vec<u8>>, String> {
+) -> Result<(Vec<Vec<u8>>, bool), String> {
     let mut file = File::open(archive).map_err(|e| format!("{}: {e}", archive.display()))?;
     let mount = Gta6Mount::open_root(&mut file, keys).map_err(|e| e.to_string())?;
     let mut walk = Walk {
@@ -148,11 +160,12 @@ fn programs(
         building,
         progress,
         bodies: Vec::new(),
+        unread: false,
     };
     walk.walk(&mount, MAX_DEPTH);
     match progress.stopped() {
         true => Err(stopped()),
-        false => Ok(walk.bodies),
+        false => Ok((walk.bodies, walk.unread)),
     }
 }
 

@@ -245,6 +245,12 @@ const CTOR: &str = "new ()";
 // one does, the one form that width says is held.
 const AT_ELEMENT: &str = "at an element";
 
+/// Two spellings of one place that mean the same, the first the shorter: the text may say either.
+// ⚠ Held only where the two are one by what the function declares: the bytes a variable holds
+// as wide as its kind are the variable, and a field of an element held in place is the field of
+// the element.
+const EITHER: &str = "either";
+
 impl fmt::Display for Sk {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (mark, items) = match self {
@@ -666,6 +672,7 @@ fn same(held: &Sk, text: &Sk) -> bool {
                 _ => false,
             }
         }
+        (Sk::Op(EITHER, held), text) => held.iter().any(|one| same(one, text)),
         (Sk::Num(a, _), Sk::Num(b, _)) => same_bits(*a, *b),
         (Sk::Name(a), Sk::Name(b)) => a == b,
         (Sk::Op(a, xs), Sk::Op(b, ys)) => {
@@ -3365,7 +3372,20 @@ impl Held<'_> {
                     false => Sk::Op(".f", vec![name, num(offset)]),
                 }
             }
-            _ => Sk::Op(".f", vec![self.sk(addr, d)?, num(offset)]),
+            _ => {
+                let place = self.sk(addr, d)?;
+                // A field of an element of an array of values held in place is `a[i].f_N` as
+                // much as `(&a[i]).f_N`, as `place_of` holds it.
+                let in_place = match (&place, self.held_element(addr)) {
+                    (Sk::Op("&", inner), true) => inner.first().cloned(),
+                    _ => None,
+                };
+                let field = Sk::Op(".f", vec![place, num(offset)]);
+                match in_place {
+                    Some(of) => Sk::Op(EITHER, vec![Sk::Op(".f", vec![of, num(offset)]), field]),
+                    None => field,
+                }
+            }
         })
     }
 
@@ -3709,6 +3729,12 @@ impl Held<'_> {
                 },
                 _ => false,
             };
+        // A field of an element of an array of values held in place is `a[i].f_N` as much as
+        // `(&a[i])->f_N`: what the element's address points at is the element.
+        let mut in_place = match (&place, self.held_element(base)) {
+            (Sk::Op("&", inner), true) => inner.first().cloned(),
+            _ => None,
+        };
         // `->` goes through a pointer and `.` stays in place.
         let mut through = !variable;
         for (n, field) in fields.iter().enumerate().rev() {
@@ -3724,9 +3750,58 @@ impl Held<'_> {
                     ".f"
                 };
                 place = Sk::Op(mark, vec![place, Sk::Num(*field, Lit::Int)]);
+                in_place = in_place.map(|of| Sk::Op(".f", vec![of, Sk::Num(*field, Lit::Int)]));
             }
         }
-        Ok(place)
+        if let Some(in_place) = in_place {
+            return Ok(Sk::Op(EITHER, vec![in_place, place]));
+        }
+        // The bytes a variable of one cell holds, read or written as wide as its kind, are the variable.
+        let own = match (base, bytes) {
+            (Expr::AddrOf { var, cell: 0 }, Some(bytes)) if !embedded && offset == 0 => {
+                let kind = self.head.vars.get(var).map(|info| &info.kind);
+                let whole = kind.and_then(kind_bytes) == Some(bytes);
+                (self.sharp() && whole && self.cells(*var) == Some(1)).then_some(*var)
+            }
+            _ => None,
+        };
+        Ok(match own {
+            Some(var) => Sk::Op(EITHER, vec![Sk::Name(self.var(var)), place]),
+            None => place,
+        })
+    }
+
+    /// Whether `base` is the address of an element of an array the function declares of a value type held in place.
+    fn held_element(&self, base: &Expr) -> bool {
+        let Expr::Call {
+            callee: Callee::Intrinsic { name, .. },
+            args,
+            ..
+        } = base
+        else {
+            return false;
+        };
+        match args.as_slice() {
+            [array, _] if name == "array_element_address" => self.values_array(array),
+            _ => false,
+        }
+    }
+
+    /// Whether `array` is a variable the function declares an array of a value type held in place.
+    fn values_array(&self, array: &Expr) -> bool {
+        let Expr::Var(array) = array else {
+            return false;
+        };
+        let kind = self.head.vars.get(array).map(|info| &info.kind);
+        let of = match kind {
+            Some(Kind::Array(of)) => &**of,
+            _ => return false,
+        };
+        self.on(Pass::Fields)
+            && matches!(
+                of,
+                Kind::Value { .. } | Kind::Aggregate(_) | Kind::Vector | Kind::Handle
+            )
     }
 
     /// What stands at the address of element `index` of `array`, read `bytes` wide, as the source level writes it: the element where the access is as wide as one, else the bytes at its address.
@@ -3751,9 +3826,16 @@ impl Held<'_> {
             let address = Sk::Op("&", vec![element(pair)]);
             Sk::Op("->", vec![address, num(0)])
         };
+        // Part of the first bytes of an element held in place is `a[i].f_0` as much as `(&a[i])->f_0`.
+        let first = |pair: Vec<Sk>| {
+            let field = Sk::Op(".f", vec![element(pair.clone()), num(0)]);
+            Sk::Op(EITHER, vec![field, at(pair)])
+        };
+        let values = self.on(Pass::Fields) && self.values_array(array);
         Ok(match (bytes, wide) {
             (None, _) => at(pair),
             (Some(bytes), Some(wide)) if wide == Some(bytes) => element(pair),
+            (Some(_), Some(_)) if values => first(pair),
             (Some(_), Some(_)) => at(pair),
             (Some(_), None) => Sk::Op(AT_ELEMENT, pair),
         })

@@ -473,3 +473,148 @@ fn an_object_of_another_type_handed_through_a_slot_whose_line_types_the_cell_is_
     let derived = through(&[(WANT, None), (OTHER, Some(WANT)), (HOLDER, None)]);
     assert_eq!(denied(&f, &derived), None);
 }
+
+#[test]
+fn a_bool_field_of_four_bytes_written_with_more_than_a_truth_is_caught() {
+    let mut project = with_a_bool_field();
+    if let Some(fields) = project.fields.get_mut(&key(HOLDER)) {
+        for field in fields.iter_mut() {
+            field.bytes = 4;
+        }
+    }
+    // The upper bytes of the field are the field's: a truth is 0 or 1 in all four.
+    let high = straight(
+        1,
+        vec![store(StoreKind::I32, p(0), 0x10, int(0x100))],
+        int(0),
+    );
+    assert_eq!(denied(&high, &project).as_deref(), Some("bool field"));
+    let one = straight(1, vec![store(StoreKind::I32, p(0), 0x10, int(1))], int(0));
+    assert_eq!(denied(&one, &project), None);
+    // A byte written alone is held for itself.
+    let low = straight(1, vec![store(StoreKind::U8, p(0), 0x10, int(1))], int(0));
+    assert_eq!(denied(&low, &project), None);
+}
+
+/// A project whose signature of the function states its one parameter of `kind`.
+fn stating(kind: Kind) -> Project {
+    let mut project = Project::default();
+    let signature = Signature {
+        params: vec![Param { kind, cells: 1 }],
+        returns: 1,
+        result: Kind::Unknown,
+    };
+    project.signatures.insert(own(), signature);
+    project
+}
+
+/// What [`read_high`] finds of `f` under `project`, over [`RUNS`] seeds.
+fn read_for_more(f: &cfg::Function, project: &Project) -> bool {
+    let singles = BTreeSet::new();
+    let was: Vec<(Input, Run)> = (0..RUNS)
+        .map(|seed| {
+            let input = Input::of(seed);
+            let run = run_on(f, &input, &[], Limits::DEFAULT, project, &singles);
+            (input, run)
+        })
+        .collect();
+    read_high(f, &was, Limits::DEFAULT, project, &singles).is_some()
+}
+
+#[test]
+fn a_parameter_stated_32_bits_whose_upper_half_the_function_reads_is_found() {
+    let int32 = stating(Kind::I32);
+    // Returned whole, all of its bits are the result.
+    assert!(read_for_more(&straight(1, vec![], p(0)), &int32));
+    // Read as 32 bits and handed to a callee, its low half is all that is read here.
+    let low = Expr::cast(Scalar::I32, p(0));
+    let narrowed = straight(1, vec![tally(low.clone())], int(0));
+    assert!(!read_for_more(&narrowed, &int32));
+    assert!(!read_for_more(
+        &straight(1, vec![tally(p(0))], int(0)),
+        &int32
+    ));
+    // Stored whole, it is read whole.
+    let global = Var::Global {
+        program: PROGRAM,
+        offset: 0x20,
+        statics: false,
+    };
+    let kept = Stmt::Assign {
+        target: global,
+        value: p(0),
+    };
+    assert!(read_for_more(&straight(1, vec![kept], int(0)), &int32));
+    // A float is held as an int is; a parameter every caller is proved to widen is not held.
+    assert!(read_for_more(
+        &straight(1, vec![], p(0)),
+        &stating(Kind::F32)
+    ));
+    let mut widened = int32.clone();
+    widened.widened.insert(own(), BTreeSet::from([0]));
+    assert!(!read_for_more(&straight(1, vec![], p(0)), &widened));
+    // Of no stated kind, nothing is held.
+    assert!(!read_for_more(
+        &straight(1, vec![], p(0)),
+        &stating(Kind::Unknown)
+    ));
+    assert!(!read_for_more(&straight(1, vec![], low), &int32));
+}
+
+#[test]
+fn what_one_function_refers_to_in_other_programs_is_found_by_every_way_it_names_them() {
+    const THEIRS: u32 = 0x0000_0002;
+    let imported = Expr::Call {
+        callee: Callee::Import {
+            module: "shared".to_owned(),
+            name: "func_000050".to_owned(),
+            program: THEIRS,
+            at: 0x50,
+        },
+        args: Vec::new(),
+        returns: Some(0),
+    };
+    let through = Expr::Call {
+        callee: Callee::Virtual {
+            class: HOLDER.to_owned(),
+            method: "Method_3".to_owned(),
+            ty: HOLDER.to_owned(),
+            slot: 3,
+        },
+        args: vec![local(0)],
+        returns: Some(0),
+    };
+    let reference = Expr::FunctionRef {
+        program: PROGRAM,
+        at: 0x20,
+    };
+    let f = straight(
+        0,
+        vec![
+            Stmt::Eval(imported),
+            set(0, made(OTHER)),
+            Stmt::Eval(through),
+            set(1, reference),
+        ],
+        int(0),
+    );
+    let mut project = Project {
+        types: types(&[(OTHER, None), (HOLDER, None)]),
+        ..Project::default()
+    };
+    for facts in project.types.values_mut() {
+        facts.home = THEIRS;
+    }
+    if let Some(holder) = project.types.get_mut(&key(HOLDER)) {
+        holder.slots.insert(3, FunctionKey::new(THEIRS, 0x60));
+    }
+    let found = corpus::referred(&f, &project);
+    let functions = [
+        FunctionKey::new(THEIRS, 0x50),
+        FunctionKey::new(THEIRS, 0x60),
+        FunctionKey::new(PROGRAM, 0x20),
+    ];
+    assert_eq!(found.functions, BTreeSet::from(functions));
+    assert_eq!(found.types, BTreeSet::from([key(OTHER), key(HOLDER)]));
+    assert_eq!(found.slots, BTreeSet::from([(key(HOLDER), 3)]));
+}

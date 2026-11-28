@@ -471,11 +471,24 @@ struct Found {
     /// Where a lifted function and its listing's first part, by [`cause`].
     causes: BTreeMap<String, u64>,
     wrong: Vec<String>,
+    /// Where something was counted that fails nothing, the first of each kind: a finding to read.
+    noted: Vec<String>,
 }
+
+/// The places of what fails nothing that a report keeps the words of.
+const NOTED: usize = 40;
 
 impl Found {
     fn count(&mut self, what: &'static str, n: u64) {
         *self.counts.entry(what).or_default() += n;
+    }
+
+    /// Counts what fails nothing at `at`, and keeps where, while few are kept.
+    fn note(&mut self, what: &'static str, at: &str) {
+        self.count(what, 1);
+        if self.noted.len() < NOTED {
+            self.noted.push(format!("{what}: {at}"));
+        }
     }
 
     /// Notes what went wrong at `at`, cut short: the rest of a failure is cells of the corpus.
@@ -500,6 +513,13 @@ impl Found {
                 }
                 for (before, left) in inputs::LEFT.into_iter().zip(done.left) {
                     self.count(before, left.into());
+                }
+                self.count("parameter cells stated 32 bits", done.stated_low.into());
+                if done.read_high {
+                    self.note(
+                        "functions whose parameter stated 32 bits is read for more",
+                        at,
+                    );
                 }
             }
             Some(Err(why)) => {
@@ -569,6 +589,8 @@ impl Found {
                 *all.causes.entry(cause).or_default() += n;
             }
             all.wrong.extend(part.wrong);
+            let room = NOTED.saturating_sub(all.noted.len());
+            all.noted.extend(part.noted.into_iter().take(room));
         }
         all
     }
@@ -582,6 +604,9 @@ impl Found {
         }
         for wrong in self.wrong.iter().take(400) {
             eprintln!("{label}: {wrong}");
+        }
+        for noted in &self.noted {
+            eprintln!("{label}: noted, failing nothing: {noted}");
         }
     }
 
@@ -820,6 +845,209 @@ fn every_address_of_a_local_handed_to_a_function_reaches_no_further_than_the_pas
     let found = Found::all(found);
     eprintln!("REACH: {} listing(s)", paths.len());
     found.report("REACH");
+}
+
+/// What the code of one function refers to: functions and types by name, and the slots it calls through on a type.
+#[derive(Default)]
+pub(super) struct Referred {
+    pub functions: BTreeSet<FunctionKey>,
+    pub types: BTreeSet<TypeKey>,
+    pub slots: BTreeSet<(TypeKey, u32)>,
+}
+
+/// What the code of `f` refers to: a call by import, a function reference, a call through a slot and the function it resolves to, a type made, cast to or held through.
+pub(super) fn referred(f: &cfg::Function, project: &Project) -> Referred {
+    let mut found = Referred::default();
+    let mut named: Vec<(Option<TypeKey>, Option<u32>)> = Vec::new();
+    let mut note = |top: &Expr| {
+        top.walk(&mut |e| match e {
+            Expr::Call { callee, .. } => match callee {
+                Callee::Import { program, at, .. } => {
+                    found.functions.insert(FunctionKey::new(*program, *at));
+                }
+                Callee::Virtual { ty, slot, .. } => named.push((TypeKey::of_name(ty), Some(*slot))),
+                Callee::Intrinsic { ty: Some(ty), .. } => named.push((TypeKey::of(ty), None)),
+                _ => {}
+            },
+            Expr::FunctionRef { program, at } => {
+                found.functions.insert(FunctionKey::new(*program, *at));
+            }
+            Expr::VirtualFunctionRef { ty, slot, .. } => named.push((TypeKey::of(ty), Some(*slot))),
+            Expr::NewObject(ty) | Expr::NewArray { ty, .. } => named.push((TypeKey::of(ty), None)),
+            _ => {}
+        });
+    };
+    for block in &f.cfg.blocks {
+        for stmt in &block.stmts {
+            stmt.each_expr(&mut note);
+        }
+        if let Some(e) = block.term.expr() {
+            note(e);
+        }
+    }
+    for (ty, slot) in named {
+        let Some(ty) = ty.filter(|ty| ty.builtin().is_none()) else {
+            continue;
+        };
+        found.types.insert(ty);
+        if let Some(slot) = slot {
+            found.slots.insert((ty, slot));
+            found.functions.extend(project.slot(ty, slot));
+        }
+    }
+    found
+}
+
+/// Holds what the code of `f` refers to in other programs to what the project says other programs refer to, and gives the slots it calls through.
+fn held_outside(
+    f: &cfg::Function,
+    project: &Project,
+    found: &mut Found,
+    at: &str,
+) -> BTreeSet<(TypeKey, u32)> {
+    let own = f.head.program;
+    let referred = referred(f, project);
+    for key in referred.functions.iter().filter(|key| key.program() != own) {
+        match project.reached_from_outside(*key) {
+            true => found.count("functions of another program referred to, held", 1),
+            false => {
+                let why = format!(
+                    "refers to func_{:06X} of program {:08X}, which the project says no other program reaches",
+                    key.at(),
+                    key.program()
+                );
+                found.wrong("references the project denies", at, &why);
+            }
+        }
+    }
+    let home = |ty: &TypeKey| project.types.get(ty).map(|facts| facts.home);
+    for ty in &referred.types {
+        if home(ty).is_none_or(|home| home == own) {
+            continue;
+        }
+        match project.type_named_outside(*ty) {
+            true => found.count("types of another program named, held", 1),
+            false => {
+                let why = format!("names {ty}, which the project says no other program names");
+                found.wrong("references the project denies", at, &why);
+            }
+        }
+    }
+    referred.slots
+}
+
+/// Holds the lines of types to what the project says other programs refer to: a base or an interface of another program's is named by the program whose type derives from it, and a function a type fills a slot with is reached from every program that calls through that slot on the type or a base of it.
+// ⚠ `sites` are the slots each program's code calls through, by program: a function a call may
+// run there is reached from that program whether or not an object of its type ever gets there.
+fn lines_outside(
+    project: &Project,
+    sites: &BTreeMap<(TypeKey, u32), BTreeSet<u32>>,
+    found: &mut Found,
+) {
+    for (ty, facts) in &project.types {
+        let mut line = vec![*ty];
+        let mut base = facts.base;
+        for _ in 0..BASES {
+            let Some(at) = base else {
+                break;
+            };
+            line.push(at);
+            base = project.types.get(&at).and_then(|facts| facts.base);
+        }
+        let at = format!("{ty}");
+        let mut above: Vec<TypeKey> = line.iter().skip(1).copied().collect();
+        above.extend(facts.interfaces.iter().copied());
+        for ancestor in above {
+            let theirs = project.types.get(&ancestor).map(|facts| facts.home);
+            if theirs.is_none_or(|home| home == facts.home) || ancestor.builtin().is_some() {
+                continue;
+            }
+            if !project.type_named_outside(ancestor) {
+                let why = format!(
+                    "derives from {ancestor}, which the project says no other program names"
+                );
+                found.wrong("references the project denies", &at, &why);
+            }
+        }
+        // ⚠ Down the line of bases only: an interface numbers its slots apart from its implementors'.
+        for (slot, function) in &facts.slots {
+            let callers = line
+                .iter()
+                .filter_map(|above| sites.get(&(*above, *slot)))
+                .flatten();
+            if callers
+                .copied()
+                .all(|program| program == function.program())
+            {
+                continue;
+            }
+            match project.reached_from_outside(*function) {
+                true => found.count(
+                    "functions a slot of another program's call may run, held",
+                    1,
+                ),
+                false => {
+                    let why = format!(
+                        "fills slot {slot} with func_{:06X} of program {:08X}, which another program calls through and the project says no other program reaches",
+                        function.at(),
+                        function.program()
+                    );
+                    found.wrong("references the project denies", &at, &why);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn every_reference_to_another_program_is_one_the_project_says_another_program_makes() {
+    let what = "the references across programs of a folder of lifted listings, against the project";
+    let Some(paths) = listings(what) else {
+        return;
+    };
+    let Some(project) = whole_project() else {
+        or_test_support::skip_corpus(what, format!("set {PROJECT} to the project of the folder"));
+        return;
+    };
+    let found = each(&paths, |path| {
+        let mut found = Found::default();
+        let mut sites: BTreeSet<((TypeKey, u32), u32)> = BTreeSet::new();
+        let text = std::fs::read_to_string(path).expect("the listing is text");
+        let stem = stem(path);
+        let Ok(listing) = Listing::open(&text) else {
+            found.wrong("listings refused", &stem, "does not open");
+            return (found, sites);
+        };
+        for f in listing.functions() {
+            let Ok(f) = f else {
+                found.wrong("listings refused", &stem, "a function does not read");
+                break;
+            };
+            let at = format!("{stem}: {}", f.head.name);
+            if let Ok(lowered) = cfg::lower(f) {
+                let program = lowered.head.program;
+                for site in held_outside(&lowered, &project, &mut found, &at) {
+                    sites.insert((site, program));
+                }
+            }
+        }
+        found.keep(SHOWN);
+        (found, sites)
+    });
+    let mut by_site: BTreeMap<(TypeKey, u32), BTreeSet<u32>> = BTreeMap::new();
+    let mut parts = Vec::with_capacity(found.len());
+    for (part, sites) in found {
+        parts.push(part);
+        for (site, program) in sites {
+            by_site.entry(site).or_default().insert(program);
+        }
+    }
+    let mut found = Found::all(parts);
+    lines_outside(&project, &by_site, &mut found);
+    found.keep(SHOWN);
+    eprintln!("OUTSIDE: {} listing(s)", paths.len());
+    found.report("OUTSIDE");
+    assert!(found.wrong.is_empty());
 }
 
 /// Takes `f` through the passes `cx` asks, writes it in the readable form and reads that back; `None` where it does not lower.

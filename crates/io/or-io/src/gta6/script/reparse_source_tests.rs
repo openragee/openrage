@@ -1292,3 +1292,74 @@ fn a_type_tested_reads_as_the_test_of_its_cast_against_null() {
     let chosen = "    DEMO.USE(p0 is type_0123456789ABCDEF ? p1 : 2);\n";
     assert_eq!(source_says(vec![used(choice)], chosen), Ok(true));
 }
+
+#[test]
+fn the_bytes_a_variable_holds_as_wide_as_its_kind_read_as_the_variable() {
+    let stored = |kind: StoreKind| {
+        vec![simple(Stmt::Store {
+            kind,
+            addr: address(2),
+            offset: 0,
+            value: Expr::Const(Const::i32(0x1234_5678)),
+        })]
+    };
+    let int = [(Var::Local(2), Width::Cell, Kind::I32)];
+    let named = "    local_2 = 0x12345678;\n";
+    assert_eq!(declared_says(stored(StoreKind::I32), &int, named), Ok(true));
+    assert_eq!(
+        declared_says(stored(StoreKind::I32), &int, "    local_3 = 0x12345678;\n"),
+        Ok(false)
+    );
+    assert_eq!(
+        declared_says(stored(StoreKind::I32), &int, "    local_2 = 0x12345679;\n"),
+        Ok(false)
+    );
+    // Fewer bytes than the kind holds are a part of the variable, never the variable.
+    let byte = [(Var::Local(2), Width::Cell, Kind::U8)];
+    assert_eq!(
+        declared_says(stored(StoreKind::I32), &byte, named),
+        Ok(false)
+    );
+    let wide = [(Var::Local(2), Width::Cell, Kind::I64)];
+    assert_eq!(
+        declared_says(stored(StoreKind::I32), &wide, named),
+        Ok(false)
+    );
+    // Of no kind stated, the bytes are no variable.
+    assert_eq!(declared_says(stored(StoreKind::I32), &[], named), Ok(false));
+}
+
+#[test]
+fn a_field_of_an_element_held_in_place_reads_as_the_field_of_the_element() {
+    let read = |offset: u32| {
+        let at = intrinsic("array_element_address", vec![local(1), p(1)]);
+        vec![used(Expr::Load {
+            ty: Scalar::U64,
+            addr: boxed(at),
+            offset,
+        })]
+    };
+    let values = [(
+        Var::Local(1),
+        Width::Cell,
+        Kind::Array(Box::new(Kind::Aggregate(2))),
+    )];
+    let dotted = "    DEMO.USE(local_1[p1].f_8);\n";
+    assert_eq!(declared_says(read(8), &values, dotted), Ok(true));
+    let pointed = "    DEMO.USE((&local_1[p1])->f_8);\n";
+    assert_eq!(declared_says(read(8), &values, pointed), Ok(true));
+    assert_eq!(
+        declared_says(read(8), &values, "    DEMO.USE(local_1[p1].f_10);\n"),
+        Ok(false)
+    );
+    // ⚠ Of an array of references a dot after the element goes through what it holds.
+    let ints = [(Var::Local(1), Width::Cell, Kind::Array(Box::new(Kind::I64)))];
+    assert_eq!(declared_says(read(8), &ints, dotted), Ok(false));
+    assert_eq!(declared_says(read(8), &ints, pointed), Ok(true));
+    // Part of an element's first bytes, as the printer writes it in place.
+    let first = "    DEMO.USE(local_1[p1].f_0);\n";
+    assert_eq!(declared_says(read(0), &values, first), Ok(true));
+    let at = "    DEMO.USE((&local_1[p1])->f_0);\n";
+    assert_eq!(declared_says(read(0), &values, at), Ok(true));
+    assert_eq!(declared_says(read(0), &ints, first), Ok(false));
+}

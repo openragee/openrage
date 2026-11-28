@@ -6,6 +6,18 @@
 //! cell from one whose address was handed out on, which is the most a pass may assume of it.
 //! ⚠ A load is no event: two loads may change places, and one nothing reads may go.
 //!
+//! Two things the runtime does are no call. A delegate the function makes and binds (a builtin
+//! object handed, fresh, with a target and a function reference to a builtin of its own type) is
+//! an object that holds the two, and an array the function makes is an object whose elements
+//! `array_set_*` writes one at a time, `array_get_*` reads, `array_element_address` points into
+//! and `array_length` is the length it was made with. While no event has shown such an object it
+//! is the function's own, like a frame cell: binding it or writing an element is no event and
+//! changes no other memory, and what is observable of it is what it holds when an event first
+//! shows it (a call or a store handed it, it was returned, or a callee could see it in the frame),
+//! as one event before that one. From then on a write of an element of the array is a call again.
+//! ⚠ An element is held at its index and the byte in it, never at the address the runtime would
+//! give it: a read of the array's own memory at an offset sees none of its elements.
+//!
 //! A source construct is run as the statements `desugar` gives for it, and a reading of an
 //! expression as the expression read. ⚠ So of what the passes make, the check does not see:
 //! - which construct statements were made into, nor the role a part was given: it runs the
@@ -65,6 +77,14 @@ const POINTED: u64 = 0xA7 << 56;
 const MIDDLE: u64 = 1 << 39;
 /// The base types a check of what an object may stand for follows before it cannot say.
 const BASES: usize = 64;
+/// The addresses of the elements of the arrays a run made: the array's number in bits 40 to 55, the index in bits 16 to 39 and the byte of the element below.
+const ELEMENTS: u64 = 0xA8 << 56;
+/// The bits of an element's address under the array's number.
+const ELEMENT_BITS: u64 = (1 << 40) - 1;
+/// The most arrays a run gives elements of their own; one made past them is held as any object.
+const ARRAYS: usize = 1 << 16;
+/// The flag of a type id that says the runtime defines the type.
+const BUILTIN_TYPE: u32 = 0x8000_0000;
 
 /// The kinds of project-wide proof a function's own code is held to, as the first word of the failure of each.
 pub(crate) const PROOFS: [&str; 9] = [
@@ -208,6 +228,25 @@ pub(crate) enum Event {
     },
     Return(Vec<u64>),
     Unreachable,
+    /// A delegate the function made, as the event after this one first shows it: the object, the target it was bound to and the function.
+    Bound {
+        object: u64,
+        target: u64,
+        function: u64,
+    },
+    /// An array the function made, as the event after this one first shows it: the array, and each cell of its elements written, by where it is under the array.
+    Filled {
+        array: u64,
+        elements: Vec<(u64, u64)>,
+    },
+}
+
+/// An object the function made whose contents no event has shown.
+enum Held {
+    /// A delegate bound to a target and a function.
+    Delegate { target: u64, function: u64 },
+    /// An array, by its number among the arrays the run made.
+    Array(u32),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -452,6 +491,21 @@ struct Machine<'f> {
     pointers: BTreeMap<u32, Option<u32>>,
     /// The type of the receiver, where it holds an address of its own.
     receiver: Option<TypeKey>,
+    /// The objects the function made of a type the runtime defines, by address, with the index of the type.
+    builtins: HashMap<u64, u32>,
+    /// The cells a function reference evaluated to.
+    refs: HashSet<u64>,
+    /// The objects the function made whose contents no event has shown, by address.
+    held: HashMap<u64, Held>,
+    /// The objects shown since the last event whose contents are still to be shown, by address.
+    unveiling: Vec<u64>,
+    /// The arrays the function made, by their number, and the number of each by its address.
+    arrays: Vec<u64>,
+    array_slots: HashMap<u64, u32>,
+    /// The length each array was made with, by its number.
+    lengths: Vec<u64>,
+    /// The cells of elements written while no event had shown the array, by the array's number.
+    written: HashMap<u32, BTreeSet<u64>>,
 }
 
 impl<'f> Machine<'f> {
@@ -592,11 +646,14 @@ impl<'f> Machine<'f> {
                 continue;
             };
             match &field.kind {
-                Kind::Bool if field.bytes == 1 && !excused => {
-                    let byte = (value >> (8 * i)) & 0xFF;
-                    if byte > 1 {
+                // ⚠ A `bool` of more than one byte is held through the bytes this write covers:
+                // the rest are another write's to say.
+                Kind::Bool if (1..=8).contains(&field.bytes) && !excused => {
+                    let covered = field.bytes.min(bytes - i);
+                    let bits = (value >> (8 * i)) & (u64::MAX >> (64 - 8 * covered));
+                    if bits > 1 {
                         let why =
-                            format!("{byte:#X} is written to the bool at byte {offset:#X} of {ty}");
+                            format!("{bits:#X} is written to the bool at byte {offset:#X} of {ty}");
                         self.disproved("bool field", why);
                     }
                 }
@@ -738,8 +795,118 @@ impl<'f> Machine<'f> {
                 )),
                 None => 0,
             },
+            // An element of an array is zero until a callee has had the array.
+            0xA8 => {
+                let array = self.arrays.get(((addr >> 40) & 0xFFFF) as usize);
+                match array.and_then(|array| self.shown.get(array)) {
+                    Some(id) => {
+                        let at = ELEMENTS | ((id & 0xFFFF) << 40) | (addr & ELEMENT_BITS);
+                        self.draw(mix2(mix2(self.seed, at), self.calls))
+                    }
+                    None => 0,
+                }
+            }
             _ => self.draw(mix2(mix2(self.seed, addr), self.calls)),
         }
+    }
+
+    /// The number of the array `addr` is an element of, where it is one no event has shown.
+    fn held_element(&self, addr: u64) -> Option<u32> {
+        if addr >> 56 != ELEMENTS >> 56 {
+            return None;
+        }
+        let slot = ((addr >> 40) & 0xFFFF) as u32;
+        let array = self.arrays.get(slot as usize)?;
+        self.held.contains_key(array).then_some(slot)
+    }
+
+    /// The address of element `index` of the array numbered `slot`, where the index is one an element is held at.
+    fn element(&self, slot: u32, index: u64) -> Option<u64> {
+        let index = index as i64;
+        let held = (0..1 << 24).contains(&index);
+        held.then(|| ELEMENTS | (u64::from(slot) << 40) | ((index as u64) << 16))
+    }
+
+    /// Notes the cells a write of `bytes` bytes at `addr` touched in the array numbered `slot`.
+    fn wrote(&mut self, slot: u32, addr: u64, bytes: u32) {
+        let last = addr.wrapping_add(u64::from(bytes.max(1)) - 1);
+        let cells = self.written.entry(slot).or_default();
+        cells.insert(addr & !7);
+        cells.insert(last & !7);
+    }
+
+    /// What an intrinsic does to an array the function made, where that is held otherwise than as a call: `None` where it is not.
+    // ⚠ A write of an element is held only while no event has shown the array: once a callee may
+    // hold it, another reference to it may be any cell, so the write is a call again.
+    fn on_array(&mut self, name: &str, cells: &[u64], returns: Option<u32>) -> Option<Val> {
+        let base = name.split('<').next().unwrap_or(name);
+        let slot = *self.array_slots.get(cells.first()?)?;
+        if base == "array_length" {
+            let length = self.lengths.get(slot as usize).copied();
+            return length
+                .filter(|_| cells.len() == 1 && returns == Some(1))
+                .map(Val::One);
+        }
+        let at = self.element(slot, *cells.get(1)?)?;
+        if base == "array_element_address" {
+            return (cells.len() == 2 && returns == Some(1)).then_some(Val::One(at));
+        }
+        if base == "array_get_value" {
+            let n = returns.filter(|n| *n >= 1 && cells.len() == 2)?;
+            let read = (0..u64::from(n)).map(|k| self.read(at.wrapping_add(8 * k), 8));
+            return Some(Val::Many(read.collect()));
+        }
+        if let Some(ty) = base.strip_prefix("array_get_").and_then(Scalar::from_name) {
+            let one = cells.len() == 2 && returns == Some(1);
+            return one.then(|| Val::One(cast(ty, self.read(at, ty.bytes()))));
+        }
+        let kind = base.strip_prefix("array_set_")?;
+        let values = cells.get(2..)?;
+        let bytes = match (kind, values.len()) {
+            ("u8", 1) => 1,
+            ("u16", 1) => 2,
+            ("u32", 1) => 4,
+            ("u64" | "ref", 1) => 8,
+            ("slots", n) if n >= 1 => 8,
+            _ => return None,
+        };
+        // An address of the frame's, or one a proof follows, kept in the array would leave unseen.
+        let addresses = values
+            .iter()
+            .any(|value| framed(*value) || pointed(*value).is_some());
+        if returns != Some(0) || addresses || self.held_element(at).is_none() {
+            return None;
+        }
+        for (k, value) in (0u64..).zip(values) {
+            let addr = at.wrapping_add(8 * k);
+            self.put(addr, *value, bytes);
+            self.wrote(slot, addr, bytes);
+        }
+        Some(Val::Many(Vec::new()))
+    }
+
+    /// The delegate a call of a builtin binds and what it is bound to, where the call is the constructor of a delegate the function made and nothing has shown.
+    // No name is asked: an object of a builtin type, handed fresh with a target and a function
+    // reference to a builtin of that same type, is what only the runtime's delegate is made by.
+    fn binds(&self, callee: &Callee, cells: &[u64]) -> Option<(u64, Held)> {
+        let Callee::Builtin { ty, .. } = callee else {
+            return None;
+        };
+        let [object, target, function] = cells else {
+            return None;
+        };
+        let fresh = !self.shown.contains_key(object) && !self.held.contains_key(object);
+        let own = self.builtins.get(object) == Some(ty);
+        // A target that is an address of the frame's would reach a callee unseen.
+        let target_kept = !framed(*target) && pointed(*target).is_none();
+        let bound = fresh && own && target_kept && self.refs.contains(function);
+        bound.then_some((
+            *object,
+            Held::Delegate {
+                target: *target,
+                function: *function,
+            },
+        ))
     }
 
     /// Whether `addr` is the cell of a parameter the project proves every caller hands an `int` widened by its sign.
@@ -750,12 +917,24 @@ impl<'f> Machine<'f> {
         addr & 7 == 0 && cell.is_some_and(|cell| widened.is_some_and(|cells| cells.contains(&cell)))
     }
 
-    /// A cell as an event states it: an object, or a temporary's address, by the order it was first shown in.
+    /// A cell as an event states it: an object, an element of an array or a temporary's address, by the order it was first shown in; an object of the function's it first shows has what it holds shown as an event of its own.
     fn stated(&mut self, cell: u64) -> u64 {
+        let stated = self.numbered(cell);
+        self.unveil();
+        stated
+    }
+
+    /// [`stated`](Self::stated), leaving the contents of what it first shows to [`unveil`](Self::unveil).
+    fn numbered(&mut self, cell: u64) -> u64 {
         match cell >> 56 {
             0xA6 => {
+                let base = cell & !0xFFFF;
                 let next = self.shown.len() as u64 + 1;
-                let id = *self.shown.entry(cell & !0xFFFF).or_insert(next);
+                let fresh = !self.shown.contains_key(&base);
+                let id = *self.shown.entry(base).or_insert(next);
+                if fresh && self.held.contains_key(&base) {
+                    self.unveiling.push(base);
+                }
                 HEAP | (id << 16) | (cell & 0xFFFF)
             }
             0xA3 => {
@@ -763,7 +942,46 @@ impl<'f> Machine<'f> {
                 let id = *self.temps.entry(cell & !TEMP_CELLS).or_insert(next);
                 TEMPS | (id << 20) | (cell & TEMP_CELLS)
             }
+            // An element's address shows the array it is in.
+            0xA8 => match self.arrays.get(((cell >> 40) & 0xFFFF) as usize).copied() {
+                Some(array) => {
+                    let id = (self.numbered(array) >> 16) & 0xFFFF;
+                    ELEMENTS | (id << 40) | (cell & ELEMENT_BITS)
+                }
+                None => cell,
+            },
             _ => cell,
+        }
+    }
+
+    /// Pushes, for each object of the function's that was just shown for the first time, what it holds, as an event before the one that shows it.
+    fn unveil(&mut self) {
+        // Each object leaves `held` as it is taken, and none goes back: the loop ends.
+        while let Some(base) = self.unveiling.pop() {
+            let Some(held) = self.held.remove(&base) else {
+                continue;
+            };
+            let object = self.numbered(base);
+            let event = match held {
+                Held::Delegate { target, function } => Event::Bound {
+                    object,
+                    target: self.numbered(target),
+                    function,
+                },
+                Held::Array(slot) => {
+                    let written = self.written.remove(&slot).unwrap_or_default();
+                    let mut elements = Vec::with_capacity(written.len());
+                    for addr in written {
+                        let cell = self.cell(addr);
+                        elements.push((addr & ELEMENT_BITS, self.numbered(cell)));
+                    }
+                    Event::Filled {
+                        array: object,
+                        elements,
+                    }
+                }
+            };
+            self.run.events.push(event);
         }
     }
 
@@ -795,6 +1013,19 @@ impl<'f> Machine<'f> {
     /// Writes the low `bytes` bytes of `value`; a write outside the frame is an event.
     fn write(&mut self, addr: u64, value: u64, bytes: u32) {
         let bytes = bytes.min(8);
+        // An element of an array no event has shown is the function's own, as a frame cell is,
+        // until an address that must not leave unseen is written to it.
+        if let Some(slot) = self.held_element(addr) {
+            let address = framed(value) || pointed(value).is_some();
+            if !(bytes == 8 && address) {
+                self.put(addr, value, bytes);
+                self.wrote(slot, addr, bytes);
+                return;
+            }
+            if let Some(array) = self.arrays.get(slot as usize).copied() {
+                self.stated(array);
+            }
+        }
         self.touched(addr, bytes);
         if !framed(addr) && bytes == 8 {
             self.kept(value, "stored");
@@ -815,11 +1046,16 @@ impl<'f> Machine<'f> {
             let (addr, value) = (self.stated(addr), self.stated(value));
             self.run.events.push(Event::Store { addr, bytes, value });
         }
+        self.put(addr, value, bytes);
+    }
+
+    /// Writes the low `bytes` bytes of `value` at `addr`, as no event.
+    fn put(&mut self, addr: u64, value: u64, bytes: u32) {
         if addr & 7 == 0 && bytes == 8 {
             self.cells.insert(addr, value);
             return;
         }
-        for i in 0..u64::from(bytes) {
+        for i in 0..u64::from(bytes.min(8)) {
             let at = addr.wrapping_add(i);
             let shift = (at & 7) * 8;
             let old = self.cell(at & !7);
@@ -1001,6 +1237,9 @@ impl<'f> Machine<'f> {
                     *cell = cast(ty, *cell);
                 }
             }
+            if let Some(done) = self.on_array(name, &cells, returns) {
+                return done;
+            }
             // A conversion between integers is what the runtime computes of the cell, and nothing made up.
             if let Some(exact) = converted(name, cells.first().copied()) {
                 return Val::One(exact);
@@ -1026,6 +1265,11 @@ impl<'f> Machine<'f> {
                 Does::Allocates => return Val::One(self.alloc(id)),
                 Does::Calls => {}
             }
+        }
+        // A delegate bound is no call: what it holds is shown where it goes.
+        if let Some((object, bound)) = self.binds(callee, &cells) {
+            self.held.insert(object, bound);
+            return self.yielded(mix2(mix2(self.seed, id), self.calls), returns);
         }
         for cell in &cells {
             if framed(*cell) {
@@ -1066,10 +1310,15 @@ impl<'f> Machine<'f> {
         });
         let n = self.calls;
         self.calls += 1;
-        let shown = &self.shown;
-        self.cells.retain(|addr, _| {
-            framed(*addr) || (addr >> 56 == 0xA6 && !shown.contains_key(&(addr & !0xFFFF)))
-        });
+        let (shown, held, arrays) = (&self.shown, &self.held, &self.arrays);
+        // What the function made and no event has shown is out of every callee's reach.
+        let own = |addr: u64| match addr >> 56 {
+            0xA6 => !shown.contains_key(&(addr & !0xFFFF)),
+            0xA8 => (arrays.get(((addr >> 40) & 0xFFFF) as usize))
+                .is_some_and(|array| held.contains_key(array)),
+            _ => false,
+        };
+        self.cells.retain(|addr, _| framed(*addr) || own(*addr));
         for (at, addr) in exposed {
             let h = mix2(mix2(self.seed ^ 0xC10B, at), n);
             let new = self.draw(h);
@@ -1299,24 +1548,41 @@ impl<'f> Machine<'f> {
                 if let Some(key) = TypeKey::of(ty) {
                     self.objects.insert(object, key);
                 }
+                if ty.id & BUILTIN_TYPE != 0 {
+                    self.builtins.insert(object, ty.id & !BUILTIN_TYPE);
+                }
                 object
             }
             Expr::NewArray { ty, len, .. } => {
-                self.eval(len);
-                self.alloc(mix2(7, text_hash(&ty.name)))
+                let length = cast(Scalar::I32, self.eval(len).one());
+                let array = self.alloc(mix2(7, text_hash(&ty.name)));
+                if self.arrays.len() < ARRAYS && !self.array_slots.contains_key(&array) {
+                    let slot = self.arrays.len() as u32;
+                    self.arrays.push(array);
+                    self.array_slots.insert(array, slot);
+                    self.lengths.push(length);
+                    self.held.insert(array, Held::Array(slot));
+                }
+                array
             }
             Expr::FunctionRef { program, at } => {
-                plain(mix2(mix2(8, u64::from(*program)), u64::from(*at)))
+                let function = plain(mix2(mix2(8, u64::from(*program)), u64::from(*at)));
+                self.refs.insert(function);
+                function
             }
             Expr::BuiltinFunctionRef { ty, method } => {
-                plain(mix2(mix2(9, u64::from(*ty)), u64::from(*method)))
+                let function = plain(mix2(mix2(9, u64::from(*ty)), u64::from(*method)));
+                self.refs.insert(function);
+                function
             }
             Expr::VirtualFunctionRef { receiver, ty, slot } => {
                 let receiver = self.eval(receiver).one();
-                plain(mix2(
+                let function = plain(mix2(
                     mix2(mix2(10, typed(receiver)), text_hash(&ty.name)),
                     u64::from(*slot),
-                ))
+                ));
+                self.refs.insert(function);
+                function
             }
             Expr::StringConstant { program, offset } => {
                 plain(mix2(mix2(11, u64::from(*program)), u64::from(*offset)))
@@ -1938,6 +2204,14 @@ fn run_with(
         objects: HashMap::new(),
         pointers,
         receiver,
+        builtins: HashMap::new(),
+        refs: HashSet::new(),
+        held: HashMap::new(),
+        unveiling: Vec::new(),
+        arrays: Vec::new(),
+        array_slots: HashMap::new(),
+        lengths: Vec::new(),
+        written: HashMap::new(),
     };
     if f.head.locals > FRAME_CELLS || f.head.params > FRAME_CELLS {
         machine.unsupported("a frame of more cells than the oracle makes");
@@ -2009,6 +2283,26 @@ fn differing(was: &Event, is: &Event) -> &'static str {
             true => "the upper half of a returned value",
             false => "a returned value",
         },
+        (
+            Event::Bound {
+                object: a,
+                target: x,
+                ..
+            },
+            Event::Bound {
+                object: b,
+                target: y,
+                ..
+            },
+        ) => match (a == b, x == y) {
+            (false, _) => "another delegate shown",
+            (true, false) => "a delegate bound to another target",
+            (true, true) => "a delegate bound to another function",
+        },
+        (Event::Filled { array: a, .. }, Event::Filled { array: b, .. }) if a != b => {
+            "another array shown"
+        }
+        (Event::Filled { .. }, Event::Filled { .. }) => "an array shown with other elements",
         _ => "another kind of event",
     }
 }
@@ -2054,6 +2348,12 @@ pub(crate) struct Checked {
     pub entered: [u32; Turned::ALL.len()],
     /// The blocks no input entered, by what stands before each, at its place in [`inputs::LEFT`].
     pub left: [u32; inputs::LEFT.len()],
+    /// The parameter cells the function's signature states 32 bits of that were held to their low halves.
+    pub stated_low: u32,
+    /// Whether turning the upper half of one of them over changed what the function does.
+    // ⚠ Counted and failed by nothing: such a kind may be one every caller's code keeps, which no
+    // run of this function says.
+    pub read_high: bool,
 }
 
 /// Runs a function as it was read and after the passes, by the four first and then by every one; `Err` names the pass whose result does otherwise.
@@ -2093,7 +2393,10 @@ fn tested(run: &Run) -> Run {
                 }
             }
             Event::Call { seen, .. } => *seen = 0,
-            Event::Store { .. } | Event::Unreachable => {}
+            Event::Store { .. }
+            | Event::Unreachable
+            | Event::Bound { .. }
+            | Event::Filled { .. } => {}
         }
     }
     run
@@ -2193,6 +2496,93 @@ fn proofs_held(
     None
 }
 
+/// The parameter cells of `f` its signature states a 32-bit kind of and no caller is proved to widen: what the function does is held to their low halves alone.
+fn stated_low(f: &cfg::Function, project: &Project) -> Vec<u32> {
+    let own = FunctionKey::new(f.head.program, f.head.at);
+    let Some(signature) = project.signatures.get(&own) else {
+        return Vec::new();
+    };
+    let widened = project.widened.get(&own);
+    let mut cells = Vec::new();
+    let mut at = 0u32;
+    for param in &signature.params {
+        let narrow = matches!(param.kind, Kind::I32 | Kind::U32 | Kind::F32);
+        let caller = widened.is_some_and(|widened| widened.contains(&at));
+        if param.cells == 1 && narrow && !caller {
+            cells.push(at);
+        }
+        at = at.saturating_add(param.cells);
+    }
+    // A signature of other cells than the function takes is another function's.
+    match at == f.head.params {
+        true => cells,
+        false => Vec::new(),
+    }
+}
+
+/// `input` with the upper half of each parameter cell of `cells` turned over.
+fn upper_turned(input: &Input, cells: &[u32]) -> Input {
+    let seed = mix(input.seed);
+    let mut turned = input.clone();
+    for cell in cells {
+        let h = mix2(seed, PARAMS + 8 * u64::from(*cell));
+        let was = input.chosen.get(&h).copied().unwrap_or_else(|| made(h));
+        turned.chosen.insert(h, plain(was ^ 0x5A5A_5A5A_0000_0000));
+    }
+    turned
+}
+
+/// `run` with only the low half of each cell handed to a call.
+// ⚠ A parameter of 32 bits handed on whole is read by the callee for what the callee reads: the
+// low half here, and the callee's own check for the rest.
+fn handed_low(run: &Run) -> Run {
+    let mut run = run.clone();
+    for event in &mut run.events {
+        if let Event::Call { args, .. } = event {
+            for arg in args.iter_mut() {
+                *arg &= 0xFFFF_FFFF;
+            }
+        }
+    }
+    run
+}
+
+/// The first parameter cell `stated_low` gives of `read` whose upper half changes what the function does on an input of `was`, and how.
+// ⚠ Every such cell is turned over at once, so a run that differs names the first of them and
+// not the one that differs; a store or a return of the cell whole, a test of all its bits and
+// its address handed out all differ.
+fn read_high(
+    read: &cfg::Function,
+    was: &[(Input, Run)],
+    limits: Limits,
+    project: &Project,
+    singles: &BTreeSet<u32>,
+) -> Option<String> {
+    let cells = stated_low(read, project);
+    let first = cells.first()?;
+    for (input, run) in was {
+        let turned = upper_turned(input, &cells);
+        let is = run_with(
+            read,
+            &turned,
+            &[],
+            limits,
+            project,
+            singles,
+            Proving::Nothing,
+        );
+        if is.unsupported.is_some() || run.unsupported.is_some() {
+            continue;
+        }
+        if let Err(why) = same(&handed_low(run), &handed_low(&is)) {
+            return Some(format!(
+                "parameter cell {first} or another the signature states 32 bits, {input}: {why}"
+            ));
+        }
+    }
+    None
+}
+
 /// Runs a function's blocks as a front end made them and after the passes `cx` asks; `Err` names the pass that makes the runs differ once it is switched on after those before it.
 // ⚠ The way back from a source construct is `cfg::lower`, which writes each as the statements
 // it holds: a construct made wrongly differs here like any other rewrite.
@@ -2229,6 +2619,7 @@ pub(crate) fn check_blocks(
         blocks: reached.len() as u32,
         entered,
         left,
+        ..Checked::default()
     };
     if checked.skipped {
         return Ok(checked);
@@ -2263,6 +2654,8 @@ pub(crate) fn check_blocks(
     if let Some(why) = proofs_held(read, &was, limits, cx.project, singles) {
         return Err(why);
     }
+    checked.stated_low = stated_low(read, cx.project).len() as u32;
+    checked.read_high = read_high(read, &was, limits, cx.project, singles).is_some();
     // `Err` where a run differs, `Ok(false)` where the passes left what the oracle does not run.
     let holds = |options: Options| -> Result<bool, String> {
         let cx = Context::new(cx.names, cx.project, options);
@@ -2395,6 +2788,11 @@ public static class Program_00000001
     public static class Operations
     {
         public static VmValue clamp_f32(VmValue p0, VmValue p1, VmValue p2) => Vm.Intrinsic("clamp_f32", 1, p0, p1, p2)[0];
+        public static void array_set_u32(VmValue p0, VmValue p1, VmValue p2) => Vm.Intrinsic("array_set_u32", 0, p0, p1, p2);
+        public static VmValue array_get_u32(VmValue p0, VmValue p1) => Vm.Intrinsic("array_get_u32", 1, p0, p1)[0];
+        public static VmValue array_element_address(VmValue p0, VmValue p1) => Vm.Intrinsic("array_element_address", 1, p0, p1)[0];
+        public static VmValue array_length(VmValue p0) => Vm.Intrinsic("array_length", 1, p0)[0];
+        public static VmValue NewArray_type_00000000000000E2(VmValue p0) => Vm.NewArray(new VmType("type_00000000000000E2", 4, 0x00000045U, 0x00000000U), p0);
     }
 }
 "#;
@@ -2880,6 +3278,99 @@ fn a_call_of_the_runtime_written_on_its_receiver_keeps_its_operands_in_order() {
 }
 
 /// The blocks as a body of labels and jumps, one label a block, for reading them.
+/// A delegate made in `v_000010_0`, and its binding to `target` and the function at `at` of the program.
+fn delegate_bound(target: &str, at: &str) -> String {
+    let made =
+        "v_000010_0 = Vm.NewObject(new VmType(\"System.Delegate\", 48, 0x80000002U, 0x000C2000U));";
+    format!("{made} Builtins.System.Delegate.Ctor(v_000010_0, {target}, Vm.Function(0x00000001U, 0x{at}));")
+}
+
+#[test]
+fn a_delegate_made_and_bound_is_seen_by_what_it_holds_where_it_first_goes() {
+    let bound = delegate_bound("p0", "000010");
+    // Moved past a call that cannot reach it, it is the same delegate.
+    assert!(!differ(
+        &format!("{bound} Native.DEMO.USE(p1); Native.DEMO.USE(v_000010_0); return 0;"),
+        &format!("Native.DEMO.USE(p1); {bound} Native.DEMO.USE(v_000010_0); return 0;"),
+    ));
+    // Binding it writes no memory a load reads.
+    assert!(!differ(
+        &format!("v_000018_1 = load_u64(p1, 0x10); {bound} Native.DEMO.USE2(v_000018_1, v_000010_0); return 0;"),
+        &format!("{bound} v_000018_1 = load_u64(p1, 0x10); Native.DEMO.USE2(v_000018_1, v_000010_0); return 0;"),
+    ));
+    // A target read past a call that may change it is another target.
+    let late = delegate_bound("v_000018_1", "000010");
+    assert!(differ(
+        &format!("v_000018_1 = load_u64(p1, 0x10); Native.DEMO.USE(p0); {late} Native.DEMO.USE(v_000010_0); return 0;"),
+        &format!("Native.DEMO.USE(p0); v_000018_1 = load_u64(p1, 0x10); {late} Native.DEMO.USE(v_000010_0); return 0;"),
+    ));
+    // Another target or another function is another delegate, wherever it goes.
+    let to = |target: &str, at: &str| {
+        format!(
+            "{} store_u64(p1, 0x8, v_000010_0); return 0;",
+            delegate_bound(target, at)
+        )
+    };
+    assert!(differ(&to("5", "000010"), &to("7", "000010")));
+    assert!(differ(&to("5", "000010"), &to("5", "000020")));
+    holds(&format!(
+        "{bound} Native.DEMO.USE(p1); Native.DEMO.USE(v_000010_0); return 0;"
+    ));
+}
+
+#[test]
+fn an_array_the_function_made_is_its_own_until_it_goes_and_is_then_seen_with_its_elements() {
+    let new = "v_000010_0 = Operations.NewArray_type_00000000000000E2(2);";
+    let set =
+        |index: u32, value: u32| format!("Operations.array_set_u32(v_000010_0, {index}, {value});");
+    let (five, seven) = (set(0, 5), set(1, 7));
+    let load = "v_000018_1 = load_u64(p1, 0x10);";
+    // A write of an element changes no memory a load reads.
+    assert!(!differ(
+        &format!("{new} {five} {load} Native.DEMO.USE2(v_000010_0, v_000018_1); return 0;"),
+        &format!("{load} {new} {five} Native.DEMO.USE2(v_000010_0, v_000018_1); return 0;"),
+    ));
+    // Two elements written in the other order are one array where it goes.
+    assert!(!differ(
+        &format!("{new} {five} {seven} Native.DEMO.USE(v_000010_0); return 0;"),
+        &format!("{new} {seven} {five} Native.DEMO.USE(v_000010_0); return 0;"),
+    ));
+    // Another value written is another array.
+    assert!(differ(
+        &format!("{new} {five} Native.DEMO.USE(v_000010_0); return 0;"),
+        &format!("{new} {} Native.DEMO.USE(v_000010_0); return 0;", set(0, 7)),
+    ));
+    // An element read before it is written reads what the array was made with.
+    let get = "v_000018_1 = Operations.array_get_u32(v_000010_0, 0);";
+    assert!(differ(
+        &format!("{new} {five} {get} return v_000018_1;"),
+        &format!("{new} {get} {five} return v_000018_1;"),
+    ));
+    // And so does a load through the element's address.
+    let at = "local_1 = Operations.array_element_address(v_000010_0, 0);";
+    let through = "v_000018_1 = load_i32(local_1, 0x0);";
+    assert!(differ(
+        &format!("{new} {at} {five} {through} return v_000018_1;"),
+        &format!("{new} {at} {through} {five} return v_000018_1;"),
+    ));
+    // Once a callee may hold the array, a write of it is a call.
+    assert!(differ(
+        &format!("{new} Native.DEMO.USE(v_000010_0); {five} {load} return v_000018_1;"),
+        &format!("{new} Native.DEMO.USE(v_000010_0); {load} {five} return v_000018_1;"),
+    ));
+    // Its length is the one it was made with, whatever runs between.
+    let length = "v_000018_1 = Operations.array_length(v_000010_0);";
+    assert!(!differ(
+        &format!("{new} Native.DEMO.USE(p0); {length} return v_000018_1;"),
+        &format!("{new} {length} Native.DEMO.USE(p0); return v_000018_1;"),
+    ));
+    holds(&format!(
+        "{new} {} {} Native.DEMO.USE(v_000010_0); return 0;",
+        "Operations.array_set_u32(v_000010_0, 0, p0);",
+        "Operations.array_set_u32(v_000010_0, 1, p1);"
+    ));
+}
+
 fn flat(f: &cfg::Function) -> tree::Function {
     let label = |b: cfg::BlockId| tree::Label::Block(b as u32);
     let go = |b: cfg::BlockId| vec![tree::Stmt::Goto(label(b))];

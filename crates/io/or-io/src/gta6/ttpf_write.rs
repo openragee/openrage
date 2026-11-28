@@ -1,13 +1,16 @@
 //! Writing a `.ttpf`: every row of a texture left alone is carried as the file stores it, codecs
 //! no reader decodes included, and a replaced texture is tiled and written as zlib rows of the
 //! sizes its entry states, so the directory, the keys and every virtual address stay as they were.
+//! A pack with no rows takes no edit and is written as the image its file is.
 
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::Write;
 
 use super::super::tiling::{Level, Tile};
-use super::{read_at, row_code_pages, Plan, Row, TexturePack, TtpfError, HEADER_LEN, KIND_ZLIB};
+use super::{
+    read_at, row_code_pages, Envelope, Plan, Row, TexturePack, TtpfError, HEADER_LEN, KIND_ZLIB,
+};
 
 /// A row's offset is stated in 24 bits of 256 bytes.
 const OFFSET_LIMIT: u64 = 1 << 32;
@@ -126,6 +129,16 @@ impl TexturePack {
         &mut self.replaced
     }
 
+    /// Refuses, by its platform's name, an edit of a pack with no rows: every edit is written as rows.
+    pub(super) fn edits_rows(&self) -> Result<(), TtpfError> {
+        match self.envelope {
+            Envelope::Rows => Ok(()),
+            Envelope::Plain => Err(TtpfError::EditPlain {
+                platform: self.facts.platform.label(),
+            }),
+        }
+    }
+
     /// The stored bytes a replacement wrote for row `row`.
     // An empty body is a row of the texture the replacement left as the file stores it: no zlib
     // stream is empty.
@@ -196,6 +209,7 @@ impl TexturePack {
 
     /// Where texture `index`'s replacement goes, once its shape, its tail and its rows are ones the writer covers.
     fn writable(&self, index: usize) -> Result<Plan, TtpfError> {
+        self.edits_rows()?;
         if !self.is_complete() {
             return Err(TtpfError::NotWhole);
         }
@@ -332,6 +346,7 @@ impl TexturePack {
 
     /// The table a save writes: each row after the one before it at 256-byte alignment or on the next 4 KiB page as the start rule says, and as the file has it where the rule does not decide or the file departs from it in a row no replacement wrote.
     pub fn save_layout(&self) -> Result<SaveLayout, TtpfError> {
+        self.edits_rows()?;
         if let Some(moved) = self.moved.as_deref() {
             return self.relaid_layout(moved);
         }
@@ -399,10 +414,26 @@ impl TexturePack {
         })
     }
 
+    /// Writes a pack with no rows to `out` as the image its file is, which no edit has changed.
+    fn save_plain(&self, out: &mut impl Write) -> Result<(), TtpfError> {
+        // `replaced_mut` hands out the replaced textures, and none of them would be written.
+        if !self.replaced.0.is_empty() || self.moved.is_some() {
+            return self.edits_rows();
+        }
+        let mut file = File::open(&self.path).map_err(|source| TtpfError::Io {
+            path: self.path.clone(),
+            source,
+        })?;
+        (std::io::copy(&mut file, out).map(drop)).map_err(TtpfError::Write)
+    }
+
     /// Writes the pack with its replaced textures to `out`, in the form saving it again writes byte for byte.
     pub fn save_to(&self, out: &mut impl Write) -> Result<(), TtpfError> {
         if !self.is_complete() || self.entries.iter().any(|e| !e.on_disk) {
             return Err(TtpfError::NotWhole);
+        }
+        if self.envelope == Envelope::Plain {
+            return self.save_plain(out);
         }
         let layout = self.save_layout()?;
         let mut file = File::open(&self.path).map_err(|source| TtpfError::Io {

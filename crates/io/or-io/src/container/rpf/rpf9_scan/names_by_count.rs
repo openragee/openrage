@@ -28,7 +28,8 @@ enum Kind {
         archive: u64,
     },
     /// An entry; `unbounded` for a first entry or an unknown zlib body whose end is not stated,
-    /// which the count cannot tell from bytes of no entry.
+    /// which the count cannot tell from bytes of no entry, and for a body stored as it is whose
+    /// end is not stated, whose bytes may read as further finds.
     Entry {
         unbounded: bool,
     },
@@ -72,8 +73,8 @@ impl Rpf9NamesByCount {
             },
             Rpf9BodyKind::Zlib(run) => Kind::Entry {
                 unbounded: end.is_none()
-                    && run.content == Rpf9Content::Other
-                    && run.signature.is_none(),
+                    && ((run.content == Rpf9Content::Other && run.signature.is_none())
+                        || (run.chunks == 0 && run.resource.is_none())),
             },
             _ => Kind::Entry { unbounded: false },
         };

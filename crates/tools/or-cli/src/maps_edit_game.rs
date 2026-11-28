@@ -218,10 +218,7 @@ pub(crate) fn run(args: &[String]) -> Result<ExitCode, Failure> {
     if let Some(error) = &built.not_kept {
         eprintln!("warning: the index was not kept: {error}");
     }
-    let edition = match or_title::game::Game::detect_from_root(&root)
-        .generation()
-        .is_gen9()
-    {
+    let edition = match mount.game.generation().is_gen9() {
         true => Target::Enhanced,
         false => Target::Legacy,
     };

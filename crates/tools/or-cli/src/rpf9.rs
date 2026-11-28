@@ -1147,31 +1147,8 @@ fn split_inner(path: &str) -> Vec<String> {
         .collect()
 }
 
-/// Every `*.rpf` directly under `root` and every `pack/*/*.rpf`, sorted — the build's archive set,
-/// matching the explorer test's walk.
-pub(crate) fn build_archives(root: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let mut rpfs_in = |dir: &Path| {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("rpf") {
-                    out.push(path);
-                }
-            }
-        }
-    };
-    rpfs_in(root);
-    if let Ok(packs) = std::fs::read_dir(root.join("pack")) {
-        for pack in packs.flatten() {
-            if pack.path().is_dir() {
-                rpfs_in(&pack.path());
-            }
-        }
-    }
-    out.sort();
-    out
-}
+// The build's archive set: every `*.rpf` directly under the root and every `pack/*/*.rpf`.
+pub(crate) use or_title::install::gta6_files::mounted as build_archives;
 
 #[cfg(test)]
 #[path = "rpf9_tests.rs"]

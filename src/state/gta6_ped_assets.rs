@@ -111,7 +111,7 @@ fn read_archive(path: &Path, out: &mut Index) {
 
 /// The index of the install or folder at `root`, read from its archives.
 fn build(root: &Path) -> Index {
-    let (archives, _) = crate::state::gta6_install_scan::archives_under(root);
+    let archives = or_title::install::gta6_files::list(root).archive_paths();
     let mut index = Index::default();
     for path in archives {
         let small =

@@ -264,7 +264,8 @@ pub fn run_names(args: &[String]) -> ExitCode {
         ));
     }
 
-    let title = or_title::Game::detect_from_root(&game_root);
+    // The crawl below reads with GTA V's keys, so a folder no profile claims is indexed as GTA V's.
+    let title = or_title::Game::detect_from_root(&game_root).unwrap_or(or_title::Game::GtaVLegacy);
     let resolved = resolve_crypto(&game_root, keys.as_deref());
     let mut warnings = resolved.notes;
 

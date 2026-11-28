@@ -4,16 +4,16 @@
 //! asked before one with a more specific marker claims installs that are not
 //! its own. An Enhanced install ships `GTA5.exe` beside `GTA5_Enhanced.exe`,
 //! so Legacy asked first reads every Enhanced install as Legacy. Registered
-//! titles are asked after every builtin. GTA VI's title id is the most
-//! specific marker, so it is asked first.
+//! titles are asked after every builtin. A GTA VI build's title id is the
+//! most specific marker, so those are asked first.
 
 use std::path::Path;
 use std::sync::{OnceLock, RwLock};
 
 use super::profile::GameProfile;
-use super::profiles::{Gta6, GtaVEnhanced, GtaVLegacy, Rdr2};
+use super::profiles::{Gta6, Gta6Ps5, GtaVEnhanced, GtaVLegacy, Rdr2};
 
-static BUILTIN: &[&dyn GameProfile] = &[&Gta6, &GtaVEnhanced, &GtaVLegacy, &Rdr2];
+static BUILTIN: &[&dyn GameProfile] = &[&Gta6, &Gta6Ps5, &GtaVEnhanced, &GtaVLegacy, &Rdr2];
 
 fn registered() -> &'static RwLock<Vec<&'static dyn GameProfile>> {
     static REGISTERED: OnceLock<RwLock<Vec<&'static dyn GameProfile>>> = OnceLock::new();

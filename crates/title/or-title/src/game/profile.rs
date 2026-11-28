@@ -165,6 +165,11 @@ pub trait GameProfile: Send + Sync + 'static {
         self.label()
     }
 
+    /// The id of the game this is a build of, which code that means any build of it tests.
+    fn title_id(&self) -> &'static str {
+        self.id()
+    }
+
     fn platform(&self) -> Platform {
         Platform::Pc
     }

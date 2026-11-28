@@ -130,9 +130,9 @@ impl crate::ui::panel_state::PanelState for Capture {
 
 /// The folder of the GTA VI install the app was given, where it still stands.
 fn install(state: &AppState) -> Option<std::path::PathBuf> {
-    (state.prefs.game_paths.get(or_title::Game::GtaVI))
+    crate::state::gta_vi::install(&state.prefs)
+        .map(|(_, root)| root.clone())
         .filter(|root| root.is_dir())
-        .cloned()
 }
 
 /// Whether the World screen has an install to show.

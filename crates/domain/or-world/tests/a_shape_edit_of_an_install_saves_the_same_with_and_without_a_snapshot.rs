@@ -49,7 +49,7 @@ const ONE_IN_FOR_AN_INTERIOR: usize = 10;
 const ONE_IN_FOR_A_PED: usize = 20;
 
 fn crypto_for(root: &Path) -> Option<Arc<dyn RpfCryptoProvider>> {
-    let exe = Game::detect_from_root(root).find_executable(root)?;
+    let exe = Game::detect_from_root(root)?.find_executable(root)?;
     let keys = extract_keys(&exe, &|_| {}).ok()?;
     Some(Arc::new(Gta5RetailCryptoProvider::new(Arc::new(keys))))
 }

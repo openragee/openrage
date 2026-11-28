@@ -17509,3 +17509,6 @@ msgstr "Eine beleuchtete unter ihnen empfängt die Sonne ohne Schatten: Die Kask
 
 msgid "Of the game's thirty material kinds, the standard and the translucent are lit by their own arithmetic; skin, clear coat, sheen and the rest are lit as the standard one for now"
 msgstr "Von den dreißig Materialarten des Spiels werden die Standardart und die durchscheinende nach ihrer eigenen Rechnung beleuchtet; Haut, Klarlack, Schimmer und die übrigen vorerst wie die Standardart"
+
+msgid "No GTA VI keys: the {platform} build has no executable OpenRage reads them from, so they come only from a key snapshot of that build."
+msgstr "Keine GTA VI-Schlüssel: Die {platform}-Version hat keine ausführbare Datei, aus der OpenRage sie liest, daher kommen sie nur aus einem Schlüssel-Snapshot dieser Version."

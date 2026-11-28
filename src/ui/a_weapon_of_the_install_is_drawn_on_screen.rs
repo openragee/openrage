@@ -33,7 +33,8 @@ fn a_weapon_of_the_install_is_imported_and_its_assembled_view_is_read() {
         skip_install(WHAT, format_args!("{GAME_ROOT_ENV} names no install"));
         return;
     };
-    let Some(exe) = Game::detect_from_root(&root).find_executable(&root) else {
+    let Some(exe) = Game::detect_from_root(&root).and_then(|game| game.find_executable(&root))
+    else {
         skip_install(WHAT, format_args!("the install has no executable"));
         return;
     };

@@ -2,7 +2,7 @@
 
 How OpenRage's GTA VI support stops being support for one Xbox package and becomes support for a title that ships on several platforms: what a PlayStation 5 build holds, where the tree bakes in Xbox facts, the design that makes the platform an explicit axis, and the order of the rows that build it.
 
-Status: proposed on 2026-11-28; no row is started, and its decisions are the plan's own until the owner rules on [what is asked](#asked-of-the-owner). [R72](Roadmap.md#r72-gta-vi-on-every-platform) says where each row stands.
+Status: the plan of 2026-11-28; its rows R72a to R72e are built, and its decisions are the plan's own until the owner rules on [what is asked](#asked-of-the-owner). [R72](Roadmap.md#r72-gta-vi-on-every-platform) says where each row stands.
 
 ## The shape in brief
 
@@ -34,15 +34,15 @@ Measured on 2026-11-28. A cell is what the build's own bytes state.
 | Archives | one `X.rpf` each | `X.rpf`, and for most a `X_concat.rpf` beside it |
 | RPF9 header, the platform letter at 0x19 | `z` | `p` |
 | RPF9 header, the byte at 0x2E | 9 | 7 |
-| Bodies | zlib chunks | stored as they are, each on a coarse alignment |
+| Bodies | zlib chunks | stored as they are, from any 16-byte slot |
 | Texture pack | an `RDS5` row table whose row 0 is the `ETPF` directory | the `ETPF` directory at byte 0, then the texels |
-| Texels of one texture | the Xbox tile order | the same blocks in another order |
+| Texels of one texture | the Xbox tiles | the same image, in its own order inside a 64 KiB tile |
 | Tables | enciphered | enciphered, and not opened by the Xbox snapshot |
 
 - **Both files of a pair are whole archives.** A `_concat` archive has its own header and table, and its content is nested archives. Whether a row of `X.rpf` points into `X_concat.rpf` or the two mount side by side is [not measured](#measurements-still-owed).
-- **The PlayStation 5 pack is the image the Xbox pack decodes into.** The Xbox row table states a virtual size, and the PlayStation 5 file of the same pack is that image stored plainly, with the same directory in front. The Xbox coder and its tables play no part on PlayStation 5.
-- **The texel order differs and can be solved without a guess.** One texture both builds hold, under the same key and the same descriptor, gives the same blocks in two orders, so the Xbox image is an oracle for the PlayStation 5 order.
-- **The keyless scan finds nothing.** Its detectors look for zlib chunk heads. On PlayStation 5 a body starts on an alignment boundary with its own magic in the clear: a nested archive, an effect container, a movie, a metadata body.
+- **A PlayStation 5 pack is an image stored plainly.** The Xbox rows decode into an image at virtual addresses; a PlayStation 5 file is such an image as it is, behind the same directory, each entry equal to the Xbox one but for its page. A range there is padded, so a texture's length comes from its entry. The Xbox coder and its tables play no part on PlayStation 5.
+- **The texel order differs only inside a 64 KiB tile.** A texture both builds hold is the same bytes on both, except in the tiles of tile mode 0, where a PlayStation 5 tile is the 4 KiB tile's order and then the Xbox tile's other bits. The Xbox reader was the oracle, and `a_texture_two_platforms_hold_reads_to_the_same_pixels_through_each_envelope` holds the two readers to each other. ⚠ A shared key is not proof of a shared picture: the pack of controller art holds another drawing under one key on each platform.
+- **The keyless scan finds nothing.** Its detectors look for zlib chunk heads. On PlayStation 5 a body starts on a 16-byte slot with its own first bytes in the clear: a nested archive, an effect container, a movie, a metadata body. Bodies are packed back to back or set on a lattice of their own archive, so no grid finds them.
 
 ## What the tree does with it today
 
@@ -118,7 +118,7 @@ pub struct PlatformFacts {
     /// The header byte at 0x2E, whose role is not known.
     pub header_word: u8,
     pub texel_order: TexelOrder,   // XboxTiles, Prospero
-    pub scan: ScanStrategy,        // ZlibHeads, AlignedBodies
+    pub scan: ScanStrategy,        // ZlibHeads, StoredBodies
 }
 
 impl PlatformFacts {
@@ -141,7 +141,9 @@ Whether a table and its bodies can sit in two files is decided by [a measurement
 
 ### The scan
 
-A scan is a strategy chosen by the header's platform. The zlib strategy is today's code. The aligned strategy steps over the alignment grid and names a body by the magic at its start, which is all a PlayStation 5 archive needs and is a fraction of the code. Both give the same rows, so every view and command over a scan is untouched.
+A scan is a strategy chosen by the header's platform. The zlib strategy is today's code. The stored strategy shares its walk over the 16-byte slots and names a body by its first bytes: a metadata document, whose frames state where it ends, an RBF or an XML document, and a headerless resource behind its zero slot. Both give the same rows, so every view and command over a scan is untouched.
+
+⚠ A stored body has an end only where its bytes state one. A metadata document, a movie, an audio container and a stored resource with its head do; a headerless resource does not, so a scan lists it and cannot open it.
 
 ### Texture packs
 
@@ -171,8 +173,8 @@ No context is threaded through the readers on speculation. A headerless reader t
 
 ### Titles, builds and installs
 
-- **The title is an id.** A profile states a title as an id and a label, `Game::title` returns it, and code that means any build of GTA VI tests the title. `Game::GtaVI` equality stays only where the Xbox build is meant.
-- **PlayStation 5 is a profile.** It states its title ids, `eboot.bin` and `Platform::Ps5`, and is registered beside the Xbox build. Console builds carry their platform in their id and the unsuffixed id is kept for PC, as GTA V's are: the Xbox build is renamed, and the old id still reads from saved preferences as the legacy names do.
+- **The title is an id.** A profile states its title's id beside its label, `Game::title_id` returns it, and code that means any build of GTA VI tests the title. `Game::GtaVI` equality stays only where the Xbox build is meant.
+- **PlayStation 5 is a profile.** It states its title ids and `Platform::Ps5`, and is registered beside the Xbox build. ⚠ It names no executable: every PlayStation package holds an `eboot.bin`, and a folder that holds a profile's executable is claimed by it. The Xbox build keeps the id it had as the only build, because what OpenRage keeps for a build is kept under its id; whether it is renamed so that the plain id is PC's is [asked](#asked-of-the-owner).
 - **No silent fallback.** `Game::detect_from_root` answers nothing for a folder no profile claims, and each caller says what it does then.
 - **Dead layout goes.** `InstallLayout` is either read by the mount or deleted; the plan deletes it and leaves GTA V's mount as it is.
 
@@ -226,7 +228,7 @@ Each row ends on a check that fails today. Rows a to e need no key.
 | R72b | The title as an id, the PlayStation 5 profile, no fallback in detection | a folder with a PlayStation 5 `param.json` is that build, and a folder no profile claims is no game |
 | R72c | One list of an install's files | the walks are deleted, and a pair lists as a pair in the app and the CLI |
 | R72d | Texture packs: directory, envelope, texel order | every PlayStation 5 pack reads, and a texture both builds hold decodes to the same pixels |
-| R72e | The aligned scan | a scan of a PlayStation 5 archive lists its nested archives and its clear bodies |
+| R72e | The scan of stored bodies | a scan of a PlayStation 5 archive lists its nested archives and its clear bodies |
 | R72f | Keys per build, the session handed to an open, the global deleted | an archive of a build with no keys held opens by scan and names the build; no `or-io` reader reads the environment |
 | R72g | RPF9 as a backend of `RpfArchive` | the version branches are one match, with every archive suite unchanged |
 | R72h | The tables of a PlayStation 5 archive: rows, pairs, the mount, a census of every reader | waits on a snapshot; then each reader's share read on PlayStation 5 is measured against the Xbox's |
@@ -234,6 +236,8 @@ Each row ends on a check that fails today. Rows a to e need no key.
 | R72j | The module move, the suites over a list of builds, the documents | no file named for the Xbox holds a fact of the game, and [GTA_VI_Xbox_Build.md](../features/GTA_VI_Xbox_Build.md) is one document of every build |
 
 R72a stands on nothing and R72b beside it. R72c needs R72b, R72d and R72e need R72a, R72f and R72g follow in either order, and R72j is last because it moves files every other row edits.
+
+Rows a to e are built. What holds each: `a_header_that_mixes_two_platforms_or_states_an_unmeasured_one_is_refused_by_name` and, over the builds `OPENRAGE_GAME_ROOT` names, `every_archive_header_of_a_build_parses_and_states_its_build_s_one_platform`; the cases of `crates/title/or-title/tests/a_gta_vi_folder_is_not_gta_v.rs`; the tests of `crates/title/or-title/src/install/gta6_files.rs`; `a_texture_two_platforms_hold_reads_to_the_same_pixels_through_each_envelope`, which is install-gated; and the tests of `crates/io/or-io/src/container/rpf/rpf9_scan/tests/stored.rs`. Left of them: a PlayStation 5 pack saves only as the file it is, and an edit of one is refused; the modules that read an archive by its file name still do; and `InstallLayout` stands.
 
 ## Measurements still owed
 
@@ -255,7 +259,7 @@ Each has a default the rows take if nothing is said.
 | Question | Default |
 |---|---|
 | Is a console build its own profile, with the title as an id above it? | yes |
-| Is the Xbox build's id renamed so that the plain id is PC's? | yes, with the old id still read |
+| Is the Xbox build's id renamed so that the plain id is PC's? | not yet: what OpenRage keeps for a build is kept under its id |
 | Does `Game::detect_from_root` stop answering GTA V Legacy for an unknown folder? | yes |
 | Is `InstallLayout` deleted or made the mount's source? | deleted |
 | Do the module move and the rename of the feature document wait for the other GTA VI lanes? | yes: R72j is last |

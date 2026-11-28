@@ -388,7 +388,7 @@ puts R55's conversion in the app, closing it added R55c, closing R55c added R55d
 - [ ] [R56 RDR2 the second container](#r56-rdr2-the-second-container) — the archive reads and writes (an RPF8 table in the clear, 2026-10-07); RSC8 and RDR2's structures are not started, and the other archives' tables need the title's TFIT keys; `PagingModel`, `ResourceEnvelope` and every `GameProfile` method are kept for it (OD-AUDIT-KEEPS)
 - [ ] [R57 GTA VI readiness](#r57-gta-vi-readiness) — a property row; the paging model and the resource envelope are held behind their seams, and the archive is a version and a layout
 - [ ] [R57b Earlier RAGE titles](#r57b-earlier-rage-titles) — unscheduled: GTA IV, EFLC, Max Payne 3 and RDR1, future goals rather than non-goals (owner, 2026-10-01); their archives read and write in `or-io`, and nothing above them does
-- [ ] [R72 GTA VI on every platform](#r72-gta-vi-on-every-platform) — proposed on 2026-11-28 and not started: GTA VI support reads one Xbox package, and a PlayStation 5 build opens nowhere; [GTA_VI_Platforms_Plan.md](GTA_VI_Platforms_Plan.md) has the design and the rows
+- [ ] [R72 GTA VI on every platform](#r72-gta-vi-on-every-platform) — the plan of 2026-11-28: the rows that need no key are built, so a PlayStation 5 build is detected, its texture packs read and its archives scan; its tables wait on a key snapshot; [GTA_VI_Platforms_Plan.md](GTA_VI_Platforms_Plan.md) has the design and the rows
 
 ### Phase 10 — The application
 
@@ -11096,11 +11096,16 @@ that is an id, keys held per build and handed to an open, and one list of an ins
 [GTA_VI_Platforms_Plan.md](GTA_VI_Platforms_Plan.md) owns what the build is, where the tree holds
 Xbox facts, the design, the rows and their order, and the questions put to the owner.
 
-**Where it stands.** Proposed and not started; no row has a lane. The plan's rows are lettered
-there and take a checkbox here as each is scheduled.
+**Where it stands.** The rows that need no key are built: a platform is a type of `or-io` with
+the facts of each in one table, a header is held to its own platform's byte, the PlayStation 5
+build is a profile under a title id and an unknown folder is no game, one function lists an
+install's files, a texture pack opens behind either envelope and reads in either texel order, and a
+scan names the bodies an archive stores as they are. [The plan](GTA_VI_Platforms_Plan.md#the-order-of-work)
+names the test that holds each and what is left of them. The rows after them are not started, and
+take a checkbox here as each is scheduled.
 
 **Depends on.** Nothing for the rows that need no key: the platform type and the header, the
-PlayStation 5 profile, the list of an install's files, texture packs and the aligned scan. The rows
+PlayStation 5 profile, the list of an install's files, texture packs and the scan of stored bodies. The rows
 that read a PlayStation 5 table wait on a key snapshot for that build, which the plan does not
 produce.
 

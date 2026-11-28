@@ -154,7 +154,7 @@ mod a_real_install {
             .into_iter()
             .filter(|root| {
                 let edition = Game::detect_from_root(root);
-                edition == Game::GtaVLegacy || edition == Game::GtaVEnhanced
+                edition == Some(Game::GtaVLegacy) || edition == Some(Game::GtaVEnhanced)
             })
             .collect();
         if roots.is_empty() {
@@ -162,7 +162,7 @@ mod a_real_install {
             return;
         }
         for root in roots {
-            let edition = Game::detect_from_root(&root);
+            let edition = Game::detect_from_root(&root).expect("a GTA V install");
             let exe = (edition.find_executable(&root)).expect("an install has its executable");
             let keys = extract_keys(&exe, &|_| {}).expect("keys from the install's executable");
             let game = mount(

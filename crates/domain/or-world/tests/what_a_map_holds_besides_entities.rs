@@ -37,7 +37,7 @@ use or_test_support::{game_roots, skip_install, GAME_ROOT_ENV};
 use or_title::game::Game;
 
 fn crypto_for(root: &Path) -> Option<Arc<dyn RpfCryptoProvider>> {
-    let exe = Game::detect_from_root(root).find_executable(root)?;
+    let exe = Game::detect_from_root(root)?.find_executable(root)?;
     let keys = extract_keys(&exe, &|_| {}).ok()?;
     Some(Arc::new(Gta5RetailCryptoProvider::new(Arc::new(keys))))
 }

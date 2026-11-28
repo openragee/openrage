@@ -241,7 +241,8 @@ fn every_dlc_document_an_install_ships_is_the_same_document_after_a_write() {
         // ⚠ Asking the title rather than naming an executable: Enhanced ships
         // `GTA5_Enhanced.exe`, so a hard-coded `GTA5.exe` skips it and the
         // report says "no install" about an install that is right there.
-        let Some(exe) = Game::detect_from_root(root).find_executable(root) else {
+        let Some(exe) = Game::detect_from_root(root).and_then(|game| game.find_executable(root))
+        else {
             or_test_support::skip_install(
                 WHAT,
                 format_args!("{} has no executable to take keys from", root.display()),

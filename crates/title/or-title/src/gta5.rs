@@ -90,7 +90,8 @@ impl Gta5 {
         if !install.common_rpf().is_file() {
             return Err(InstallError::NotAnInstall { root });
         }
-        let game = Game::detect_from_root(&root);
+        // A folder that holds `common.rpf` and no profile's marker is an install without its executable.
+        let game = Game::detect_from_root(&root).unwrap_or(Game::GtaVLegacy);
         if !is_gta5(game) {
             return Err(InstallError::NotGta5 {
                 root,

@@ -223,7 +223,8 @@ fn a_real_install_at_a_level_of_dlc_walks_nothing_of_the_packs_listed_after_it()
         return;
     }
     for root in &roots {
-        let Some(exe) = Game::detect_from_root(root).find_executable(root) else {
+        let Some(exe) = Game::detect_from_root(root).and_then(|game| game.find_executable(root))
+        else {
             skip_install(what, format_args!("{} has no executable", root.display()));
             continue;
         };

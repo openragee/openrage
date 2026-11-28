@@ -876,26 +876,10 @@ fn read_body<'a>(
 
 /// `install` where it is an archive, else every `*.rpf` in it and in each folder of its `pack`.
 fn archives(install: &Path) -> Vec<PathBuf> {
-    if install.is_file() {
-        return vec![install.to_path_buf()];
+    match install.is_file() {
+        true => vec![install.to_path_buf()],
+        false => or_title::install::gta6_files::mounted(install),
     }
-    let rpfs_in = |dir: &Path| -> Vec<PathBuf> {
-        let listed = std::fs::read_dir(dir).into_iter().flatten().flatten();
-        let paths = listed.map(|e| e.path());
-        paths
-            .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("rpf")))
-            .collect()
-    };
-    let mut out = rpfs_in(install);
-    let packs = std::fs::read_dir(install.join("pack"))
-        .into_iter()
-        .flatten()
-        .flatten();
-    for pack in packs.map(|e| e.path()).filter(|p| p.is_dir()) {
-        out.extend(rpfs_in(&pack));
-    }
-    out.sort();
-    out
 }
 
 /// The first `*.exe` directly in `install`.

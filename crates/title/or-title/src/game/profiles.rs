@@ -89,6 +89,10 @@ impl GameProfile for GtaVLegacy {
         "GTA V"
     }
 
+    fn title_id(&self) -> &'static str {
+        "gta-v"
+    }
+
     fn container(&self) -> ContainerFamily {
         ContainerFamily::Rpf7
     }
@@ -173,6 +177,10 @@ impl GameProfile for GtaVEnhanced {
 
     fn title(&self) -> &'static str {
         "GTA V"
+    }
+
+    fn title_id(&self) -> &'static str {
+        "gta-v"
     }
 
     fn container(&self) -> ContainerFamily {
@@ -345,6 +353,9 @@ pub struct Gta6;
 /// GTA VI's own asset target; nothing in this workspace reads a layout of it.
 const GTA6_TARGET: Generation = Generation::from_id("gta-vi");
 
+/// The title id every build of GTA VI states.
+pub(super) const GTA_VI: &str = "gta-vi";
+
 impl GameProfile for Gta6 {
     fn id(&self) -> &'static str {
         "gta-vi"
@@ -358,7 +369,10 @@ impl GameProfile for Gta6 {
         "GTA VI. Its RPF9 archives' tables are encrypted: with a key snapshot an archive is browsed as a folder of its entries, and with no key it opens as a scan of the bodies stored in the clear. The install opens as a plain folder."
     }
 
-    // The only build read so far is an Xbox package.
+    fn title_id(&self) -> &'static str {
+        GTA_VI
+    }
+
     fn platform(&self) -> Platform {
         Platform::XboxSeries
     }
@@ -406,5 +420,70 @@ impl GameProfile for Gta6 {
 
     fn dlc_policy(&self) -> DlcPolicy {
         DlcPolicy::MountAll
+    }
+}
+
+/// The PlayStation 5 build of GTA VI, known by the title id its package states.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Gta6Ps5;
+
+impl GameProfile for Gta6Ps5 {
+    fn id(&self) -> &'static str {
+        "gta-vi-ps5"
+    }
+
+    fn label(&self) -> &'static str {
+        Gta6.label()
+    }
+
+    fn description(&self) -> &'static str {
+        Gta6.description()
+    }
+
+    fn title(&self) -> &'static str {
+        Gta6.title()
+    }
+
+    fn title_id(&self) -> &'static str {
+        GTA_VI
+    }
+
+    fn platform(&self) -> Platform {
+        Platform::Ps5
+    }
+
+    fn container(&self) -> ContainerFamily {
+        Gta6.container()
+    }
+
+    fn native_target(&self) -> Generation {
+        GTA6_TARGET
+    }
+
+    fn asset_targets(&self) -> &'static [Generation] {
+        Gta6.asset_targets()
+    }
+
+    fn target_labels(&self) -> &'static [or_io::TargetDescriptor] {
+        Gta6.target_labels()
+    }
+
+    // ⚠ Empty on purpose: every PlayStation package holds an `eboot.bin`, and a
+    // folder holding an executable candidate is claimed, so naming it would
+    // claim them all.
+    fn executable_candidates(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    fn playstation_title_ids(&self) -> &'static [&'static str] {
+        &["PPSA38500"]
+    }
+
+    fn install_layout(&self) -> InstallLayout {
+        Gta6.install_layout()
+    }
+
+    fn dlc_policy(&self) -> DlcPolicy {
+        Gta6.dlc_policy()
     }
 }

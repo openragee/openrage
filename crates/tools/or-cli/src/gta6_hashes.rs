@@ -302,7 +302,11 @@ fn census_command(args: &[String]) -> Result<(), String> {
         }
     }
     let root = root.ok_or(format!("give an install to census\n{USAGE}"))?;
-    let archives = archives_under(&root);
+    let listed = or_title::install::gta6_files::list(&root);
+    if listed.truncated {
+        eprintln!("note: the walk stopped at a limit: the archives past it are not counted");
+    }
+    let archives = listed.archive_paths();
     let game = game_of(&archives).ok_or(format!("no RPF archive under {}", root.display()))?;
     let cancel = super::jobs::on_interrupt();
     let census = match game {
@@ -880,34 +884,6 @@ fn game_of(archives: &[PathBuf]) -> Option<Game> {
             .is_ok_and(|()| u32::from_le_bytes(head) == RPF9_MAGIC)
     });
     Some(if rpf9 { Game::Gta6 } else { Game::Gta5 })
-}
-
-/// Every `.rpf` under `root`, at any depth, sorted.
-fn archives_under(root: &Path) -> Vec<PathBuf> {
-    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            match entry.file_type() {
-                Ok(kind) if kind.is_dir() => walk(&path, out),
-                Ok(kind)
-                    if kind.is_file()
-                        && path
-                            .extension()
-                            .is_some_and(|e| e.eq_ignore_ascii_case("rpf")) =>
-                {
-                    out.push(path)
-                }
-                _ => {}
-            }
-        }
-    }
-    let mut out = Vec::new();
-    walk(root, &mut out);
-    out.sort();
-    out
 }
 
 fn relative_label(root: &Path, path: &Path) -> String {

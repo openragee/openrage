@@ -103,6 +103,7 @@ impl TexturePack {
 
     /// Where texture `index`'s slices lie, the memory its rows hold now, and how many levels a slice reads.
     fn sliced(&self, index: usize, slice: u32) -> Result<Sliced, TtpfError> {
+        self.edits_rows()?;
         if !self.is_complete() {
             return Err(TtpfError::NotWhole);
         }

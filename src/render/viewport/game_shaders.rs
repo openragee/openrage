@@ -362,8 +362,8 @@ impl RenderBridge {
         use crate::state::gta6_shaders;
         // The install's folder where one is set, else the folder above the drawable's own archive.
         let install = || {
-            let set = (state.prefs.game_paths.get(or_title::Game::GtaVI))
-                .map(|root| root.join("shaders.rpf"));
+            let set = crate::state::gta_vi::install(&state.prefs)
+                .map(|(_, root)| root.join("shaders.rpf"));
             set.or_else(|| {
                 let path = state.document(doc)?.path.as_deref()?;
                 (path.ancestors().skip(1))

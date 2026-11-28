@@ -47,6 +47,7 @@ pub mod text;
 pub mod text_language;
 pub mod texture_names;
 mod tiling;
+mod tiling_prospero;
 #[cfg(feature = "gta5")]
 pub mod timecycle;
 pub mod ttpf;

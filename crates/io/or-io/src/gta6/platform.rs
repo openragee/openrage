@@ -20,8 +20,8 @@ pub enum TexelOrder {
 pub enum ScanStrategy {
     /// Bodies are runs of zlib chunks, found by their heads.
     ZlibHeads,
-    /// Bodies are stored as they are, each on an alignment boundary, found by their own magic.
-    AlignedBodies,
+    /// Bodies are stored as they are, each from a 16-byte slot, found by their own first bytes.
+    StoredBodies,
 }
 
 /// The facts of one platform's builds of GTA VI.
@@ -45,7 +45,7 @@ const FACTS: [PlatformFacts; 2] = [
         platform: Platform::Ps5,
         header_word: 0x07,
         texel_order: TexelOrder::Prospero,
-        scan: ScanStrategy::AlignedBodies,
+        scan: ScanStrategy::StoredBodies,
     },
 ];
 

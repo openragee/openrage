@@ -233,7 +233,7 @@ fn a_file_that_is_no_manifest_is_not_kept_and_the_command_says_what_it_takes() {
 fn mounted(root: &Path) -> Option<or_title::MountedGame> {
     use or_io::container::rpf::crypto::{extract_keys, Gta5RetailCryptoProvider};
     use std::sync::Arc;
-    let exe = or_title::game::Game::detect_from_root(root).find_executable(root)?;
+    let exe = or_title::game::Game::detect_from_root(root)?.find_executable(root)?;
     let keys = extract_keys(&exe, &|_| {}).ok()?;
     let crypto: Arc<dyn or_io::container::RpfCryptoProvider> =
         Arc::new(Gta5RetailCryptoProvider::new(Arc::new(keys)));

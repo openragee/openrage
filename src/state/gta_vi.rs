@@ -6,7 +6,14 @@ use std::path::{Path, PathBuf};
 use or_io::container::rpf::{Rpf9Header, RPF9_HEADER_SIZE, RPF9_MAGIC};
 use or_title::ContainerFamily;
 
-use super::prefs::Game;
+use super::prefs::{Game, Prefs};
+
+/// The GTA VI install the preferences hold: the active game's where it is a build of GTA VI, else the first build's with a folder set.
+pub(crate) fn install(prefs: &Prefs) -> Option<(Game, &PathBuf)> {
+    (prefs.active_game.into_iter().chain(Game::all()))
+        .filter(|build| build.is_gta_vi())
+        .find_map(|build| Some((build, prefs.game_paths.get(build)?)))
+}
 
 /// The sentence every [`rpf9_refusal`] starts with: why an RPF9 archive's entries have no names.
 pub(crate) fn rpf9_why() -> &'static str {
@@ -109,8 +116,7 @@ pub(super) fn rpf9_refusal_at(path: &Path) -> Option<String> {
 
 /// The title the folder at `root` holds, or else `game`, when OpenRage cannot read that title yet.
 pub(super) fn unsupported_title(game: Game, root: &Path) -> Option<Game> {
-    [Game::detect_from_root(root), game]
-        .into_iter()
+    (Game::detect_from_root(root).into_iter().chain([game]))
         .find(|title| !title.profile().is_supported())
 }
 
@@ -126,7 +132,7 @@ fn why_unsupported(title: Game) -> String {
 pub(super) fn refused_install(game: Game, root: &Path) -> Option<String> {
     let title = unsupported_title(game, root)?;
     // ⚠ A folder picked for the title and found to hold none of it is not that title: saying it is sent the person looking for a key.
-    if Game::detect_from_root(root) != title {
+    if Game::detect_from_root(root) != Some(title) {
         return Some(tr!(
             "{folder} does not look like a {title} folder, so it was not set as one.",
             folder = root.display(),
@@ -148,7 +154,7 @@ pub(super) fn refused_install(game: Game, root: &Path) -> Option<String> {
 /// Whether `root` holds `game`, a title OpenRage cannot open as an install yet, whose folder is
 /// remembered and opened as a plain folder.
 pub(super) fn holds_unsupported(game: Game, root: &Path) -> bool {
-    !game.profile().is_supported() && Game::detect_from_root(root) == game
+    !game.profile().is_supported() && Game::detect_from_root(root) == Some(game)
 }
 
 impl super::AppState {
@@ -156,6 +162,9 @@ impl super::AppState {
     /// install, any other is remembered, made active and opened as a plain folder; a folder that
     /// holds another title is refused.
     pub fn open_title_folder(&mut self, game: Game, root: PathBuf) {
+        // A folder picked for one build of a title and holding another opens as the build it holds.
+        let held = Game::detect_from_root(&root).filter(|held| held.title_id() == game.title_id());
+        let game = held.unwrap_or(game);
         if read_by_scan(game) {
             return self.request_game_switch(game, root);
         }
@@ -187,7 +196,7 @@ fn folder_note(
     root: &Path,
     keys: impl FnOnce() -> crate::state::rpf9_scan::rpf9_table::gta6_keys_held::Gta6Keys,
 ) -> Option<(String, bool)> {
-    let title = Some(Game::detect_from_root(root)).filter(|t| !t.profile().is_supported())?;
+    let title = Game::detect_from_root(root).filter(|t| !t.profile().is_supported())?;
     if read_by_scan(title) {
         use crate::state::rpf9_scan::rpf9_table::gta6_keys_held::Gta6Keys;
         let note = match keys() {
@@ -590,6 +599,26 @@ mod tests {
         let other = tempfile::tempdir().expect("scratch");
         state.open_title_folder(Game::GtaVI, other.path().to_path_buf());
         assert_eq!(state.prefs.game_paths.get(Game::GtaVI), Some(&dir));
+    }
+
+    #[test]
+    fn a_playstation_5_folder_opens_as_its_own_build_and_is_the_gta_vi_install() {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let dir = scratch.path().to_path_buf();
+        std::fs::create_dir(dir.join("sce_sys")).expect("sce_sys");
+        let params = br#"{"titleId": "PPSA38500"}"#;
+        std::fs::write(dir.join("sce_sys/param.json"), params).expect("params");
+        let mut state = AppState::from_prefs(Prefs::default());
+        state.documents.clear();
+        assert_eq!(install(&state.prefs), None);
+
+        // Picked on the Xbox build's row, it is still the build its folder holds.
+        state.open_title_folder(Game::GtaVI, dir.clone());
+        assert_eq!(state.prefs.game_paths.get(Game::GtaVI), None);
+        assert_eq!(state.prefs.game_paths.get(Game::GtaVIPs5), Some(&dir));
+        assert_eq!(state.prefs.active_game, Some(Game::GtaVIPs5));
+        assert_eq!(install(&state.prefs), Some((Game::GtaVIPs5, &dir)));
+        assert!(!says(&state, ToastType::Error, &["GTA VI"]));
     }
 
     /// Each text `output` painted, where, and the colour of its last run: a row's name.

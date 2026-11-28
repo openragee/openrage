@@ -19,7 +19,7 @@ use or_title::{build_mounted_game, DlcCutoff, GtaInstall, MountedGame};
 const WHAT: &str = "the_installs_dlc_list_names_collections_whose_files_the_install_holds";
 
 fn mount(root: &Path) -> Option<MountedGame> {
-    let exe = Game::detect_from_root(root).find_executable(root)?;
+    let exe = Game::detect_from_root(root)?.find_executable(root)?;
     let keys = extract_keys(&exe, &|_| {}).ok()?;
     let crypto: Arc<dyn RpfCryptoProvider> =
         Arc::new(Gta5RetailCryptoProvider::new(Arc::new(keys)));

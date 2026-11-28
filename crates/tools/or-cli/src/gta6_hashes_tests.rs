@@ -252,7 +252,7 @@ fn resolver() -> Vec<Source> {
 #[test]
 fn two_named_entries_and_one_unnamed_count_as_two_resolved_and_one_not() {
     let dir = install();
-    let archives = archives_under(dir.path());
+    let archives = or_title::install::gta6_files::list(dir.path()).archive_paths();
     assert_eq!(game_of(&archives), Some(Game::Gta6));
     let options = Options::default();
     let (keys, resolver) = (keys(), resolver());
@@ -292,7 +292,7 @@ fn two_named_entries_and_one_unnamed_count_as_two_resolved_and_one_not() {
 #[test]
 fn each_source_is_credited_with_the_hashes_it_named_first() {
     let dir = install();
-    let archives = archives_under(dir.path());
+    let archives = or_title::install::gta6_files::list(dir.path()).archive_paths();
     let names = [
         source("zq first", &["alpha.bin"]),
         source("zq second", &["alpha.bin", "beta.bin", "gamma.bin"]),
@@ -376,7 +376,7 @@ fn a_clear_headerless_row_is_read_past_its_slot_and_counted() {
         "the resource past the slot"
     );
 
-    let archives = archives_under(dir.path());
+    let archives = or_title::install::gta6_files::list(dir.path()).archive_paths();
     let options = Options::default();
     let census = census_gta6(
         dir.path(),
@@ -391,7 +391,7 @@ fn a_clear_headerless_row_is_read_past_its_slot_and_counted() {
 #[test]
 fn a_census_with_no_names_resolves_nothing_and_a_cancelled_one_walks_nothing() {
     let dir = install();
-    let archives = archives_under(dir.path());
+    let archives = or_title::install::gta6_files::list(dir.path()).archive_paths();
     let options = Options::default();
     let keys = keys();
     let gta6 = with(&keys, &[]);
@@ -651,7 +651,7 @@ fn clear_headerless_rows_of_the_build_read_past_their_slot() {
         return;
     };
     let mut tried = Vec::new();
-    for path in archives_under(&build) {
+    for path in or_title::install::gta6_files::list(&build).archive_paths() {
         let mut file = File::open(&path).expect("the archive opens");
         if let Ok(root) = Gta6Mount::open_root(&mut file, &keys) {
             rows(&mut file, &root, &keys, 0, &mut tried);
@@ -673,7 +673,7 @@ fn the_census_runs_on_the_build_and_prints_its_table() {
     let Some((keys, build)) = the_build("hashes census over a GTA VI build") else {
         return;
     };
-    let archives = archives_under(&build);
+    let archives = or_title::install::gta6_files::list(&build).archive_paths();
     assert_eq!(game_of(&archives), Some(Game::Gta6));
     // Top-level tables and a handful of bodies keep the run short.
     let options = Options {

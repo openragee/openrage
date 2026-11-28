@@ -11,7 +11,8 @@ pub(super) fn draw_ttpf(
         return;
     };
     let pack = &ttpf.pack;
-    let stated = pack.rows.last().map_or(0, |sentinel| sentinel.offset);
+    // A pack with no row table states no length: its file's is the one it has.
+    let stated = (pack.rows.last()).map_or(pack.size_on_disk(), |sentinel| sentinel.offset);
     ui.heading(tr!("GTA VI Texture Pack"));
     ui.separator();
     grid(ui, "ttpf_pack", |ui| {

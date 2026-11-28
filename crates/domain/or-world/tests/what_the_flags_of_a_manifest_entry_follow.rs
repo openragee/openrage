@@ -33,7 +33,7 @@ const WHAT: &str = "what_the_flags_of_a_manifest_entry_follow";
 const READERS: usize = 12;
 
 fn mount(root: &Path) -> Option<MountedGame> {
-    let exe = Game::detect_from_root(root).find_executable(root)?;
+    let exe = Game::detect_from_root(root)?.find_executable(root)?;
     let keys = extract_keys(&exe, &|_| {}).ok()?;
     let crypto: Arc<dyn RpfCryptoProvider> =
         Arc::new(Gta5RetailCryptoProvider::new(Arc::new(keys)));

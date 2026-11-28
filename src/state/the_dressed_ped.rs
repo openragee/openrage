@@ -521,7 +521,7 @@ fn the_ped_wears_its_own_drawables_from_the_install_in_every_slot_nothing_select
     let Some(mut f) = fitted() else { return };
     let mut with_keys = super::opening_a_ydd::with_keys(&root);
     std::mem::swap(&mut f.state.keys, &mut with_keys.keys);
-    let game = crate::state::prefs::Game::detect_from_root(&root);
+    let game = crate::state::prefs::Game::detect_from_root(&root).expect("a game's install");
     f.state.prefs.game_paths.set(game, Some(root));
     f.state.prefs.active_game = Some(game);
     let jacket = f.jacket.clone();
@@ -599,7 +599,7 @@ fn a_shows_the_peds_own_drawable_in_the_slot_the_garment_took() {
     let Some(mut f) = fitted() else { return };
     let mut with_keys = super::opening_a_ydd::with_keys(&root);
     std::mem::swap(&mut f.state.keys, &mut with_keys.keys);
-    let game = crate::state::prefs::Game::detect_from_root(&root);
+    let game = crate::state::prefs::Game::detect_from_root(&root).expect("a game's install");
     f.state.prefs.game_paths.set(game, Some(root));
     f.state.prefs.active_game = Some(game);
     let jacket = f.jacket.clone();
@@ -722,7 +722,7 @@ fn each_preset_of_the_animation_is_a_clip_of_the_installs_default_movement_and_d
     let Some(mut f) = fitted() else { return };
     let mut with_keys = super::opening_a_ydd::with_keys(&root);
     std::mem::swap(&mut f.state.keys, &mut with_keys.keys);
-    let game = crate::state::prefs::Game::detect_from_root(&root);
+    let game = crate::state::prefs::Game::detect_from_root(&root).expect("a game's install");
     f.state.prefs.game_paths.set(game, Some(root));
     f.state.prefs.active_game = Some(game);
     let jacket = f.jacket.clone();
@@ -768,7 +768,7 @@ fn a_hat_that_states_the_hide_hair_scale_takes_the_peds_own_hair_off_and_says_so
     };
     let mut with_keys = super::opening_a_ydd::with_keys(&root);
     std::mem::swap(&mut f.state.keys, &mut with_keys.keys);
-    let game = crate::state::prefs::Game::detect_from_root(&root);
+    let game = crate::state::prefs::Game::detect_from_root(&root).expect("a game's install");
     f.state.prefs.game_paths.set(game, Some(root));
     f.state.prefs.active_game = Some(game);
     let hat = (f.state.wardrobe_pack())
@@ -821,7 +821,7 @@ fn a_slot_of_the_peds_own_taken_off_or_changed_is_drawn_so_and_the_game_dresses_
     let Some(mut f) = fitted() else { return };
     let mut with_keys = super::opening_a_ydd::with_keys(&root);
     std::mem::swap(&mut f.state.keys, &mut with_keys.keys);
-    let game = crate::state::prefs::Game::detect_from_root(&root);
+    let game = crate::state::prefs::Game::detect_from_root(&root).expect("a game's install");
     f.state.prefs.game_paths.set(game, Some(root));
     f.state.prefs.active_game = Some(game);
     let jacket = f.jacket.clone();
@@ -900,7 +900,7 @@ fn a_head_of_the_peds_own_that_the_menu_offers_is_drawn_and_no_file_of_it_is_mis
     let Some(mut f) = fitted() else { return };
     let mut with_keys = super::opening_a_ydd::with_keys(&root);
     std::mem::swap(&mut f.state.keys, &mut with_keys.keys);
-    let game = crate::state::prefs::Game::detect_from_root(&root);
+    let game = crate::state::prefs::Game::detect_from_root(&root).expect("a game's install");
     f.state.prefs.game_paths.set(game, Some(root));
     f.state.prefs.active_game = Some(game);
     let jacket = f.jacket.clone();

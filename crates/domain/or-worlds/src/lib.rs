@@ -31,9 +31,9 @@ pub fn of_game(game: Game) -> Option<(Entry, GameId)> {
     })
 }
 
-/// The title that opens the install at `root`, by the game the folder is detected as.
+/// The title that opens the install at `root`, by the game the folder is detected as; a folder no profile claims is asked of GTA V, whose mount refuses one with no `common.rpf`.
 pub fn of_install(root: &Path) -> Option<(Entry, GameId)> {
-    of_game(Game::detect_from_root(root))
+    of_game(Game::detect_from_root(root).unwrap_or(Game::GtaVLegacy))
 }
 
 /// The title a kept file or a person names `id`.

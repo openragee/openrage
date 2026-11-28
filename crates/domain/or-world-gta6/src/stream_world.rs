@@ -95,8 +95,7 @@ pub(super) struct Shared {
     done: std::sync::atomic::AtomicU64,
 }
 
-/// The world as a thread of its own streams and selects it, so that a frame only reads what was
-/// selected last and never waits for the selection.
+/// The world as a thread of its own streams and selects it, so that a frame only reads what was selected last and never waits for the selection.
 pub struct World {
     pub(super) shared: Arc<Shared>,
     thread: std::thread::JoinHandle<()>,
@@ -187,8 +186,7 @@ impl World {
         });
     }
 
-    /// Say the band past its distance each level fades out over, by `Level as usize`, in metres:
-    /// [`fade_of`] the install's visual settings.
+    /// Say the band past its distance each level fades out over, by `Level as usize`, in metres: [`fade_of`] the install's visual settings.
     pub fn set_fade(&self, fade: [f32; Level::COUNT]) {
         self.tell_of(|told| {
             let changed = told.fade != fade;

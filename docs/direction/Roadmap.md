@@ -10772,8 +10772,8 @@ them, `interior` and `interior_rooms`), the two ambient symbols it took from the
 rules of streaming, but for what the forest and the portal walk call, are in `or-world-gta6`, and
 the digests held after it (961 of 961, `the_world_reads_as_its_reference_says`, 2026-11-28). Left
 of part 4: the thread on the core's `Driver`, the split of `select_asking`, and the occluders and
-the lights in the one read of a body. The shots were not run, and the adapter states no title
-yet. The detail, with what the driver cannot hold of GTA VI as built, is under "or-world-gta6" in
+the lights in the one read of a body. The shots script was drawn once after the move and held
+against part 1's run, not one made at this part's base, and the adapter states no title yet. The detail, with what the driver cannot hold of GTA VI as built, is under "or-world-gta6" in
 [Crate_Reference.md](../reference/Crate_Reference.md#domain-crates).
 
 **Depends on.** [R71a](#r71a-the-world-contract-the-conformance-kit-and-the-fake-title); from its second part

@@ -859,6 +859,55 @@ fn a_script_managed_map_that_reads_empty_is_kept_while_it_is_the_parent_of_a_map
 }
 
 #[test]
+fn a_script_managed_map_read_empty_as_a_parent_stays_wanted_where_a_camera_that_starts_past_its_child_drops_it(
+) {
+    let near = ([-10.0; 3], [10.0; 3]);
+    // The script-managed 2 streams in 150 m from the origin; 1, whose parent it is, 60 m from it.
+    let mut managed = map_row(2, 2, [-100.0; 3], [100.0; 3], (0, 0));
+    managed.group = 7;
+    let maps = vec![map_row(1, 0, near.0, near.1, (0, 1)), managed];
+    let index = Arc::new(index_with(
+        vec![PathBuf::from("made-up.rpf")],
+        &[],
+        maps,
+        vec![2],
+    ));
+    let empty = StreamMap {
+        name: 2,
+        entities: Vec::new(),
+        prop_lists: Vec::new(),
+        ..made_up()
+    };
+    let started = || {
+        let mut streamer = Streamer::new(Arc::clone(&index));
+        streamer.set_enabled(Enabled {
+            modes: 1,
+            groups: vec![7],
+        });
+        streamer
+    };
+    let past_the_child = View::at(Vec3::new(100.0, 0.0, 0.0), 1.0);
+
+    // A camera that comes from the child: the map is read as a parent, and kept past the child.
+    let mut came = started();
+    came.rewant(&View::at(Vec3::ZERO, 1.0));
+    assert!(came.insert(2, read_map(&index, &empty)));
+    came.rewant(&past_the_child);
+    assert_eq!(wanted_by(&came), vec![2]);
+
+    // A camera that starts past the child: the map is read for itself, found empty and dropped.
+    let mut fresh = started();
+    fresh.rewant(&past_the_child);
+    assert_eq!(wanted_by(&fresh), vec![2]);
+    assert!(!fresh.insert(2, read_map(&index, &empty)));
+    fresh.rewant(&past_the_child);
+    assert_eq!(wanted_by(&fresh), Vec::<u32>::new());
+
+    // ⚠ The forest holds no node of it either way: the count of maps wanted differs, what draws does not.
+    assert_eq!(came.forest.len().1, fresh.forest.len().1);
+}
+
+#[test]
 fn a_fast_camera_still_wants_the_high_tier() {
     let near = ([-10.0; 3], [10.0; 3]);
     // Content flags 0: the high tier.

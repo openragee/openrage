@@ -1800,7 +1800,10 @@ of the viewer and rewrote none of it.
   moved files run under their names in the adapter. The feature `made-up` also builds what the
   app's tests drive a `Streamer` and a `World` by.
 - **What held.** `the_world_reads_as_its_reference_says` held after the move to the digests
-  written before it: 961 of 961 on the GTA VI build of this machine, 2026-11-28.
+  written before it: 961 of 961 on the GTA VI build of this machine, 2026-11-28. The shots
+  script, drawn once after the move, held against the first part's run and not one made at this
+  part's base. What `ambient` packs by face is held to the law the G-buffer's program unpacks it
+  by (`a_share_packed_by_face_unpacks_to_its_axis_its_way_out_and_the_room_s_share`).
 - **Why the suite and the screen count one map apart.** At the city stop the suite's selection
   wants 3,189 maps and the screen's dump 3,190 (`the_world_reads_as_its_reference_says` against
   the dump of the reference script, 2026-11-27 and 2026-11-28). The one map is script-managed,
@@ -1808,7 +1811,8 @@ of the viewer and rewrote none of it.
   for itself finds it empty and wants it no more; one that first read it as a parent, as the
   screen does from where its camera starts, keeps it, and still wants it for itself at the city.
   The nodes in the forest are the same either way (32,430). ⚠ So the count of maps wanted
-  follows the path of the camera, and what draws does not.
+  follows the path of the camera, and what draws does not; made-up maps show both paths in
+  `a_script_managed_map_read_empty_as_a_parent_stays_wanted_where_a_camera_that_starts_past_its_child_drops_it`.
 
 Left of the part, and what stands in its way. The world's thread still streams and selects
 through GTA VI's own `Streamer`, the occluders and the lights still have their own loops and

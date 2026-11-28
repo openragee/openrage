@@ -43,8 +43,7 @@ const RESTREAM: f32 = 4.0;
 /// The hour the world starts at.
 const NOON: f32 = 12.0;
 
-/// The band past its distance each level fades out over, as the install's visual settings state
-/// it, by `Level as usize`, in metres; [`FADE`] where they do not.
+/// The band past its distance each level fades out over, as the install's visual settings state it, by `Level as usize`, in metres; [`FADE`] where they do not.
 pub fn fade_of(settings: &VisualSettings) -> [f32; Level::COUNT] {
     ["hd", "lod", "slod1", "slod2", "slod3", "orphanhd", "slod4"]
         .map(|level| settings.get_f32(&format!("lod.fadedist.{level}"), FADE))
@@ -68,8 +67,7 @@ pub struct Instance {
     pub cast_only: bool,
 }
 
-/// A run of a selection's instances that stand together, and the sphere that holds them all: a
-/// camera that does not see the sphere sees none of them.
+/// A run of a selection's instances that stand together, and the sphere that holds them all: a camera that does not see the sphere sees none of them.
 #[derive(Clone, Copy)]
 pub struct Chunk {
     pub centre: Vec3,
@@ -144,8 +142,7 @@ pub struct Selected {
     pub inside: Option<crate::interior::Inside>,
     /// The rooms the camera sees of each interior it looks into.
     pub rooms_seen: crate::interior::RoomsSeen,
-    /// From the room the camera stands in, the pyramids through it the outside is seen through, as
-    /// unit normals in the world; `None` where nothing of the outside is hidden.
+    /// From the room the camera stands in, the pyramids through it the outside is seen through, as unit normals in the world; `None` where nothing of the outside is hidden.
     pub outside_through: Option<Vec<Vec<Vec3>>>,
 }
 
@@ -336,8 +333,7 @@ impl Streamer {
         changed
     }
 
-    /// Work out the maps the camera of `view` wants, ask for those not loaded and let go of the
-    /// rest; whether a map came or went.
+    /// Work out the maps the camera of `view` wants, ask for those not loaded and let go of the rest; whether a map came or went.
     pub fn stream(&mut self, view: &View) -> bool {
         let mut changed = false;
         let now = Instant::now();
@@ -453,8 +449,7 @@ impl Streamer {
         true
     }
 
-    /// What draws for the camera of `view`; `ready` says whether a model is on the device, and
-    /// `None` that it never will be.
+    /// What draws for the camera of `view`; `ready` says whether a model is on the device, and `None` that it never will be.
     #[cfg(any(test, feature = "made-up"))]
     pub fn select(&mut self, view: &View, ready: &dyn Fn(ModelRef) -> Option<bool>) -> Selected {
         self.select_asking(view, ready, &mut |_, _| {})

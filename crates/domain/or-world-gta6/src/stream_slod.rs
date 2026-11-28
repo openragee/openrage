@@ -70,8 +70,7 @@ impl CardList {
         }
     }
 
-    /// The same seen with distances scaled by `scale`, `fade` opaque, less the instances `hidden`
-    /// names: those whose tree is drawn as a model.
+    /// The same seen with distances scaled by `scale`, `fade` opaque, less the instances `hidden` names: those whose tree is drawn as a model.
     pub fn seen(&self, scale: f32, fade: f32, hidden: &[u32]) -> Self {
         let mut records = Arc::clone(&self.records);
         if !hidden.is_empty() {
@@ -91,8 +90,7 @@ impl CardList {
         }
     }
 
-    /// The places of its instances that a model drawn stands at, by `standing`: a tree drawn as a
-    /// model yields its card, and one not drawn keeps it.
+    /// The places of its instances that a model drawn stands at, by `standing`: a tree drawn as a model yields its card, and one not drawn keeps it.
     pub fn handed_off(&self, standing: &Standing) -> Vec<u32> {
         if standing.cells.is_empty() || !standing.reaches(self) {
             return Vec::new();
@@ -121,8 +119,7 @@ impl CardList {
     }
 }
 
-/// Where every instance a selection draws stands, by the cell of the ground it stands in: what
-/// a far stand-in yields to.
+/// Where every instance a selection draws stands, by the cell of the ground it stands in: what a far stand-in yields to.
 #[derive(Default)]
 pub struct Standing {
     cells: std::collections::HashMap<(i32, i32), Vec<Vec3>>,

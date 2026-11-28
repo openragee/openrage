@@ -49,9 +49,7 @@ pub struct Opening {
     pub door: bool,
 }
 
-/// Whether a portal of `flags` that holds `doors` doors is shut as the interior stands when it is
-/// placed: one that may close and holds a door is, whatever rooms it joins; one that holds none, or
-/// a link, whose doors never reach it, is open.
+/// Whether a portal of `flags` that holds `doors` doors is shut as the interior stands when it is placed: one that may close and holds a door is, whatever rooms it joins; one that holds none, or a link, whose doors never reach it, is open.
 // ⚠ Inferred: a placed door stands at rest unopened, and the placed interior's proxy is set.
 // ponytail: no door keeps its portal open by its own flags or its archetype's, which the viewer does not read.
 pub fn shut_at_rest(flags: u32, doors: usize) -> bool {
@@ -63,9 +61,7 @@ pub fn shut_at_rest(flags: u32, doors: usize) -> bool {
     portal_is_shut(flags, true, &vec![at_rest; doors])
 }
 
-/// What a camera sees of an interior: by room and by portal; from a room, the pyramids in the world
-/// through the portals to the outside it sees the outside through, `None` where nothing of the
-/// outside is hidden.
+/// What a camera sees of an interior: by room and by portal; from a room, the pyramids in the world through the portals to the outside it sees the outside through, `None` where nothing of the outside is hidden.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Seen {
     pub rooms: Vec<bool>,
@@ -86,8 +82,7 @@ pub fn room_of(rooms: &[RoomBox], eye: Vec3) -> Option<usize> {
         .map(|(k, _)| k)
 }
 
-/// The smallest room other than room 0 whose box holds `p`, the middle of a sphere of `radius`
-/// smaller than the box's half diagonal.
+/// The smallest room other than room 0 whose box holds `p`, the middle of a sphere of `radius` smaller than the box's half diagonal.
 // ⚠ Measured: a prop on a shelf or against a wall has a sphere that passes the room's box, and lit
 // as outdoors it stood four stops and more over the room. Inferred: a shell's piece is wider than
 // the room it walls.
@@ -124,8 +119,7 @@ pub fn plane_of(corners: &[Vec3; 4]) -> Option<(Vec3, Vec3)> {
     Some((normal, corners.iter().copied().sum::<Vec3>() / 4.0))
 }
 
-/// An interior a camera may see into: its rooms and portals in its own space, and what takes a
-/// point of the world into that space.
+/// An interior a camera may see into: its rooms and portals in its own space, and what takes a point of the world into that space.
 pub struct Shell<'a> {
     pub rooms: &'a [RoomBox],
     pub portals: &'a [Opening],
@@ -214,9 +208,7 @@ fn link(interiors: &mut [rules::Interior]) {
     }
 }
 
-/// What a camera at `eye` sees of `shells`: from the room it stands in, through its open portals
-/// and the links into the shells they join; each other shell from outside, through its open
-/// portals to the outside; all of it with no test of where the camera looks.
+/// What a camera at `eye` sees of `shells`: from the room it stands in, through its open portals and the links into the shells they join; each other shell from outside, through its open portals to the outside; all of it with no test of where the camera looks.
 // ponytail: the world's thread is told where the camera stands and not where it looks, so each
 // portal passes the frustum's test, as though the camera looked every way; narrow it with the
 // view's planes if the rooms drawn cost.
@@ -337,10 +329,7 @@ const SKY_ANGLE: f32 = 90.0;
 /// The mean reflectance of a room's surfaces the daylight factor takes.
 const REFLECTANCE: f32 = 0.5;
 
-/// How much of the natural and of the artificial ambient light what stands at `p` in room `room`
-/// of `rooms` takes: of the sky's, the room's average daylight factor over its openings to the
-/// outside, rising to the whole of it in an opening; of the artificial, the light its lamps of
-/// `flux` lumens send round it.
+/// How much of the natural and of the artificial ambient light what stands at `p` in room `room` of `rooms` takes: of the sky's, the room's average daylight factor over its openings to the outside, rising to the whole of it in an opening; of the artificial, the light its lamps of `flux` lumens send round it.
 // ⚠ Inferred: the build states no ambient scale for a room (its light inside is traced through the
 // openings), so the architect's average daylight factor, `W θ / (A (1 − R²))` for openings of area
 // W in a room of surface A, stands for what its tracing brings in. It states no artificial ambient

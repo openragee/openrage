@@ -29,3 +29,10 @@ fn a_map_of_an_entity_a_prop_list_a_grass_list_and_a_far_list_counts_four_kinds(
         .collect();
     assert_eq!(kinds, [0, 1, 2, 3]);
 }
+
+#[test]
+fn a_far_list_that_comes_straight_after_the_entities_is_a_far_list() {
+    // One entity, then a list of far stand-ins, with no prop list and no plain grass list between.
+    let kinds = [0, 1].map(|at| kind(&node(Kind::Entity), at, 1));
+    assert_eq!(kinds, [0, 3]);
+}

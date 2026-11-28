@@ -168,21 +168,17 @@ fn room_at(interior: &Interior, location: EntitySetLocation) -> u32 {
     }
 }
 
-/// The rooms a camera sees of each interior in range it looks into, by the map and place of the
-/// interior's instance.
+/// The rooms a camera sees of each interior in range it looks into, by the map and place of the interior's instance.
 pub type RoomsSeen = HashMap<(u32, u32), Vec<bool>>;
 
-/// Whether a lamp of room `room` of the interior placed at `at` lights what a camera that sees
-/// `rooms` sees: one of a room the camera does not see lights none of it, and one of an interior
-/// whose contents do not draw lights nothing.
+/// Whether a lamp of room `room` of the interior placed at `at` lights what a camera that sees `rooms` sees: one of a room the camera does not see lights none of it, and one of an interior whose contents do not draw lights nothing.
 // ⚠ GTA V's rule: an interior's lights are those of the rooms its portals show, and a lamp is
 // its entity's, there while the entity is.
 pub fn lit(rooms: &RoomsSeen, at: (u32, u32), room: u32) -> bool {
     (rooms.get(&at)).is_some_and(|seen| seen.get(room as usize).copied().unwrap_or(true))
 }
 
-/// `interior` as `instance` places it: each entity it draws that the index has a model for; the
-/// doors its map places, `map_doors` in the world, close the openings of its shell they stand in.
+/// `interior` as `instance` places it: each entity it draws that the index has a model for; the doors its map places, `map_doors` in the world, close the openings of its shell they stand in.
 pub fn place(
     index: &WorldIndex,
     instance: &InteriorInstance,
@@ -347,8 +343,7 @@ impl Placed {
         eye.distance(self.centre) <= (self.lod_dist * scale).max(self.radius)
     }
 
-    /// Give each instance of `chunks` that stands wholly within one of this interior's rooms the
-    /// ambient light of what stands there: a map's props and lists placed inside its shell.
+    /// Give each instance of `chunks` that stands wholly within one of this interior's rooms the ambient light of what stands there: a map's props and lists placed inside its shell.
     // ⚠ Inferred: an instance whose sphere fits in a room is in it; a shell's walls, wider than their
     // room, keep the outdoors'.
     pub fn shade(&self, chunks: &[Chunk], instances: &mut [Instance]) {
@@ -404,9 +399,7 @@ impl Placed {
             .any(|room| p.clamp(room.min, room.max).distance_squared(p) <= r * r)
     }
 
-    /// Call `draw` with each child of what `seen` holds a camera of `view` sees at the hour `hour`,
-    /// 0 to 23, how far from the camera it stands and how opaque it draws, the interior itself
-    /// drawing `fade` opaque.
+    /// Call `draw` with each child of what `seen` holds a camera of `view` sees at the hour `hour`, 0 to 23, how far from the camera it stands and how opaque it draws, the interior itself drawing `fade` opaque.
     pub fn each(
         &self,
         view: &View,
@@ -489,8 +482,7 @@ fn with_interiors(
     }
 }
 
-/// The interiors the map body of these two sections places, each from its archetype's body, read
-/// through `files`; a map that places none costs one look at `map`.
+/// The interiors the map body of these two sections places, each from its archetype's body, read through `files`; a map that places none costs one look at `map`.
 pub fn read_placed(
     index: &WorldIndex,
     files: &mut HashMap<u32, File>,
@@ -520,8 +512,7 @@ pub fn read_placed(
     placed
 }
 
-/// The lights the archetypes of `interior`'s contents hold, in the world under `instance`, each
-/// with the room it is in.
+/// The lights the archetypes of `interior`'s contents hold, in the world under `instance`, each with the room it is in.
 pub fn lights_of(
     index: &WorldIndex,
     instance: &InteriorInstance,
@@ -598,10 +589,7 @@ pub fn light_bounds(interior: &Interior, outer: Mat4, room: u32) -> Vec<Mat4> {
     boxes
 }
 
-/// The lights of the contents of the interiors the map body `model` places, read through `files`,
-/// each with the place of its interior's instance among the map's entities, its room, and whether it
-/// stands inside its room's box; and the boxes [`light_bounds`] gives each room that holds a lamp,
-/// by the instance's place and the room.
+/// The lights of the contents of the interiors the map body `model` places, read through `files`, each with the place of its interior's instance among the map's entities, its room, and whether it stands inside its room's box; and the boxes [`light_bounds`] gives each room that holds a lamp, by the instance's place and the room.
 pub fn lights_placed(
     index: &WorldIndex,
     files: &mut HashMap<u32, File>,

@@ -126,7 +126,8 @@ fn measure(enhanced: bool) {
     let roots: Vec<_> = game_roots()
         .into_iter()
         .filter(|root| {
-            or_title::game::Game::detect_from_root(root).loads_gen9_content() == enhanced
+            or_title::game::Game::detect_from_root(root)
+                .is_some_and(|game| game.loads_gen9_content() == enhanced)
         })
         .collect();
     if roots.is_empty() {

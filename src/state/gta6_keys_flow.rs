@@ -23,7 +23,7 @@ pub(crate) fn executable() -> Option<PathBuf> {
         .or_else(configured_executable)
 }
 
-/// The executable in the GTA VI install folder the preferences hold.
+/// The executable in the install folder the preferences hold for the Xbox build, the one build whose executable keys are read from.
 ///
 /// ⚠ Read from the file and not through `load_prefs`, which would reset the base a later save merges
 /// against, from a reader's thread.
@@ -35,11 +35,24 @@ fn configured_executable() -> Option<PathBuf> {
 fn said(found: or_io::Result<Option<GtaViKeys>>) -> Result<GtaViKeys, String> {
     match found {
         Ok(Some(keys)) => Ok(keys),
-        Ok(None) => Err(tr!(
+        Ok(None) => Err(no_keys()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Why no keys are held: no install folder is set, or the build set has no executable to read them from.
+fn no_keys() -> String {
+    let prefs = prefs_path().map(|file| read_prefs(&file).0);
+    let install = prefs.as_ref().and_then(crate::state::gta_vi::install);
+    match install {
+        Some((build, _)) if build.executable_candidates().is_empty() => tr!(
+            "No GTA VI keys: the {platform} build has no executable OpenRage reads them from, so they come only from a key snapshot of that build.",
+            platform = build.profile().platform().label()
+        ),
+        _ => tr!(
             "No GTA VI keys: set the GTA VI install folder in Settings ▸ Games so its executable can unlock them."
         )
-        .to_string()),
-        Err(e) => Err(e.to_string()),
+        .to_string(),
     }
 }
 
@@ -83,8 +96,22 @@ mod tests {
 
     #[test]
     fn no_keys_say_where_the_install_folder_is_set() {
+        let config = tempfile::tempdir().expect("a config folder");
+        keep_prefs_in(config.path());
         let err = said(Ok(None)).err().expect("no keys");
         assert!(err.contains("Settings ▸ Games"), "{err}");
+
+        // A build with no executable is not told to set the folder it already set.
+        let mut prefs = Prefs::default();
+        let folder = Some(config.path().to_path_buf());
+        prefs.game_paths.set(Game::GtaVIPs5, folder);
+        save_prefs(&prefs);
+        let err = said(Ok(None)).err().expect("no keys");
+        let platform = Game::GtaVIPs5.profile().platform().label();
+        assert!(
+            err.contains(platform) && !err.contains("Settings ▸ Games"),
+            "{err}"
+        );
     }
 
     #[test]

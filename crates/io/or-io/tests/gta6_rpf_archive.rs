@@ -257,3 +257,44 @@ fn every_archive_of_the_build_opens_as_a_tree_and_reads_as_the_gta_vi_reader_doe
         "every nested archive is of the archive kind"
     );
 }
+
+/// Needs no key: a header is in the clear. `OPENRAGE_GAME_ROOT` names the folders, one a build.
+#[test]
+fn every_archive_header_of_a_build_parses_and_states_its_build_s_one_platform() {
+    use or_io::container::rpf::{Rpf9Header, RPF9_HEADER_SIZE, RPF9_MAGIC};
+    use std::io::Read;
+
+    let what = "gta6 archive headers by platform";
+    let mut builds = 0;
+    for root in or_test_support::game_roots() {
+        let mut platforms = BTreeMap::new();
+        for path in build_archives(&root) {
+            let mut head = [0u8; RPF9_HEADER_SIZE];
+            let read = File::open(&path).and_then(|mut file| file.read_exact(&mut head));
+            let magic = u32::from_le_bytes([head[0], head[1], head[2], head[3]]);
+            if read.is_err() || magic != RPF9_MAGIC {
+                continue;
+            }
+            let header =
+                Rpf9Header::parse(&head).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            let facts = header
+                .facts()
+                .expect("a parsed header states a measured platform");
+            *platforms.entry(facts.platform.label()).or_insert(0usize) += 1;
+        }
+        if platforms.is_empty() {
+            continue;
+        }
+        builds += 1;
+        eprintln!("{}: {platforms:?}", root.display());
+        assert_eq!(
+            platforms.len(),
+            1,
+            "{} holds archives of more than one platform: {platforms:?}",
+            root.display()
+        );
+    }
+    if builds == 0 {
+        skip_install(what, "OPENRAGE_GAME_ROOT names no folder of RPF9 archives");
+    }
+}

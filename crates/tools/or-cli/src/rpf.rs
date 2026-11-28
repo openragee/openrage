@@ -438,6 +438,10 @@ pub(crate) fn scan_row(find: &Rpf9ScanFind) -> String {
                 signature: Some(s), ..
             }),
         ) => headerless_row(*s),
+        // A run of no chunk is a body stored as it is.
+        (_, kind @ Rpf9BodyKind::Zlib(run)) if run.chunks == 0 => {
+            scan_label(kind).replacen("zlib", "stored", 1)
+        }
         (_, kind) => scan_label(kind).to_string(),
     }
 }
@@ -488,6 +492,7 @@ pub(crate) fn scan_line(find: &Rpf9ScanFind) -> String {
             resource: Some(resource),
             ..
         }) => format!("{}; {end}", resource_line(resource)),
+        Rpf9BodyKind::Zlib(run) if run.chunks == 0 => format!("stored as it is; {end}"),
         Rpf9BodyKind::Zlib(run) => format!(
             "{} chunk(s), {} stored piece(s), first chunk {} -> {} bytes, run inflates to {}; {end}",
             run.chunks,

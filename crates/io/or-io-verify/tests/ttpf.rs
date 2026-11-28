@@ -113,6 +113,7 @@ fn reason(pack: &TexturePack, e: &TtpfError) -> Option<String> {
         TtpfError::UnknownFormat { code, .. } => format!("format {code:#05x}"),
         TtpfError::TopMipInTail { format, .. } => format!("a top mip in the {format} tail"),
         TtpfError::NotOnDisk { .. } => "a body past the end of the file".into(),
+        TtpfError::TexelOrder { platform } => format!("the {platform} texel order"),
         TtpfError::Inflate { row, .. } if zero_head(pack, *row) => {
             "a zlib body whose head is zeros (a piece not downloaded)".into()
         }
@@ -145,6 +146,116 @@ fn the_packs_of_part_2_hold_to_the_container_model_and_each_texture_reads_or_is_
 #[test]
 fn the_packs_of_part_3_hold_to_the_container_model_and_each_texture_reads_or_is_refused_by_name() {
     read_part(2);
+}
+
+/// The bytes of pixels compared from each pair of packs.
+const PAIR_BUDGET: u64 = 64 << 20;
+
+/// The packs under every game root by their path under it, which the builds of a title share.
+fn packs_by_place() -> BTreeMap<PathBuf, Vec<PathBuf>> {
+    let mut places: BTreeMap<PathBuf, Vec<PathBuf>> = BTreeMap::new();
+    for root in game_roots() {
+        let mut found = Vec::new();
+        packs_under(&root, &mut found);
+        for path in found {
+            if let Ok(place) = path.strip_prefix(&root) {
+                places.entry(place.to_path_buf()).or_default().push(path);
+            }
+        }
+    }
+    places
+}
+
+/// The textures of `xbox` whose rows are all stored or zlib, each with its pixels read through
+/// `xbox` and through `ps5` where `ps5` holds its key, up to [`PAIR_BUDGET`]; and those that differ.
+fn compared(xbox: &TexturePack, ps5: &TexturePack) -> (usize, Vec<String>) {
+    use or_io::gta6::ttpf::{KIND_STORED, KIND_ZLIB};
+
+    let twin: BTreeMap<u64, usize> = (ps5.entries.iter().enumerate())
+        .map(|(index, entry)| (entry.key, index))
+        .collect();
+    let (mut read, mut bytes, mut differ) = (0, 0u64, Vec::new());
+    for (index, entry) in xbox.entries.iter().enumerate() {
+        if bytes >= PAIR_BUDGET {
+            break;
+        }
+        // A row through the coder is rebuilt through tables, which is no oracle.
+        let plain = xbox.rows_of(index).is_some_and(|rows| {
+            xbox.rows[rows]
+                .iter()
+                .all(|row| row.kind == KIND_STORED || row.kind == KIND_ZLIB)
+        });
+        let Some(&other) = twin.get(&entry.key).filter(|_| plain) else {
+            continue;
+        };
+        let (Ok(ours), theirs) = (xbox.texture(index), ps5.texture(other)) else {
+            continue;
+        };
+        read += 1;
+        bytes += ours.pixels.len() as u64;
+        match theirs {
+            Ok(theirs)
+                if (theirs.levels, theirs.faces) == (ours.levels, ours.faces)
+                    && theirs.pixels == ours.pixels => {}
+            Ok(theirs) => differ.push(format!(
+                "{} texture {index}: {} level(s) on Xbox Series, {} on PlayStation 5, the pixels differ",
+                xbox.path().display(),
+                ours.levels,
+                theirs.levels
+            )),
+            Err(e) => differ.push(format!("{} texture {other}: {e}", ps5.path().display())),
+        }
+    }
+    (read, differ)
+}
+
+/// A texture is stored once for each platform, behind two envelopes and in two texel orders, so
+/// each build is the other's check.
+#[test]
+fn a_texture_two_platforms_hold_reads_to_the_same_pixels_through_each_envelope() {
+    use or_io::Platform;
+
+    let what = "gta6 ttpf, two platforms";
+    let pairs: Vec<(TexturePack, TexturePack)> = packs_by_place()
+        .into_iter()
+        // ⚠ `platform.ttpf` holds each platform's own art under one key: it is no pair.
+        .filter(|(place, _)| place.file_stem().is_some_and(|stem| stem != "platform"))
+        .filter_map(|(_, paths)| {
+            let mut packs: Vec<TexturePack> = (paths.iter())
+                .filter_map(|path| TexturePack::open(path).ok())
+                .collect();
+            let mut take = |platform| {
+                let at = packs.iter().position(|pack| pack.platform() == platform)?;
+                Some(packs.swap_remove(at))
+            };
+            Some((take(Platform::XboxSeries)?, take(Platform::Ps5)?))
+        })
+        .collect();
+    if pairs.is_empty() {
+        skip_install(
+            what,
+            format_args!("{GAME_ROOT_ENV} names no two GTA VI folders of two platforms"),
+        );
+        return;
+    }
+    let results: Vec<(usize, Vec<String>)> = pairs
+        .par_iter()
+        .map(|(xbox, ps5)| compared(xbox, ps5))
+        .collect();
+    let read: usize = results.iter().map(|(read, _)| read).sum();
+    let differ: Vec<&String> = results.iter().flat_map(|(_, differ)| differ).collect();
+    eprintln!(
+        "ttpf, two platforms: {} pair(s) of packs, {read} texture(s) read through both, {} that differ",
+        pairs.len(),
+        differ.len()
+    );
+    assert!(read > 0, "no texture of {} pair(s) was read", pairs.len());
+    assert!(
+        differ.is_empty(),
+        "{} of {read} texture(s) differ between the platforms; the first: {:#?}",
+        differ.len(),
+        &differ[..differ.len().min(8)]
+    );
 }
 
 /// Every present head of part `part` holds to the container model, and each texture of its
@@ -180,7 +291,7 @@ fn read_part(part: usize) {
             complete += 1;
             "complete"
         } else {
-            let sentinel = pack.rows.last().map_or(0, |row| row.offset);
+            let sentinel = (pack.rows.last()).map_or(pack.size_on_disk(), |row| row.offset);
             short.push((path, pack.size_on_disk(), sentinel));
             "incomplete"
         };

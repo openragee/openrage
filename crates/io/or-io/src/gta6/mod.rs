@@ -34,6 +34,7 @@ pub mod other_bodies;
 pub mod ped_assets;
 #[cfg(feature = "meta")]
 pub mod ped_catalogue;
+pub mod platform;
 pub mod save;
 // Its natives list is GTA V's `NativeDb`, which `gta5` builds.
 #[cfg(feature = "gta5")]
@@ -46,6 +47,7 @@ pub mod text;
 pub mod text_language;
 pub mod texture_names;
 mod tiling;
+mod tiling_prospero;
 #[cfg(feature = "gta5")]
 pub mod timecycle;
 pub mod ttpf;

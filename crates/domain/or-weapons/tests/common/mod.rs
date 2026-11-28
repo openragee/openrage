@@ -13,7 +13,7 @@ use or_title::{build_mounted_game, DlcCutoff, GtaInstall, MountedGame};
 
 /// The install mounted with every pack its content list names, none when it cannot be.
 pub fn mount(root: &Path) -> Option<MountedGame> {
-    let exe = Game::detect_from_root(root).find_executable(root)?;
+    let exe = Game::detect_from_root(root)?.find_executable(root)?;
     let keys = extract_keys(&exe, &|_| {}).ok()?;
     let crypto: Arc<dyn RpfCryptoProvider> =
         Arc::new(Gta5RetailCryptoProvider::new(Arc::new(keys)));

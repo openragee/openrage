@@ -46,13 +46,13 @@ pub fn classify(path: &Path, prefs: &Prefs) -> PathClass {
     PathClass::ShippedGame
 }
 
-/// Which game's install `path` is inside: the configured one that holds it, else the one an executable in a folder above it says.
+/// Which game's install `path` is inside: the configured one that holds it, else the one a folder above it is detected as, none where a marker there is no profile's.
 pub fn game_of(path: &Path, prefs: &Prefs) -> Option<Game> {
     Game::all()
         .find(|&game| {
             (prefs.game_paths.get(game)).is_some_and(|root| path.starts_with(root.as_path()))
         })
-        .or_else(|| has_install_marker_in_ancestors(path).map(Game::detect_from_root))
+        .or_else(|| has_install_marker_in_ancestors(path).and_then(Game::detect_from_root))
 }
 
 /// Where the mods overlay would hold its copy of this shipped `.rpf`; `None` for anything else.

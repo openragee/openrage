@@ -786,7 +786,7 @@ fn a_real_install_resolves_what_its_type_files_declare() {
         );
         return;
     };
-    let exe = or_title::Game::detect_from_root(root).find_executable(root);
+    let exe = or_title::Game::detect_from_root(root).and_then(|game| game.find_executable(root));
     let Some(exe) = exe else {
         or_test_support::skip_install(WHAT, "no executable, so no keys");
         return;

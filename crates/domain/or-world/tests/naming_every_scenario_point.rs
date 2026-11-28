@@ -179,7 +179,7 @@ fn every_staged_points_type_is_named_and_a_retyped_point_keeps_its_layout() {
 }
 
 fn crypto_for(root: &Path) -> Option<Arc<dyn RpfCryptoProvider>> {
-    let exe = Game::detect_from_root(root).find_executable(root)?;
+    let exe = Game::detect_from_root(root)?.find_executable(root)?;
     let keys = extract_keys(&exe, &|_| {}).ok()?;
     Some(Arc::new(Gta5RetailCryptoProvider::new(Arc::new(keys))))
 }

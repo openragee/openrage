@@ -4,6 +4,15 @@ What OpenRage reads, edits and saves of a GTA VI Xbox build, what it refuses and
 
 GTA VI is a title of its own (`crates/title/or-title/src/game/profiles.rs`) with no declared format: nothing of it is a `#[record]` declaration, because there is no source to name a field by. Its readers are ordinary code in `crates/io/or-io/src/gta6/`, behind `or-io`'s `gta6` feature, and a name there says the role a field was measured to play. The archive is read from its table by `crates/io/or-io/src/container/rpf/gta6_rpf.rs` and the files beside it, and scanned where no key is held. The layouts themselves are in the gitignored docs/extra/ tier and are not repeated here.
 
+## A PlayStation 5 build
+
+This document is about the Xbox Series build. A PlayStation 5 build is a build of its own (`Gta6Ps5`), known by the title id its package states, and far less of it is read: [GTA_VI_Platforms_Plan.md](../direction/GTA_VI_Platforms_Plan.md) says why and what comes next.
+
+- **A file states its platform.** An archive's header and a texture pack's directory each hold the platform's letter, and a reader takes what differs by platform from `crates/io/or-io/src/gta6/platform.rs`, never from the install.
+- **Its archives scan and do not open.** No key OpenRage holds opens a PlayStation 5 table, so an archive is a scan, with no name and no path. Its bodies are stored as they are, which `crates/io/or-io/src/container/rpf/rpf9_scan/stored.rs` names by their first bytes. ⚠ Such a body has an end only where its bytes state one: a metadata document, a movie, an audio container and a resource with its head open from a scan, and a headerless resource is listed and does not.
+- **Its texture packs read.** A pack there has no row table and no coder: the file is the image its directory points into, in the PlayStation 5's own order inside a 64 KiB tile (`crates/io/or-io/src/gta6/tiling_prospero.rs`). It saves as the file it is, and an edit of one is refused.
+- **Most archives come as a pair**, `X.rpf` and `X_concat.rpf`, both whole archives, which `crates/title/or-title/src/install/gta6_files.rs` lists side by side.
+
 ## An archive is read from its table
 
 An RPF9 archive's header is in the clear, and its table of contents is enciphered with keys that are in the game's executable. OpenRage ships no key: it reads them out of the user's own executable, and [GTA_VI_Modding.md](../guides/GTA_VI_Modding.md#give-openrage-your-executables-keys) gives the steps. With them, an archive opens behind `RpfArchive` as `RpfVersion::Rpf9` and is browsed as a GTA V archive is.

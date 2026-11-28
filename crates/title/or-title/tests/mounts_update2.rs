@@ -107,7 +107,7 @@ fn a_legacy_mount_layers_update2_over_the_base_archives() {
 fn retail_mounts(edition: Game, what: &str) -> Vec<(PathBuf, MountedGame)> {
     let roots: Vec<PathBuf> = game_roots()
         .into_iter()
-        .filter(|root| Game::detect_from_root(root) == edition)
+        .filter(|root| Game::detect_from_root(root) == Some(edition))
         .collect();
     if roots.is_empty() {
         skip_install(

@@ -37,6 +37,7 @@ pub mod mrf;
 pub mod names;
 pub mod nav_precalc;
 pub mod needle;
+pub mod platform;
 #[cfg(feature = "archives")]
 pub mod rdr2;
 #[cfg(feature = "rel")]
@@ -57,3 +58,4 @@ pub use hash::{
 };
 pub use names::{Collision, HashFlavour, NameBook, NameIndex, Resolution};
 pub use needle::{hex_preview, Needle, NeedleKind};
+pub use platform::Platform;

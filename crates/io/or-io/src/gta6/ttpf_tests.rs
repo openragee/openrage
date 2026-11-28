@@ -1453,6 +1453,9 @@ fn check_says_what_texture_refuses_without_reading_a_body() {
     assert!(matches!(holed.texture(1), Err(TtpfError::Inflate { .. })));
 }
 
+#[path = "ttpf_envelope_tests.rs"]
+mod envelope;
+
 #[path = "ttpf_write_tests.rs"]
 mod write;
 

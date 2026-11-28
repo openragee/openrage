@@ -440,7 +440,8 @@ fn said(verb: &str, args: &[String]) -> Result<Vec<String>, String> {
     let config =
         or_title::config::config_dir().ok_or("no configuration directory to keep the index in")?;
     // The keys kept for the game where they are, else those of the install's own executable.
-    let detected = or_title::Game::detect_from_root(&root);
+    // As `of_install` above: a folder no profile claims is GTA V's.
+    let detected = or_title::Game::detect_from_root(&root).unwrap_or(or_title::Game::GtaVLegacy);
     let cache = super::keys::shared_keys_cache_path_for(detected).filter(|file| file.is_file());
     let executable = detected.find_executable(&root);
     let keys = match (flag_value(args, "--keys"), &cache, &executable) {

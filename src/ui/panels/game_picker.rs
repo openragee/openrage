@@ -122,8 +122,8 @@ fn draw_installs(ui: &mut egui::Ui, state: &mut AppState) {
 /// Every build, those of one title together, titles in the order the registry first names them.
 fn builds_by_title() -> Vec<Game> {
     let mut builds: Vec<Game> = Game::all().collect();
-    let titles: Vec<&str> = builds.iter().map(|g| g.profile().title()).collect();
-    let first = |game: &Game| titles.iter().position(|t| *t == game.profile().title());
+    let titles: Vec<&str> = builds.iter().map(|g| g.title_id()).collect();
+    let first = |game: &Game| titles.iter().position(|t| *t == game.title_id());
     builds.sort_by_key(first);
     builds
 }

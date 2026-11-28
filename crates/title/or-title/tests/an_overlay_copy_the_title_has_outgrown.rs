@@ -364,7 +364,7 @@ fn a_retail_archive_is_told_from_a_touched_one_and_from_another_by_its_table() {
         return;
     }
     for root in roots {
-        let edition = or_title::Game::detect_from_root(&root);
+        let edition = or_title::Game::detect_from_root(&root).expect("a game's install");
         let exe = edition
             .find_executable(&root)
             .expect("an install has its executable");

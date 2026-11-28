@@ -16,9 +16,6 @@ use super::gta6_texture_naming::{NamingEnded, TextureNaming};
 use super::rpf9_kept::word;
 use super::{AppState, DocPayload, Document, DocumentId, DocumentKind};
 
-/// The most folders a walk reads and the most packs it indexes.
-const MOST_FOLDERS: usize = 100_000;
-const MOST_PACKS: usize = 10_000;
 /// The version of what this file keeps of an index: a change to it takes another.
 const VERSION: u64 = 2;
 /// The most a kept index inflates to, some thirty million keys.
@@ -236,35 +233,12 @@ fn index(
     cancel: &or_job::Cancel,
     progress: &or_job::Progress,
 ) -> Option<(Index, usize)> {
-    let (mut folders, mut packs) = (vec![root.to_path_buf()], Vec::new());
-    let (mut read, mut whole) = (0, true);
-    while let Some(folder) = folders.pop() {
-        if cancel.is_set() {
-            return None;
-        }
-        read += 1;
-        let Ok(entries) = std::fs::read_dir(&folder) else {
-            whole = false;
-            continue;
-        };
-        for path in entries.flatten().map(|e| e.path()) {
-            if path.is_dir() {
-                match read + folders.len() < MOST_FOLDERS {
-                    true => folders.push(path),
-                    false => whole = false,
-                }
-            } else if path
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("ttpf"))
-            {
-                match packs.len() < MOST_PACKS {
-                    true => packs.push(path),
-                    false => whole = false,
-                }
-            }
-        }
+    let listed = or_title::install::gta6_files::list(root);
+    if cancel.is_set() {
+        return None;
     }
-    packs.sort();
+    let mut whole = !listed.truncated && listed.unread == 0;
+    let packs = listed.texture_packs;
     let mut was = kept.map(|kept| kept.packs(root)).unwrap_or_default();
     let mut now = kept.map(|kept| kept.of.clone()).unwrap_or_default();
     let (was_packs, mut opened) = (was.len(), 0);

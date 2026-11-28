@@ -42,7 +42,7 @@ const STATED: [&str; 11] = [
 const TITLE_UPDATE: &str = "TitleUpdate";
 
 fn mount(root: &Path) -> Option<MountedGame> {
-    let exe = Game::detect_from_root(root).find_executable(root)?;
+    let exe = Game::detect_from_root(root)?.find_executable(root)?;
     let keys = extract_keys(&exe, &|_| {}).ok()?;
     let crypto: Arc<dyn RpfCryptoProvider> =
         Arc::new(Gta5RetailCryptoProvider::new(Arc::new(keys)));

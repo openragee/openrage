@@ -14,10 +14,12 @@ use super::rpf9::{Rpf9Header, RPF9_HEADER_SIZE, RPF9_MAGIC};
 use super::version::RSC8_MAGIC;
 #[cfg(feature = "awc")]
 use crate::awc::{stream_table_offset, AwcChunkKind, AwcFile, AwcKey, AWC_MAGIC_LE};
+use crate::gta6::platform::ScanStrategy;
 
 mod kept;
 mod names_by_count;
 mod raw_deflate;
+mod stored;
 mod stored_names;
 pub use kept::{seal_rpf9_scan, unseal_rpf9_scan};
 pub use names_by_count::{rpf9_names_by_count_at, Rpf9NamesByCount};
@@ -131,7 +133,8 @@ pub enum Rpf9Content {
     Other,
 }
 
-/// A run of zlib chunks, and of 64 KiB pieces stored raw between them in a PSO run.
+/// A run of zlib chunks, and of 64 KiB pieces stored raw between them in a PSO run; no chunk, and
+/// pieces only where its end is stated, for a body of an archive that stores bodies as they are.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rpf9ZlibRun {
     pub content: Rpf9Content,
@@ -770,7 +773,9 @@ impl<R: Read + Seek> Rpf9Scan<R> {
             }
         }
         let mut broken = false;
-        if on_slot && may_start_body(self.reader.get(at, 4)?) {
+        if on_slot
+            && (may_start_body(self.reader.get(at, 4)?) || self.reader.may_start_stored(at)?)
+        {
             match self.reader.find_at(at, None, u64::MAX)? {
                 Found::Body(find) => return self.claim_before_names(*find).map(Some),
                 Found::Broken(tail) => {
@@ -1443,6 +1448,8 @@ struct Reader<R> {
     /// The bytes kept of what `find_at` last looked at, at `kept_at`.
     kept: Vec<u8>,
     kept_at: u64,
+    /// How the file's bodies are stored, which the header at its start states by its platform.
+    strategy: ScanStrategy,
 }
 
 impl<R: Read + Seek> Reader<R> {
@@ -1451,7 +1458,9 @@ impl<R: Read + Seek> Reader<R> {
     }
 
     /// A reader whose fills read `window` bytes of the file, or what is asked for at once.
-    fn windowed(source: R, window: usize) -> Result<Self, Rpf9ScanError> {
+    fn windowed(mut source: R, window: usize) -> Result<Self, Rpf9ScanError> {
+        let strategy = stored::strategy_of(&mut source)
+            .map_err(|source| Rpf9ScanError::Io { offset: 0, source })?;
         Ok(Self {
             src: Source::new(source, window)
                 .map_err(|source| Rpf9ScanError::Io { offset: 0, source })?,
@@ -1461,6 +1470,7 @@ impl<R: Read + Seek> Reader<R> {
             keep: 0,
             kept: Vec::new(),
             kept_at: u64::MAX,
+            strategy,
         })
     }
 
@@ -1547,6 +1557,8 @@ impl<R: Read + Seek> Reader<R> {
             Some((Rpf9BodyKind::StoredRsc8 { version, extent }, extent))
         } else if let Some((revision, length)) = bink2(head) {
             Some((Rpf9BodyKind::Bink2 { revision, length }, length))
+        } else if self.strategy == ScanStrategy::StoredBodies {
+            return self.stored_body(at, out, limit);
         } else if head.starts_with(&[0x78, 0xDA]) {
             return self.zlib_run(at, out, limit);
         } else {
@@ -1687,8 +1699,9 @@ impl<R: Read + Seek> Reader<R> {
         out: Option<&mut Vec<u8>>,
         limit: u64,
     ) -> Result<Found, Rpf9ScanError> {
-        // Measured: a container starts a 4 KiB page and its table's end, below 256 MiB, is its end.
-        if !at.is_multiple_of(AWC_PAGE) {
+        // Measured: a container starts a 4 KiB page, or any slot where bodies are stored as they
+        // are, and its table's end, below 256 MiB, is its end.
+        if self.strategy == ScanStrategy::ZlibHeads && !at.is_multiple_of(AWC_PAGE) {
             return Ok(Found::Nothing);
         }
         let Some(extent) = self.awc_extent(at)? else {
@@ -2902,6 +2915,7 @@ mod tests {
     mod counted;
     mod raw_streams;
     mod recount;
+    mod stored;
     mod stored_names;
 
     fn deflate(bytes: &[u8]) -> Vec<u8> {

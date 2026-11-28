@@ -40,7 +40,7 @@ fn scanned_title_of_the_tab(state: &AppState) -> Option<Game> {
     })
 }
 
-/// GTA VI while the World screen flies through the GTA VI folder Settings names, which is read by scan and never the open install; not once that folder was found to hold no world.
+/// The GTA VI build while the World screen flies through its folder Settings names, which is read by scan and never the open install; not once that folder was found to hold no world.
 fn world_title(state: &AppState) -> Option<Game> {
     let on = state.active_workspace == crate::ui::dock::Workspace::World;
     let shown = on && crate::ui::panels::world_viewer::offered(state);
@@ -49,7 +49,8 @@ fn world_title(state: &AppState) -> Option<Game> {
             .failed
             .is_some()
     };
-    (shown && !failed()).then_some(Game::GtaVI)
+    let (build, _) = crate::state::gta_vi::install(&state.prefs)?;
+    (shown && !failed()).then_some(build)
 }
 
 /// The game whose install a launch opens; a click lists the installs found to switch to.

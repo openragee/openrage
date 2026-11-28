@@ -47,7 +47,7 @@ fn open(state: &mut AppState, path: PathBuf) -> DocumentId {
 
 fn shipped_bik(root: &Path, (rpf, path): (&str, &str)) -> Vec<u8> {
     let exe = Game::detect_from_root(root)
-        .find_executable(root)
+        .and_then(|game| game.find_executable(root))
         .expect("the install's executable");
     let keys = Arc::new(extract_keys(&exe, &|_| {}).expect("keys from the install's executable"));
     let provider = Arc::new(Gta5RetailCryptoProvider::new(keys));
@@ -297,7 +297,9 @@ fn a_shipped_bink2_plays_with_its_sound_through_or_media() {
     const WHAT: &str = "a shipped Bink 2 movie plays with its sound in OpenRage's own code";
     let Some(root) = game_roots().into_iter().find(|root| {
         root.join(SHIPPED_BINK2.0).is_file()
-            && Game::detect_from_root(root).find_executable(root).is_some()
+            && Game::detect_from_root(root)
+                .and_then(|game| game.find_executable(root))
+                .is_some()
     }) else {
         skip_install(WHAT, format_args!("no install root; set {GAME_ROOT_ENV}"));
         return;
@@ -490,7 +492,7 @@ fn every_shipped_bink2_matches_its_installs_dll_plane_for_plane() {
     }
     for root in &roots {
         let exe = Game::detect_from_root(root)
-            .find_executable(root)
+            .and_then(|game| game.find_executable(root))
             .expect("the install's executable");
         let keys = extract_keys(&exe, &|_| {}).expect("keys from the install's executable");
         let provider: Arc<dyn RpfCryptoProvider> =

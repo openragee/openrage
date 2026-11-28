@@ -32,7 +32,7 @@ static HELD: Mutex<Option<Held>> = Mutex::new(None);
 /// The install's folder where one is set, else the folder above the active document that holds
 /// the archive.
 fn archive_of(state: &AppState, document: Option<&Path>) -> Option<PathBuf> {
-    let set = (state.prefs.game_paths.get(or_title::Game::GtaVI)).map(|root| root.join(ARCHIVE));
+    let set = crate::state::gta_vi::install(&state.prefs).map(|(_, root)| root.join(ARCHIVE));
     set.filter(|archive| archive.is_file()).or_else(|| {
         (document?.ancestors().skip(1))
             .map(|folder| folder.join(ARCHIVE))

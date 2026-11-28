@@ -23,7 +23,7 @@ use or_wardrobe::{Component, Ped, Wardrobe};
 const WHAT: &str = "every_drawable_the_ped_offers_is_a_file_of_the_install";
 
 fn mount(root: &Path) -> Option<MountedGame> {
-    let exe = Game::detect_from_root(root).find_executable(root)?;
+    let exe = Game::detect_from_root(root)?.find_executable(root)?;
     let keys = extract_keys(&exe, &|_| {}).ok()?;
     let crypto: Arc<dyn RpfCryptoProvider> =
         Arc::new(Gta5RetailCryptoProvider::new(Arc::new(keys)));

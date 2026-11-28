@@ -217,7 +217,7 @@ impl AppState {
     /// Start reading the effects of the GTA VI install folder's `shaders.rpf` once for each folder
     /// set, unless the app already knows effects.
     fn start_install_effects(&self) {
-        let Some(root) = self.prefs.game_paths.get(or_title::Game::GtaVI) else {
+        let Some((_, root)) = super::gta_vi::install(&self.prefs) else {
             return;
         };
         let mut read = install_read();

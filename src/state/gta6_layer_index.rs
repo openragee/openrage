@@ -304,7 +304,7 @@ fn bodies_in(path: &Path) -> Option<Bodies> {
 
 /// The index of the install or folder at `root`, read from its archives.
 fn build(root: &Path, kept: Option<&Kept>) -> Index {
-    let (archives, _) = crate::state::gta6_install_scan::archives_under(root);
+    let archives = or_title::install::gta6_files::list(root).archive_paths();
     let mut was = (kept.and_then(|kept| kept.read(root).ok())).unwrap_or_default();
     let mut now = kept.map(|kept| kept.of.clone()).unwrap_or_default();
     let mut all = Vec::new();

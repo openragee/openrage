@@ -75,7 +75,7 @@ pub(super) fn draw_ttpf(ui: &mut egui::Ui, state: &mut AppState, doc_id: Documen
     if let Some(note) = &supplied {
         ui.label(egui::RichText::new(note).color(theme::TEXT_SECONDARY));
     }
-    if supplied.is_none() {
+    if supplied.is_none() && ttpf.pack.envelope().has_coder() {
         let calibrate = ui.button(tr!("Calibrate decoding")).on_hover_text(tr!(
             "Fit the tables of the console's texture coder from every pack of this game, so that the textures stored through it for BC3, BC4, BC5, BC6H and BC7 read. No file holds those tables, so such a texture is an estimate and is marked calibrated"
         ));

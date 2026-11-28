@@ -32,7 +32,8 @@ fn every_file_a_real_dlc_sub_pack_holds_answers_to_the_crc_device() {
         return;
     }
     for root in &roots {
-        let Some(exe) = Game::detect_from_root(root).find_executable(root) else {
+        let Some(exe) = Game::detect_from_root(root).and_then(|game| game.find_executable(root))
+        else {
             or_test_support::skip_install(
                 WHAT,
                 format_args!("{} has no executable", root.display()),

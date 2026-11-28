@@ -1,6 +1,7 @@
-//! A `.ttpf` texture pack: an `RDS5` header, a table of 8-byte rows, an `ETPF` directory of textures
-//! in row 0, then bodies of tiled texture memory. A texture is keyed by the 64-bit hash of its
-//! lower-cased name, which the pack does not hold.
+//! A `.ttpf` texture pack: an `ETPF` directory of textures and the image of their memory, which an
+//! `RDS5` file holds as a table of 8-byte rows whose bodies decode into it, the directory in row 0,
+//! and which a bare `ETPF` file is. A texture is keyed by the 64-bit hash of its lower-cased name,
+//! which the pack does not hold.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -8,19 +9,22 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use super::bcpack::{self, BcPackError};
+use super::platform::{PlatformFacts, TexelOrder};
 use super::tiling::{chain, chain_lengths, volume_chain, Layout, Level, Tile};
+use super::tiling_prospero;
 use crate::codec::texture::{DxgiFormat, GrcTextureFormat, TextureSource};
+use crate::platform::Platform;
 
 const MAGIC: [u8; 4] = *b"RDS5";
 const DIRECTORY_MAGIC: [u8; 4] = *b"ETPF";
-/// The directory version every measured pack carries.
-const DIRECTORY_VERSION: u32 = 0x27A;
+/// The directory version every measured pack carries, in the three bytes after its platform's letter.
+const DIRECTORY_VERSION: u32 = 2;
 const HEADER_LEN: u64 = 0x10;
 const ROW_LEN: u64 = 8;
 const ENTRY_LEN: u64 = 16;
 const KEY_LEN: u64 = 8;
 /// The most memory one texture is read into.
-const TEXTURE_LIMIT: u64 = 1 << 30;
+pub(super) const TEXTURE_LIMIT: u64 = 1 << 30;
 
 /// A body's codec kind: the bytes as stored.
 pub const KIND_STORED: u8 = 0;
@@ -36,8 +40,22 @@ pub enum TtpfError {
         #[source]
         source: std::io::Error,
     },
-    #[error("not a GTA VI texture pack: the file starts {0:02X?}, not RDS5")]
+    #[error("not a GTA VI texture pack: the file starts {0:02X?}, with neither RDS5 nor ETPF")]
     NotATexturePack([u8; 4]),
+    #[error("the texture pack's directory states no platform a GTA VI pack is read of: {0}")]
+    Platform(String),
+    #[error("the {platform} texel order is not implemented, so no texture of the pack reads")]
+    TexelOrder { platform: &'static str },
+    #[error(
+        "the pack's image is {size:#x} bytes and at most 1 GiB of it is read at once, so it gives \
+         no {len:#x} bytes at {at:#x}"
+    )]
+    ImageRange { at: u64, len: u64, size: u64 },
+    #[error(
+        "editing a {platform} texture pack is not implemented: an edit is written as rows, and its \
+         file has no row table"
+    )]
+    EditPlain { platform: &'static str },
     #[error(
         "the file's first bytes are all zero, as a piece a download has not delivered yet reads: \
          the pack opens once its start is on disk"
@@ -233,7 +251,31 @@ fn codec_state(kind: u8) -> String {
     }
 }
 
-/// The 16-byte file header.
+/// How a pack holds its image, which the file's first four bytes name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Envelope {
+    /// `RDS5`: a header and a table of rows whose bodies decode into the image, row 0 the directory.
+    Rows,
+    /// A bare `ETPF`: the file is the image, the directory at its start.
+    Plain,
+}
+
+impl Envelope {
+    fn of_magic(magic: [u8; 4]) -> Option<Self> {
+        match magic {
+            MAGIC => Some(Self::Rows),
+            DIRECTORY_MAGIC => Some(Self::Plain),
+            _ => None,
+        }
+    }
+
+    /// Whether a body of this envelope can be stored through the BCPack coder.
+    pub fn has_coder(self) -> bool {
+        self == Self::Rows
+    }
+}
+
+/// The 16-byte file header of a pack of rows; of a plain pack, no rows and the file's length.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Header {
     /// Rows in the table, the directory and the sentinel included.
@@ -485,13 +527,17 @@ impl TextureSource for Texture {
     }
 }
 
-/// An opened `.ttpf`: its header, table and directory, read without reading the bodies.
+/// An opened `.ttpf`: its envelope and its directory, read without reading a texture.
 #[derive(Debug, Clone)]
 pub struct TexturePack {
     path: PathBuf,
     on_disk: u64,
     sparse: bool,
+    envelope: Envelope,
+    /// The facts of the platform the directory states.
+    facts: &'static PlatformFacts,
     pub header: Header,
+    /// The table's rows; none where the file is the image.
     pub rows: Vec<Row>,
     pub entries: Vec<Entry>,
     /// The row each entry's page lands on; `None` for an entry not on disk.
@@ -504,7 +550,7 @@ pub struct TexturePack {
 }
 
 impl TexturePack {
-    /// Reads the header, the table and the directory of the pack at `path`.
+    /// Reads the envelope the file's magic names and the directory of the pack at `path`.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, TtpfError> {
         let path = path.as_ref().to_path_buf();
         let mut file = File::open(&path).map_err(|source| TtpfError::Io {
@@ -530,114 +576,127 @@ impl TexturePack {
         if head.iter().all(|&byte| byte == 0) {
             return Err(TtpfError::HeadIsZero);
         }
-        if magic != MAGIC {
-            return Err(TtpfError::NotATexturePack(magic));
-        }
-        if head[0x0D] != 0 || head[0x0E] != 0 {
-            return Err(malformed(format!(
-                "header bytes 0x0D and 0x0E are {:02X?}; only zero is measured, and whether they \
-                 widen the virtual size is not known",
-                &head[0x0D..0x0F]
-            )));
-        }
-        // Byte 0x0C carries the virtual size from bit 32 up.
-        let header = Header {
-            row_count: u32_at(&head, 4),
-            virtual_size: u64::from(u32_at(&head, 8)) | u64::from(head[0x0C]) << 32,
+        let envelope = Envelope::of_magic(magic).ok_or(TtpfError::NotATexturePack(magic))?;
+        // Where the directory starts in the file, and the bytes that can hold it.
+        let (header, rows, directory, directory_len) = match envelope {
+            Envelope::Rows => {
+                if head[0x0D] != 0 || head[0x0E] != 0 {
+                    return Err(malformed(format!(
+                        "header bytes 0x0D and 0x0E are {:02X?}; only zero is measured, and \
+                         whether they widen the virtual size is not known",
+                        &head[0x0D..0x0F]
+                    )));
+                }
+                // Byte 0x0C carries the virtual size from bit 32 up.
+                let header = Header {
+                    row_count: u32_at(&head, 4),
+                    virtual_size: u64::from(u32_at(&head, 8)) | u64::from(head[0x0C]) << 32,
+                };
+                if header.row_count < 3 {
+                    return Err(malformed(format!(
+                        "{} rows cannot hold a directory, a body and the sentinel",
+                        header.row_count
+                    )));
+                }
+
+                let table_end = HEADER_LEN + ROW_LEN * u64::from(header.row_count);
+                present("table", table_end)?;
+                let table = read_at(&mut file, &path, HEADER_LEN, table_end - HEADER_LEN)?;
+                let rows = table
+                    .as_chunks::<{ ROW_LEN as usize }>()
+                    .0
+                    .iter()
+                    .enumerate()
+                    .map(|(i, row)| parse_row(i, u32_at(row, 0), u32_at(row, 4)))
+                    .collect::<Result<Vec<_>, _>>()?;
+                check_rows(&rows, &header, table_end, on_disk)?;
+
+                // Row 0 is stored, so its decoded size is its length in the file less its pad.
+                let (directory, directory_len) = (rows[0].offset, rows[1].virtual_address);
+                present("directory", directory + directory_len)?;
+                (header, rows, directory, directory_len)
+            }
+            // The file is the image: its length is the image's size, and no row cuts it.
+            Envelope::Plain => {
+                let header = Header {
+                    row_count: 0,
+                    virtual_size: on_disk,
+                };
+                (header, Vec::new(), 0, on_disk)
+            }
         };
-        if header.row_count < 3 {
-            return Err(malformed(format!(
-                "{} rows cannot hold a directory, a body and the sentinel",
-                header.row_count
-            )));
-        }
+        let (letter, stated, entries) = read_directory(&mut file, &path, directory, directory_len)?;
+        let facts =
+            PlatformFacts::of_letter(letter).map_err(|e| TtpfError::Platform(e.to_string()))?;
 
-        let table_end = HEADER_LEN + ROW_LEN * u64::from(header.row_count);
-        present("table", table_end)?;
-        let table = read_at(&mut file, &path, HEADER_LEN, table_end - HEADER_LEN)?;
-        let rows = table
-            .as_chunks::<{ ROW_LEN as usize }>()
-            .0
-            .iter()
-            .enumerate()
-            .map(|(i, row)| parse_row(i, u32_at(row, 0), u32_at(row, 4)))
-            .collect::<Result<Vec<_>, _>>()?;
-        check_rows(&rows, &header, table_end, on_disk)?;
-
-        let directory = rows[0].offset;
-        // Row 0 is stored, so its decoded size is its length in the file less its pad.
-        let directory_len = rows[1].virtual_address;
-        present("directory", directory + directory_len)?;
-        if directory_len < HEADER_LEN {
-            return Err(malformed(format!("the directory is {directory_len} bytes")));
-        }
-        let dir_head = read_at(&mut file, &path, directory, HEADER_LEN)?;
-        if dir_head[..4] != DIRECTORY_MAGIC {
-            return Err(malformed("row 0 does not start with ETPF".into()));
-        }
-        let version = u32_at(&dir_head, 4);
-        if version != DIRECTORY_VERSION {
-            return Err(malformed(format!(
-                "the directory's version is {version:#x}; only {DIRECTORY_VERSION:#x} is measured"
-            )));
-        }
-        let count = u64::from(u32_at(&dir_head, 8));
-        let pool = u64::from(u32_at(&dir_head, 12));
-        if count > rows.len() as u64 - 2
-            || HEADER_LEN + 2 * ENTRY_LEN * count + pool > directory_len
-        {
-            return Err(malformed(format!(
-                "{count} entries and a {pool}-byte pool do not fit a {directory_len}-byte directory \
-                 over {} bodies",
-                rows.len() - 2
-            )));
-        }
-        let listed = read_at(
-            &mut file,
-            &path,
-            directory + HEADER_LEN,
-            (ENTRY_LEN + KEY_LEN) * count,
-        )?;
-        let (entries, keys) = listed.split_at((ENTRY_LEN * count) as usize);
-        let entries: Vec<Entry> = entries
-            .as_chunks::<{ ENTRY_LEN as usize }>()
-            .0
-            .iter()
-            .zip(keys.as_chunks::<{ KEY_LEN as usize }>().0)
-            .map(|(entry, key)| Entry::parse(entry, u64::from_le_bytes(*key)))
-            .collect();
-
-        let bodies = &rows[1..rows.len() - 1];
         let mut first_rows: Vec<Option<usize>> = Vec::with_capacity(entries.len());
-        let mut previous = 0;
-        for (k, entry) in entries.iter().enumerate() {
-            if !entry.on_disk {
-                first_rows.push(None);
-                continue;
+        match envelope {
+            Envelope::Rows => {
+                if entries.len() > rows.len() - 2 {
+                    return Err(malformed(format!(
+                        "{} entries are more than the table's {} bodies",
+                        entries.len(),
+                        rows.len() - 2
+                    )));
+                }
+                let bodies = &rows[1..rows.len() - 1];
+                let mut previous = 0;
+                for (k, entry) in entries.iter().enumerate() {
+                    if !entry.on_disk {
+                        first_rows.push(None);
+                        continue;
+                    }
+                    let at = u64::from(entry.page) << 12;
+                    let row = bodies
+                        .binary_search_by_key(&at, |r| r.virtual_address)
+                        .map(|i| i + 1)
+                        .map_err(|_| {
+                            malformed(format!(
+                                "texture {k}'s page {:#x} is not where a body starts",
+                                entry.page
+                            ))
+                        })?;
+                    if previous >= row {
+                        return Err(malformed(format!(
+                            "texture {k} does not start after the texture before it"
+                        )));
+                    }
+                    previous = row;
+                    first_rows.push(Some(row));
+                }
             }
-            let at = u64::from(entry.page) << 12;
-            let row = bodies
-                .binary_search_by_key(&at, |r| r.virtual_address)
-                .map(|i| i + 1)
-                .map_err(|_| {
-                    malformed(format!(
-                        "texture {k}'s page {:#x} is not where a body starts",
-                        entry.page
-                    ))
-                })?;
-            if previous >= row {
-                return Err(malformed(format!(
-                    "texture {k} does not start after the texture before it"
-                )));
+            Envelope::Plain => {
+                // The Xbox tiles of a texture lie in rows its entry counts and sizes.
+                if facts.texel_order == TexelOrder::XboxTiles {
+                    return Err(malformed(format!(
+                        "the directory states {}, whose textures lie in the rows of a table, and \
+                         the file has none",
+                        facts.platform.label()
+                    )));
+                }
+                // A texture's memory runs from its page to the next texture's.
+                let mut floor = stated;
+                for (k, entry) in entries.iter().enumerate().filter(|(_, e)| e.on_disk) {
+                    let at = u64::from(entry.page) << 12;
+                    if at < floor || at >= on_disk {
+                        return Err(malformed(format!(
+                            "texture {k}'s page {:#x} is not past the directory and the texture \
+                             before it, inside the file",
+                            entry.page
+                        )));
+                    }
+                    floor = at + 1;
+                }
+                first_rows.resize(entries.len(), None);
             }
-            previous = row;
-            first_rows.push(Some(row));
         }
 
         Ok(Self {
             path,
             on_disk,
             sparse,
+            envelope,
+            facts,
             header,
             rows,
             entries,
@@ -657,15 +716,73 @@ impl TexturePack {
         self.on_disk
     }
 
-    /// Whether the file is as long as its sentinel row states and not sparse; a download in progress can be shorter, or full length with pieces still missing.
+    /// How the pack holds its image.
+    pub fn envelope(&self) -> Envelope {
+        self.envelope
+    }
+
+    /// The platform the pack's directory states.
+    pub fn platform(&self) -> Platform {
+        self.facts.platform
+    }
+
+    /// Whether the file is as long as its sentinel row states, where it has one, and not sparse; a download in progress can be shorter, or full length with pieces still missing.
     pub fn is_complete(&self) -> bool {
-        let sentinel = self.file_rows().last();
-        sentinel.is_some_and(|s| s.offset == self.on_disk) && !self.sparse
+        let whole = match self.envelope {
+            Envelope::Rows => (self.file_rows().last()).is_some_and(|s| s.offset == self.on_disk),
+            // A plain file states no length of its own.
+            Envelope::Plain => true,
+        };
+        whole && !self.sparse
+    }
+
+    /// `len` bytes of the image at virtual address `at`: decoded from the rows that hold them, or read from the file where the file is the image.
+    pub fn image(&self, at: u64, len: u64) -> Result<Vec<u8>, TtpfError> {
+        let size = self.header.virtual_size;
+        let end = (at.checked_add(len))
+            .filter(|&end| end <= size && len <= TEXTURE_LIMIT)
+            .ok_or(TtpfError::ImageRange { at, len, size })?;
+        let mut file = File::open(&self.path).map_err(|source| TtpfError::Io {
+            path: self.path.clone(),
+            source,
+        })?;
+        if self.envelope == Envelope::Plain {
+            return read_at(&mut file, &self.path, at, len);
+        }
+        let mut out = vec![0u8; len as usize];
+        // Row 0 starts at 0 and the sentinel at the image's end, so a row holds `at` and the walk ends.
+        let first = self.rows.partition_point(|row| row.virtual_address <= at) - 1;
+        for row in first..self.rows.len() - 1 {
+            let from = self.rows[row].virtual_address;
+            if from >= end {
+                break;
+            }
+            let body = self.body(&mut file, row)?;
+            let (lo, hi) = (at.max(from), end.min(from + body.len() as u64));
+            out[(lo - at) as usize..(hi - at) as usize]
+                .copy_from_slice(&body[(lo - from) as usize..(hi - from) as usize]);
+        }
+        Ok(out)
+    }
+
+    /// The range of the image texture `index`'s memory takes, up to the next texture's or the image's end; `None` where its entry or the next is not on disk.
+    pub fn range_of(&self, index: usize) -> Option<Range<u64>> {
+        if self.envelope == Envelope::Rows {
+            let at = |row: usize| self.rows[row].virtual_address;
+            return self.rows_of(index).map(|rows| at(rows.start)..at(rows.end));
+        }
+        let at = |entry: &Entry| entry.on_disk.then_some(u64::from(entry.page) << 12);
+        let start = at(self.entries.get(index)?)?;
+        let end = match self.entries.get(index + 1) {
+            Some(next) => at(next)?,
+            None => self.header.virtual_size,
+        };
+        Some(start..end)
     }
 
     /// What row `row` is, or `None` past the table.
     pub fn role(&self, row: usize) -> Option<RowRole> {
-        let last = self.rows.len() - 1;
+        let last = self.rows.len().checked_sub(1)?;
         match row {
             0 => Some(RowRole::Directory),
             r if r < last => Some(RowRole::Body),
@@ -674,7 +791,7 @@ impl TexturePack {
         }
     }
 
-    /// The rows that hold texture `index`'s memory, in virtual order; `None` where its entry or the next is not on disk.
+    /// The rows that hold texture `index`'s memory, in virtual order; `None` where its entry or the next is not on disk, and for a pack with no rows.
     pub fn rows_of(&self, index: usize) -> Option<Range<usize>> {
         let first = (*self.first_rows.get(index)?)?;
         let end = match self.first_rows.get(index + 1) {
@@ -686,7 +803,10 @@ impl TexturePack {
 
     /// Why texture `index` cannot be read, as far as the directory and the table tell without inflating a body.
     pub fn check(&self, index: usize) -> Result<(), TtpfError> {
-        self.plan_as(index, true).map(|_| ())
+        match self.facts.texel_order {
+            TexelOrder::XboxTiles => self.plan_as(index, true).map(|_| ()),
+            TexelOrder::Prospero => tiling_prospero::plan(self, index).map(|_| ()),
+        }
     }
 
     /// The row of `rows` that holds byte `at` of a texture whose range starts at `start`.
@@ -725,6 +845,11 @@ impl TexturePack {
         let Some(entry) = self.entries.get(index) else {
             return Err(TtpfError::NoSuchTexture { index, count });
         };
+        // What follows places the Xbox tiles, and everything that reads or writes them asks it.
+        if self.facts.texel_order != TexelOrder::XboxTiles {
+            let platform = self.facts.platform.label();
+            return Err(TtpfError::TexelOrder { platform });
+        }
         let rows = self
             .rows_of(index)
             .ok_or(TtpfError::RangeNotKnown { index })?;
@@ -917,6 +1042,14 @@ impl TexturePack {
 
     /// [`Self::texture`], and how its coded bodies were rebuilt: exactly, or through the pack's calibration.
     pub fn texture_noted(&self, index: usize) -> Result<(Texture, bcpack::Decode), TtpfError> {
+        match self.facts.texel_order {
+            TexelOrder::XboxTiles => self.texture_in_tiles(index),
+            TexelOrder::Prospero => tiling_prospero::texture(self, index),
+        }
+    }
+
+    /// [`Self::texture_noted`] out of the Xbox tiles the texture's rows hold.
+    fn texture_in_tiles(&self, index: usize) -> Result<(Texture, bcpack::Decode), TtpfError> {
         let Plan {
             rows,
             start,
@@ -984,6 +1117,10 @@ impl TexturePack {
 
     /// Texture `index` from mip `from` down, or the largest mip under it whose rows decode, with which mip that is.
     pub fn texture_from(&self, index: usize, from: u32) -> Result<(u32, Texture), TtpfError> {
+        // Only the Xbox tiles are placed level by level: another order reads whole.
+        if self.facts.texel_order != TexelOrder::XboxTiles {
+            return self.texture(index).map(|texture| (0, texture));
+        }
         let Plan {
             rows,
             start,
@@ -1173,7 +1310,7 @@ impl TexturePack {
     }
 }
 
-fn malformed(why: String) -> TtpfError {
+pub(super) fn malformed(why: String) -> TtpfError {
     TtpfError::Malformed(why)
 }
 
@@ -1191,6 +1328,47 @@ fn read_at(file: &mut File, path: &Path, at: u64, len: u64) -> Result<Vec<u8>, T
             source,
         })?;
     Ok(bytes)
+}
+
+/// The `ETPF` directory at `at`, which `room` bytes on disk can hold: the platform letter it states, the bytes it takes and its entries.
+fn read_directory(
+    file: &mut File,
+    path: &Path,
+    at: u64,
+    room: u64,
+) -> Result<(u8, u64, Vec<Entry>), TtpfError> {
+    if room < HEADER_LEN {
+        return Err(malformed(format!("the directory is {room} bytes")));
+    }
+    let head = read_at(file, path, at, HEADER_LEN)?;
+    // A plain file was told by this magic, so only a table's row 0 can lack it.
+    if head[..4] != DIRECTORY_MAGIC {
+        return Err(malformed("row 0 does not start with ETPF".into()));
+    }
+    let version = u32_at(&head, 4) >> 8;
+    if version != DIRECTORY_VERSION {
+        return Err(malformed(format!(
+            "the directory's version is {version:#x}; only {DIRECTORY_VERSION:#x} is measured"
+        )));
+    }
+    let count = u64::from(u32_at(&head, 8));
+    let pool = u64::from(u32_at(&head, 12));
+    let stated = HEADER_LEN + 2 * ENTRY_LEN * count + pool;
+    if stated > room {
+        return Err(malformed(format!(
+            "{count} entries and a {pool}-byte pool do not fit a {room}-byte directory"
+        )));
+    }
+    let listed = read_at(file, path, at + HEADER_LEN, (ENTRY_LEN + KEY_LEN) * count)?;
+    let (entries, keys) = listed.split_at((ENTRY_LEN * count) as usize);
+    let entries = entries
+        .as_chunks::<{ ENTRY_LEN as usize }>()
+        .0
+        .iter()
+        .zip(keys.as_chunks::<{ KEY_LEN as usize }>().0)
+        .map(|(entry, key)| Entry::parse(entry, u64::from_le_bytes(*key)))
+        .collect();
+    Ok((head[4], stated, entries))
 }
 
 fn parse_row(index: usize, lo: u32, hi: u32) -> Result<Row, TtpfError> {
@@ -1287,7 +1465,7 @@ fn held_levels(entry: &Entry, flags: u16, levels: &[Level], unit: u64) -> usize 
 }
 
 /// The bytes of the smallest row a row-size code states that holds `bytes`.
-fn smallest_row_holding(bytes: u64) -> Option<u64> {
+pub(super) fn smallest_row_holding(bytes: u64) -> Option<u64> {
     (1..32)
         .filter_map(row_code_pages)
         .map(|pages| u64::from(pages) << 12)

@@ -25,7 +25,9 @@ impl Game {
     pub const GtaVLegacy: Game = Game("gta-v-legacy");
     pub const GtaVEnhanced: Game = Game("gta-v-enhanced");
     pub const Rdr2: Game = Game("rdr2");
+    /// The Xbox Series build, which keeps the id it had as the only build.
     pub const GtaVI: Game = Game("gta-vi");
+    pub const GtaVIPs5: Game = Game("gta-vi-ps5");
 }
 
 impl Game {
@@ -50,6 +52,15 @@ impl Game {
         self.profile().description()
     }
 
+    pub fn title_id(self) -> &'static str {
+        self.profile().title_id()
+    }
+
+    /// Whether this is a build of GTA VI, on any platform.
+    pub fn is_gta_vi(self) -> bool {
+        self.title_id() == profiles::GTA_VI
+    }
+
     pub fn executable_candidates(self) -> &'static [&'static str] {
         self.profile().executable_candidates()
     }
@@ -70,10 +81,9 @@ impl Game {
         self.0
     }
 
-    pub fn detect_from_root(root: &Path) -> Self {
-        registry::detect(root)
-            .map(|p| Game(p.id()))
-            .unwrap_or(Self::GtaVLegacy)
+    /// The build whose markers the folder at `root` holds; `None` where no profile claims it.
+    pub fn detect_from_root(root: &Path) -> Option<Self> {
+        registry::detect(root).map(|p| Game(p.id()))
     }
 
     pub fn loads_gen9_content(self) -> bool {

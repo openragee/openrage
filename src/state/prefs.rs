@@ -1029,9 +1029,10 @@ pub fn keys_cache_path_for(game: Game) -> Option<PathBuf> {
 }
 
 pub fn keys_cache_path_for_exe(exe: &std::path::Path) -> Option<PathBuf> {
+    // These are GTA V's keys: an executable in a folder no profile claims keeps Legacy's cache.
     let game = exe
         .parent()
-        .map(Game::detect_from_root)
+        .and_then(Game::detect_from_root)
         .unwrap_or(Game::GtaVLegacy);
     keys_cache_path_for(game)
 }

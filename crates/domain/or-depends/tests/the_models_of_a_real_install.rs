@@ -38,7 +38,7 @@ fn mounted(what: &str) -> Option<(PathBuf, MountedGame)> {
         );
         return None;
     };
-    let exe = or_title::Game::detect_from_root(root).find_executable(root);
+    let exe = or_title::Game::detect_from_root(root).and_then(|game| game.find_executable(root));
     let Some(exe) = exe else {
         or_test_support::skip_install(what, "no executable, so no keys");
         return None;

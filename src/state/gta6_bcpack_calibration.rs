@@ -53,20 +53,6 @@ fn ended(calibration: &Calibration) -> Option<Ended> {
         .clone()
 }
 
-/// Every `.ttpf` under `dir`, into `out`.
-fn packs_under(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(listed) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for path in listed.flatten().map(|entry| entry.path()) {
-        if path.is_dir() {
-            packs_under(&path, out);
-        } else if (path.extension()).is_some_and(|e| e.eq_ignore_ascii_case("ttpf")) {
-            out.push(path);
-        }
-    }
-}
-
 /// The folder whose packs are calibrated with the pack at `path`: the game folder its
 /// `data/ttdb` lies under, a `pack/<name>` folder counting as the game's, else the pack's own.
 pub(crate) fn folder_of(path: &Path) -> PathBuf {
@@ -85,8 +71,7 @@ pub(crate) fn folder_of(path: &Path) -> PathBuf {
 /// The mark, under `dir`, that the offer of a calibration was declined for the packs under
 /// `folder`: the packs' names and lengths name it, so the same game in another folder has it too.
 fn declined_mark(dir: &Path, folder: &Path) -> PathBuf {
-    let mut paths = Vec::new();
-    packs_under(folder, &mut paths);
+    let paths = or_title::install::gta6_files::list(folder).texture_packs;
     let members: Vec<u64> = (paths.iter())
         .filter_map(|path| Some(member_key(path, std::fs::metadata(path).ok()?.len())))
         .collect();
@@ -118,9 +103,7 @@ pub(crate) fn running() -> bool {
 }
 
 fn work(folder: &Path, cancel: &Cancel, progress: &Progress) -> Ended {
-    let mut paths = Vec::new();
-    packs_under(folder, &mut paths);
-    paths.sort();
+    let paths = or_title::install::gta6_files::list(folder).texture_packs;
     let packs: Vec<TexturePack> = (paths.iter())
         .filter_map(|path| TexturePack::open(path).ok())
         .collect();

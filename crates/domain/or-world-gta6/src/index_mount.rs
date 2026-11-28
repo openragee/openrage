@@ -210,25 +210,13 @@ pub(super) fn level_folders(files: &[&RegisteredFile]) -> HashMap<String, usize>
     folders
 }
 
-/// Every `.rpf` under `root`, the folder's own first.
+/// Every archive under `root`, through the one lister, the folder's own first; a walk cut short by a limit is logged.
 pub(super) fn archives_under(root: &Path) -> Vec<PathBuf> {
-    let mut found = Vec::new();
-    let mut folders = vec![(root.to_path_buf(), 0)];
-    while let Some((folder, depth)) = folders.pop() {
-        let Ok(entries) = std::fs::read_dir(&folder) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() && depth < 4 {
-                folders.push((path, depth + 1));
-            } else if (path.extension()).is_some_and(|e| e.eq_ignore_ascii_case("rpf")) {
-                found.push(path);
-            }
-        }
+    let listed = or_title::install::gta6_files::list(root);
+    if listed.truncated {
+        tracing::warn!(root = %root.display(), "the walk stopped at a limit: archives past it are not indexed");
     }
-    found.sort();
-    found
+    listed.archive_paths()
 }
 
 #[cfg(test)]

@@ -51,7 +51,8 @@ fn every_bound_of_an_install_has_the_same_root_from_its_front_as_whole() {
         return;
     }
     for root in &roots {
-        let Some(exe) = Game::detect_from_root(root).find_executable(root) else {
+        let Some(exe) = Game::detect_from_root(root).and_then(|game| game.find_executable(root))
+        else {
             or_test_support::skip_install(
                 WHAT,
                 format_args!("{} has no executable", root.display()),

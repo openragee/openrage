@@ -13,9 +13,8 @@ use super::jobs::{file_name, JobKind, Outcome, RunningJob, Then};
 use super::rpf9_scan::{body_path, opens_as_bytes, Ended, Row, RowKind, Rpf9ScanDocument, View};
 use super::AppState;
 
-/// The most folders the walk reads, the most archives it scans, and the most bodies it keeps.
-pub(crate) const MOST_FOLDERS: usize = 10_000;
-pub(crate) const MOST_ARCHIVES: usize = 1_000;
+pub(crate) use or_title::install::gta6_files::{MOST_ARCHIVES, MOST_FOLDERS};
+/// The most bodies the scan keeps.
 pub(crate) const MOST_HITS: usize = 1 << 23;
 /// How often the job looks at the scan of the archive in hand.
 const LOOK: Duration = Duration::from_millis(50);
@@ -191,35 +190,6 @@ impl AppState {
     }
 }
 
-/// Every file under `root` named `.rpf`, in path order, and whether the walk stopped at a limit
-/// before it found them all.
-pub(super) fn archives_under(root: &Path) -> (Vec<PathBuf>, bool) {
-    let (mut folders, mut archives, mut read) = (vec![root.to_path_buf()], Vec::new(), 0);
-    let mut cut = false;
-    while let Some(folder) = folders.pop() {
-        read += 1;
-        let Ok(entries) = std::fs::read_dir(&folder) else {
-            continue;
-        };
-        for path in entries.flatten().map(|e| e.path()) {
-            let rpf = (path.extension()).is_some_and(|e| e.eq_ignore_ascii_case("rpf"));
-            if path.is_dir() {
-                match read + folders.len() < MOST_FOLDERS {
-                    true => folders.push(path),
-                    false => cut = true,
-                }
-            } else if rpf {
-                match archives.len() < MOST_ARCHIVES {
-                    true => archives.push(path),
-                    false => cut = true,
-                }
-            }
-        }
-    }
-    archives.sort();
-    (archives, cut)
-}
-
 /// Scan each archive under `root` as its own tab scans it, reading the scan kept of one already
 /// scanned and keeping a scan that reads one whole, and tally it into `found`.
 fn scan_every_archive(
@@ -228,7 +198,8 @@ fn scan_every_archive(
     cancel: &Cancel,
     progress: &Progress,
 ) -> Ended {
-    let (archives, cut) = archives_under(root);
+    let listed = or_title::install::gta6_files::list(root);
+    let (archives, cut) = (listed.archive_paths(), listed.truncated);
     let sizes: Vec<u64> = (archives.iter())
         .map(|path| std::fs::metadata(path).map_or(0, |m| m.len()))
         .collect();
@@ -429,10 +400,6 @@ mod tests {
         .expect("written");
         std::fs::write(dir.path().join("notes.txt"), vec![0u8; 0x400]).expect("written");
 
-        let mut wanted = vec![first.clone(), second.clone(), dir.path().join("c.rpf")];
-        wanted.sort();
-        assert_eq!(archives_under(dir.path()), (wanted, false));
-
         let (found, cancel, progress) = (Mutex::default(), Cancel::new(), Progress::new());
         let ended = scan_every_archive(dir.path(), &found, &cancel, &progress);
         assert_eq!(ended, Ended::Whole);
@@ -559,16 +526,5 @@ mod tests {
             FIND_BUDGET,
             "a change of the kinds examines every body again"
         );
-    }
-
-    #[test]
-    fn a_walk_past_the_most_archives_says_it_was_cut() {
-        let dir = tempfile::tempdir().expect("a folder");
-        for i in 0..=MOST_ARCHIVES {
-            std::fs::write(dir.path().join(format!("{i:04}.rpf")), []).expect("written");
-        }
-        let (archives, cut) = archives_under(dir.path());
-        assert_eq!(archives.len(), MOST_ARCHIVES);
-        assert!(cut, "the archive past the limit is said");
     }
 }

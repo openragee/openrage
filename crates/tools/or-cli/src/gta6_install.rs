@@ -8,13 +8,11 @@ use std::path::{Path, PathBuf};
 
 use or_io::container::rpf::{Rpf9Family, Rpf9NamesByCount, Rpf9Scan, Rpf9ScanFind};
 use or_job::{Cancel, Step};
+use or_title::install::gta6_files::{MOST_ARCHIVES, MOST_FOLDERS};
 
 use crate::project::Failure::{self, Run, Usage};
 use crate::rpf::{is_rpf9, scan_row, split_value};
 
-/// The most folders the walk reads, and the most archives it scans.
-const MOST_FOLDERS: usize = 10_000;
-const MOST_ARCHIVES: usize = 1_000;
 /// The most offsets `--sample` prints of a kind, and the most of a kind an archive keeps.
 const MOST_SAMPLE: usize = 10_000;
 const MOST_KEPT: usize = 1 << 22;
@@ -110,36 +108,13 @@ fn admitted(kind: Option<&str>, find: &Rpf9ScanFind) -> bool {
     kind.is_none_or(|k| k == scan_row(find) || Rpf9Family::parse(k) == Some(Rpf9Family::of(find)))
 }
 
-/// Every file under `root` named `.rpf` whose head is RPF9's, in path order, and whether the
+/// Every archive listed under `root` whose head is RPF9's, in the order listed, and whether the
 /// walk stopped at a limit before it found them all.
 fn archives_under(root: &Path) -> (Vec<PathBuf>, bool) {
-    let (mut folders, mut archives, mut read) = (vec![root.to_path_buf()], Vec::new(), 0);
-    let mut cut = false;
-    while let Some(folder) = folders.pop() {
-        read += 1;
-        let Ok(entries) = fs::read_dir(&folder) else {
-            continue;
-        };
-        for path in entries.flatten().map(|e| e.path()) {
-            if path.is_dir() {
-                match read + folders.len() < MOST_FOLDERS {
-                    true => folders.push(path),
-                    false => cut = true,
-                }
-            } else if path
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("rpf"))
-                && is_rpf9(&path)
-            {
-                match archives.len() < MOST_ARCHIVES {
-                    true => archives.push(path),
-                    false => cut = true,
-                }
-            }
-        }
-    }
-    archives.sort();
-    (archives, cut)
+    let listed = or_title::install::gta6_files::list(root);
+    let named = listed.archives.into_iter().map(|archive| archive.path);
+    let archives = named.filter(|path| is_rpf9(path)).collect();
+    (archives, listed.truncated)
 }
 
 /// The bodies `admits` takes of the archive at `path`, by row, and their offsets where `keep`;

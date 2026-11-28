@@ -190,7 +190,8 @@ fn cmd_info(args: &[String]) -> Result<(), String> {
     for (key, (name, _)) in name_keys(lines, &keys) {
         names.entry(key).or_insert(name);
     }
-    let sentinel = pack.rows.last().map_or(0, |row| row.offset);
+    // A pack with no row table states no length: its file's is the one it has.
+    let sentinel = (pack.rows.last()).map_or(pack.size_on_disk(), |row| row.offset);
     let state = if pack.is_complete() {
         "complete".to_string()
     } else if pack.size_on_disk() == sentinel {
@@ -199,9 +200,10 @@ fn cmd_info(args: &[String]) -> Result<(), String> {
         format!("short: {} of {sentinel} bytes on disk", pack.size_on_disk())
     };
     println!(
-        "{}: {} texture(s) in {} rows; {state}\n",
+        "{}: {} texture(s) for {} in {} rows; {state}\n",
         path.display(),
         pack.entries.len(),
+        pack.platform().label(),
         pack.rows.len()
     );
     // A line up to what its texture's read is called, and the read where the texture has a
@@ -426,7 +428,7 @@ fn packs_under(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     Ok(())
 }
 
-/// Every pack that opens under `folder`, in the order of their paths.
+/// Every pack under `folder` that opens and whose envelope has the BCPack coder, in the order of their paths.
 fn open_under(folder: &str) -> Result<Vec<TexturePack>, String> {
     let mut paths = Vec::new();
     packs_under(Path::new(folder), &mut paths)?;
@@ -434,12 +436,15 @@ fn open_under(folder: &str) -> Result<Vec<TexturePack>, String> {
     let mut packs = Vec::new();
     for path in &paths {
         match TexturePack::open(path) {
-            Ok(pack) => packs.push(pack),
+            Ok(pack) if pack.envelope().has_coder() => packs.push(pack),
+            Ok(_) => {}
             Err(e) => eprintln!("{}: {e}", path.display()),
         }
     }
     match packs.is_empty() {
-        true => Err(format!("no texture pack opens under {folder}")),
+        true => Err(format!(
+            "no texture pack whose envelope has the BCPack coder opens under {folder}"
+        )),
         false => Ok(packs),
     }
 }

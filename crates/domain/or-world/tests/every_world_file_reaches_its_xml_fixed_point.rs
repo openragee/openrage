@@ -386,7 +386,7 @@ fn census_of(root: &Path) -> Option<Census> {
     let label = root.display().to_string();
     let mut census = Census::default();
     census.installs.entry(label.clone()).or_default().enhanced =
-        Game::detect_from_root(root) == Game::GtaVEnhanced;
+        Game::detect_from_root(root) == Some(Game::GtaVEnhanced);
     let mut warnings = Vec::new();
     let _ = crawl::crawl(root, provider, &mut warnings, &mut |found| {
         let leaf = found.leaf.to_ascii_lowercase();
@@ -408,7 +408,7 @@ fn census_of(root: &Path) -> Option<Census> {
 }
 
 fn crypto_for(root: &Path) -> Option<Arc<dyn RpfCryptoProvider>> {
-    let exe = Game::detect_from_root(root).find_executable(root)?;
+    let exe = Game::detect_from_root(root)?.find_executable(root)?;
     let keys = extract_keys(&exe, &|_| {}).ok()?;
     Some(Arc::new(Gta5RetailCryptoProvider::new(Arc::new(keys))))
 }

@@ -320,7 +320,7 @@ impl AppState {
         let root = root.to_path_buf();
         let run = TextureNaming::run(doing, move |cancel, progress| {
             let _running = Harvesting;
-            let (archives, _) = super::gta6_install_scan::archives_under(&root);
+            let archives = or_title::install::gta6_files::list(&root).archive_paths();
             let file = names::vocabulary_file(&config);
             let mut vocabulary = Vocabulary::load(&file);
             let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
@@ -360,7 +360,8 @@ impl AppState {
     /// where no tab holds one.
     pub fn harvest_names_of_the_open_gta6_folder(&mut self) {
         let is_gta6 = |folder: &PathBuf| {
-            folder.is_dir() && super::gta_vi::read_by_scan(or_title::Game::detect_from_root(folder))
+            let game = or_title::Game::detect_from_root(folder);
+            folder.is_dir() && game.is_some_and(super::gta_vi::read_by_scan)
         };
         let tabs = (self.active_document().into_iter()).chain(self.documents.iter());
         let root = tabs.filter_map(|doc| doc.path.clone()).find(is_gta6);

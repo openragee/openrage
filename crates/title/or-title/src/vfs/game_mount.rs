@@ -309,7 +309,8 @@ pub fn build_mounted_game_with(
     let mut roots: Vec<MountRoot> = Vec::new();
     let mut diagnostics = Diagnostics::new();
 
-    let game = Game::detect_from_root(&install.root);
+    // This mount is GTA V's: a folder no profile claims mounts by Legacy's rules.
+    let game = Game::detect_from_root(&install.root).unwrap_or(Game::GtaVLegacy);
 
     // ⚠ Membership is the install's own copy. An overlay holding `common.rpf`
     // beside a directory that holds nothing else is not an install, and

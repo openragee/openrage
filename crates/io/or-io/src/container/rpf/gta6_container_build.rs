@@ -23,6 +23,8 @@ use super::{bad, headerless, push, round16, stored_chunked, Rpf9NewBody, Rpf9Pie
 use super::{GtaViKeys, Rpf9Builder, Rpf9Toc};
 use crate::error::Result;
 use crate::gta6::hash::{name_hash32, name_hash64};
+use crate::gta6::platform::PlatformFacts;
+use crate::platform::Platform;
 
 /// The metadata descriptors every measured four-descriptor archive holds: kind, the u16 after it,
 /// and the payload's offset into the metadata.
@@ -37,8 +39,11 @@ const CLASS_MEDIA: u8 = 0xFF;
 const CLASS_ARCHIVE: u8 = 0x00;
 /// The index cipher type the reader opens.
 const INDEX_CIPHER_TYPE: u16 = 16;
-/// Header bytes every measured header holds: `+0x19`, `+0x2D` and `+0x2E`.
-const HEADER_CONSTANTS: [(usize, u8); 3] = [(0x19, 0x7A), (0x2D, 0x0F), (0x2E, 0x09)];
+/// The header byte every measured header holds at `+0x2D`.
+const HEADER_2D: u8 = 0x0F;
+// ponytail: a built archive is the Xbox Series's, the one platform keys are held for; the
+// platform comes from the key set once a key set states one.
+const BUILT_FOR: Platform = Platform::XboxSeries;
 
 /// The index key a table is enciphered under: a key id the snapshot holds, and the IV.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,9 +127,10 @@ pub fn build(
         columns.iter().filter(|c| c.external).count() as u16,
     );
     LE::write_u32(&mut prefix[0x30..], INDEX_KEYED_TAIL);
-    for (at, byte) in HEADER_CONSTANTS {
-        prefix[at] = byte;
-    }
+    let facts = PlatformFacts::of(BUILT_FOR)?;
+    prefix[0x19] = facts.platform.extension_letter() as u8;
+    prefix[0x2D] = HEADER_2D;
+    prefix[0x2E] = facts.header_word;
     for (i, (kind, after, offset)) in DESCRIPTORS.iter().enumerate() {
         LE::write_u16(&mut prefix[0x40 + 8 * i..], *kind);
         LE::write_u16(&mut prefix[0x42 + 8 * i..], *after);

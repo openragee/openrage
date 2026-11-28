@@ -40,10 +40,6 @@ pub fn user_snapshot() -> SnapshotSource {
     SnapshotSource::discover(or_title::config::config_dir().as_deref()).or_bundled()
 }
 
-fn find_game_exe(game_root: &Path) -> Option<PathBuf> {
-    Game::detect_from_root(game_root).find_executable(game_root)
-}
-
 pub fn resolve_crypto(game_root: &Path, keys_override: Option<&Path>) -> ResolvedCrypto {
     if let Some(path) = keys_override {
         return match load_cache_provider(path) {
@@ -59,8 +55,9 @@ pub fn resolve_crypto(game_root: &Path, keys_override: Option<&Path>) -> Resolve
         };
     }
 
-    let game = Game::detect_from_root(game_root);
-    let exe = find_game_exe(game_root);
+    // A folder no profile claims is read with GTA V's keys: an install copied without its executable opens from the keys cache.
+    let game = Game::detect_from_root(game_root).unwrap_or(Game::GtaVLegacy);
+    let exe = game.find_executable(game_root);
     if game == Game::Rdr2 {
         return resolve_rdr2(exe.as_deref());
     }

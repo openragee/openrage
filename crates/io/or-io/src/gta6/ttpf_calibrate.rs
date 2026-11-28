@@ -53,9 +53,9 @@ fn places(len: usize, element: usize, size: [usize; 3], tile: &Tile) -> Option<V
 }
 
 impl TexturePack {
-    /// Draws the bodies that do not decode exactly through `tables` from now on, where it covers them; `None` refuses them again.
+    /// Draws the bodies that do not decode exactly through `tables` from now on, where it covers them; `None` refuses them again, and a pack whose envelope has no coder takes none.
     pub fn set_calibration(&mut self, tables: Option<Arc<Tables>>) {
-        self.calibration = tables;
+        self.calibration = tables.filter(|_| self.envelope.has_coder());
     }
 
     /// Whether a calibration is set.

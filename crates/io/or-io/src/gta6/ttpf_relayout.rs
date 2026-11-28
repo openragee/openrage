@@ -179,6 +179,7 @@ impl TexturePack {
 
     /// The entry, rows and levels of texture `index` given `shape`, as the pack's own textures of that shape have them.
     fn planned(&self, index: usize, shape: Shape) -> Result<Planned, TtpfError> {
+        self.edits_rows()?;
         if !self.is_complete() || self.entries.iter().any(|e| !e.on_disk) {
             return Err(TtpfError::NotWhole);
         }

@@ -62,7 +62,10 @@ fn install(what: &str) -> Option<(PathBuf, GameId, PathBuf)> {
         );
         return None;
     };
-    let game = or_title::Game::detect_from_root(root);
+    let Some(game) = or_title::Game::detect_from_root(root) else {
+        or_test_support::skip_install(what, "the folder holds no game");
+        return None;
+    };
     let Some(exe) = game.find_executable(root) else {
         or_test_support::skip_install(what, "no executable, so no keys");
         return None;

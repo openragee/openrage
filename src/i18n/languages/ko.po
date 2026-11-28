@@ -17509,3 +17509,6 @@ msgstr "그중 조명되는 것은 그림자 없이 태양을 받습니다. 게�
 
 msgid "Of the game's thirty material kinds, the standard and the translucent are lit by their own arithmetic; skin, clear coat, sheen and the rest are lit as the standard one for now"
 msgstr "게임의 서른 가지 재질 종류 중 표준과 반투명은 각자의 계산으로 조명됩니다. 피부, 클리어 코트, 광택 및 나머지는 당분간 표준처럼 조명됩니다"
+
+msgid "No GTA VI keys: the {platform} build has no executable OpenRage reads them from, so they come only from a key snapshot of that build."
+msgstr "GTA VI 키가 없습니다: {platform} 빌드에는 OpenRage가 키를 읽어 올 실행 파일이 없으므로, 키는 해당 빌드의 키 스냅샷에서만 가져올 수 있습니다."

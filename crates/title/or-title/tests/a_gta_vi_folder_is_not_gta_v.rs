@@ -1,9 +1,10 @@
 // Every folder here is written by the test: an Xbox package's root holds a
-// `MicrosoftGame.Config` and a `common.rpf`, and its executable may be absent.
+// `MicrosoftGame.Config` and a `common.rpf`, and its executable may be absent;
+// a PlayStation 5 package's holds `sce_sys/param.json` and an `eboot.bin`.
 
 use std::path::{Path, PathBuf};
 
-use or_title::game::{registry, ContainerFamily};
+use or_title::game::{registry, ContainerFamily, Platform};
 use or_title::gta5::{Gta5, InstallError};
 use or_title::Game;
 
@@ -51,13 +52,63 @@ fn gta_vi_package(dir: &Path) {
     write(dir, "common.rpf", b"");
 }
 
+/// A PlayStation 5 package's root: a parameter file stating `title_id`, the `eboot.bin` every package carries, and a `common.rpf`.
+fn ps5_package(dir: &Path, title_id: &str) {
+    let params = format!("{{\"titleId\": \"{title_id}\"}}");
+    write(dir, "sce_sys/param.json", params.as_bytes());
+    write(dir, "eboot.bin", b"");
+    write(dir, "common.rpf", b"");
+}
+
+#[test]
+fn a_playstation_5_package_is_gta_vi_by_its_title_id() {
+    let (_scratch, dir) = scratch("ps5");
+    ps5_package(&dir, "PPSA38500");
+
+    let found = registry::detect(&dir).expect("the package is a build");
+    assert_eq!(found.id(), "gta-vi-ps5");
+    assert_eq!(found.platform(), Platform::Ps5);
+    assert_eq!(Game::detect_from_root(&dir), Some(Game::GtaVIPs5));
+
+    // Two builds of one title, and only one of them is the Xbox package.
+    assert_ne!(Game::GtaVIPs5, Game::GtaVI);
+    assert_eq!(Game::GtaVIPs5.title_id(), Game::GtaVI.title_id());
+    assert!(Game::GtaVIPs5.is_gta_vi() && Game::GtaVI.is_gta_vi());
+    assert_eq!(Game::GtaVLegacy.title_id(), Game::GtaVEnhanced.title_id());
+    for other in [Game::GtaVLegacy, Game::GtaVEnhanced, Game::Rdr2] {
+        assert!(!other.is_gta_vi(), "{} is taken for GTA VI", other.label());
+    }
+}
+
+// Every PlayStation package holds an `eboot.bin`, so one of another title is what a profile naming it would claim.
+#[test]
+fn a_playstation_package_of_another_title_is_no_game() {
+    let (_scratch, dir) = scratch("ps5-other");
+    ps5_package(&dir, "PPSA00000");
+
+    assert!(
+        registry::detect(&dir).is_none(),
+        "claimed by {:?}",
+        registry::detect(&dir).map(|p| p.id())
+    );
+    assert_eq!(Game::detect_from_root(&dir), None);
+}
+
+#[test]
+fn a_folder_no_profile_claims_is_no_game() {
+    let (_scratch, dir) = scratch("unclaimed");
+    write(&dir, "common.rpf", b"");
+
+    assert_eq!(Game::detect_from_root(&dir), None);
+}
+
 #[test]
 fn a_package_without_its_executable_is_gta_vi_by_its_config() {
     let (_scratch, dir) = scratch("config");
     gta_vi_package(&dir);
 
     assert_eq!(registry::detect(&dir).map(|p| p.id()), Some("gta-vi"));
-    assert_eq!(Game::detect_from_root(&dir), Game::GtaVI);
+    assert_eq!(Game::detect_from_root(&dir), Some(Game::GtaVI));
 }
 
 #[test]
@@ -65,7 +116,7 @@ fn the_title_id_is_compared_without_case() {
     let (_scratch, dir) = scratch("lowercase");
     write(&dir, CONFIG, &config(&"7952987A".to_ascii_lowercase()));
 
-    assert_eq!(Game::detect_from_root(&dir), Game::GtaVI);
+    assert_eq!(Game::detect_from_root(&dir), Some(Game::GtaVI));
 }
 
 #[test]
@@ -73,7 +124,7 @@ fn the_executable_alone_marks_gta_vi() {
     let (_scratch, dir) = scratch("exe");
     write(&dir, "game_scarlett_master.exe", b"");
 
-    assert_eq!(Game::detect_from_root(&dir), Game::GtaVI);
+    assert_eq!(Game::detect_from_root(&dir), Some(Game::GtaVI));
 }
 
 #[test]
@@ -97,13 +148,16 @@ fn gta_vi_is_known_and_unsupported_and_says_why() {
 
 #[test]
 fn a_gta_vi_package_is_not_opened_as_gta_v() {
-    let (_scratch, dir) = scratch("not-gta5");
-    gta_vi_package(&dir);
+    let packages: [fn(&Path); 2] = [gta_vi_package, |dir| ps5_package(dir, "PPSA38500")];
+    for package in packages {
+        let (_scratch, dir) = scratch("not-gta5");
+        package(&dir);
 
-    match Gta5::at(&dir) {
-        Err(InstallError::NotGta5 { title, .. }) => assert_eq!(title, "GTA VI"),
-        Err(other) => panic!("refused for the wrong reason: {other}"),
-        Ok(_) => panic!("a GTA VI package was taken for a GTA V install"),
+        match Gta5::at(&dir) {
+            Err(InstallError::NotGta5 { title, .. }) => assert_eq!(title, "GTA VI"),
+            Err(other) => panic!("refused for the wrong reason: {other}"),
+            Ok(_) => panic!("a GTA VI package was taken for a GTA V install"),
+        }
     }
 }
 
@@ -112,10 +166,10 @@ fn a_gta_v_install_is_not_gta_vi() {
     let (_scratch, dir) = scratch("gta5");
     write(&dir, "GTA5.exe", b"");
     write(&dir, "common.rpf", b"");
-    assert_eq!(Game::detect_from_root(&dir), Game::GtaVLegacy);
+    assert_eq!(Game::detect_from_root(&dir), Some(Game::GtaVLegacy));
 
     write(&dir, "GTA5_Enhanced.exe", b"");
-    assert_eq!(Game::detect_from_root(&dir), Game::GtaVEnhanced);
+    assert_eq!(Game::detect_from_root(&dir), Some(Game::GtaVEnhanced));
 }
 
 #[test]
@@ -124,7 +178,7 @@ fn an_rdr2_install_is_not_gta_vi() {
     write(&dir, "RDR2.exe", b"");
     write(&dir, "common_0.rpf", b"");
 
-    assert_eq!(Game::detect_from_root(&dir), Game::Rdr2);
+    assert_eq!(Game::detect_from_root(&dir), Some(Game::Rdr2));
 }
 
 #[test]

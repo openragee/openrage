@@ -1,14 +1,13 @@
-//! RPF9, GTA VI's archive generation: a 64-byte header in the clear, then a table of contents and a
-//! names blob encrypted with no key OpenRage has, so the header is read and the archive refused.
-//!
-//! It is no [`RpfVersion`](super::RpfVersion), whose every question (a flat table, hashed names,
-//! deflated bodies, a write path) has no measured answer for RPF9.
+//! The header of RPF9, GTA VI's archive generation: 64 bytes in the clear, which state the platform
+//! the archive was built for, before an enciphered table of contents and names blob.
 
 #[cfg(feature = "gta6")]
 use byteorder::{ByteOrder, LE};
 
 #[cfg(feature = "gta6")]
 use crate::error::{IoError, Result};
+#[cfg(feature = "gta6")]
+use crate::gta6::platform::PlatformFacts;
 
 /// The bytes `9FPR`.
 pub const RPF9_MAGIC: u32 = 0x5250_4639;
@@ -39,9 +38,8 @@ pub struct Rpf9Header {
     pub part_b_offset: u32,
     /// Eight bytes that differ in every archive measured; what they are is not known.
     pub per_archive: [u8; 8],
-    /// The build-platform letter the header states at `0x19`: `z` on the Xbox Series builds
-    /// measured, `p` on PlayStation 5, and so on by the public rage.re prefix table. It is the
-    /// first letter the archive's `#dr`/`#td` extensions resolve to.
+    /// The build-platform letter the header states at `0x19`: `z` on Xbox Series, `p` on
+    /// PlayStation 5. It is the first letter the archive's `#dr`/`#td` extensions resolve to.
     pub platform: u8,
     /// The header as read, including every word whose role is not known.
     pub raw: [u8; RPF9_HEADER_SIZE],
@@ -93,10 +91,15 @@ impl Rpf9Header {
         })
     }
 
+    /// The facts of the platform the header's letter states, refused for one no build was measured on.
+    pub fn facts(&self) -> Result<&'static PlatformFacts> {
+        PlatformFacts::of_letter(self.platform)
+    }
+
     /// The first rule this header breaks of those every RPF9 header measured holds.
     pub fn broken_rule(&self) -> Option<String> {
         let raw = &self.raw;
-        for (at, want) in [(0x18, 0), (0x1B, 0), (0x2D, 0x0F), (0x2E, 0x09), (0x2F, 0)] {
+        for (at, want) in [(0x18, 0), (0x1B, 0), (0x2D, 0x0F), (0x2F, 0)] {
             if raw[at] != want {
                 return Some(format!(
                     "byte {at:#04X} is {:#04X}, where every header measured holds {want:#04X}",
@@ -104,13 +107,17 @@ impl Rpf9Header {
                 ));
             }
         }
-        // 0x19 is the build-platform letter (`z` on Xbox Series, `p` on PS5, …), not a constant.
-        // It must still be one of RAGE's platform letters, so a stray byte is refused.
-        const RAGE_LETTERS: &[u8] = b"ywxdzcopasnvi";
-        if !RAGE_LETTERS.contains(&self.platform) {
+        // 0x19 is the build-platform letter, and 0x2E differs by platform with it.
+        let facts = match self.facts() {
+            Ok(facts) => facts,
+            Err(e) => return Some(format!("byte 0x19: {e}")),
+        };
+        if raw[0x2E] != facts.header_word {
             return Some(format!(
-                "byte 0x19 is {:#04X}, which is no RAGE platform letter",
-                self.platform
+                "byte 0x2E is {:#04X}, where a header of {}, which the letter at 0x19 states, holds {:#04X}",
+                raw[0x2E],
+                facts.platform.label(),
+                facts.header_word
             ));
         }
         if raw[0x34..].iter().any(|b| *b != 0) {
@@ -206,6 +213,7 @@ impl Rpf9Header {
 mod tests {
     use super::*;
     use crate::container::rpf::RpfArchive;
+    use crate::platform::Platform;
 
     const TOC_END: u32 = 0x1A0;
     const NAMES: u32 = 0x30;
@@ -262,11 +270,44 @@ mod tests {
         assert_eq!(header.raw[..], bytes[..RPF9_HEADER_SIZE]);
         assert_eq!(&header.raw[..4], b"9FPR");
 
-        // A PlayStation 5 build states `p` at 0x19, and it reads rather than being refused.
+        // A PlayStation 5 header states `p` at 0x19 and its own byte at 0x2E.
         let mut ps5 = archive();
         ps5[0x19] = b'p';
+        ps5[0x2E] = 0x07;
         let header = Rpf9Header::parse(&ps5).expect("a PS5 RPF9 head reads");
         assert_eq!(header.platform, b'p');
+        assert_eq!(header.facts().unwrap().platform, Platform::Ps5);
+    }
+
+    #[test]
+    fn a_header_that_mixes_two_platforms_or_states_an_unmeasured_one_is_refused_by_name() {
+        let why = |letter: u8, word: u8| {
+            let mut bytes = archive();
+            bytes[0x19] = letter;
+            bytes[0x2E] = word;
+            match Rpf9Header::parse(&bytes) {
+                Err(IoError::Invalid { why, .. }) => why,
+                other => panic!("letter {letter:#04X} with {word:#04X} gave {other:?}"),
+            }
+        };
+        // Each platform's letter with the other's byte.
+        let mixed = why(b'p', 0x09);
+        assert!(
+            mixed.contains("0x2E") && mixed.contains("PlayStation 5"),
+            "{mixed}"
+        );
+        let mixed = why(b'z', 0x07);
+        assert!(
+            mixed.contains("0x2E") && mixed.contains("Xbox Series"),
+            "{mixed}"
+        );
+        // A platform OpenRage knows and no GTA VI build was measured on.
+        let pc = why(b'y', 0x09);
+        assert!(pc.contains("0x19") && pc.contains("PC"), "{pc}");
+        // The lenient read still gives the header, for a scan to say what it found.
+        let mut bytes = archive();
+        bytes[0x19] = b'y';
+        assert!(Rpf9Header::read(&bytes).unwrap().facts().is_err());
     }
 
     #[test]

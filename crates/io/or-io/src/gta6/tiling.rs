@@ -46,6 +46,19 @@ impl Tile {
         Self::new(pattern, element, slots)
     }
 
+    /// [`Self::of`] on the PlayStation 5, whose 64 KiB tile is the 4 KiB tile's order, then the Xbox 64 KiB tile's other bits.
+    pub(super) fn prospero(format: Format, large: bool) -> Self {
+        let xbox = Self::of(format, large);
+        let pattern = match (large, xbox.element) {
+            (false, _) | (true, 2) => return xbox,
+            (true, 1) => "x0 x1 x2 x3 y0 y1 y2 y3 y4 x4 y5 x5 y6 x6 y7 x7",
+            (true, 4) => "x0 x1 y0 y1 y2 x2 y3 x3 y4 x4 y5 x5 y6 x6",
+            (true, 8) => "x0 y0 y1 x1 x2 y2 x3 y3 x4 y4 x5 y5 x6",
+            (true, _) => "y0 y1 x0 x1 y2 x2 y3 x3 y4 x4 y5 x5",
+        };
+        Self::new(pattern, xbox.element, xbox.slots)
+    }
+
     /// The 4 KiB tile of a volume of `format`'s elements: the bits that fill 16 bytes, then z y x z y x z y.
     pub(super) fn volume(format: Format) -> Option<Self> {
         let element = format.element_bytes();
@@ -207,6 +220,18 @@ pub(super) fn volume_chain(
     mips: u32,
     range: u64,
 ) -> Option<(Vec<Level>, u64)> {
+    let (levels, slab) = volume_levels(sides, format, tile, mips);
+    let slabs = u64::from(sides[2]).div_ceil(tile.depth as u64);
+    (slab.checked_mul(slabs)? == range).then_some((levels, slab))
+}
+
+/// [`volume_chain`]'s levels and z-slab for a volume of any range.
+pub(super) fn volume_levels(
+    sides: [u32; 3],
+    format: Format,
+    tile: &Tile,
+    mips: u32,
+) -> (Vec<Level>, u64) {
     let [width, height, depth] = sides;
     let count = mips.clamp(1, u32::BITS - width.max(height).max(depth).leading_zeros());
     let (mut levels, mut tails, mut footprint) = (Vec::new(), 0, 0);
@@ -244,8 +269,7 @@ pub(super) fn volume_chain(
     for level in levels.iter_mut().filter(|l| !l.tail) {
         level.at = slab - level.at;
     }
-    let slabs = u64::from(depth).div_ceil(tile.depth as u64);
-    (slab.checked_mul(slabs)? == range).then_some((levels, slab))
+    (levels, slab)
 }
 
 /// Where a texture's slices lie in its memory.

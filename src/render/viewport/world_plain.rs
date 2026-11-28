@@ -15,9 +15,12 @@ use std::time::Instant;
 use glam::{Mat4, Vec3};
 use or_renderer::world::{WorldConstants, WorldFamily, WorldSurface, WORLD_MAPS};
 use or_renderer::{
-    Frustum, ShadingMode, WorldBucket, WorldDraw, WorldInstance, WorldMaterial, WorldMesh,
+    Frustum, MeshVertex, ShadingMode, WorldBucket, WorldDraw, WorldInstance, WorldMaterial,
+    WorldMesh,
 };
-use or_world::model::{Alpha, AssetKey, Surface, TextureAsk, TextureFormat};
+use or_world::model::{
+    Alpha, AssetKey, FrameFacts, Surface, Texture, TextureAsk, TextureFormat, WaterQuad,
+};
 use or_world::streaming::NodeState;
 
 use super::budget::{may_take, taking, Budgets};
@@ -85,8 +88,8 @@ struct Material {
     away: f32,
 }
 
-/// What a layout was made for: the session, the selection, the camera, what is on the device and the height of the screen.
-type LaidFor = (u64, u64, [u32; 16], u64, u32);
+/// What a layout was made for: the session, the selection, the camera, what is on the device, the height of the screen and the tint of the day.
+type LaidFor = (u64, u64, [u32; 16], u64, u32, u32);
 
 /// A world fed through the seam, on the device.
 #[derive(Default)]
@@ -112,8 +115,12 @@ pub(in crate::render::viewport) struct Plain {
     laid_for: Option<LaidFor>,
     laid: Vec<WorldInstance>,
     spheres: Vec<[f32; 4]>,
-    /// The sun and the clear colour of the session's look, for the frame's end.
-    look: Option<(Vec3, f32, [f32; 4])>,
+    /// The sun, the exposure and the clear colour of the session's look, for the frame's end.
+    look: Option<(Vec3, f32, f32, [f32; 4])>,
+    /// What every instance's colour is multiplied by: the look's ambient light over the pass's own.
+    tint: f32,
+    /// The session's water as one mesh, made when its sheets first come; the inner `None` where they hold no triangle.
+    water: Option<Option<Arc<WorldMesh>>>,
     was: Option<Instant>,
 }
 
@@ -129,13 +136,31 @@ fn bucket_of(alpha: Alpha) -> WorldBucket {
 fn device_format(format: TextureFormat) -> wgpu::TextureFormat {
     use wgpu::TextureFormat as F;
     match format {
-        TextureFormat::Rgba8 => F::Rgba8UnormSrgb,
+        // ⚠ Coverage alone is spread to four channels before it goes: see `on_device`.
+        TextureFormat::Rgba8 | TextureFormat::A8 => F::Rgba8UnormSrgb,
         TextureFormat::Bc1 => F::Bc1RgbaUnormSrgb,
+        TextureFormat::Bc2 => F::Bc2RgbaUnormSrgb,
         TextureFormat::Bc3 => F::Bc3RgbaUnormSrgb,
         // One and two channels have no sRGB form: a colour stored so is read as it is.
         TextureFormat::Bc4 => F::Bc4RUnorm,
         TextureFormat::Bc5 => F::Bc5RgUnorm,
         TextureFormat::Bc7 => F::Bc7RgbaUnormSrgb,
+    }
+}
+
+/// `texture` as the device takes it: its levels as they are, but for coverage alone, which a sampler reads as black under that coverage.
+fn on_device(texture: &Texture) -> CpuTexture {
+    let levels = match texture.format {
+        TextureFormat::A8 => (texture.levels.iter())
+            .map(|level| level.iter().flat_map(|a| [0, 0, 0, *a]).collect())
+            .collect(),
+        _ => texture.levels.clone(),
+    };
+    CpuTexture {
+        width: texture.width,
+        height: texture.height,
+        format: device_format(texture.format),
+        levels,
     }
 }
 
@@ -145,13 +170,41 @@ fn pixels_at(away: f32) -> u32 {
     near.map_or(FAR_PIXELS, |(_, pixels)| *pixels)
 }
 
-/// How strongly a white sun lights the plain pass: a world's colour maps are made for a sun several times a model preview's key, and at that key a street at noon is drawn as dusk.
+/// How strongly a white sun lights a face turned to it, as a multiple of the face's colour: a world's colour maps are made for a sun several times a model preview's key.
 const SUN_STRENGTH: f32 = 1.5;
+/// The ambient light the plain pass adds to every face, which no caller sets.
+const PASS_AMBIENT: f32 = 0.15;
+/// The least an instance's colour is multiplied by, so that a look with no ambient light divides nothing by nought.
+const LEAST_TINT: f32 = 0.05;
+/// The colour of a sheet of water before it is lit, linear.
+const WATER: [f32; 3] = [0.02, 0.11, 0.19];
 
-/// The light the plain pass's key is given for a sun of the colour `key`: none at night.
-fn key_strength(key: [f32; 3]) -> f32 {
-    let luminance = 0.2126 * key[0] + 0.7152 * key[1] + 0.0722 * key[2];
-    SUN_STRENGTH * luminance.clamp(0.0, 2.0)
+fn luminance(colour: [f32; 3]) -> f32 {
+    0.2126 * colour[0] + 0.7152 * colour[1] + 0.0722 * colour[2]
+}
+
+/// How the plain pass is lit for `facts`: the strength its key light is given, and what every instance's colour is multiplied by.
+// ⚠ The pass's ambient light is its own and fixed, so the look's reaches a face as a tint of its
+// instance, and the key is divided by that tint to stay the sun's: a face turned to the sun takes
+// `SUN_STRENGTH` of a white sun and a face turned from it the look's ambient light.
+fn lit_by(facts: &FrameFacts) -> (f32, f32) {
+    let tint = (luminance(facts.ambient) / PASS_AMBIENT).clamp(LEAST_TINT, 8.0);
+    let key = SUN_STRENGTH * luminance(facts.key).clamp(0.0, 2.0);
+    (key / tint, tint)
+}
+
+/// The vertices and indices of `quads` as one mesh facing up.
+fn water_mesh(quads: &[WaterQuad]) -> (Vec<MeshVertex>, Vec<u32>) {
+    let (mut vertices, mut indices) = (Vec::new(), Vec::new());
+    for corner in quads.iter().flat_map(WaterQuad::triangles).flatten() {
+        indices.push(vertices.len() as u32);
+        vertices.push(MeshVertex::new(
+            corner.to_array(),
+            [0.0, 0.0, 1.0],
+            [0.0; 2],
+        ));
+    }
+    (vertices, indices)
 }
 
 /// A linear colour as the bytes of a screen hold it, which is what the renderer's background is stated in.
@@ -371,7 +424,21 @@ impl RenderBridge {
         plain.frame += 1;
         let frame = plain.frame;
         let facts = feed.facts();
-        plain.look = Some((facts.sun, key_strength(facts.key), shown(facts.clear)));
+        let (key, tint) = lit_by(&facts);
+        plain.look = Some((facts.sun, key, facts.exposure, shown(facts.clear)));
+        plain.tint = tint;
+        if plain.water.is_none() {
+            if let Some(quads) = feed.water() {
+                let (vertices, indices) = water_mesh(&quads);
+                plain.water = Some((!indices.is_empty()).then(|| {
+                    let blend = WorldBucket::Blend;
+                    let material =
+                        (self.renderer).world_material(&self.device, None, None, None, blend);
+                    Arc::new(WorldMesh::new(&self.device, &vertices, &indices, material))
+                }));
+                plain.changes += 1;
+            }
+        }
         let now = Instant::now();
         let (time, more) = taking(plain.was.map(|then| now.duration_since(then)));
         plain.was = Some(now);
@@ -384,12 +451,7 @@ impl RenderBridge {
                 break;
             };
             let made = read.as_ref().and_then(|texture| {
-                let cpu = CpuTexture {
-                    width: texture.width,
-                    height: texture.height,
-                    format: device_format(texture.format),
-                    levels: texture.levels.clone(),
-                };
+                let cpu = on_device(texture);
                 let (view, bytes) = upload(&self.device, &self.queue, &cpu, bc, budgets.most_side)?;
                 Some((view, bytes, texture.width.max(texture.height)))
             });
@@ -437,6 +499,7 @@ impl RenderBridge {
             view_proj.to_cols_array().map(f32::to_bits),
             plain.changes,
             height,
+            tint.to_bits(),
         );
         if plain.laid_for == Some(key) {
             self.world.cost.refresh = started.elapsed();
@@ -582,7 +645,7 @@ impl RenderBridge {
             }
         }
         keyed.sort_unstable_by_key(|(key, _)| *key);
-        let draws: Vec<WorldDraw> = keyed.into_iter().map(|(_, draw)| draw).collect();
+        let mut draws: Vec<WorldDraw> = keyed.into_iter().map(|(_, draw)| draw).collect();
         // A model the selection names is held though the camera looks away from it.
         for named in &instances.models {
             if let Some(Slot::Ready { held, .. }) = plain.models.get_mut(named) {
@@ -603,8 +666,19 @@ impl RenderBridge {
             pages,
             lit_by_the_game: false,
         };
+        // The water after everything laid out, with no sphere: it blends over what stands under it.
+        let laid = plain.laid.len();
+        if let Some(Some(water)) = &plain.water {
+            let [r, g, b] = WATER.map(|c| c * tint);
+            (plain.laid).push(WorldInstance::of(Mat4::IDENTITY, [r, g, b, 1.0]));
+            draws.push(WorldDraw {
+                mesh: Arc::clone(water),
+                instances: laid as u32..laid as u32 + 1,
+            });
+        }
         (self.renderer).set_world(&self.device, &self.queue, &plain.laid, draws);
         self.renderer.set_world_spheres(&plain.spheres);
+        plain.laid.truncate(laid);
         for model in plain.evict_models(budgets.models_kept) {
             feed.tell(model, NodeState::Loading);
             plain.changes += 1;
@@ -617,9 +691,13 @@ impl RenderBridge {
 
     /// Light the plain pass by the session's sun and clear to its sky's colour, where a session drew through the seam this frame.
     pub(in crate::render::viewport) fn light_world_feed(&mut self) {
-        if let (true, Some((sun, strength, clear))) =
-            (self.world.plain.shown, self.world.plain.look)
-        {
+        let fed = (self.world.plain.shown)
+            .then_some(self.world.plain.look)
+            .flatten();
+        // ⚠ Set every frame: a frame no session feeds draws at the exposure the renderer began with.
+        let exposure = fed.map_or(or_renderer::viewport::PLAIN_EXPOSURE, |look| look.2);
+        self.renderer.set_plain_exposure(exposure);
+        if let Some((sun, strength, _, clear)) = fed {
             self.renderer.set_key_light(sun, strength);
             self.renderer.set_background(clear);
             self.renderer.set_sky_background(false);
@@ -676,7 +754,7 @@ impl Plain {
             let at = *at as usize;
             self.laid.push(WorldInstance {
                 rows: instances.rows[at],
-                tint: [1.0, 1.0, 1.0, instances.fade[at]],
+                tint: [self.tint, self.tint, self.tint, instances.fade[at]],
                 ambient: or_renderer::world::OUTDOORS,
                 cast_only: 0.0,
             });
@@ -697,7 +775,9 @@ mod tests {
     fn a_colour_map_is_read_as_srgb_wherever_its_format_has_such_a_form() {
         for format in [
             TextureFormat::Rgba8,
+            TextureFormat::A8,
             TextureFormat::Bc1,
+            TextureFormat::Bc2,
             TextureFormat::Bc3,
             TextureFormat::Bc7,
         ] {
@@ -706,6 +786,101 @@ mod tests {
         for format in [TextureFormat::Bc4, TextureFormat::Bc5] {
             assert!(!device_format(format).is_srgb(), "{format:?}");
         }
+    }
+
+    #[test]
+    fn coverage_alone_goes_to_the_device_as_black_under_that_coverage_and_a_block_format_as_it_is()
+    {
+        let coverage = Texture {
+            width: 2,
+            height: 1,
+            format: TextureFormat::A8,
+            srgb: false,
+            levels: vec![vec![0, 200], vec![77]],
+        };
+        assert_eq!(
+            TextureFormat::A8.level_bytes(2, 1),
+            coverage.levels[0].len()
+        );
+        let cpu = on_device(&coverage);
+        assert_eq!(cpu.format, wgpu::TextureFormat::Rgba8UnormSrgb);
+        assert_eq!(
+            cpu.levels,
+            [vec![0, 0, 0, 0, 0, 0, 0, 200], vec![0, 0, 0, 77]]
+        );
+        let block: Vec<u8> = (0..16).collect();
+        assert_eq!(TextureFormat::Bc2.level_bytes(4, 4), block.len());
+        let blocks = Texture {
+            width: 4,
+            height: 4,
+            format: TextureFormat::Bc2,
+            srgb: true,
+            levels: vec![block.clone()],
+        };
+        let cpu = on_device(&blocks);
+        assert_eq!(cpu.format, wgpu::TextureFormat::Bc2RgbaUnormSrgb);
+        assert_eq!((cpu.width, cpu.height, cpu.levels), (4, 4, vec![block]));
+    }
+
+    #[test]
+    fn the_sheets_of_water_are_one_mesh_that_faces_up_each_at_its_height() {
+        use or_world::model::Corner;
+        let quads = [
+            WaterQuad {
+                min: [-8.0, 0.0],
+                max: [8.0, 4.0],
+                height: 3.0,
+                half: None,
+            },
+            WaterQuad {
+                min: [10.0, -4.0],
+                max: [20.0, 6.0],
+                height: 30.25,
+                half: Some(Corner::SouthEast),
+            },
+        ];
+        let (vertices, indices) = water_mesh(&quads);
+        assert_eq!(indices, (0..9).collect::<Vec<u32>>());
+        let heights: Vec<f32> = vertices.iter().map(|vertex| vertex.position[2]).collect();
+        assert_eq!(heights, [3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 30.25, 30.25, 30.25]);
+        assert!(vertices
+            .iter()
+            .all(|vertex| vertex.normal == [0.0, 0.0, 1.0]));
+        // Each triangle turns counter-clockwise seen from above, as its normal says.
+        for triangle in vertices.as_chunks::<3>().0 {
+            let [a, b, c] = triangle.each_ref().map(|v| Vec3::from_array(v.position));
+            assert!((b - a).cross(c - a).z > 0.0, "{a} {b} {c}");
+        }
+        // The half keeps its south-east corner and not its north-west.
+        let half: Vec<[f32; 3]> = vertices[6..].iter().map(|v| v.position).collect();
+        assert!(half.contains(&[20.0, -4.0, 30.25]) && !half.contains(&[10.0, 6.0, 30.25]));
+        assert!(water_mesh(&[]).1.is_empty());
+    }
+
+    #[test]
+    fn at_noon_the_ground_and_every_wall_are_lit_above_a_floor_by_the_sun_and_the_looks_sky() {
+        // A day as a look states it: the sun 0.6 of a radian south of overhead.
+        let (lean, up) = 0.6f32.sin_cos();
+        let facts = FrameFacts {
+            sun: Vec3::new(0.0, -lean, up),
+            key: [1.0; 3],
+            ambient: [0.3; 3],
+            exposure: 1.6,
+            clear: [0.1, 0.2, 0.4],
+        };
+        let (key, tint) = lit_by(&facts);
+        // What the pass sums for a face of that normal, its head light left out: a multiple of the face's colour.
+        let lit = |normal: Vec3| tint * (key * normal.dot(facts.sun).max(0.0) + PASS_AMBIENT);
+        assert!(lit(Vec3::Z) >= 1.4, "the ground: {}", lit(Vec3::Z));
+        assert!(
+            lit(Vec3::NEG_Y) >= 1.0,
+            "a wall in the sun: {}",
+            lit(Vec3::NEG_Y)
+        );
+        for wall in [Vec3::Y, Vec3::X, Vec3::NEG_X] {
+            assert!(lit(wall) >= 0.29, "a wall in shade, {wall}: {}", lit(wall));
+        }
+        assert!(lit(Vec3::Z) > lit(Vec3::NEG_Y) && lit(Vec3::NEG_Y) > lit(Vec3::Y));
     }
 
     #[test]
@@ -719,8 +894,21 @@ mod tests {
 
     #[test]
     fn a_white_sun_lights_at_the_worlds_strength_and_night_not_at_all() {
-        assert_eq!(key_strength([1.0; 3]), SUN_STRENGTH);
-        assert_eq!(key_strength([0.0; 3]), 0.0);
+        let facts = |key: f32, ambient: f32| FrameFacts {
+            sun: Vec3::Z,
+            key: [key; 3],
+            ambient: [ambient; 3],
+            exposure: 1.0,
+            clear: [0.0; 3],
+        };
+        // The key times the tint is the sun's own strength, whatever the ambient light.
+        for ambient in [0.05, PASS_AMBIENT, 0.3] {
+            let (key, tint) = lit_by(&facts(1.0, ambient));
+            assert!((key * tint - SUN_STRENGTH).abs() < 1e-5, "{ambient}");
+            assert!((tint * PASS_AMBIENT - ambient).abs() < 1e-5, "{ambient}");
+        }
+        assert_eq!(lit_by(&facts(0.0, 0.05)).0, 0.0);
+        assert!(lit_by(&facts(1.0, 0.0)).0.is_finite());
         // A clear colour is stated to the renderer as a screen holds it: a linear mid grey is brighter than half there.
         let grey = shown([0.5; 3]);
         assert!((grey[0] - 0.7354).abs() < 1e-3, "{grey:?}");

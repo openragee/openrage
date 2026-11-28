@@ -462,7 +462,8 @@ fn the_world_states_its_capabilities_and_a_map_that_names_itself_has_no_parent()
             Capability::Ground,
             Capability::Collision,
             Capability::Placements,
-            Capability::WeatherGate
+            Capability::WeatherGate,
+            Capability::Water
         ]
     );
     let [row] = index.maps() else {
@@ -548,7 +549,7 @@ impl Feed for Unfed {
 }
 
 #[test]
-fn the_sun_rises_in_the_east_stands_overhead_at_noon_and_sets_in_the_west() {
+fn the_sun_rises_in_the_east_stands_in_the_south_at_noon_and_sets_in_the_west() {
     let (_dir, world, _index, _scratch) = scene();
     let install: &dyn WorldInstall = &*world;
     let sun = |hour: f32| {
@@ -557,9 +558,17 @@ fn the_sun_rises_in_the_east_stands_overhead_at_noon_and_sets_in_the_west() {
     };
     // East is +X and up is +Z, as the game's maps are laid.
     assert!((sun(6.0) - Vec3::X).length() < 1e-5, "{}", sun(6.0));
-    assert!((sun(12.0) - Vec3::Z).length() < 1e-5, "{}", sun(12.0));
+    // At noon it leans south of overhead, so that a wall is lit as the ground is; it is a unit vector at every hour.
+    let noon = sun(12.0);
+    assert!(
+        noon.x.abs() < 1e-5 && noon.y < -0.4 && noon.z > 0.7,
+        "{noon}"
+    );
     assert!((sun(18.0) - Vec3::NEG_X).length() < 1e-5, "{}", sun(18.0));
-    assert!(sun(9.0).x > 0.0 && sun(9.0).z > 0.0 && sun(0.0).z < -0.99);
+    assert!(sun(9.0).x > 0.0 && sun(9.0).z > 0.0 && sun(0.0).z < -0.7);
+    for hour in [0.0, 3.5, 9.0, 12.0, 15.25, 21.0] {
+        assert!((sun(hour).length() - 1.0).abs() < 1e-5, "{hour}");
+    }
 }
 
 #[test]

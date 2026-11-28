@@ -17639,11 +17639,21 @@ msgstr "이 옵션으로 월드 열기"
 msgid "A world opened with other options has an index of its own, read from the install the first time"
 msgstr "다른 옵션으로 연 월드는 자체 인덱스를 가지며, 처음에는 설치본에서 읽습니다"
 
-msgid "Drawn by the plain pass: one sun, and no shadow, sky, water or shader of the game's own"
-msgstr "단순 패스로 그림: 태양 하나이며, 그림자·하늘·물·게임 자체 셰이더는 없습니다"
+msgid "Drawn by the plain pass: one sun and level water, and no shadow, sky or shader of the game's own"
+msgstr "단순 패스로 그림: 태양 하나와 평평한 물, 그림자·하늘·게임 고유 셰이더 없음"
 
-msgid "No weather is named yet, so a map that streams under some weathers alone stays out"
-msgstr "아직 날씨가 지정되지 않아, 일부 날씨에서만 스트리밍되는 맵은 제외됩니다"
+msgid "The weather the world is looked at under: a map placed for some weathers streams under them alone"
+msgstr "월드를 보는 날씨: 일부 날씨용으로 배치된 맵은 그 날씨에서만 스트리밍됩니다"
+
+msgid "{count} thing placed has no model named and is not drawn"
+msgid_plural "{count} things placed have no model named and are not drawn"
+msgstr[0] "배치된 항목 {count}개는 지정된 모델이 없어 그려지지 않습니다"
+msgstr[1] "배치된 항목 {count}개는 지정된 모델이 없어 그려지지 않습니다"
+
+msgid "{count} list of instances (grass, batches of props) is not drawn"
+msgid_plural "{count} lists of instances (grass, batches of props) are not drawn"
+msgstr[0] "인스턴스 목록 {count}개(풀, 소품 묶음)는 그려지지 않습니다"
+msgstr[1] "인스턴스 목록 {count}개(풀, 소품 묶음)는 그려지지 않습니다"
 
 msgid "As the install has it"
 msgstr "설치본 그대로"

@@ -94,6 +94,7 @@ pub struct MeshDraw {
 struct CameraUniform {
     view_proj: [[f32; 4]; 4],
     inv_view_proj: [[f32; 4]; 4],
+    /// Where the camera stands in `xyz`, and in `w` how far the plain modes expose what they lit: 1 leaves it as lit.
     camera_pos_ws: [f32; 4],
     camera_misc: [f32; 4],
     /// The way towards the key light of the plain modes in `xyz`, of unit length, and how strongly it lights in `w`.
@@ -105,6 +106,9 @@ pub const KEY_LIGHT_TOWARDS: Vec3 = Vec3::new(0.4, 0.8, 0.3);
 
 /// How strongly the key light lights until a caller sets another.
 pub const KEY_LIGHT_STRENGTH: f32 = 0.55;
+
+/// The exposure of the plain modes until a caller sets another: what they lit is drawn as it is.
+pub const PLAIN_EXPOSURE: f32 = 1.0;
 
 /// What the shader reads of a key light: the unit way towards it and its strength; the first light where `towards` points nowhere.
 fn key_light_uniform(towards: Vec3, strength: f32) -> [f32; 4] {
@@ -256,6 +260,7 @@ pub struct ViewportRenderer {
     game_sun: Option<Vec3>,
     /// The way towards the key light of the plain modes, and its strength.
     key_light: (Vec3, f32),
+    plain_exposure: f32,
     /// Whether the game's own sky is drawn where nothing else is, in place of the background colour.
     sky_background: bool,
     /// Whether the sun's shadow is cast and received by the game's passes.
@@ -657,6 +662,21 @@ impl ViewportRenderer {
         self.key_light = (towards, strength);
     }
 
+    /// How far the plain world pass exposes what it lit: at any exposure but 1 a colour is multiplied by it and bent under white, so that a dark surface is lifted and a bright one does not clip.
+    ///
+    /// ⚠ At 1, where it begins, the pass draws what it lit as it is, bit for bit.
+    pub fn set_plain_exposure(&mut self, exposure: f32) {
+        self.plain_exposure = match exposure.is_finite() && exposure > 0.0 {
+            true => exposure,
+            false => PLAIN_EXPOSURE,
+        };
+    }
+
+    /// The exposure of the plain world pass, as it was set.
+    pub fn plain_exposure(&self) -> f32 {
+        self.plain_exposure
+    }
+
     /// The way towards the key light and its strength, as they were set.
     pub fn key_light(&self) -> (Vec3, f32) {
         self.key_light
@@ -685,7 +705,7 @@ impl ViewportRenderer {
             bytemuck::cast_slice(&[CameraUniform {
                 view_proj: view_proj.to_cols_array_2d(),
                 inv_view_proj: inv_view_proj.to_cols_array_2d(),
-                camera_pos_ws: [eye.x, eye.y, eye.z, 1.0],
+                camera_pos_ws: [eye.x, eye.y, eye.z, self.plain_exposure],
                 camera_misc: [
                     camera.near,
                     camera.far,

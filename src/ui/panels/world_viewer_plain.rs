@@ -11,7 +11,7 @@ use super::log::grouped;
 use super::world_viewer::{keys, whole_window, Capture, Pose, CLEAN, VIEW_MIN};
 use crate::render::RenderBridge;
 use crate::state::prefs::Game;
-use crate::state::world_session::{Kind, Standing, Unread, Waiting};
+use crate::state::world_session::{Kind, Standing, Undrawn, Unread, Waiting};
 use crate::state::AppState;
 use crate::ui::accessible_name::named;
 use crate::ui::panels::settings::SettingsCategory;
@@ -30,7 +30,7 @@ pub enum Section {
     /// What the title lets a person choose at open.
     Options,
     Streaming,
-    /// That the session names no weather, for a world whose maps a weather gates.
+    /// The weather the world is looked at under, for a world whose maps a weather gates.
     Weather,
     Unread,
 }
@@ -277,6 +277,8 @@ pub fn draw_side(ui: &mut egui::Ui, state: &mut AppState, bridge: Option<&mut Re
     let (standing, caps, kinds) = (session.standing(), session.caps(), session.option_kinds());
     let (waiting, unread) = (session.waiting(), session.unread());
     let (mut hour, camera) = (session.hour(), session.camera());
+    let (weathers, mut weather, undrawn) =
+        (session.weathers(), session.weather(), session.undrawn());
     let opened_with = session.key().options.clone();
     let fields = state.panels.get::<Fields>();
     if fields.of != Some(game) {
@@ -404,15 +406,30 @@ pub fn draw_side(ui: &mut egui::Ui, state: &mut AppState, bridge: Option<&mut Re
                             ),
                         );
                     }
+                    for line in undrawn_lines(undrawn) {
+                        said(ui, &line);
+                    }
                     said(
                         ui,
-                        tr!("Drawn by the plain pass: one sun, and no shadow, sky, water or shader of the game's own"),
+                        tr!("Drawn by the plain pass: one sun and level water, and no shadow, sky or shader of the game's own"),
                     );
                 }
                 Section::Weather => {
-                    said(
-                        ui,
-                        tr!("No weather is named yet, so a map that streams under some weathers alone stays out"),
+                    ui.strong(tr!("Weather"));
+                    let name = |id: u64| {
+                        let named = weathers.iter().find(|weather| weather.id == id);
+                        named.map_or_else(String::new, |weather| weather.name.clone())
+                    };
+                    let combo = egui::ComboBox::from_id_salt("world_plain_weather")
+                        .selected_text(name(weather))
+                        .show_ui(ui, |ui| {
+                            for each in &weathers {
+                                ui.selectable_value(&mut weather, each.id, &each.name);
+                            }
+                        });
+                    named(
+                        combo.response,
+                        tr!("The weather the world is looked at under: a map placed for some weathers streams under them alone"),
                     );
                 }
                 Section::Unread => {
@@ -440,11 +457,34 @@ pub fn draw_side(ui: &mut egui::Ui, state: &mut AppState, bridge: Option<&mut Re
         return;
     };
     session.set_hour(hour);
+    if weather != session.weather() {
+        session.set_weather(weather);
+    }
     if let Some(pose) = go {
         let mut camera = session.camera();
         pose.put(&mut camera);
         session.set_camera(camera);
     }
+}
+
+/// What a selection holds that is not drawn, a line a kind; none where everything is.
+fn undrawn_lines(undrawn: Undrawn) -> Vec<String> {
+    let mut lines = Vec::new();
+    if undrawn.stand_ins > 0 {
+        lines.push(tr_n!(
+            "{count} thing placed has no model named and is not drawn",
+            "{count} things placed have no model named and are not drawn",
+            undrawn.stand_ins
+        ));
+    }
+    if undrawn.lists > 0 {
+        lines.push(tr_n!(
+            "{count} list of instances (grass, batches of props) is not drawn",
+            "{count} lists of instances (grass, batches of props) are not drawn",
+            undrawn.lists
+        ));
+    }
+    lines
 }
 
 /// One reason things could not be read, with how many.
@@ -570,6 +610,30 @@ mod tests {
         for bad in ["", "1 2", "1 2 three", "1 2 3 4", "north of the pier"] {
             assert!(place_of(bad, &pose()).is_err(), "`{bad}` should be refused");
         }
+    }
+
+    #[test]
+    fn what_is_not_drawn_is_said_a_line_a_kind_with_its_count_and_nothing_where_all_is_drawn() {
+        assert!(undrawn_lines(Undrawn::default()).is_empty());
+        let boxes = undrawn_lines(Undrawn {
+            stand_ins: 1,
+            lists: 0,
+        });
+        assert_eq!(
+            boxes,
+            ["1 thing placed has no model named and is not drawn"]
+        );
+        let both = undrawn_lines(Undrawn {
+            stand_ins: 12,
+            lists: 3,
+        });
+        assert_eq!(
+            both,
+            [
+                "12 things placed have no model named and are not drawn",
+                "3 lists of instances (grass, batches of props) are not drawn"
+            ]
+        );
     }
 
     #[test]

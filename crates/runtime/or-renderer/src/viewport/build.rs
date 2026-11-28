@@ -260,6 +260,7 @@ impl ViewportRenderer {
                 crate::viewport::KEY_LIGHT_TOWARDS,
                 crate::viewport::KEY_LIGHT_STRENGTH,
             ),
+            plain_exposure: crate::viewport::PLAIN_EXPOSURE,
             sky_background: false,
             shadows: true,
             day: None,

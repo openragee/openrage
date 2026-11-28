@@ -161,8 +161,17 @@ impl Shell {
                 })
             })
             .collect();
+        let (weather, undrawn) = (session.weather(), session.undrawn());
+        let named = session
+            .weathers()
+            .into_iter()
+            .find(|kind| kind.id == weather);
+        let sheets = session.feed().and_then(|feed| feed.water());
         let json = serde_json::json!({
             "game": session.key().game.label(),
+            "weather": named.map(|kind| kind.name),
+            "water_sheets": sheets.map_or(0, |sheets| sheets.len()),
+            "undrawn": { "stand_ins": undrawn.stand_ins, "lists": undrawn.lists },
             "frame_ms_at_rest": frame_ms,
             "frame_ms_laid_out_again": relaid_ms,
             "waiting": { "maps": waiting.maps, "models": waiting.models, "textures": waiting.textures },

@@ -18,11 +18,11 @@ use crate::collision::{BoxOverlap, GroundProbe, Hit, OrientedBox};
 use crate::kept::{Inputs, Section, SectionError};
 use crate::model::{
     AssetKey, Drawn, Draws, Feed, FrameFacts, Index, IndexFault, Instances, InteriorPlaced, Light,
-    MapId, Model, Moment, Occluders, PlacementRow, Texture, TextureAsk,
+    MapId, Model, Moment, Occluders, PlacementRow, Texture, TextureAsk, WaterQuad,
 };
 use crate::policy::StreamPolicy;
 use crate::sentence::Sentence;
-use crate::slots::{Extras, OptionId, OptionKind, OptionValue, SwitchKind};
+use crate::slots::{Extras, OptionId, OptionKind, OptionValue, SwitchKind, WeatherKind};
 use crate::streaming::Node;
 
 /// A game by the id its profile registers under.
@@ -182,6 +182,10 @@ pub trait WorldInstall: Send + Sync {
     ) -> Result<Vec<(u64, BoxOverlap)>, WorldError> {
         Err(WorldError::Lacks("collision query"))
     }
+    /// The level sheets of water of the world; an error where the world states no water.
+    fn water(&self, _index: &Index) -> Result<Vec<WaterQuad>, WorldError> {
+        Err(WorldError::Lacks("water"))
+    }
 }
 
 /// What reads an install's rows and links them.
@@ -257,6 +261,10 @@ pub trait MapBody: Any + Send + Sync {
     fn lights(&self) -> &[Light];
     fn occluders(&self) -> &Occluders;
     fn interiors(&self) -> &[InteriorPlaced];
+    /// How many lists of instances its file states that it lays out none of: what a frame cannot draw, for a panel to say.
+    fn unlaid_lists(&self) -> u32 {
+        0
+    }
     /// The instances of what `drawn` draws of it: called once a loaded body a selection.
     fn lay(&self, drawn: &Drawn<'_>, at: &Moment, out: &mut Instances);
     /// The bytes it holds, as the budget counts them.
@@ -346,6 +354,10 @@ pub trait ModelReader: Sync {
 pub trait WorldLook: Sync {
     /// What is switched while the world of `index` is open: a title whose switches its files state reads them from its link.
     fn switches(&self, index: &Index) -> Vec<SwitchKind>;
+    /// The weathers a world is looked at under, the one it opens under first; none where the title names no weather.
+    fn weathers(&self, _index: &Index) -> Vec<WeatherKind> {
+        Vec::new()
+    }
     /// What the moment alone decides, the rest of the title's day handed to `out` by name.
     fn frame(&self, at: &Moment, out: &mut dyn Feed) -> FrameFacts;
 }

@@ -19,10 +19,12 @@ pub enum Capability {
     Base = 5,
     /// Its own shader programs, where the plain pass is not the whole picture.
     OwnPrograms = 6,
+    /// Level sheets of water, each at its height.
+    Water = 7,
 }
 
 impl Capability {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Ground,
         Self::Collision,
         Self::Placements,
@@ -30,6 +32,7 @@ impl Capability {
         Self::Edits,
         Self::Base,
         Self::OwnPrograms,
+        Self::Water,
     ];
 }
 

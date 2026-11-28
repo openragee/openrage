@@ -84,11 +84,13 @@ pub(crate) fn texture_of<S: TextureSource>(texture: &S, pixels: u32) -> Result<T
     let stated = texture.pixel_format();
     let format = match stated {
         GrcTextureFormat::DXT1 => TextureFormat::Bc1,
+        GrcTextureFormat::DXT3 => TextureFormat::Bc2,
         GrcTextureFormat::DXT5 => TextureFormat::Bc3,
         GrcTextureFormat::DXT5A => TextureFormat::Bc4,
         GrcTextureFormat::DXN => TextureFormat::Bc5,
         GrcTextureFormat::BC7 => TextureFormat::Bc7,
         GrcTextureFormat::A8B8G8R8 => TextureFormat::Rgba8,
+        GrcTextureFormat::A8 => TextureFormat::A8,
         other => return Err(NoTexture::Format(format!("{other:?}"))),
     };
     let (width, height) = texture.stored_size();

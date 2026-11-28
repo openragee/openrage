@@ -123,5 +123,5 @@ fn the_gta_v_script_takes_its_install_from_the_environment_and_only_steps_a_fed_
             _ => {}
         }
     }
-    assert_eq!(shots, 4);
+    assert_eq!(shots, 6);
 }

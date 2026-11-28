@@ -1956,3 +1956,104 @@ fn a_vertex_coloured_mesh_takes_its_albedo_from_its_first_colour_where_a_standar
     assert!(near(standard[0], [255; 4], 2), "{standard:?}");
     assert!(accepted(scope), "the device accepted every pass");
 }
+
+/// The ground, a wall turned to the camera and how the plain pass is lit, for the exposure checks: a mid grey of 0.2 under an ambient light twice the pass's own.
+const GREY_UNDER_THE_SKY: [f32; 4] = [0.4, 0.4, 0.4, 1.0];
+
+#[cfg_attr(
+    not(feature = "gpu-tests"),
+    ignore = "needs a GPU adapter: acquisition can hang, not just fail"
+)]
+#[test]
+fn a_noon_sun_south_of_overhead_lights_the_ground_and_a_wall_above_a_floor_once_exposed_and_an_exposure_of_one_changes_nothing(
+) {
+    let test = "a_noon_sun_south_of_overhead_lights_the_ground_and_a_wall";
+    for (device, queue) in devices(test) {
+        let mut renderer =
+            ViewportRenderer::new(&device, &queue, wgpu::TextureFormat::Rgba8Unorm, SIZE, SIZE);
+        renderer.set_background(BACKGROUND);
+        let camera = OrbitCamera {
+            yaw: 0.0,
+            pitch: 0.6,
+            distance: 6.0,
+            ..OrbitCamera::default()
+        };
+        // The wall stands behind the ground as the camera sees them, turned to face it.
+        let towards = (camera.eye() * Vec3::new(1.0, 1.0, 0.0)).normalize();
+        let (ground_at, wall_at) = (towards * 0.8, towards * -0.8 + Vec3::Z * 0.6);
+        let upright = Mat4::from_quat(glam::Quat::from_rotation_arc(Vec3::Z, towards));
+        let instances = [
+            WorldInstance::of(Mat4::from_translation(ground_at), GREY_UNDER_THE_SKY),
+            WorldInstance::of(
+                Mat4::from_translation(wall_at) * upright,
+                GREY_UNDER_THE_SKY,
+            ),
+        ];
+        let material = plain(&device, &renderer, WorldBucket::Opaque);
+        let draws = vec![WorldDraw {
+            mesh: square(&device, 0.5, material.clone()),
+            instances: 0..2,
+        }];
+        renderer.set_world(&device, &queue, &instances, draws);
+        let seen = |renderer: &ViewportRenderer| {
+            let image = frame(&device, &queue, renderer, &camera, ShadingMode::Material);
+            let (ground, wall) = (
+                image[pixel_of(&camera, ground_at)],
+                image[pixel_of(&camera, wall_at)],
+            );
+            let background = image[0];
+            assert!(
+                ground != background && wall != background,
+                "both are in view"
+            );
+            (ground[0], wall[0])
+        };
+        // The sun 0.6 of a radian from overhead, on the side the wall faces and then behind it; its key is the sun's 1.5 over the tint of 2.
+        let (lean, up) = 0.6f32.sin_cos();
+        let (in_front, behind) = (
+            towards * lean + Vec3::Z * up,
+            towards * -lean + Vec3::Z * up,
+        );
+
+        renderer.set_key_light(in_front, 0.75);
+        let unexposed = seen(&renderer);
+        renderer.set_plain_exposure(crate::viewport::PLAIN_EXPOSURE);
+        assert_eq!(seen(&renderer), unexposed, "an exposure of one is none");
+        assert_eq!(renderer.plain_exposure(), 1.0);
+
+        renderer.set_plain_exposure(1.6);
+        let (ground, sunlit) = seen(&renderer);
+        renderer.set_key_light(behind, 0.75);
+        let (_, shaded) = seen(&renderer);
+        // In the target's own linear bytes: the ground and a wall turned to the sun read as day, and a wall turned from it is lit by the sky.
+        assert!((90..250).contains(&ground), "the ground: {ground}");
+        assert!((70..250).contains(&sunlit), "a wall in the sun: {sunlit}");
+        assert!((20..sunlit).contains(&shaded), "a wall in shade: {shaded}");
+        assert!(
+            ground > unexposed.0 && sunlit > unexposed.1,
+            "exposed, a grey is lifted"
+        );
+
+        // White under the same light stays under white, where unexposed it clips.
+        let white = [WorldInstance::of(
+            Mat4::from_translation(ground_at),
+            [2.0, 2.0, 2.0, 1.0],
+        )];
+        let draws = vec![WorldDraw {
+            mesh: square(&device, 0.5, material.clone()),
+            instances: 0..1,
+        }];
+        renderer.set_world(&device, &queue, &white, draws);
+        renderer.set_key_light(in_front, 0.75);
+        let image = frame(&device, &queue, &renderer, &camera, ShadingMode::Material);
+        let exposed = image[pixel_of(&camera, ground_at)][0];
+        renderer.set_plain_exposure(1.0);
+        let image = frame(&device, &queue, &renderer, &camera, ShadingMode::Material);
+        let clipped = image[pixel_of(&camera, ground_at)][0];
+        assert!(exposed > ground && exposed < 255, "{exposed}");
+        assert_eq!(clipped, 255);
+        // A value that is no exposure leaves the pass as it began.
+        renderer.set_plain_exposure(f32::NAN);
+        assert_eq!(renderer.plain_exposure(), 1.0);
+    }
+}

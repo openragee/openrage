@@ -17639,11 +17639,21 @@ msgstr "用这些选项打开世界"
 msgid "A world opened with other options has an index of its own, read from the install the first time"
 msgstr "用其他选项打开的世界有自己的索引，首次需从安装中读取"
 
-msgid "Drawn by the plain pass: one sun, and no shadow, sky, water or shader of the game's own"
-msgstr "由简单通道绘制：一个太阳，没有阴影、天空、水面，也没有游戏自身的着色器"
+msgid "Drawn by the plain pass: one sun and level water, and no shadow, sky or shader of the game's own"
+msgstr "由简易通道绘制：一个太阳和平坦的水面，没有阴影、天空或游戏自身的着色器"
 
-msgid "No weather is named yet, so a map that streams under some weathers alone stays out"
-msgstr "尚未指定天气，因此仅在某些天气下流式加载的地图不会载入"
+msgid "The weather the world is looked at under: a map placed for some weathers streams under them alone"
+msgstr "观察世界时的天气：为某些天气放置的地图只在这些天气下流式加载"
+
+msgid "{count} thing placed has no model named and is not drawn"
+msgid_plural "{count} things placed have no model named and are not drawn"
+msgstr[0] "{count} 个放置物没有指定模型，不会绘制"
+msgstr[1] "{count} 个放置物没有指定模型，不会绘制"
+
+msgid "{count} list of instances (grass, batches of props) is not drawn"
+msgid_plural "{count} lists of instances (grass, batches of props) are not drawn"
+msgstr[0] "{count} 个实例列表（草、道具批次）不会绘制"
+msgstr[1] "{count} 个实例列表（草、道具批次）不会绘制"
 
 msgid "As the install has it"
 msgstr "按安装原样"

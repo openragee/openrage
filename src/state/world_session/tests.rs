@@ -125,7 +125,7 @@ fn the_selection_a_session_hands_a_frame_is_the_drivers() {
         let view = install
             .policy()
             .view(eye, Vec3::ZERO, session.camera().fov_y);
-        let moment = Moment::noon(0);
+        let moment = Moment::noon(session.weather());
         let stands = |model: AssetKey| match device.there.contains(&model) {
             true => NodeState::Ready,
             false => NodeState::Loading,
@@ -373,7 +373,7 @@ fn a_gta_v_install_opens_a_session_of_gta_vs_capabilities_whose_selection_is_the
         );
         let mut driver = Driver::new(Arc::clone(&own), Arc::clone(&index));
         let view = own.policy().view(eye, Vec3::ZERO, session.camera().fov_y);
-        let moment = Moment::noon(0);
+        let moment = Moment::noon(session.weather());
         let stands = |model: AssetKey| match () {
             () if device.there.contains(&model) => NodeState::Ready,
             () if device.never.contains(&model) => NodeState::Absent,
@@ -509,4 +509,94 @@ fn a_model_the_device_let_go_is_read_and_handed_again() {
         assert!(started.elapsed() < PATIENCE, "the model was not read again");
     }
     assert_eq!(device.there[first.len()..], [gone]);
+}
+
+#[test]
+fn the_water_a_world_states_reaches_the_frame_and_a_world_that_states_none_hands_none() {
+    let (mut session, _scratch) = over(FakeTitle::new(), "fake-install");
+    assert!(session.feed().is_none(), "no feed until it is open");
+    at_rest(&mut session, fake::NOWHERE, &mut Device::default());
+    let water = session.feed().and_then(|feed| feed.water());
+    let water = water.expect("the fake world's pond");
+    assert_eq!(*water, [fake::POND]);
+    assert!(session.caps().has(Capability::Water));
+    // A world whose capabilities state no water is asked for none.
+    let (mut dry, _scratch) = over(FakeTitle::broken(Fault::WaterUnstated), "fake-install");
+    at_rest(&mut dry, fake::NOWHERE, &mut Device::default());
+    assert!(!dry.caps().has(Capability::Water));
+    assert!(dry.feed().and_then(|feed| feed.water()).is_none());
+}
+
+#[test]
+fn a_map_a_weather_gates_is_in_under_that_weather_and_out_under_the_one_the_world_opens_with() {
+    use crate::forest_fixture::{ent, install, manifest_bytes, map_around, map_file, MapOf};
+    use crate::world_fixture::{cube, hash};
+    use or_world_gta5::state::{flags, NOT_BY_DEFAULT};
+    // One map, held for a group the rain alone lets in: two things placed that no type file declares.
+    let map = MapOf {
+        flags: NOT_BY_DEFAULT,
+        ..map_around(
+            cube([0.0; 3], 100.0),
+            vec![
+                ent("a_thing", [1.0, 0.0, 0.0]),
+                ent("another", [4.0, 0.0, 0.0]),
+            ],
+        )
+    };
+    let files = vec![
+        map_file("m_rain", &map),
+        (
+            "levels/_manifest.ymf".to_string(),
+            manifest_bytes(&[("m_rain", flags::WEATHER, 0, &["RAIN"])]),
+        ),
+    ];
+    let install = install(&[("x64a.rpf", files)]);
+    let scratch = tempfile::tempdir().expect("a scratch folder");
+    let (entry, game) = or_worlds::of_game(Game::GtaVLegacy).expect("GTA V has a title");
+    let key = WorldKey {
+        game: Game::GtaVLegacy,
+        install: install.path().to_path_buf(),
+        options: Vec::new(),
+    };
+    let spec = or_world::contract::WorldSpec::of(game, install.path());
+    let config = scratch.path().to_path_buf();
+    let mut session = DrivenSession::open(key, entry.title, spec, OwnedKeys::None, config);
+    let eye = Vec3::new(2.0, 0.0, 3.0);
+    let mut device = Device::default();
+
+    // It opens under the first weather its title names, the clear day, and the map stays out.
+    let clear = at_rest(&mut session, eye, &mut device);
+    let weathers = session.weathers();
+    assert_eq!(weathers[0].name, "CLEAR");
+    assert_eq!(session.weather(), weathers[0].id);
+    assert!(clear.instances.is_empty(), "{:?}", clear.instances);
+    assert_eq!(session.undrawn(), super::Undrawn::default());
+
+    // Under the rain it is in, and its two things stand as boxes the plain pass does not draw.
+    let rain = u64::from(hash("RAIN"));
+    assert!(weathers.iter().any(|weather| weather.id == rain));
+    session.set_weather(rain);
+    let started = Instant::now();
+    let wet = loop {
+        let now = at_rest(&mut session, eye, &mut device);
+        if !now.instances.is_empty() {
+            break now;
+        }
+        assert!(started.elapsed() < PATIENCE, "the rain let no map in");
+    };
+    assert_eq!(wet.instances.len(), 2);
+    session.poll();
+    assert_eq!(session.undrawn().stand_ins, 2);
+    assert_eq!(session.undrawn().lists, 0);
+
+    // And out again under the clear day.
+    session.set_weather(weathers[0].id);
+    let started = Instant::now();
+    loop {
+        if at_rest(&mut session, eye, &mut device).instances.is_empty() {
+            break;
+        }
+        assert!(started.elapsed() < PATIENCE, "the clear day kept the map");
+    }
+    assert_eq!(session.undrawn().stand_ins, 0);
 }

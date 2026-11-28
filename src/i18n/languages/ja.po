@@ -17639,11 +17639,21 @@ msgstr "これらで世界を開く"
 msgid "A world opened with other options has an index of its own, read from the install the first time"
 msgstr "別のオプションで開いた世界は独自のインデックスを持ち、初回はインストールから読み取られます"
 
-msgid "Drawn by the plain pass: one sun, and no shadow, sky, water or shader of the game's own"
-msgstr "簡易パスで描画：太陽は 1 つで、影・空・水・ゲーム独自のシェーダーはありません"
+msgid "Drawn by the plain pass: one sun and level water, and no shadow, sky or shader of the game's own"
+msgstr "簡易パスで描画：太陽は 1 つ、水面は平らで、影・空・ゲーム独自のシェーダーはありません"
 
-msgid "No weather is named yet, so a map that streams under some weathers alone stays out"
-msgstr "天候はまだ指定されないため、特定の天候でのみストリームされるマップは読み込まれません"
+msgid "The weather the world is looked at under: a map placed for some weathers streams under them alone"
+msgstr "世界を見るときの天候：特定の天候用に配置されたマップは、その天候でのみストリームされます"
+
+msgid "{count} thing placed has no model named and is not drawn"
+msgid_plural "{count} things placed have no model named and are not drawn"
+msgstr[0] "配置物 {count} 個はモデルが指定されておらず、描画されません"
+msgstr[1] "配置物 {count} 個はモデルが指定されておらず、描画されません"
+
+msgid "{count} list of instances (grass, batches of props) is not drawn"
+msgid_plural "{count} lists of instances (grass, batches of props) are not drawn"
+msgstr[0] "インスタンスリスト {count} 個（草、小物のバッチ）は描画されません"
+msgstr[1] "インスタンスリスト {count} 個（草、小物のバッチ）は描画されません"
 
 msgid "As the install has it"
 msgstr "インストールのまま"

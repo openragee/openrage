@@ -17800,11 +17800,23 @@ msgstr "Открыть мир с этими"
 msgid "A world opened with other options has an index of its own, read from the install the first time"
 msgstr "У мира, открытого с другими параметрами, свой индекс, который в первый раз читается из установки"
 
-msgid "Drawn by the plain pass: one sun, and no shadow, sky, water or shader of the game's own"
-msgstr "Нарисовано простым проходом: одно солнце, без теней, неба, воды и собственных шейдеров игры"
+msgid "Drawn by the plain pass: one sun and level water, and no shadow, sky or shader of the game's own"
+msgstr "Нарисовано простым проходом: одно солнце и ровная вода, без теней, неба и собственных шейдеров игры"
 
-msgid "No weather is named yet, so a map that streams under some weathers alone stays out"
-msgstr "Погода пока не задана, поэтому карта, которая подгружается только при некоторых погодах, остаётся в стороне"
+msgid "The weather the world is looked at under: a map placed for some weathers streams under them alone"
+msgstr "Погода, при которой показан мир: карта, размещённая для некоторых погод, подгружается только при них"
+
+msgid "{count} thing placed has no model named and is not drawn"
+msgid_plural "{count} things placed have no model named and are not drawn"
+msgstr[0] "{count} размещённый объект не называет модель и не рисуется"
+msgstr[1] "{count} размещённых объекта не называют модель и не рисуются"
+msgstr[2] "{count} размещённых объектов не называют модель и не рисуются"
+
+msgid "{count} list of instances (grass, batches of props) is not drawn"
+msgid_plural "{count} lists of instances (grass, batches of props) are not drawn"
+msgstr[0] "{count} список экземпляров (трава, наборы предметов) не рисуется"
+msgstr[1] "{count} списка экземпляров (трава, наборы предметов) не рисуются"
+msgstr[2] "{count} списков экземпляров (трава, наборы предметов) не рисуются"
 
 msgid "As the install has it"
 msgstr "Как в установке"

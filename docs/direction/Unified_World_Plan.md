@@ -120,6 +120,7 @@ pub trait WorldInstall: Send + Sync {
     fn maps(&self) -> &dyn MapReader;
     fn models(&self) -> &dyn ModelReader;
     fn look(&self) -> &dyn WorldLook;
+    fn water(&self, index: &Index) -> Result<Vec<WaterQuad>, WorldError>;   // provided: an error where no water is stated
 }
 pub trait WorldIndexer: Sync {
     fn rules(&self) -> u32;
@@ -139,6 +140,7 @@ pub trait MapBody: Any + Send + Sync {
     fn lights(&self) -> &[Light];
     fn occluders(&self) -> &Occluders;
     fn interiors(&self) -> &[InteriorPlaced];
+    fn unlaid_lists(&self) -> u32;           // provided: none
     fn lay(&self, drawn: &Drawn<'_>, at: &Moment, out: &mut Instances);
     fn bytes(&self) -> u64;
 }
@@ -148,6 +150,7 @@ pub trait ModelReader: Sync {
 }
 pub trait WorldLook: Sync {
     fn switches(&self) -> Vec<SwitchKind>;
+    fn weathers(&self, index: &Index) -> Vec<WeatherKind>;   // provided: none; the first is the one a world opens under
     fn frame(&self, at: &Moment, out: &mut dyn Feed) -> FrameFacts;
 }
 pub trait EditTitle: Sync {
@@ -210,7 +213,7 @@ Shared code holds no test of which game it serves: a game differs at three level
 
 ### Capabilities, as data
 
-The core's `Capability` has the seven values below; what is chosen at open is an option and what is switched while open a switch, both slots. A panel section, a tool or a verb whose capability is absent is hidden or greyed with the reason.
+The core's `Capability` has the eight values below; what is chosen at open is an option and what is switched while open a switch, both slots. A panel section, a tool or a verb whose capability is absent is hidden or greyed with the reason.
 
 | Capability | GTA V | GTA VI | RDR2, expected |
 |---|---|---|---|
@@ -221,6 +224,7 @@ The core's `Capability` has the seven values below; what is chosen at open is an
 | An edit store | yes, in a project | yes, over a document | no |
 | A base to compare with, put back to and merge against | yes | no | no |
 | Its own programs | Legacy after R71f, Enhanced after R71g | after R71h | not in this programme |
+| Level sheets of water | yes, from the level's water file (`WorldInstall::water`, R71e) | not through the contract: its water is its viewer's | unmeasured |
 
 ### Policies with defaults
 

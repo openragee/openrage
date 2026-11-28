@@ -820,7 +820,13 @@ fn plain_lit(s: Surface, world_pos: vec3<f32>) -> vec3<f32> {
     let key = max(dot(s.normal, camera.key_light.xyz), 0.0) * camera.key_light.w;
     let head = max(dot(s.normal, view_dir), 0.0) * 0.30;
     let highlight = shine(s, camera.key_light.xyz, view_dir) * camera.key_light.w;
-    return diffuse_of(s) * (key + head + 0.15) + highlight + s.emissive;
+    let lit = diffuse_of(s) * (key + head + 0.15) + highlight + s.emissive;
+    // ⚠ `camera_pos_ws.w` is the exposure of the plain modes, and at 1 what was lit is returned untouched: a caller that sets none draws as it did before there was one.
+    let exposure = camera.camera_pos_ws.w;
+    if (exposure != 1.0) {
+        return vec3<f32>(1.0) - exp(-lit * exposure);
+    }
+    return lit;
 }
 
 // A surface of the plain modes that writes depth: `cut` is the coverage under which it is not drawn, and `glow` how far it shows its own colour unlit.

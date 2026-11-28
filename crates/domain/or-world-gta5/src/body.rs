@@ -108,6 +108,10 @@ impl MapBody for Body {
         &self.beside.occluders
     }
 
+    fn unlaid_lists(&self) -> u32 {
+        self.beside.lists
+    }
+
     fn interiors(&self) -> &[InteriorPlaced] {
         &self.interiors
     }

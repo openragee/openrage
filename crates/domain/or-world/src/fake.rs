@@ -31,11 +31,11 @@ use crate::model::{
     ElementFormat, Feed, FeedName, FrameFacts, Gate, Index, Instance, Instances, InteriorPlaced,
     Light, LightKind, Lod, MapId, MapRow, Mesh, Model, Moment, OccluderBox, Occluders,
     PlacementRow, Semantic, Surface, SwitchId, Texture, TextureAsk, TextureFormat, VertexLayout,
-    EVERY_HOUR,
+    WaterQuad, EVERY_HOUR,
 };
 use crate::policy::StreamPolicy;
 use crate::sentence;
-use crate::slots::{Choices, Extras, OptionId, OptionKind, Slot, SwitchKind};
+use crate::slots::{Choices, Extras, OptionId, OptionKind, Slot, SwitchKind, WeatherKind};
 use crate::streaming::{Category, Children, Extent, Kind, Level, MapBox, Node, ParentRef};
 
 /// The game the fake title opens a world of: an id no profile registers.
@@ -64,6 +64,13 @@ pub const MOVE: OperationId = OperationId(1);
 pub const WORDS: usize = 2;
 /// The one weather the fake title has.
 pub const WEATHER: u64 = 1;
+/// The fake world's one sheet of water: a pond south-west of everything, a metre under the ground.
+pub const POND: WaterQuad = WaterQuad {
+    min: [-900.0, -900.0],
+    max: [-800.0, -850.0],
+    height: -1.0,
+    half: None,
+};
 
 /// Where the parent of the ladder draws alone.
 pub const FAR_EYE: Vec3 = Vec3::new(0.0, 500.0, 0.0);
@@ -140,10 +147,14 @@ pub enum Fault {
     StoreUnstated,
     /// Its capabilities state no height of the ground, and it answers one.
     GroundUnstated,
+    /// Its capabilities state no water, and it answers a sheet of it.
+    WaterUnstated,
+    /// The look lists its one weather twice.
+    WeatherTwice,
 }
 
 impl Fault {
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 28] = [
         Self::LinkForgets,
         Self::ParentUnlinked,
         Self::ChildrenMiscounted,
@@ -170,6 +181,8 @@ impl Fault {
         Self::BaseStated,
         Self::StoreUnstated,
         Self::GroundUnstated,
+        Self::WaterUnstated,
+        Self::WeatherTwice,
     ];
 }
 
@@ -1063,6 +1076,17 @@ impl WorldLook for Install {
         }
     }
 
+    fn weathers(&self, _index: &Index) -> Vec<WeatherKind> {
+        let fair = WeatherKind {
+            id: WEATHER,
+            name: "fair".to_string(),
+        };
+        match self.shared.has(Fault::WeatherTwice) {
+            true => vec![fair.clone(), fair],
+            false => vec![fair],
+        }
+    }
+
     fn frame(&self, at: &Moment, out: &mut dyn Feed) -> FrameFacts {
         // The sun stands overhead at noon and at the horizon at 6 h and 18 h.
         let turn = (at.hour - 12.0) / 24.0 * std::f32::consts::TAU;
@@ -1095,10 +1119,17 @@ impl WorldInstall for Install {
         if !has(Fault::GroundUnstated) {
             caps = caps.with(Capability::Ground);
         }
+        if !has(Fault::WaterUnstated) {
+            caps = caps.with(Capability::Water);
+        }
         match has(Fault::CapsLie) {
             true => caps,
             false => caps.with(Capability::Placements),
         }
+    }
+
+    fn water(&self, _index: &Index) -> Result<Vec<WaterQuad>, WorldError> {
+        Ok(vec![POND])
     }
 
     // The fake world's ground is level, at the height of nought everywhere.

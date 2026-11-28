@@ -137,7 +137,7 @@ fn a_gta5_install_is_found_through_the_registry_and_indexed_through_its_title() 
     assert!(lines[3].starts_with("  2 map(s): "), "{printed}");
     assert_eq!(
         lines[4],
-        "  it states: a height of the ground, a collision query, placement rows, a weather gate"
+        "  it states: a height of the ground, a collision query, placement rows, a weather gate, sheets of water"
     );
     assert_eq!(
         lines[5..],

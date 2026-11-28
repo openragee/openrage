@@ -530,7 +530,11 @@ pub struct Model {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TextureFormat {
     Rgba8,
+    /// One byte a pixel: its coverage, with no colour.
+    A8,
     Bc1,
+    /// A colour as BC1 holds it, and four bits of coverage a pixel.
+    Bc2,
     Bc3,
     Bc4,
     Bc5,
@@ -542,8 +546,11 @@ impl TextureFormat {
     pub fn level_bytes(self, width: u32, height: u32) -> usize {
         let (wide, high, each) = match self {
             Self::Rgba8 => (width, height, 4),
+            Self::A8 => (width, height, 1),
             Self::Bc1 | Self::Bc4 => (width.div_ceil(4), height.div_ceil(4), 8),
-            Self::Bc3 | Self::Bc5 | Self::Bc7 => (width.div_ceil(4), height.div_ceil(4), 16),
+            Self::Bc2 | Self::Bc3 | Self::Bc5 | Self::Bc7 => {
+                (width.div_ceil(4), height.div_ceil(4), 16)
+            }
         };
         (u128::from(wide) * u128::from(high) * each)
             .try_into()
@@ -571,6 +578,44 @@ pub struct FrameFacts {
     pub ambient: [f32; 3],
     pub exposure: f32,
     pub clear: [f32; 3],
+}
+
+/// A corner of a level rectangle, by the compass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Corner {
+    SouthWest,
+    NorthWest,
+    NorthEast,
+    SouthEast,
+}
+
+/// A level sheet of water: a rectangle at a height, or the half of one that keeps a corner.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WaterQuad {
+    /// Its west and south edges, in metres.
+    pub min: [f32; 2],
+    /// Its east and north edges.
+    pub max: [f32; 2],
+    /// The height its surface stands at.
+    pub height: f32,
+    /// The corner the half that is water keeps; `None` where the whole rectangle is.
+    pub half: Option<Corner>,
+}
+
+impl WaterQuad {
+    /// Its surface as triangles, each wound counter-clockwise as seen from above.
+    pub fn triangles(&self) -> Vec<[Vec3; 3]> {
+        let at = |x: f32, y: f32| Vec3::new(x, y, self.height);
+        let (sw, se) = (at(self.min[0], self.min[1]), at(self.max[0], self.min[1]));
+        let (ne, nw) = (at(self.max[0], self.max[1]), at(self.min[0], self.max[1]));
+        match self.half {
+            None => vec![[sw, se, ne], [sw, ne, nw]],
+            Some(Corner::SouthWest) => vec![[sw, se, nw]],
+            Some(Corner::NorthWest) => vec![[nw, sw, ne]],
+            Some(Corner::NorthEast) => vec![[ne, nw, se]],
+            Some(Corner::SouthEast) => vec![[se, ne, sw]],
+        }
+    }
 }
 
 /// The name a value of a title's day reaches its programs by.

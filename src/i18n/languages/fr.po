@@ -17639,11 +17639,21 @@ msgstr "Ouvrir le monde avec celles-ci"
 msgid "A world opened with other options has an index of its own, read from the install the first time"
 msgstr "Un monde ouvert avec d'autres options a son propre index, lu dans l'installation la première fois"
 
-msgid "Drawn by the plain pass: one sun, and no shadow, sky, water or shader of the game's own"
-msgstr "Dessiné par la passe simple : un soleil, et aucune ombre, aucun ciel, aucune eau ni aucun shader propre au jeu"
+msgid "Drawn by the plain pass: one sun and level water, and no shadow, sky or shader of the game's own"
+msgstr "Dessiné par la passe simple : un soleil et une eau plane, et aucune ombre, aucun ciel ni aucun shader propre au jeu"
 
-msgid "No weather is named yet, so a map that streams under some weathers alone stays out"
-msgstr "Aucune météo n'est encore nommée, donc une carte qui n'est diffusée que sous certaines météos reste dehors"
+msgid "The weather the world is looked at under: a map placed for some weathers streams under them alone"
+msgstr "La météo sous laquelle le monde est regardé : une carte placée pour certaines météos n'est diffusée que sous celles-ci"
+
+msgid "{count} thing placed has no model named and is not drawn"
+msgid_plural "{count} things placed have no model named and are not drawn"
+msgstr[0] "{count} élément placé ne nomme aucun modèle et n'est pas dessiné"
+msgstr[1] "{count} éléments placés ne nomment aucun modèle et ne sont pas dessinés"
+
+msgid "{count} list of instances (grass, batches of props) is not drawn"
+msgid_plural "{count} lists of instances (grass, batches of props) are not drawn"
+msgstr[0] "{count} liste d'instances (herbe, lots d'accessoires) n'est pas dessinée"
+msgstr[1] "{count} listes d'instances (herbe, lots d'accessoires) ne sont pas dessinées"
 
 msgid "As the install has it"
 msgstr "Comme dans l'installation"

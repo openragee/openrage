@@ -43,6 +43,14 @@ pub struct SwitchKind {
     pub on: bool,
 }
 
+/// One weather a world is looked at under, by the title's name of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WeatherKind {
+    pub id: u64,
+    /// The title's own word for it, which no catalog holds.
+    pub name: String,
+}
+
 /// One thing a title adds to a slot, by the title's number of it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Slot {

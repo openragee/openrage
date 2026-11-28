@@ -637,6 +637,12 @@ fn a_body_states_the_far_lights_and_the_occluders_of_its_map() {
         hand_built::LISTS.0 + hand_built::LISTS.1
     );
     assert_eq!(own(&*lit).beside.lists, 0);
+    // The body says so through the contract, for a panel that knows no game to count.
+    assert_eq!(
+        hides.unlaid_lists() as usize,
+        hand_built::LISTS.0 + hand_built::LISTS.1
+    );
+    assert_eq!(lit.unlaid_lists(), 0);
     assert!(lit.bytes() > 0 && hides.bytes() > far.bytes());
 }
 
@@ -840,11 +846,13 @@ fn a_texture_reads_in_the_format_its_file_states_and_one_that_cannot_says_why() 
     let mut formats = PgDictionary::<GrcTexture>::default();
     // One level each, the first of colours the file says are sRGB; the last is a format's number and no four letters.
     let stated = [
+        ("three", four_cc(b"DXT3"), TextureFormat::Bc2),
         ("five", four_cc(b"DXT5"), TextureFormat::Bc3),
         ("one_channel", four_cc(b"ATI1"), TextureFormat::Bc4),
         ("two_channels", four_cc(b"ATI2"), TextureFormat::Bc5),
         ("seven", four_cc(b"BC7 "), TextureFormat::Bc7),
         ("plain", 32, TextureFormat::Rgba8),
+        ("coverage", 28, TextureFormat::A8),
     ];
     for (name, format, _) in stated {
         formats.insert(made(name, &|texture| {
@@ -854,7 +862,8 @@ fn a_texture_reads_in_the_format_its_file_states_and_one_that_cannot_says_why() 
             texture.backing_store = (0..=255).collect();
         }));
     }
-    formats.insert(made("three", &|texture| texture.format = four_cc(b"DXT3")));
+    // Luminance alone, by its number: a format the core's texture has no word for.
+    formats.insert(made("grey", &|texture| texture.format = 50));
     formats.insert(made("cube", &|texture| texture.image_type = 1));
     formats.insert(made("deep", &|texture| texture.depth = 4));
     // Its first level alone is more bytes than its store holds.
@@ -898,7 +907,7 @@ fn a_texture_reads_in_the_format_its_file_states_and_one_that_cannot_says_why() 
     };
     let mut asks = vec![
         ask("formats", "five"),
-        ask("formats", "three"),
+        ask("formats", "grey"),
         ask("formats", "cube"),
         ask("formats", "deep"),
         ask("formats", "short"),
@@ -930,8 +939,8 @@ fn a_texture_reads_in_the_format_its_file_states_and_one_that_cannot_says_why() 
             "{name}"
         );
     }
-    assert_eq!(of(0), of(9));
-    assert_eq!(of(1), &Err(NoTexture::Format("DXT3".to_owned())));
+    assert_eq!(of(0), of(10));
+    assert_eq!(of(1), &Err(NoTexture::Format("L8".to_owned())));
     assert_eq!(of(2), &Err(NoTexture::NotFlat));
     assert_eq!(of(3), &Err(NoTexture::NotFlat));
     assert_eq!(of(4), &Err(NoTexture::PartLevel));
@@ -947,4 +956,116 @@ fn a_texture_reads_in_the_format_its_file_states_and_one_that_cannot_says_why() 
         })
     );
     assert!(of(8).is_ok(), "{:?}", of(8));
+}
+
+/// One item of a water file's quads: its corners, its type, whether it is hidden and its height.
+fn water_item([west, east, south, north]: [i32; 4], kind: u8, hidden: bool, z: f32) -> String {
+    format!(
+        "<Item><minX value=\"{west}\" /><maxX value=\"{east}\" /><minY value=\"{south}\" />\
+         <maxY value=\"{north}\" /><Type value=\"{kind}\" /><IsInvisible value=\"{hidden}\" />\
+         <z value=\"{z:.2}\" /></Item>"
+    )
+}
+
+#[test]
+fn the_water_file_of_an_install_reaches_the_world_as_sheets_at_their_heights() {
+    use or_world::caps::Capability;
+    use or_world::model::{Corner, WaterQuad};
+    // A whole rectangle, a half that keeps its north-west corner, one hidden and one the game leaves out.
+    let items = [
+        water_item([-8, 8, 0, 4], 0, false, 1.5),
+        water_item([10, 20, -4, 6], 2, false, 30.25),
+        water_item([30, 40, 0, 4], 0, true, 2.0),
+        water_item([50, 60, 0, 4], 5, false, 3.0),
+    ];
+    let file = format!(
+        "<WaterData><WaterQuads>{}</WaterQuads></WaterData>",
+        items.concat()
+    );
+    let water: Files = vec![("data/levels/gta5/water.xml".to_owned(), file.into_bytes())];
+    let dir = install(&[("common.rpf", water), ("x64a.rpf", hand_built::files())]);
+    let scratch = tempfile::tempdir().expect("a scratch folder");
+    let (world, index) = opened(dir.path(), scratch.path());
+    assert!(world.caps().has(Capability::Water));
+    let sheets = world.water(&index).expect("the water file reads");
+    assert_eq!(
+        sheets,
+        [
+            WaterQuad {
+                min: [-8.0, 0.0],
+                max: [8.0, 4.0],
+                height: 1.5,
+                half: None,
+            },
+            WaterQuad {
+                min: [10.0, -4.0],
+                max: [20.0, 6.0],
+                height: 30.25,
+                half: Some(Corner::NorthWest),
+            },
+        ]
+    );
+    // Every corner of a sheet's surface stands at its height, and a half is one triangle that keeps its corner.
+    let half = sheets[1].triangles();
+    assert_eq!(half.len(), 1);
+    assert!(half[0].contains(&Vec3::new(10.0, 6.0, 30.25)));
+    assert!(!half[0].contains(&Vec3::new(20.0, -4.0, 30.25)));
+    for corner in sheets.iter().flat_map(|sheet| {
+        let height = sheet.height;
+        (sheet.triangles().into_iter().flatten()).map(move |corner| (corner, height))
+    }) {
+        assert_eq!(corner.0.z, corner.1);
+    }
+
+    // An install with no water file has no water, and a file that is no water file is refused.
+    let dry = install(&[("x64a.rpf", hand_built::files())]);
+    let (world, index) = opened(dry.path(), scratch.path());
+    assert_eq!(world.water(&index).expect("no file is no fault"), []);
+    let broken: Files = vec![(
+        "data/levels/gta5/water.xml".to_owned(),
+        b"<Other />".to_vec(),
+    )];
+    let bad = install(&[("common.rpf", broken), ("x64a.rpf", hand_built::files())]);
+    let (world, index) = opened(bad.path(), scratch.path());
+    assert!(world.water(&index).is_err());
+}
+
+#[test]
+fn the_world_names_its_weathers_the_clear_day_first_and_its_noon_sun_lights_ground_and_wall() {
+    use or_world::model::Moment;
+    let dir = install(&[("x64a.rpf", hand_built::files())]);
+    let scratch = tempfile::tempdir().expect("a scratch folder");
+    let (world, index) = opened(dir.path(), scratch.path());
+    let weathers = world.look().weathers(&index);
+    assert_eq!(weathers[0].name, "CLEAR");
+    assert_eq!(weathers[0].id, u64::from(hash("CLEAR")));
+    assert_eq!(weathers[0].id, hand_built::weather());
+    let mut ids: Vec<u64> = weathers.iter().map(|weather| weather.id).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), weathers.len(), "each weather is named once");
+    assert!(weathers.iter().any(|weather| weather.name == "RAIN"));
+
+    struct Unfed;
+    impl or_world::model::Feed for Unfed {
+        fn set(&mut self, _: or_world::model::FeedName<'_>, _: &[f32]) {}
+    }
+    let at = |hour: f32| {
+        let moment = Moment {
+            hour,
+            weather: weathers[0].id,
+        };
+        world.look().frame(&moment, &mut Unfed)
+    };
+    let noon = at(12.0).sun;
+    assert!((noon.length() - 1.0).abs() < 1e-5);
+    // At noon the ground takes most of the sun and a wall that faces south a good share of it; none comes from the north.
+    assert!(noon.dot(Vec3::Z) >= 0.7, "{noon}");
+    assert!(noon.dot(Vec3::NEG_Y) >= 0.4, "{noon}");
+    assert!(noon.x.abs() < 1e-5);
+    // It rises in the east and sets in the west, level with the ground.
+    let (dawn, dusk) = (at(6.0).sun, at(18.0).sun);
+    assert!(dawn.x > 0.99 && dusk.x < -0.99, "{dawn} {dusk}");
+    assert!(dawn.z.abs() < 1e-5 && dusk.z.abs() < 1e-5);
+    assert!(at(0.0).sun.z < 0.0 && at(0.0).key == [0.0; 3]);
 }

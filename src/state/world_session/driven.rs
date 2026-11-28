@@ -17,7 +17,7 @@ use std::time::Duration;
 use glam::Vec3;
 use or_job::{Cancel, Progress};
 use or_renderer::FlyCamera;
-use or_world::caps::WorldCaps;
+use or_world::caps::{Capability, WorldCaps};
 use or_world::contract::{
     Keys, Opening, Refused, Worker, WorldError, WorldIndexer, WorldInstall, WorldSpec, WorldTitle,
 };
@@ -25,17 +25,17 @@ use or_world::driver::Driver;
 use or_world::kept::{self, Section};
 use or_world::model::{
     AssetKey, Feed, FeedName, FrameFacts, Index, Instances, MapId, Moment, PlacementRow, Switched,
-    Texture, TextureAsk,
+    Texture, TextureAsk, WaterQuad,
 };
 use or_world::pool::Pool;
 use or_world::sentence;
 use or_world::sentence::Sentence;
-use or_world::slots::OptionKind;
+use or_world::slots::{OptionKind, WeatherKind};
 use or_world::streaming::NodeState;
 
 use super::mesh::{arrived, ArrivedModel};
 use super::{
-    Kind, Reason, Selection, Standing, Unread, Waiting, WorldFeed, WorldKey, WorldSession,
+    Kind, Reason, Selection, Standing, Undrawn, Unread, Waiting, WorldFeed, WorldKey, WorldSession,
 };
 use crate::state::prefs::Prefs;
 
@@ -49,7 +49,7 @@ const QUEUED: usize = 256;
 const INTERIORS_A_TURN: usize = 2;
 /// How long the thread sleeps between turns while something is on its way, and while nothing is.
 const TURN: (Duration, Duration) = (Duration::from_millis(12), Duration::from_millis(120));
-/// The weather a session streams under: none by name, so a map gated by a weather stays out.
+/// The weather a session streams under where its title names none.
 const NO_WEATHER: u64 = 0;
 /// The model of GTA V's stand-in box and any title's like it is asked of no reader: the plain pass draws no stand-in.
 const STAND_IN_ABOVE: u64 = 1 << 32;
@@ -94,6 +94,11 @@ struct State {
     /// Where the camera stands and its vertical field of view; `None` until a frame was drawn.
     eye: Option<(Vec3, f32)>,
     hour: f32,
+    /// The weather a person chose; `None` for the first the title names.
+    weather: Option<u64>,
+    weathers: Vec<WeatherKind>,
+    water: Option<Arc<[WaterQuad]>>,
+    undrawn: Undrawn,
     /// Where each model stands on the device, not yet taken by the thread.
     told: Vec<(AssetKey, NodeState)>,
     /// The textures the last frame waits for, where it asked since the thread last took them.
@@ -139,6 +144,10 @@ pub struct DrivenSession {
     option_kinds: Vec<OptionKind>,
     camera: FlyCamera,
     hour: f32,
+    weather: Option<u64>,
+    weathers: Vec<WeatherKind>,
+    water: Option<Arc<[WaterQuad]>>,
+    undrawn: Undrawn,
     shared: Arc<Shared>,
     /// What the last poll took from the thread.
     standing: Standing,
@@ -182,6 +191,10 @@ impl DrivenSession {
                 stop: false,
                 eye: None,
                 hour: 12.0,
+                weather: None,
+                weathers: Vec::new(),
+                water: None,
+                undrawn: Undrawn::default(),
                 told: Vec::new(),
                 asks: None,
                 standing: Standing::Opening(0.0),
@@ -211,6 +224,10 @@ impl DrivenSession {
                 far: 20_000.0,
             },
             hour: 12.0,
+            weather: None,
+            weathers: Vec::new(),
+            water: None,
+            undrawn: Undrawn::default(),
             shared,
             standing: Standing::Opening(0.0),
             caps: WorldCaps::none(),
@@ -277,8 +294,16 @@ impl WorldSession for DrivenSession {
     fn poll(&mut self) {
         let mut state = self.shared.state();
         let eye = Some((self.camera.position, self.camera.fov_y));
-        let moved = state.eye != eye || state.hour != self.hour;
-        (state.eye, state.hour) = (eye, self.hour);
+        let moved = state.eye != eye || state.hour != self.hour || state.weather != self.weather;
+        (state.eye, state.hour, state.weather) = (eye, self.hour, self.weather);
+        // Both are stated once, when the world opens.
+        if self.weathers.len() != state.weathers.len() {
+            self.weathers.clone_from(&state.weathers);
+        }
+        if self.water.is_none() {
+            self.water.clone_from(&state.water);
+        }
+        self.undrawn = state.undrawn;
         self.standing = match &state.standing {
             Standing::Opening(_) => Standing::Opening(self.shared.progress.snapshot().fraction()),
             other => other.clone(),
@@ -320,6 +345,23 @@ impl WorldSession for DrivenSession {
 
     fn set_hour(&mut self, hour: f32) {
         self.hour = hour.rem_euclid(24.0);
+    }
+
+    fn weathers(&self) -> Vec<WeatherKind> {
+        self.weathers.clone()
+    }
+
+    fn weather(&self) -> u64 {
+        let first = self.weathers.first().map(|weather| weather.id);
+        self.weather.or(first).unwrap_or(NO_WEATHER)
+    }
+
+    fn set_weather(&mut self, weather: u64) {
+        self.weather = Some(weather);
+    }
+
+    fn undrawn(&self) -> Undrawn {
+        self.undrawn
     }
 
     fn waiting(&self) -> Waiting {
@@ -368,6 +410,10 @@ impl WorldFeed for DrivenSession {
     fn want_textures(&mut self, asks: Vec<(f32, TextureAsk)>) {
         self.shared.state().asks = Some(asks);
         self.shared.woken.notify_all();
+    }
+
+    fn water(&self) -> Option<Arc<[WaterQuad]>> {
+        self.water.clone()
     }
 }
 
@@ -498,6 +544,29 @@ fn nearest(instances: &Instances, eye: Vec3) -> Vec<f32> {
     near
 }
 
+/// What `selected` holds that the plain pass does not draw: the instances of a stand-in, and the lists that laid out no instance or that their bodies lay out none of.
+fn undrawn_of(selected: &or_world::driver::Selected) -> Undrawn {
+    let instances = &selected.instances;
+    let stands_in = |model: &u32| {
+        let key = instances.models.get(*model as usize);
+        key.is_some_and(|key| key.0 >= STAND_IN_ABOVE)
+    };
+    let laid: HashSet<_> = instances.node.iter().collect();
+    let lists = selected.selection.lists.iter();
+    let unlaid = selected
+        .bodies
+        .iter()
+        .map(|(_, body)| body.unlaid_lists() as usize);
+    Undrawn {
+        stand_ins: instances
+            .model
+            .iter()
+            .filter(|model| stands_in(model))
+            .count(),
+        lists: lists.filter(|list| !laid.contains(&list.node)).count() + unlaid.sum::<usize>(),
+    }
+}
+
 /// The session's thread: open the world, then stream, select and hand over until told to stop.
 fn run(
     shared: &Arc<Shared>,
@@ -518,9 +587,22 @@ fn run(
         }
     };
     let policy = install.policy();
+    let weathers = install.look().weathers(&index);
+    let first_weather = weathers.first().map(|weather| weather.id);
+    let water = match install.caps().has(Capability::Water) {
+        true => match install.water(&index) {
+            Ok(quads) => Some(Arc::from(quads)),
+            Err(why) => {
+                tracing::warn!(%why, "the water of a world did not read");
+                None
+            }
+        },
+        false => None,
+    };
     {
         let mut state = shared.state();
         (state.standing, state.caps) = (Standing::Open, install.caps());
+        (state.weathers, state.water) = (weathers, water);
     }
     let maps = {
         let (install, index) = (Arc::clone(&install), Arc::clone(&index));
@@ -584,14 +666,16 @@ fn run(
     let mut refusals = Refusals::default();
     let mut texture_asks: Vec<(f32, TextureAsk)> = Vec::new();
     let (mut version, mut last) = (0u64, None::<Instances>);
+    let mut undrawn = Undrawn::default();
     loop {
-        let (eye, hour, told, asks) = {
+        let (eye, hour, weather, told, asks) = {
             let mut state = shared.state();
             if state.stop {
                 return;
             }
             let told = std::mem::take(&mut state.told);
-            (state.eye, state.hour, told, state.asks.take())
+            let weather = state.weather.or(first_weather).unwrap_or(NO_WEATHER);
+            (state.eye, state.hour, weather, told, state.asks.take())
         };
         for (model, stands) in told {
             handed.remove(&model);
@@ -605,10 +689,7 @@ fn run(
             drop(shared.woken.wait_timeout(state, TURN.1));
             continue;
         };
-        let moment = Moment {
-            hour,
-            weather: NO_WEATHER,
-        };
+        let moment = Moment { hour, weather };
         let view = policy.view(eye, Vec3::ZERO, fov_y);
 
         let wanted = driver.want(&view, &moment, &switched, None);
@@ -714,6 +795,7 @@ fn run(
         if changed {
             version += 1;
             last = Some(selected.instances.clone());
+            undrawn = undrawn_of(&selected);
         }
         let waiting = Waiting {
             maps: streamed.waiting.len() + streamed.interiors_waiting.len(),
@@ -732,7 +814,7 @@ fn run(
         }
         state.models.extend(arrived_models);
         state.textures.extend(arrived_textures);
-        (state.waiting, state.facts) = (waiting, facts);
+        (state.waiting, state.facts, state.undrawn) = (waiting, facts, undrawn);
         state.unread = refusals.counted();
         let turn = match busy {
             true => TURN.0,

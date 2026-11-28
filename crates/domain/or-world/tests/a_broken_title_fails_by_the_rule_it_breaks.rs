@@ -24,13 +24,15 @@ fn breaks(fault: Fault) -> Rule {
         Fault::ListLaysOne => Rule::List,
         Fault::WordsShort => Rule::Columns,
         Fault::LightsDropped => Rule::Lit,
-        Fault::CapsLie | Fault::BaseStated | Fault::StoreUnstated | Fault::GroundUnstated => {
-            Rule::Caps
-        }
+        Fault::CapsLie
+        | Fault::BaseStated
+        | Fault::StoreUnstated
+        | Fault::GroundUnstated
+        | Fault::WaterUnstated => Rule::Caps,
         Fault::SessionHidesBody => Rule::ApplyShows,
         Fault::GuardIgnored => Rule::StaleGuard,
         Fault::InverseWrong => Rule::Inverse,
-        Fault::SwitchTwice => Rule::Slots,
+        Fault::SwitchTwice | Fault::WeatherTwice => Rule::Slots,
         Fault::StreamsEverywhere => Rule::Streams,
         Fault::BandOfNought => Rule::Policy,
         Fault::IndexPastVertices

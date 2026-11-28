@@ -13,9 +13,9 @@ use std::sync::Arc;
 
 use or_renderer::FlyCamera;
 use or_world::caps::WorldCaps;
-use or_world::model::{AssetKey, FrameFacts, Instances, Texture, TextureAsk};
+use or_world::model::{AssetKey, FrameFacts, Instances, Texture, TextureAsk, WaterQuad};
 use or_world::sentence::Sentence;
-use or_world::slots::{OptionId, OptionKind, OptionValue};
+use or_world::slots::{OptionId, OptionKind, OptionValue, WeatherKind};
 use or_world::streaming::NodeState;
 
 use super::prefs::{Game, Prefs};
@@ -60,6 +60,15 @@ impl Waiting {
     pub fn any(&self) -> bool {
         self.maps + self.models + self.textures > 0
     }
+}
+
+/// What a selection holds that the plain pass does not draw.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Undrawn {
+    /// The instances of a thing nothing says what draws, which would stand as a box.
+    pub stand_ins: usize,
+    /// The lists of instances of the maps loaded that are not laid out.
+    pub lists: usize,
 }
 
 /// What a thing that could not be read is.
@@ -124,6 +133,10 @@ pub trait WorldFeed {
     fn tell(&mut self, model: AssetKey, stands: NodeState);
     /// The textures the frame waits for, each with how soon it is needed, in place of those asked before.
     fn want_textures(&mut self, asks: Vec<(f32, TextureAsk)>);
+    /// The world's sheets of water, once read; `None` until then and for a world that states none.
+    fn water(&self) -> Option<Arc<[WaterQuad]>> {
+        None
+    }
 }
 
 /// One world session, as the World screen, its panel and the bridge read it.
@@ -141,6 +154,19 @@ pub trait WorldSession {
     /// The hour of the day, from 0 and below 24.
     fn hour(&self) -> f32;
     fn set_hour(&mut self, hour: f32);
+    /// The weathers the world is looked at under, the one it opened under first; none where its title names no weather.
+    fn weathers(&self) -> Vec<WeatherKind> {
+        Vec::new()
+    }
+    /// The weather it is looked at under, by the title's name of it.
+    fn weather(&self) -> u64 {
+        0
+    }
+    fn set_weather(&mut self, _weather: u64) {}
+    /// What the last selection holds that is not drawn.
+    fn undrawn(&self) -> Undrawn {
+        Undrawn::default()
+    }
     fn waiting(&self) -> Waiting;
     /// What could not be read, each kind and reason once, the most first.
     fn unread(&self) -> Vec<Unread>;

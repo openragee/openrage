@@ -89,6 +89,7 @@ fn capability_name(capability: Capability) -> &'static str {
         Capability::Edits => "an edit store",
         Capability::Base => "a base to compare with",
         Capability::OwnPrograms => "its own programs",
+        Capability::Water => "sheets of water",
     }
 }
 

@@ -702,6 +702,33 @@ fn caps(fixture: &Fixture, scratch: &Path) -> Held {
         (false, Err(_)) => {}
         (false, Ok(())) => return Err("no placement rows are stated, and asking gave rows".into()),
     }
+    match (
+        caps.has(Capability::Water),
+        opened.install.water(&opened.index),
+    ) {
+        (true, Ok(quads)) => {
+            let whole = |quad: &crate::model::WaterQuad| {
+                let numbers = [
+                    quad.min[0],
+                    quad.min[1],
+                    quad.max[0],
+                    quad.max[1],
+                    quad.height,
+                ];
+                numbers.iter().all(|n| n.is_finite())
+                    && quad.min[0] <= quad.max[0]
+                    && quad.min[1] <= quad.max[1]
+            };
+            if let Some(quad) = quads.iter().find(|quad| !whole(quad)) {
+                return Err(format!(
+                    "water is stated, and a sheet of it is no rectangle at a height: {quad:?}"
+                ));
+            }
+        }
+        (true, Err(e)) => return Err(format!("water is stated, and asking gave: {e}")),
+        (false, Err(_)) => {}
+        (false, Ok(_)) => return Err("no water is stated, and asking gave sheets of it".into()),
+    }
     let (ground, mut worker) = (&fixture.scene.ground, Worker::new());
     let probe = crate::collision::GroundProbe {
         max_rise: 0.0,
@@ -849,6 +876,21 @@ fn slots(fixture: &Fixture, scratch: &Path) -> Held {
     once("the switch", switches.iter().map(|s| u64::from(s.id.0)))?;
     if !switches.iter().any(|s| s.id == fixture.scene.held.switch) {
         return Err("the switch the fixture's held map waits for is none the look lists".into());
+    }
+    let weathers = opened.install.look().weathers(&opened.index);
+    once("the weather", weathers.iter().map(|weather| weather.id))?;
+    if weathers
+        .iter()
+        .any(|weather| weather.name.trim().is_empty())
+    {
+        return Err("a weather has a name of no words".into());
+    }
+    let checked = |weather: &crate::slots::WeatherKind| weather.id == fixture.scene.weather;
+    if !weathers.is_empty() && !weathers.iter().any(checked) {
+        return Err("the weather the fixture checks under is none the look lists".into());
+    }
+    if opened.install.caps().has(Capability::WeatherGate) && weathers.is_empty() {
+        return Err("a weather gates what streams, and the look lists no weather".into());
     }
     let extras = opened.install.extras();
     for (name, slots) in [

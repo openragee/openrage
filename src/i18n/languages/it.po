@@ -17639,11 +17639,21 @@ msgstr "Apri il mondo con queste"
 msgid "A world opened with other options has an index of its own, read from the install the first time"
 msgstr "Un mondo aperto con altre opzioni ha un indice proprio, letto dall'installazione la prima volta"
 
-msgid "Drawn by the plain pass: one sun, and no shadow, sky, water or shader of the game's own"
-msgstr "Disegnato dal passaggio semplice: un sole, e nessuna ombra, cielo, acqua o shader proprio del gioco"
+msgid "Drawn by the plain pass: one sun and level water, and no shadow, sky or shader of the game's own"
+msgstr "Disegnato dal passaggio semplice: un sole e acqua piana, e nessuna ombra, cielo o shader proprio del gioco"
 
-msgid "No weather is named yet, so a map that streams under some weathers alone stays out"
-msgstr "Nessun meteo è ancora indicato, quindi una mappa caricata solo con certi meteo resta fuori"
+msgid "The weather the world is looked at under: a map placed for some weathers streams under them alone"
+msgstr "Il meteo sotto cui si guarda il mondo: una mappa collocata per alcuni meteo viene trasmessa solo sotto di essi"
+
+msgid "{count} thing placed has no model named and is not drawn"
+msgid_plural "{count} things placed have no model named and are not drawn"
+msgstr[0] "{count} elemento collocato non nomina alcun modello e non viene disegnato"
+msgstr[1] "{count} elementi collocati non nominano alcun modello e non vengono disegnati"
+
+msgid "{count} list of instances (grass, batches of props) is not drawn"
+msgid_plural "{count} lists of instances (grass, batches of props) are not drawn"
+msgstr[0] "{count} lista di istanze (erba, gruppi di oggetti) non viene disegnata"
+msgstr[1] "{count} liste di istanze (erba, gruppi di oggetti) non vengono disegnate"
 
 msgid "As the install has it"
 msgstr "Come nell'installazione"

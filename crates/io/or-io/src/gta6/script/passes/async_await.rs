@@ -36,13 +36,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::gta6::script::cfg::{self, Block, BlockId, Cfg, Terminator, ENTRY};
 use crate::gta6::script::ir::{
-    BinOp, Callee, Const, Expr, Kind, Returns, Scalar, Stmt, StoreKind, UnOp, Var,
+    BinOp, Callee, Const, Expr, Head, Kind, Returns, Scalar, Stmt, StoreKind, UnOp, Var, Width,
 };
 use crate::gta6::script::tree::{self, Label, Sugar};
 use crate::gta6::script::{Context, Pass, Stats};
 
 pub use self::ends::{handed_back, result, AsyncResult};
-pub use self::kick::{hide_machines, joined, joined_steps, joins, Join};
+pub use self::kick::{hide_machines, hide_machines_in, joined, joined_steps, joins, Join};
 pub use self::place::{reading, Reading, Taken};
 
 /// The names this file's rewrites are switched by.
@@ -327,7 +327,7 @@ pub fn run(f: &mut tree::Function, machine: Machine, cx: &Context<'_>, _stats: &
     // Each moves a statement into an await that is already there: `await` switches both off.
     if cx.options.on(Pass::Await) {
         place::tasks(&mut f.body);
-        in_place(&mut f.body);
+        in_place(&mut f.body, &f.head);
     }
 }
 
@@ -337,6 +337,8 @@ struct Uses {
     writes: BTreeMap<Var, u32>,
     reads: BTreeMap<Var, u32>,
     addressed: BTreeSet<Var>,
+    /// The cells of the locals an address is taken of, by their number in the frame.
+    addresses: BTreeSet<u32>,
 }
 
 impl Uses {
@@ -350,13 +352,33 @@ impl Uses {
         tree::each_expr(body, &mut |top| {
             top.walk(&mut |e| match e {
                 Expr::Var(var) => *uses.reads.entry(*var).or_default() += 1,
-                Expr::AddrOf { var, .. } => {
+                Expr::AddrOf { var, cell } => {
                     uses.addressed.insert(*var);
+                    if let Var::Local(n) = var {
+                        uses.addresses.insert(n.saturating_add(*cell));
+                    }
                 }
                 _ => {}
             });
         });
         uses
+    }
+
+    /// Whether an address the body takes of a local may reach the cells of `var`: one at or below it, with no local proved one cell wide between the two.
+    // ⚠ The reach `escape` gives an address handed out: up to the next local the form read
+    // proves one cell wide. A local in that reach is memory a callee may read, so its
+    // assignment stays where it stands.
+    fn reached(&self, head: &Head, var: Var) -> bool {
+        let Var::Local(n) = var else {
+            return false;
+        };
+        let single = |cell: u32| {
+            let info = head.vars.get(&Var::Local(cell));
+            info.is_some_and(|info| info.single && info.width == Width::Cell)
+        };
+        self.addresses
+            .range(..=n)
+            .any(|from| !(from.saturating_add(1)..=n).any(single))
     }
 
     /// Whether `var` is assigned once, read once and its address never taken.
@@ -386,8 +408,9 @@ fn taken_from(before: &[Stmt]) -> Option<Var> {
 
 /// Puts in the place of the variable an await takes its awaiter from the value assigned to it in the statement just before, where nothing else reads or assigns the variable or takes its address: `await f(a)`.
 // ⚠ Nothing is worked out between the assignment and the taking, which evaluates the variable
-// first: the value is worked out where it was.
-fn in_place(body: &mut Vec<tree::Stmt>) {
+// first: the value is worked out where it was. A local an address of the frame may reach keeps
+// its assignment: what a callee can see of the frame would change with it.
+fn in_place(body: &mut Vec<tree::Stmt>, head: &Head) {
     let uses = Uses::of(body);
     // An explicit stack: a body nests as deep as its listing does.
     let mut work: Vec<&mut Vec<tree::Stmt>> = vec![body];
@@ -397,9 +420,9 @@ fn in_place(body: &mut Vec<tree::Stmt>) {
             let folds = match (&list[at - 1], &list[at]) {
                 (tree::Stmt::Simple(Stmt::Assign { target, .. }), tree::Stmt::Sugar(sugar)) => {
                     match &**sugar {
-                        Sugar::Await { before, .. } => {
-                            taken_from(before).is_some_and(|var| var == *target && uses.once(var))
-                        }
+                        Sugar::Await { before, .. } => taken_from(before).is_some_and(|var| {
+                            var == *target && uses.once(var) && !uses.reached(head, var)
+                        }),
                         _ => false,
                     }
                 }

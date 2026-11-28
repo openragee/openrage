@@ -1,7 +1,9 @@
-use super::super::{hide_machines, joined_steps, joins};
+use super::super::kick::{hide_reached, names_in};
+use super::super::{hide_machines, hide_machines_in, joined_steps, joins};
 use super::*;
 use crate::gta6::script::class::{Class, ClassKind, Method, Role, Unit};
 use crate::gta6::script::ir::{ExprSugar, Kind, Scalar, TypeKey, VarInfo, Width};
+use crate::gta6::script::project::ProgramInfo;
 use crate::gta6::script::{Context, Names, Options, Pass, Project};
 
 /// The type of the machine the tests write, the owner `grouped` gives a store.
@@ -237,4 +239,138 @@ fn a_field_filled_from_what_a_parameter_points_at_is_a_copy_the_method_makes() {
         let done = program(STARTS, &HANDS.replace(filled, other), options);
         assert!(joins(&done, &cx).is_empty(), "{other}");
     }
+}
+
+/// The step function, the start function and the kick-off of a method that starts its machine through a start function, joined.
+fn started_program() -> (
+    BTreeSet<u32>,
+    tree::Function,
+    tree::Function,
+    tree::Function,
+) {
+    let names = Names::default();
+    let options = Options::baseline().with(Pass::Await);
+    let cx = Context::new(&names, Project::empty(), options);
+    let kick = HANDS.replace("func_000100(Vm.Address(locals, 0));", START_CALL);
+    let (functions, steps) = joined_steps(program(STARTS, &kick, options), &cx);
+    let (step, start, kick) = (
+        functions[0].clone(),
+        functions[1].clone(),
+        functions[2].clone(),
+    );
+    (steps, step, start, kick)
+}
+
+#[test]
+fn a_machine_another_program_may_reach_stays_written_and_so_does_its_start_function() {
+    let (steps, step, start, kick) = started_program();
+    let other = handing(&start);
+    let held = unit(
+        vec![machine(step.clone(), other.clone())],
+        vec![start.clone(), kick.clone()],
+    );
+    let nowhere = |_: u32| false;
+    let unnamed = |_: TypeKey| false;
+    // Reached by no other program, the machine and its start function go.
+    let mut written = held.clone();
+    assert_eq!(hide_reached(&mut written, &steps, &nowhere, &unnamed), 1);
+    assert_eq!(written.functions.len(), 1);
+    assert_eq!(written.functions[0].function, kick);
+
+    // ⚠ Its step function, its other method or its start function reached from outside keeps it.
+    for at in [step.head.at, other.head.at, start.head.at] {
+        let reached = move |of: u32| of == at;
+        let mut written = held.clone();
+        assert_eq!(
+            hide_reached(&mut written, &steps, &reached, &unnamed),
+            0,
+            "{at:#x}"
+        );
+        assert_eq!(written, held);
+    }
+    // ⚠ So does its type named outside.
+    let named = |key: TypeKey| key == MACHINE;
+    let mut written = held.clone();
+    assert_eq!(hide_reached(&mut written, &steps, &nowhere, &named), 0);
+    assert_eq!(written, held);
+    // Another type named outside is none of the machine's.
+    let elsewhere = |key: TypeKey| key != MACHINE;
+    let mut written = held.clone();
+    assert_eq!(hide_reached(&mut written, &steps, &nowhere, &elsewhere), 1);
+}
+
+#[test]
+fn a_machine_of_a_program_the_project_holds_and_nothing_imports_is_not_written() {
+    let names = Names::default();
+    let options = Options::baseline().with(Pass::Await);
+    let cx = Context::new(&names, Project::empty(), options);
+    let (functions, steps) = joined_steps(program(STARTS, HANDS, options), &cx);
+    let (step, other) = (functions[0].clone(), handing(&functions[1]));
+    let held = unit(vec![machine(step, other)], vec![functions[2].clone()]);
+    let mut alone = Project::default();
+    let info = ProgramInfo {
+        program: held.program,
+        ..ProgramInfo::default()
+    };
+    alone.programs.insert(held.program, info);
+    let mut written = held.clone();
+    assert_eq!(hide_machines_in(&mut written, &steps, &alone), 1);
+    assert!(written.classes.is_empty());
+    // ⚠ A program the project does not hold may be imported by any: its machines stay.
+    let mut written = held.clone();
+    assert_eq!(hide_machines_in(&mut written, &steps, Project::empty()), 0);
+    assert_eq!(written, held);
+}
+
+#[test]
+fn a_start_function_placed_in_a_class_goes_with_its_machine_as_a_free_one_does() {
+    let (steps, step, start, kick) = started_program();
+    let other = handing(&start);
+    let placed = |slot: Option<u32>| Class {
+        key: TypeKey(0x0FED_CBA9_8765_4321),
+        kind: ClassKind::Class,
+        base: None,
+        interfaces: Vec::new(),
+        fields: Vec::new(),
+        methods: vec![Method {
+            function: start.clone(),
+            role: Role::Method,
+            is_static: true,
+            is_async: false,
+            slot,
+            overrides: false,
+        }],
+        nested: Vec::new(),
+    };
+    let held = unit(
+        vec![machine(step.clone(), other.clone()), placed(None)],
+        vec![kick.clone()],
+    );
+    let mut written = held.clone();
+    assert_eq!(hide_machines(&mut written, &steps), 1);
+    assert_eq!(written.classes.len(), 1);
+    assert!(
+        written.classes[0].methods.is_empty(),
+        "{:#?}",
+        written.classes
+    );
+    assert_eq!(written.functions.len(), 1);
+    assert_eq!(written.functions[0].function, kick);
+
+    // ⚠ Filling a virtual slot, it may be called through the slot: it stays, and so does the machine it starts.
+    let held = unit(vec![machine(step, other), placed(Some(2))], vec![kick]);
+    let mut written = held.clone();
+    assert_eq!(hide_machines(&mut written, &steps), 0);
+    assert_eq!(written, held);
+}
+
+#[test]
+fn a_reference_whose_top_byte_holds_flags_counts_as_a_use_of_the_function_at_its_offset() {
+    let body = vec![tree::Stmt::Simple(Stmt::Eval(Expr::FunctionRef {
+        program: 1,
+        at: 0x4000_0080,
+    }))];
+    let mut named = std::collections::BTreeMap::new();
+    names_in(&body, 1, &mut named);
+    assert_eq!(named, std::collections::BTreeMap::from([(0x80, 1)]));
 }

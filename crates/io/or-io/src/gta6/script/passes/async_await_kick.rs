@@ -7,7 +7,8 @@
 //! through a start function that only calls it: `joined` puts that function's body where the call
 //! stood. Either way the method reads as one body, with what makes the machine out of sight, and
 //! a machine whose step function is read so is left out of what is written (`hide_machines`), with
-//! a start function nothing else calls.
+//! a start function nothing else calls; in a program another imports, only where the project says
+//! no other program reaches it (`hide_machines_in`).
 //!
 //! ⚠ A statement that copies a parameter into the machine stays in sight: the body reads the
 //! machine's field, and nothing here proves the field never changes after it. The runtime is
@@ -16,13 +17,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::gta6::script::cfg::{self, Block, Terminator};
-use crate::gta6::script::class::{Class, ClassKind, Method, Unit};
+use crate::gta6::script::class::{Class, ClassKind, Method, Role, Unit};
 use crate::gta6::script::ir::{
-    Callee, Expr, ExprSugar, Head, Returns, Stmt, StoreKind, TypeKey, Var, VarInfo,
+    Callee, Expr, ExprSugar, FunctionKey, Head, Returns, Stmt, StoreKind, TypeKey, Var, VarInfo,
+    FUNCTION_OFFSET,
 };
 use crate::gta6::script::print;
 use crate::gta6::script::tree::{self, Group, Sugar};
-use crate::gta6::script::{Context, Pass};
+use crate::gta6::script::{Context, Pass, Project};
 
 use super::{
     constant, entry_read, field_read, framed, is_step, place, quiet, rooted, state_read, unwide,
@@ -1012,7 +1014,7 @@ pub fn joined_steps(
 }
 
 /// Counts in `named` each call of a function of `program` and each reference to one that `body` makes, by offset.
-fn names_in(body: &[tree::Stmt], program: u32, named: &mut BTreeMap<u32, u32>) {
+pub(super) fn names_in(body: &[tree::Stmt], program: u32, named: &mut BTreeMap<u32, u32>) {
     tree::each_expr(body, &mut |top| {
         top.walk(&mut |e| {
             let at = match e {
@@ -1030,7 +1032,7 @@ fn names_in(body: &[tree::Stmt], program: u32, named: &mut BTreeMap<u32, u32>) {
                 | Expr::FunctionRef { program: of, at }
                     if *of == program =>
                 {
-                    *at
+                    *at & FUNCTION_OFFSET
                 }
                 _ => return,
             };
@@ -1118,15 +1120,41 @@ fn written(f: &tree::Function) -> tree::Function {
 // A method that awaits may name the machine through the fields of it alone: those readings are
 // taken off it, and it reads the bytes of the local the machine is in, as its code does.
 pub fn hide_machines(unit: &mut Unit, steps: &BTreeSet<u32>) -> usize {
+    hide_reached(unit, steps, &|_| false, &|_| false)
+}
+
+/// [`hide_machines`] in a program of `project`: where another program imports it, only the machines none of whose methods, start functions or type the project says another may reach; how many it took out.
+// ⚠ Each answer of the project is `true` where it is not proved false. A program the project does
+// not hold may be named by any other, and keeps every machine.
+pub fn hide_machines_in(unit: &mut Unit, steps: &BTreeSet<u32>, project: &Project) -> usize {
+    let program = unit.program;
+    if !project.programs.contains_key(&program) {
+        return 0;
+    }
+    if print::unimported(program, project) {
+        return hide_machines(unit, steps);
+    }
+    let reached = |at: u32| project.reached_from_outside(FunctionKey::new(program, at));
+    let named = |key: TypeKey| project.type_named_outside(key);
+    hide_reached(unit, steps, &reached, &named)
+}
+
+/// [`hide_machines`], keeping each machine a method of which, by offset, `reached` says another program may reach, or whose type `named` says another may name, and each start function `reached` names.
+pub(super) fn hide_reached(
+    unit: &mut Unit,
+    steps: &BTreeSet<u32>,
+    reached: &dyn Fn(u32) -> bool,
+    named: &dyn Fn(TypeKey) -> bool,
+) -> usize {
     if steps.is_empty() {
         return 0;
     }
-    let (hide, starts) = unwritten(unit, steps);
+    let (hide, starts) = unwritten(unit, steps, reached, named);
     if hide.is_empty() {
         return 0;
     }
-    unit.functions
-        .retain(|method| !starts.contains(&method.function.head.at));
+    let gone = |method: &Method| starts.contains(&method.function.head.at) && starter(method);
+    unit.functions.retain(|method| !gone(method));
     for method in &mut unit.functions {
         unfielded(&mut method.function.body, &hide);
     }
@@ -1138,6 +1166,7 @@ pub fn hide_machines(unit: &mut Unit, steps: &BTreeSet<u32>) -> usize {
         list.retain(|class| !goes(class, &hide));
         hidden = hidden.saturating_add(before - list.len());
         for class in list {
+            class.methods.retain(|method| !gone(method));
             for method in &mut class.methods {
                 unfielded(&mut method.function.body, &hide);
             }
@@ -1145,6 +1174,12 @@ pub fn hide_machines(unit: &mut Unit, steps: &BTreeSet<u32>) -> usize {
         }
     }
     hidden
+}
+
+/// Whether `method` may be a start function that goes with its machine: one only a call or a reference by its offset reaches, which [`names_in`] counts.
+// ⚠ A method that fills a virtual slot is called through the slot, by no offset.
+fn starter(method: &Method) -> bool {
+    method.slot.is_none() && method.role == Role::Method
 }
 
 /// Whether `class` is a machine [`hide_machines`] leaves out: one of the types `hide` holds, and a machine as [`hidden_machine`] takes one.
@@ -1165,20 +1200,17 @@ struct Naming<'a> {
 
 /// What [`hide_machines`] leaves out of what `unit` writes: the state machines, and the start functions of their step functions, by offset.
 // ⚠ A start function goes only where nothing written calls it or refers to it, and then with the
-// machine of the step function it calls: its call is then no call of anything written.
-fn unwritten(unit: &Unit, steps: &BTreeSet<u32>) -> (BTreeSet<TypeKey>, BTreeSet<u32>) {
+// machine of the step function it calls: its call is then no call of anything written. One that
+// another program may reach stays, and so does its machine.
+// A start function the classes pass placed in a class goes as a free one does; one placed in a
+// machine goes with it, as the compiler's own.
+fn unwritten(
+    unit: &Unit,
+    steps: &BTreeSet<u32>,
+    reached: &dyn Fn(u32) -> bool,
+    outside: &dyn Fn(TypeKey) -> bool,
+) -> (BTreeSet<TypeKey>, BTreeSet<u32>) {
     let program = unit.program;
-    // The functions of the program that only start a step function read into its kick-off, with that step function.
-    let starting: BTreeMap<u32, u32> = unit
-        .functions
-        .iter()
-        .filter_map(|method| {
-            let step = started(&method.function)?;
-            steps
-                .contains(&step)
-                .then_some((method.function.head.at, step))
-        })
-        .collect();
     let mut named: BTreeMap<u32, u32> = BTreeMap::new();
     // The types each class's own statement of itself names: its base, its interfaces, its fields.
     let mut typed: BTreeMap<TypeKey, BTreeSet<TypeKey>> = BTreeMap::new();
@@ -1186,9 +1218,23 @@ fn unwritten(unit: &Unit, steps: &BTreeSet<u32>) -> (BTreeSet<TypeKey>, BTreeSet
     let mut open: Vec<&Class> = unit.classes.iter().collect();
     let mut methods: Vec<(&Method, Option<TypeKey>)> =
         unit.functions.iter().map(|method| (method, None)).collect();
+    // The functions of the program that only start a step function read into its kick-off, with that step function.
+    let mut starting: BTreeMap<u32, u32> = BTreeMap::new();
+    let mut start_of = |method: &Method| {
+        let Some(step) = started(&method.function) else {
+            return;
+        };
+        if starter(method) && steps.contains(&step) {
+            starting.insert(method.function.head.at, step);
+        }
+    };
+    unit.functions.iter().for_each(&mut start_of);
     while let Some(class) = open.pop() {
         classes.push(class);
         methods.extend(class.methods.iter().map(|method| (method, Some(class.key))));
+        if class.kind != ClassKind::StateMachine {
+            class.methods.iter().for_each(&mut start_of);
+        }
         open.extend(&class.nested);
         let mut found: BTreeSet<TypeKey> = class.base.into_iter().collect();
         found.extend(class.interfaces.iter().copied());
@@ -1202,10 +1248,7 @@ fn unwritten(unit: &Unit, steps: &BTreeSet<u32>) -> (BTreeSet<TypeKey>, BTreeSet
     let mut namings: Vec<Naming<'_>> = Vec::with_capacity(methods.len());
     let mut starts: Vec<&Method> = Vec::new();
     for (method, by) in methods {
-        let start = match by {
-            None => starting.get(&method.function.head.at).copied(),
-            Some(_) => None,
-        };
+        let start = starting.get(&method.function.head.at).copied();
         match start {
             Some(_) => starts.push(method),
             None => names_in(&method.function.body, program, &mut named),
@@ -1227,7 +1270,7 @@ fn unwritten(unit: &Unit, steps: &BTreeSet<u32>) -> (BTreeSet<TypeKey>, BTreeSet
     for method in starts {
         let at = method.function.head.at;
         match named.get(&at).copied().unwrap_or_default() {
-            0 => {
+            0 if !reached(at) => {
                 uncalled.insert(at);
             }
             _ => names_in(&method.function.body, program, &mut named),
@@ -1243,6 +1286,11 @@ fn unwritten(unit: &Unit, steps: &BTreeSet<u32>) -> (BTreeSet<TypeKey>, BTreeSet
         .iter()
         .filter(|class| hidden_machine(class, steps, &named, program))
         .filter(|class| unnamed_outside(class, &typed, &namings))
+        .filter(|class| !outside(class.key))
+        .filter(|class| {
+            let at = |method: &Method| method.function.head.at;
+            !class.methods.iter().any(|method| reached(at(method)))
+        })
         .map(|class| class.key)
         .collect();
     // The step functions of the machines that go, each of the class it is a method of.

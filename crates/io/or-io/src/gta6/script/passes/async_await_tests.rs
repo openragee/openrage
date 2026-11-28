@@ -856,6 +856,20 @@ fn a_kick_off_whose_start_does_more_than_make_the_machine_is_left() {
     left_kicked(&IN_PLACE.replace(task, "return load_u64(Vm.Address(locals, 0), 0x18);"));
 }
 
+#[test]
+fn a_kick_off_in_line_whose_task_a_call_asks_of_its_builder_is_left_as_it_is() {
+    // ⚠ Nothing proves the function the builder's task getter: hidden, a call of anything else
+    // would leave no trace in what is written.
+    let task = "return load_u64(byte_offset(Vm.Address(locals, 0), 0x8), 0x8);";
+    for other in [
+        "return func_000800(byte_offset(Vm.Address(locals, 0), 0x8));",
+        "return func_000800(byte_offset(Vm.Address(locals, 0), 0x8), p1);",
+        "return func_000800(Vm.Address(locals, 0));",
+    ] {
+        left_kicked(&IN_PLACE.replace(task, other));
+    }
+}
+
 /// The step function of `FRAME` with its machine proved, and the kick-off that holds `body`, each as its blocks written in their order.
 fn two(body: &str) -> Vec<tree::Function> {
     let (_, f, machine) = untangled(&in_line());
@@ -966,21 +980,56 @@ fn what_an_await_takes_its_awaiter_from_is_written_in_place_where_nothing_else_u
         target: Var::Local(3),
         value: task(),
     });
+    let head = Head {
+        value_types: Default::default(),
+        program: 1,
+        at: 0x40,
+        name: "func_000040".to_owned(),
+        returns: Returns::Void,
+        params: 2,
+        locals: 8,
+        vars: BTreeMap::new(),
+        incomplete: None,
+    };
     let mut body = vec![kept.clone(), awaited(Expr::Var(Var::Local(3)))];
-    in_place(&mut body);
+    in_place(&mut body, &head);
     assert_eq!(body, vec![awaited(task())]);
     // A variable read again keeps what it was given.
     let again = tree::Stmt::Simple(Stmt::Eval(call("demo_use", vec![Expr::Var(Var::Local(3))])));
     let mut body = vec![kept.clone(), awaited(Expr::Var(Var::Local(3))), again];
     let held = body.clone();
-    in_place(&mut body);
+    in_place(&mut body, &head);
     assert_eq!(body, held);
     // So does one whose assignment does not stand just before the await.
     let between = tree::Stmt::Simple(Stmt::Eval(call("demo_use", vec![Expr::Var(Var::Param(1))])));
-    let mut body = vec![kept, between, awaited(Expr::Var(Var::Local(3)))];
+    let mut body = vec![kept.clone(), between, awaited(Expr::Var(Var::Local(3)))];
     let held = body.clone();
-    in_place(&mut body);
+    in_place(&mut body, &head);
     assert_eq!(body, held);
+    // And one a callee may see through the address of a local below it: its assignment is the
+    // memory that address reaches.
+    let handed = |local: u32| {
+        let address = Expr::AddrOf {
+            var: Var::Local(local),
+            cell: 0,
+        };
+        tree::Stmt::Simple(Stmt::Eval(call("demo_fill", vec![address])))
+    };
+    let mut body = vec![handed(1), kept.clone(), awaited(Expr::Var(Var::Local(3)))];
+    let held = body.clone();
+    in_place(&mut body, &head);
+    assert_eq!(body, held);
+    // A local proved one cell wide between the two ends that reach, and an address above reaches nothing below it.
+    let mut walled = head.clone();
+    let mut single = crate::gta6::script::ir::VarInfo::new(Width::Cell);
+    single.single = true;
+    walled.vars.insert(Var::Local(2), single);
+    let mut body = vec![handed(1), kept.clone(), awaited(Expr::Var(Var::Local(3)))];
+    in_place(&mut body, &walled);
+    assert_eq!(body, vec![handed(1), awaited(task())]);
+    let mut body = vec![handed(5), kept, awaited(Expr::Var(Var::Local(3)))];
+    in_place(&mut body, &head);
+    assert_eq!(body, vec![handed(5), awaited(task())]);
 }
 
 // ---- a kick-off as the passes leave it ------------------------------------------------------

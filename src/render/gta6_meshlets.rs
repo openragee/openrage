@@ -534,7 +534,7 @@ pub(crate) fn meshlets(state: &AppState) -> Option<Result<Meshlets, String>> {
         ped: &|| crate::state::gta6_shaders::ped_assets::worn(state),
         tile: &|| crate::state::gta6_shaders::terrain_tile::worn(state),
         game_texture: &|name| crate::state::gta6_shaders::global_textures::worn(state, name),
-        skin_tones: &|| crate::state::gta6_shaders::ped_assets::skin_tones(state),
+        skin_tones: &|| crate::state::gta6_shaders::ped_assets::skin_tones::worn(state),
     };
     let (mut out, effects) = meshlets_of(drawable, models, &sources)?;
     UNDER.lock().unwrap_or_else(|p| p.into_inner()).0 = effects;
@@ -567,7 +567,7 @@ pub(crate) struct Sources<'s> {
     pub game_texture: &'s dyn Fn(u32) -> Result<Option<GameSlices>, ()>,
     /// The install's skin tones, asked for by the first pass that reads the table of their
     /// records; `Err` while a worker reads them.
-    pub skin_tones: &'s dyn Fn() -> Result<Option<SkinTones>, ()>,
+    pub skin_tones: &'s dyn Fn() -> Result<Option<Arc<SkinTones>>, ()>,
 }
 
 type SkinTones = or_io::gta6::skin_tones::SkinTones;
@@ -620,7 +620,7 @@ pub(crate) fn meshlets_of(
     let mut worn: Option<Option<(Arc<Index>, Material)>> = None;
     let mut ped = None;
     let mut terrain_tile = None;
-    let mut skin_tones: Option<Option<SkinTones>> = None;
+    let mut skin_tones: Option<Option<Arc<SkinTones>>> = None;
     let map = |key: u64| {
         (from.map)(key).unwrap_or_else(|()| {
             decoding.set(true);
@@ -674,7 +674,7 @@ pub(crate) fn meshlets_of(
                         None
                     })
                 });
-                super::gta6_ped::fill_skin(pass, tones.as_ref(), &mut surface.feeds);
+                super::gta6_ped::fill_skin(pass, tones.as_deref(), &mut surface.feeds);
             }
             let joined = super::gta6_ped::joined_for(pass, &mut ped, from.ped, &decoding);
             let mut ped_map = map;

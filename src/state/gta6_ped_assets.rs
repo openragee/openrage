@@ -11,7 +11,6 @@ use std::time::Duration;
 use or_io::container::rpf::{rpf9_scan::Rpf9BodyReader, Rpf9BodyKind, Rpf9Content};
 use or_io::gta6::ped_assets::{self, PedAssetList, PedTextures};
 use or_io::gta6::ped_catalogue::{self, PedCatalogue};
-use or_io::gta6::skin_tones::{self, SkinTones};
 
 use crate::state::rpf9_scan::{Ended, Row as ScanRow, Rpf9ScanDocument};
 
@@ -27,8 +26,6 @@ const LOOK: Duration = Duration::from_millis(50);
 pub(crate) struct Index {
     pub catalogues: Vec<PedCatalogue>,
     pub lists: Vec<PedAssetList>,
-    /// The skin tones the first body that states them holds.
-    pub skin_tones: Option<SkinTones>,
 }
 
 /// What the active GTA VI drawable joins to.
@@ -90,13 +87,6 @@ fn read_archive(path: &Path, out: &mut Index) {
         let Ok((find, bytes)) = reader.read(offset, BODY_LIMIT) else {
             continue;
         };
-        if pso && out.skin_tones.is_none() && skin_tones::is_skin_tones(&bytes) {
-            let tones = or_io::meta::binary::parse_meta_binary(schema, &bytes).ok();
-            out.skin_tones = tones.as_ref().and_then(skin_tones::read_tree);
-            if out.skin_tones.is_some() {
-                continue;
-            }
-        }
         if pso {
             let list = (ped_assets::is_asset_list(&bytes))
                 .then(|| or_io::meta::binary::parse_meta_binary(schema, &bytes).ok())
@@ -133,8 +123,7 @@ fn build(root: &Path) -> Index {
     tracing::info!(
         catalogues = index.catalogues.len(),
         lists = index.lists.len(),
-        skin_presets = index.skin_tones.as_ref().map_or(0, |t| t.presets.len()),
-        "read the ped catalogues, asset lists and skin tones of {}",
+        "read the ped catalogues and asset lists of {}",
         root.display()
     );
     index
@@ -185,17 +174,9 @@ pub(crate) fn worn(state: &crate::state::AppState) -> Option<Worn> {
     })
 }
 
-/// The skin tones of the active document's install; `Err` while a worker reads its index, which
-/// the first ask starts.
-pub(crate) fn skin_tones(state: &crate::state::AppState) -> Result<Option<SkinTones>, ()> {
-    let Some(doc) = state.active_document() else {
-        return Ok(None);
-    };
-    match crate::state::gta6_texture_index::root_of(state, doc) {
-        Some(root) => under(&root).map(|index| index.skin_tones.clone()).ok_or(()),
-        None => Ok(None),
-    }
-}
+// Declared here: the state module is at its line budget.
+#[path = "gta6_skin_tones.rs"]
+pub(crate) mod skin_tones;
 
 #[cfg(test)]
 mod tests {
@@ -239,7 +220,6 @@ mod tests {
                 set_lists: Vec::new(),
             }],
             lists: vec![list],
-            skin_tones: None,
         };
         let joined = joined(&index, "ZQ_Hat_000.#dr").expect("worn");
         assert_eq!((joined.state, joined.key(WRINKLE_MASK)), (BASE, Some(0xF3)));

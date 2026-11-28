@@ -52,8 +52,7 @@ pub mod rpf9_write;
 pub mod rsc8;
 pub mod version;
 
-/// RAGE's one-letter platform prefixes (`y` PC x64, `z` Xbox Series, `p` PS5, `x` Xbox 360, …).
-pub const RAGE_PLATFORM_LETTERS: &[u8] = b"ywxdzcopasnvi";
+pub use crate::platform::RAGE_PLATFORM_LETTERS;
 
 /// The tails a platform letter is followed by in RAGE extensions (`#dr`, `#td`, `#map`, …).
 pub const RAGE_STUB_TAILS: &[&str] = &[

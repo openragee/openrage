@@ -42,56 +42,7 @@ impl ContainerFamily {
     }
 }
 
-/// The machine a build of a title was made for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Platform {
-    Pc,
-    Ps4,
-    XboxOne,
-    Ps5,
-    XboxSeries,
-}
-
-impl Platform {
-    pub fn label(self) -> &'static str {
-        match self {
-            Platform::Pc => "PC",
-            Platform::Ps4 => "PlayStation 4",
-            Platform::XboxOne => "Xbox One",
-            Platform::Ps5 => "PlayStation 5",
-            Platform::XboxSeries => "Xbox Series",
-        }
-    }
-
-    /// RAGE's one-letter filename prefix for this platform: a stored `#td` becomes
-    /// `ytd` on PC, `ztd` on Xbox Series, `ptd` on PS5. The letters, from the
-    /// rage.re public reference:
-    ///
-    /// | Prefix | Platform                                 |
-    /// |--------|------------------------------------------|
-    /// | `y`    | Windows 64 / Linux                       |
-    /// | `w`    | Windows 32 / x86                         |
-    /// | `x`    | Xbox 360 (Xenon)                         |
-    /// | `d`    | Xbox One (Durango)                       |
-    /// | `z`    | Xbox Series (Scarlett)                   |
-    /// | `c`    | PlayStation 3 / PSN                      |
-    /// | `o`    | PlayStation 4 (Orbis)                    |
-    /// | `p`    | PlayStation 5 (Prospero)                 |
-    /// | `a`    | Android                                  |
-    /// | `s`    | iOS                                      |
-    /// | `n`    | Switch (NX64)                            |
-    /// | `v`    | Vita (PSP2)                              |
-    /// | `i`    | independent (North-specific)             |
-    pub fn extension_letter(self) -> char {
-        match self {
-            Platform::Pc => 'y',
-            Platform::XboxOne => 'd',
-            Platform::XboxSeries => 'z',
-            Platform::Ps4 => 'o',
-            Platform::Ps5 => 'p',
-        }
-    }
-}
+pub use or_io::Platform;
 
 /// Where a PlayStation package states its title id: an SFO on a PlayStation 4, JSON on a PlayStation 5.
 pub const PLAYSTATION_PARAMS: &[&str] = &["sce_sys/param.sfo", "sce_sys/param.json"];

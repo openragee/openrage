@@ -34,6 +34,7 @@ pub mod other_bodies;
 pub mod ped_assets;
 #[cfg(feature = "meta")]
 pub mod ped_catalogue;
+pub mod platform;
 pub mod save;
 // Its natives list is GTA V's `NativeDb`, which `gta5` builds.
 #[cfg(feature = "gta5")]

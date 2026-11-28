@@ -571,6 +571,9 @@ impl Callee {
     }
 }
 
+/// The bits of a function reference's `at` that are the function's offset; the top byte holds the reference's flags.
+pub const FUNCTION_OFFSET: u32 = 0x00FF_FFFF;
+
 /// The source construct an expression reads as; the value and the effects stay the expression's own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ExprSugar {
@@ -692,7 +695,7 @@ pub enum Expr {
         len: Box<Expr>,
         wrapper: String,
     },
-    /// `Vm.Function(program, offset)`: a reference to a script function.
+    /// `Vm.Function(program, offset)`: a reference to a script function; `at & FUNCTION_OFFSET` is the function's offset.
     FunctionRef {
         program: u32,
         at: u32,

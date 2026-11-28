@@ -260,7 +260,7 @@ pub fn assemble(
     }
 }
 
-/// Leaves out of what `unit` writes the state machines whose step functions `steps` names, where the project holds the program and no program of it imports it.
+/// Leaves out of what `unit` writes the state machines whose step functions `steps` names, where the project holds the program and proves no other program reaches the machine's methods, its start function or its type, and renames a lambda's variable that would hide its binder's object.
 // ⚠ Another program names a function of this one only through an import: where one may, the step
 // function it may call stays written.
 pub(crate) fn machines_hidden(
@@ -268,9 +268,8 @@ pub(crate) fn machines_hidden(
     steps: &std::collections::BTreeSet<u32>,
     cx: &Context<'_>,
 ) {
-    if print::unimported(unit.program, cx.project) {
-        passes::async_await::hide_machines(unit, steps);
-    }
+    passes::async_await::hide_machines_in(unit, steps, cx.project);
+    passes::closures::renamed_in_place(unit, cx);
 }
 
 /// Takes one function the reader made through the four first passes, to the form the printer takes.

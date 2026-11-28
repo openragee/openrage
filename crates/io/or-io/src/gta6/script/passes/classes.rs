@@ -10,9 +10,9 @@
 //! just made, before anything else uses the object; every mention binds it as the delegate of
 //! a closure object of one compiler-made type; or every mention hands it, first, the receiver a
 //! member was given or an object of a script type its settled signature states every such call
-//! hands, and of the receivers' type and its bases one alone is of the function's program, is
-//! made from each class whose slot it calls on that parameter, and holds every byte it reaches
-//! through it.
+//! hands, and of the receivers' type and its bases those of the function's program that are made
+//! from each class whose slot it calls on that parameter and hold every byte it reaches through it
+//! are one, or the highest of them holds a byte reached that no type above it holds.
 //!
 //! ⚠ The fourth proof cannot tell a method from a static function that is only ever handed
 //! objects of one type and works on that type's own fields: the two are one function in the code.
@@ -45,6 +45,9 @@ mod properties;
 
 #[path = "classes_typed.rs"]
 mod typed;
+
+#[path = "classes_frame.rs"]
+mod frame;
 
 use properties::{accessed, standing, Stands};
 pub use properties::{accessor, Accessor};
@@ -773,7 +776,7 @@ fn chained(
     }
 }
 
-/// The one type that declares a function handed receivers of the type `arrived`: `arrived` or a base of it, of the program that holds the function, made from each class of `needs`, and holding every byte the function reaches through its receiver; `None` where no type, or more than one, may.
+/// The one type that declares a function handed receivers of the type `arrived`: of `arrived` and its bases, those of the program that holds the function, made from each class of `needs`, and holding every byte the function reaches through its receiver, where one alone does or, as `several` allows, the highest of them holds a byte reached that no type above it holds; `None` otherwise.
 // ⚠ The receivers say the type that declares the function is `arrived` or a base of it, and a
 // type of another program holds none of this program's functions. A generic type's functions
 // may be made in any program that uses it, and a base no program states may be anything: either
@@ -781,41 +784,70 @@ fn chained(
 // which no call is written with as a receiver, so none is taken. A builtin type holds no function
 // of a script, and nor does a type above it. A class whose slot the function calls on its
 // receiver is one the receiver is made from: a type above it is no `this` that call is made on.
+// ⚠ Of several types that may declare it, the highest is the one that declares the field of the
+// last byte reached, which every type under it holds by inheritance: where a type above it holds
+// that byte too, a builtin above it states no size, or no byte past the header is reached, which
+// declares it is not said.
 fn declarer(
     project: &Project,
     arrived: TypeKey,
     function: FunctionKey,
     reach: Option<u32>,
     needs: &[TypeKey],
+    several: bool,
 ) -> Option<TypeKey> {
     let end = reach.unwrap_or(0);
-    let mut found = None;
+    let highest = |found: &[TypeKey], declares: bool| highest(found, declares && several);
+    // The types that may declare it, from `arrived` up, and whether the highest of them holds a
+    // byte reached that the type above it does not.
+    let mut found: Vec<TypeKey> = Vec::new();
+    let mut declares = false;
+    let mut above = false;
     let mut ty = arrived;
     for _ in 0..MAX_CHAIN {
-        if ty.builtin().is_some() {
-            return found;
+        if let Some(index) = ty.builtin() {
+            // A builtin's objects hold the bytes the runtime's table states, after the header.
+            if above {
+                let bytes = opcode::builtin_type(index & 0x7FFF_FFFF).map(|(bytes, _)| bytes);
+                declares = bytes.is_some_and(|bytes| end > HEADER.saturating_add(bytes));
+            }
+            return highest(&found, declares);
         }
         let facts = project.types.get(&ty)?;
         if facts.is_value() {
             return None;
         }
         // Sizes are not taken to fall up the line: a base too small holds nothing, and the walk goes on.
-        let holds = end <= HEADER.saturating_add(facts.byte_size)
-            && needs.iter().all(|need| derives(project, ty, *need));
+        let fits = end <= HEADER.saturating_add(facts.byte_size);
+        let holds = fits && needs.iter().all(|need| derives(project, ty, *need));
         let own = facts.home == function.program();
         let generic = facts.generic.is_some() || facts.parameters > 0;
-        if holds && (generic || (own && (found.is_some() || facts.base.is_none()))) {
+        if holds && (generic || (own && facts.base.is_none())) {
             return None;
         }
-        if holds && own {
-            found = Some(ty);
+        if above {
+            declares = !fits;
+        }
+        above = holds && own;
+        if above {
+            found.push(ty);
+            declares = end > HEADER;
         }
         match facts.base {
             Some(base) => ty = base,
-            None => return found,
+            None => return highest(&found, declares),
         }
     }
     None
+}
+
+/// The type of `found`, lowest first, that declares a function: the one alone, or the highest where `declares` says it holds a byte reached that no type above it holds.
+fn highest(found: &[TypeKey], declares: bool) -> Option<TypeKey> {
+    match found {
+        [one] => Some(*one),
+        [.., top] if declares => Some(*top),
+        _ => None,
+    }
 }
 
 /// Settles the functions every mention of which hands them a receiver or a value of the caller's own: each is a method of the one type `declarer` names for the nearest type all those receivers and objects are of.
@@ -909,7 +941,10 @@ fn received(
                 let reach = carried.reach.get(function).copied();
                 let handed = hands.get(function).map(Vec::as_slice);
                 let needs = typed::needs(project, carried, members, handed, *function);
-                let owner = declarer(project, arrived, *function, reach, &needs);
+                // ⚠ A function that hands its receiver on may hand it to a method of a type
+                // under the highest that may declare it, which a `this` of that type cannot call.
+                let several = handed.is_none_or(<[FunctionKey]>::is_empty);
+                let owner = declarer(project, arrived, *function, reach, &needs, several);
                 owner.map(|owner| (owner, Role::Method))
             }
         };
@@ -1018,14 +1053,16 @@ pub fn settle(project: &mut Project) {
 /// Whether `call` runs a constructor of the type `made` makes an object of, on that object and with nothing else of it.
 // ⚠ `x = new T(a)` assigns after the constructor has run, and the two statements before: the
 // constructor must have no way to `x` but the object it is handed, so `x` is no global and no
-// variable a pointer reaches.
+// variable a pointer reaches: none `reached` says may, or a local `frame` proves none does.
 fn constructs(
     made: &ir::Stmt,
     call: &ir::Stmt,
-    program: u32,
+    head: &Head,
     project: &Project,
     reached: &Reached,
+    frame: &frame::Frame,
 ) -> bool {
+    let program = head.program;
     let (
         ir::Stmt::Assign {
             target,
@@ -1042,17 +1079,23 @@ fn constructs(
     let found = callee_key(program, callee).and_then(|key| member(project, key));
     let owned =
         found.is_some_and(|m| m.role == Role::Constructor && Some(m.owner) == TypeKey::of(ty));
-    let unseen = !reached.has(*target);
-    owned && unseen && receiver == target && !passed.iter().any(|arg| mentions(arg, *target))
+    let unseen = || !reached.has(*target) || frame.private(*target, head);
+    owned && receiver == target && !passed.iter().any(|arg| mentions(arg, *target)) && unseen()
 }
 
 /// Groups each object made and the constructor the next statement runs on it into the one `new` they were.
-fn construct(list: &mut Vec<Stmt>, program: u32, project: &Project, reached: &Reached) {
+fn construct(
+    list: &mut Vec<Stmt>,
+    head: &Head,
+    project: &Project,
+    reached: &Reached,
+    frame: &frame::Frame,
+) {
     let mut out: Vec<Stmt> = Vec::with_capacity(list.len());
     for stmt in list.drain(..) {
         match (out.pop(), stmt) {
             (Some(Stmt::Simple(made)), Stmt::Simple(call))
-                if constructs(&made, &call, program, project, reached) =>
+                if constructs(&made, &call, head, project, reached, frame) =>
             {
                 let parts = vec![made, call];
                 let kind = Group::Construct;
@@ -1208,15 +1251,15 @@ pub fn run(f: &mut tree::Function, cx: &Context<'_>, _stats: &mut Stats) {
     }
     let tree::Function { head, body } = f;
     let head: &Head = head;
-    let reached = match constructors {
-        true => Reached::of(body),
-        false => Reached::default(),
+    let (reached, frame) = match constructors {
+        true => (Reached::of(body), frame::Frame::of(body, head, cx.project)),
+        false => (Reached::default(), frame::Frame::default()),
     };
     // An explicit stack: a body nests as deep as its listing does.
     let mut work: Vec<&mut Vec<Stmt>> = vec![body];
     while let Some(list) = work.pop() {
         if constructors {
-            construct(list, head.program, cx.project, &reached);
+            construct(list, head, cx.project, &reached, &frame);
         }
         for stmt in list {
             if calls {

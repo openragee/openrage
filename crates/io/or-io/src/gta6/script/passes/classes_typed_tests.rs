@@ -287,14 +287,14 @@ fn the_objects_callers_hand_and_the_receivers_members_hand_are_of_one_type_toget
 
 #[test]
 fn a_class_whose_slot_a_function_calls_on_its_receiver_is_one_the_type_declaring_it_is_made_from() {
-    // A method of DERIVED hands it its receiver; it stores to a field BASE holds, so either may declare it.
+    // A method of DERIVED hands it its receiver; it stores to a field BASE declares, so BASE declares it.
     let with = |also: Vec<ir::Stmt>| {
         let mut stmts = vec![writes(8)];
         stmts.extend(also);
         let functions = [hands_on(0x110, p(0)), function(0x200, stmts)];
         member(project(None), &functions)
     };
-    assert_eq!(with(Vec::new()), None);
+    assert_eq!(with(Vec::new()), method(BASE));
     // A slot only DERIVED has, called on the receiver; a function DERIVED's table holds, handed it.
     assert_eq!(with(vec![slot(DERIVED, 5, vec![p(0)])]), method(DERIVED));
     assert_eq!(with(vec![call(0x120, vec![p(0), p(1)])]), method(DERIVED));
@@ -304,18 +304,18 @@ fn a_class_whose_slot_a_function_calls_on_its_receiver_is_one_the_type_declaring
         slot(DERIVED, 5, vec![p(1)]),
         slot(SHAPE, 0, vec![p(0)]),
     ] {
-        assert_eq!(with(vec![also.clone()]), None, "{also:?}");
+        assert_eq!(with(vec![also.clone()]), method(BASE), "{also:?}");
     }
     // A class the receivers are not made from leaves no type to declare it.
     assert_eq!(with(vec![slot(OTHER, 2, vec![p(0)])]), None);
     let project = project(None);
     let needs = [DERIVED];
     let declares = |arrived: TypeKey, needs: &[TypeKey]| {
-        super::super::declarer(&project, arrived, key(0x200), Some(12), needs)
+        super::super::declarer(&project, arrived, key(0x200), Some(12), needs, true)
     };
     assert_eq!(declares(DERIVED, &needs), Some(DERIVED));
     assert_eq!(declares(BASE, &needs), None);
-    assert_eq!(declares(DERIVED, &[]), None);
+    assert_eq!(declares(DERIVED, &[]), Some(BASE));
 }
 
 #[test]

@@ -554,6 +554,73 @@ fn an_object_made_and_its_constructor_run_on_it_are_one_construction() {
 }
 
 #[test]
+fn a_local_an_earlier_locals_address_reaches_no_byte_of_is_constructed_in_one_new() {
+    let mut project = Project::default();
+    project
+        .members
+        .insert(key(0x200), provisional(T1, Role::Constructor));
+    let options = Options::default().without(Pass::Receivers);
+    let object = Var::Local(3);
+    let made = make(object, &vm_type(T1, 0));
+    let ctor = ir::Stmt::Eval(call(0x200, vec![value(object), p(0)]));
+    // A statement before the two that hands `first` to the function at 0x500.
+    let after = |first: Expr| {
+        vec![
+            eval(call(0x500, vec![first])),
+            Stmt::Simple(made.clone()),
+            Stmt::Simple(ctor.clone()),
+        ]
+    };
+    let address = Expr::AddrOf {
+        var: Var::Local(1),
+        cell: 0,
+    };
+    let read = |ty: Scalar, offset: u32| Expr::Load {
+        ty,
+        addr: Box::new(address.clone()),
+        offset,
+    };
+
+    // The read is of bytes 16 to 20, which are local 2's; local 3 is bytes 24 to 32.
+    let body = after(read(Scalar::I32, 8));
+    let parts = vec![made.clone(), ctor.clone()];
+    let kind = Group::Construct;
+    let group = Stmt::Sugar(Box::new(Sugar::Group { kind, parts }));
+    let done = ran(&body, &project, options);
+    assert_eq!(done, [body[0].clone(), group]);
+    assert_eq!(tree::desugar(done), body);
+    // A read that reaches local 3, and the address handed on, leave the two statements.
+    for first in [read(Scalar::I64, 16), address.clone()] {
+        let left = after(first.clone());
+        assert_eq!(ran(&left, &project, options), left, "{first:?}");
+    }
+    // The address handed to a function the project says touches its eight bytes alone and keeps nothing.
+    let mut bounded = project.clone();
+    let param = crate::gta6::script::project::Param {
+        kind: Kind::Pointer,
+        cells: 1,
+    };
+    let signature = Signature {
+        params: vec![param],
+        returns: 0,
+        result: Kind::Unknown,
+    };
+    bounded.signatures.insert(key(0x500), signature);
+    let first = crate::gta6::script::project::reach::Reach {
+        bytes: 8,
+        dies: true,
+        ..Default::default()
+    };
+    bounded
+        .reach
+        .insert(key(0x500), BTreeMap::from([(0, first)]));
+    let handed = after(address.clone());
+    let parts = vec![made.clone(), ctor.clone()];
+    let group = Stmt::Sugar(Box::new(Sugar::Group { kind, parts }));
+    assert_eq!(ran(&handed, &bounded, options), [handed[0].clone(), group]);
+}
+
+#[test]
 fn a_builtin_named_as_a_types_equality_reads_as_the_operator() {
     let builtin = |path: &str, args: Vec<Expr>| {
         let callee = Callee::Builtin {
@@ -856,6 +923,20 @@ fn a_function_handed_only_the_receiver_of_members_is_a_method_of_their_type() {
     // Handed only the receiver of T2, it is T2's where the field is one T2 adds.
     let derived = |offset: u32| [hands_on(0x110, 0x200, p(0)), works(offset)];
     assert_eq!(said(&derived(32), 0x200), Some(method(T2, None)));
+    // Handed only the receiver of T2, it is T1's where the field is one T1 declares and T2 inherits.
+    assert_eq!(said(&derived(8), 0x200), Some(method(T1, None)));
+    // That field reached, and the receiver handed on to a function that works on a field T2 adds: not T1's.
+    let onward = [
+        hands_on(0x110, 0x200, p(0)),
+        blocks(
+            0x200,
+            Returns::Void,
+            vec![writes(8), ir::Stmt::Eval(call(0x300, vec![p(0), p(1)]))],
+        ),
+        blocks(0x300, Returns::Void, vec![writes(32)]),
+    ];
+    assert_eq!(said(&onward, 0x300), Some(method(T2, None)));
+    assert_eq!(said(&onward, 0x200), None);
 
     let referred = ir::Stmt::Assign {
         target: Var::Local(0),
@@ -870,9 +951,8 @@ fn a_function_handed_only_the_receiver_of_members_is_a_method_of_their_type() {
     };
     let handed = ir::Stmt::Eval(call(0x200, vec![p(0), p(1)]));
     // Each of these leaves it a function like any other.
-    let left: [Vec<cfg::Function>; 8] = [
-        // A field its base of the same program holds may be the base's to work on; a field past the type is no field of it.
-        derived(8).to_vec(),
+    let left: [Vec<cfg::Function>; 7] = [
+        // A field past the type is no field of it.
         both(32).to_vec(),
         // A function no type claims hands it its first parameter; a member hands it something else.
         vec![
@@ -1122,21 +1202,45 @@ fn the_one_type_of_the_receivers_line_in_the_functions_program_declares_it() {
         project
     };
     let project = line(elsewhere.clone());
-    let of =
-        |arrived: TypeKey, reach: Option<u32>| declarer(&project, arrived, key(0x200), reach, &[]);
+    let of = |arrived: TypeKey, reach: Option<u32>| {
+        declarer(&project, arrived, key(0x200), reach, &[], true)
+    };
 
     // No field reached, a field of the base of the other program, the last byte of T2.
     assert_eq!(of(T2, None), Some(T2));
     assert_eq!(of(T2, Some(12)), Some(T2));
     assert_eq!(of(T2, Some(HEADER + 40)), Some(T2));
-    // A byte past T2; two types of the program that hold what it reaches; one alone that does.
+    // A byte past T2; two types of the program that hold what it reaches, which the base of the other program holds too; one alone that does.
     assert_eq!(of(T2, Some(HEADER + 41)), None);
     assert_eq!(of(T3, Some(12)), None);
     assert_eq!(of(T3, Some(HEADER + 41)), Some(T3));
+    // Two that hold a byte past the other program's base: the higher declares the field it is in.
+    assert_eq!(of(T3, Some(HEADER + 30)), Some(T2));
+    assert_eq!(of(T3, Some(HEADER + 40)), Some(T2));
+    // Every type of the line the program's own: the highest holds what no type above it does, past the header.
+    let own = line(sized(OBJECT, 24, &[]));
+    let of_own = |reach: Option<u32>| declarer(&own, T3, key(0x200), reach, &[], true);
+    assert_eq!(of_own(Some(12)), Some(T1));
+    assert_eq!(of_own(Some(HEADER + 30)), Some(T2));
+    for reach in [None, Some(HEADER)] {
+        assert_eq!(of_own(reach), None, "{reach:?}");
+    }
+    // Above the highest a builtin that holds 48 bytes, or one whose size no table states, where `own` has the builtin that holds none: no type of the line declares it.
+    for (builtin, reach) in [(0x8000_0002, HEADER + 12), (0x8000_0001, HEADER + 12)] {
+        let under = line(sized(TypeKey(builtin), 24, &[]));
+        let of_under = declarer(&under, T3, key(0x200), Some(reach), &[], true);
+        assert_eq!(of_under, None, "{builtin:X}");
+    }
     // A function of the other program is the base's, where the base holds what it reaches.
     let theirs = FunctionKey::new(PROGRAM + 1, 0x200);
-    assert_eq!(declarer(&project, T2, theirs, Some(12), &[]), Some(T1));
-    assert_eq!(declarer(&project, T2, theirs, Some(HEADER + 30), &[]), None);
+    assert_eq!(
+        declarer(&project, T2, theirs, Some(12), &[], true),
+        Some(T1)
+    );
+    assert_eq!(
+        declarer(&project, T2, theirs, Some(HEADER + 30), &[], true),
+        None
+    );
 
     // A generic base may hold a function of any program, where it holds what is reached.
     let generic = TypeFacts {
@@ -1144,9 +1248,12 @@ fn the_one_type_of_the_receivers_line_in_the_functions_program_declares_it() {
         ..elsewhere.clone()
     };
     let project = line(generic);
-    assert_eq!(declarer(&project, T2, key(0x200), Some(12), &[]), None);
     assert_eq!(
-        declarer(&project, T2, key(0x200), Some(HEADER + 30), &[]),
+        declarer(&project, T2, key(0x200), Some(12), &[], true),
+        None
+    );
+    assert_eq!(
+        declarer(&project, T2, key(0x200), Some(HEADER + 30), &[], true),
         Some(T2)
     );
 
@@ -1167,7 +1274,10 @@ fn the_one_type_of_the_receivers_line_in_the_functions_program_declares_it() {
     };
     project.types.insert(rootless, no_base);
     for arrived in [T5, T4, rootless] {
-        assert_eq!(declarer(&project, arrived, key(0x200), None, &[]), None);
+        assert_eq!(
+            declarer(&project, arrived, key(0x200), None, &[], true),
+            None
+        );
     }
 }
 #[test]

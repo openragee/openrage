@@ -24,8 +24,16 @@ pub const OPCODE_MULTIPLIER: u16 = set::WORD_MULTIPLIER;
 pub const OPERAND_MULTIPLIER: u8 = set::OPERAND_MULTIPLIER;
 /// The decoded opcode of a native call: operand bytes 0..4 the native's RVA, 4 the argument count, 5 the result count.
 pub const NATIVE: u16 = 0x8B;
-/// The RVA a program's check copy masks its hash with; the game places natives at that RVA less the unmasked value.
-pub const NATIVE_ANCHOR_RVA: u32 = 0x01D1_09B0;
+/// Each measured build's id (header +0x1C) and the native-handler anchor RVA its check copy masks
+/// the program hash with (the game places natives at that RVA less the unmasked value). The two
+/// builds hold the one package and instruction set and differ only in these per-executable stamps;
+/// a build id or an anchor not here is refused by name, never read as another build's.
+pub const MEASURED_BUILDS: &[(u64, u32)] = &[
+    (0x5936_CAB2_EADB_CE67, 0x01D1_09B0), // Xbox Series 1.0.2.1
+    (0x8581_3A12_EADB_CE67, 0x0419_87F0), // PlayStation 5 01.002.001
+];
+/// The native anchor of the Xbox build, which [`check_copy`] masks a hash with.
+pub const NATIVE_ANCHOR_RVA: u32 = MEASURED_BUILDS[0].1;
 /// The bytes of the smallest header, before the code region.
 pub const HEADER_LEN: usize = 0x180;
 
@@ -75,9 +83,14 @@ pub fn length(opcode: u16) -> Option<u8> {
     u8::try_from(row.bytes()).ok()
 }
 
-/// The check copy a program with `hash` carries at +0x24.
+/// The check copy a program with `hash` carries at +0x24, under the Xbox build's native anchor.
 pub fn check_copy(hash: u32) -> u32 {
-    (hash ^ NATIVE_ANCHOR_RVA).rotate_left(12)
+    check_copy_with(hash, NATIVE_ANCHOR_RVA)
+}
+
+/// The check copy a program with `hash` carries at +0x24 under a given native `anchor`.
+pub fn check_copy_with(hash: u32, anchor: u32) -> u32 {
+    (hash ^ anchor).rotate_left(12)
 }
 
 /// What the program header states.
@@ -106,7 +119,9 @@ impl Header {
         }
         let hash = LE::read_u32(&body[0x10..]);
         let check = LE::read_u32(&body[0x24..]);
-        if check != check_copy(hash) {
+        // The anchor the check copy implies must be a measured build's; the builds differ only here.
+        let anchor = check.rotate_right(12) ^ hash;
+        if !MEASURED_BUILDS.iter().any(|&(_, a)| a == anchor) {
             return Err(CompiledError::CheckCopy { hash, check });
         }
         let (first, second) = (LE::read_u32(&body[0x28..]), LE::read_u32(&body[0x2C..]));

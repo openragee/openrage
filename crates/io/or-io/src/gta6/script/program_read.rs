@@ -11,12 +11,12 @@ use super::{
     functions, Area, EntryRow, FieldRow, ImportRow, MethodRow, NativeRow, Program, ProgramError,
     SlotRow, TypeRow,
 };
+use crate::gta6::script::compiled;
 
 const BASE: u64 = 0x5000_0000;
 const HEADER: usize = 0x180;
-/// The format and the build whose tables and instruction numbers are read.
+/// The format whose tables and instruction numbers are read; the build is one of the measured ones.
 const FORMAT: u32 = 0x6F;
-const BUILD: u64 = 0x5936_CAB2_EADB_CE67;
 /// The word that stands for no offset and for no type.
 const NONE: u32 = u32::MAX;
 /// The bytes of one record of a table.
@@ -616,12 +616,6 @@ pub(super) fn read(bytes: &[u8]) -> Result<Program, ProgramError> {
     if u64_at(h, 0) != 0 {
         return refuse(0, "the first eight bytes are not zero");
     }
-    if word(0x24) != crate::gta6::script::compiled::check_copy(word(0x10)) {
-        return refuse(
-            0x24,
-            "the check copy is not the one the program's hash gives",
-        );
-    }
     if word(0x14) != 1 {
         return refuse(0x14, format!("the word is {}, not 1", word(0x14)));
     }
@@ -632,11 +626,27 @@ pub(super) fn read(bytes: &[u8]) -> Result<Program, ProgramError> {
             format!("format {format:#X} is not read, format {FORMAT:#X} is"),
         );
     }
-    if u64_at(h, 0x1C) != BUILD {
-        let build = u64_at(h, 0x1C);
+    // The build id selects the build and its native anchor; a build not measured is refused by name.
+    let build = u64_at(h, 0x1C);
+    let Some(&(_, anchor)) = compiled::MEASURED_BUILDS
+        .iter()
+        .find(|&&(id, _)| id == build)
+    else {
+        let read = compiled::MEASURED_BUILDS
+            .iter()
+            .map(|(id, _)| format!("{id:#X}"))
+            .collect::<Vec<_>>()
+            .join(" and ");
         return refuse(
             0x1C,
-            format!("build {build:#X} is not read, build {BUILD:#X} is"),
+            format!("build {build:#X} is not read, the builds read are {read}"),
+        );
+    };
+    // The check copy at +0x24 is (hash ^ anchor).rotate_left(12) for this build's native anchor.
+    if word(0x24) != compiled::check_copy_with(word(0x10), anchor) {
+        return refuse(
+            0x24,
+            "the check copy is not the one the program's hash and build give",
         );
     }
     if let Some(at) = RESERVED.iter().find(|at| word(**at) != 0) {

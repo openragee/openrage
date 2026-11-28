@@ -16,6 +16,11 @@ pub enum Frame {
     /// The table of what a surface reflects of an even light, by the cosine to the eye across
     /// and the roughness down.
     EnvironmentFit,
+    /// The probes' light: a tile of each probe's light along every way, laid out by the view's
+    /// lighting record, which picks the texture from the heap by its number at +0x568.
+    ProbeRadiance,
+    /// How far each probe sees along every way, in tiles laid out as its light's.
+    ProbeVisibility,
 }
 
 /// The directional light's record.
@@ -26,22 +31,26 @@ pub const AMBIENT_MAP: u32 = 0x3094_0D63;
 pub const VIEW_LIGHTING: u32 = 0x0048_742C;
 /// The environment fit's table.
 pub const ENVIRONMENT_FIT: u32 = 0x410A_2FC7;
+/// The probes' visibility, gathered four texels at a time.
+pub const PROBE_VISIBILITY: u32 = 0x856A_CFEF;
 
 /// The bindings the frame fills whose counts a loop may run to: the view's lighting record
-/// states one probe level, which both probe loops leave after their first test.
+/// states two probe levels, so neither probe loop takes more than two turns.
 pub const AT_REST: &[u32] = &[VIEW_LIGHTING];
 
-/// The words of the view's lighting record the renderer always writes, by byte: one probe level.
-pub const VIEW_WORDS: [(u32, u32); 1] = [(super::trees::VIEW_LEVELS as u32, 1)];
+/// The words of the view's lighting record the renderer always writes, by byte: two probe levels.
+pub const VIEW_WORDS: [(u32, u32); 1] = [(super::trees::VIEW_LEVELS as u32, 2)];
 
 impl Frame {
-    /// The hash of the name of the binding it fills.
+    /// The hash of the name of the binding it fills; of a texture picked from the heap, the
+    /// record's that picks it.
     pub fn hash(self) -> u32 {
         match self {
             Self::DirectionalLight => DIRECTIONAL_LIGHT,
             Self::AmbientMap => AMBIENT_MAP,
-            Self::ViewLighting => VIEW_LIGHTING,
+            Self::ViewLighting | Self::ProbeRadiance => VIEW_LIGHTING,
             Self::EnvironmentFit => ENVIRONMENT_FIT,
+            Self::ProbeVisibility => PROBE_VISIBILITY,
         }
     }
 }
@@ -53,6 +62,7 @@ pub fn frame_of(hash: u32) -> Option<Frame> {
         Frame::AmbientMap,
         Frame::ViewLighting,
         Frame::EnvironmentFit,
+        Frame::ProbeVisibility,
     ]
     .into_iter()
     .find(|frame| frame.hash() == hash)
@@ -222,9 +232,15 @@ return vec4<f32>(f32(s25_), f32(cb1_[3].w), f32(cb2_[98].x), f32(cb3_.x));
             Frame::AmbientMap,
             Frame::ViewLighting,
             Frame::EnvironmentFit,
+            Frame::ProbeVisibility,
         ] {
             assert_eq!(frame_of(frame.hash()), Some(frame));
         }
+        // The probes' light has no name: the heap's texture the view's record picks.
+        assert_eq!(
+            frame_of(Frame::ProbeRadiance.hash()),
+            Some(Frame::ViewLighting)
+        );
         assert_eq!(frame_of(CASCADES), None);
         assert!(AT_REST.contains(&VIEW_LIGHTING) && !AT_REST.contains(&DIRECTIONAL_LIGHT));
     }

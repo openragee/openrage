@@ -327,6 +327,8 @@ fn feeds(
                 or_cli::Gta6Frame::AmbientMap => FrameFeed::AmbientMap,
                 or_cli::Gta6Frame::ViewLighting => FrameFeed::ViewLighting,
                 or_cli::Gta6Frame::EnvironmentFit => FrameFeed::EnvironmentFit,
+                or_cli::Gta6Frame::ProbeRadiance => FrameFeed::ProbeRadiance,
+                or_cli::Gta6Frame::ProbeVisibility => FrameFeed::ProbeVisibility,
             }),
             Filled::HeapWords => Feed::Bytes(heap_words(heap, rows)),
             Filled::Texture(number) => {

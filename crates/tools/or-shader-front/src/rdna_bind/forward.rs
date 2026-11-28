@@ -129,10 +129,15 @@ impl Forward {
     }
 }
 
-/// The draw's fade record: four weights of a two by two stipple from byte 16, and a pixel whose
-/// weight is under one is discarded; the rest at nought switches the alpha system's depth test
-/// and the water's clip off.
+/// The draw's fade record: the entity's fade at byte 0, four weights of a two by two stipple from
+/// byte 16, and a pixel whose weight is under one is discarded; the rest at nought switches the
+/// alpha system's depth test and the water's clip off.
+// A lit program takes the light it adds and the colour it lets through towards nothing and towards
+// one by the fade: at nought a lit surface is not there. The engine sets it to one for a draw
+// that is not fading.
 const FADE: u32 = 0xE688_861E;
+/// The fade of an entity drawn whole, and the stipple's four weights.
+const FADE_WHOLE: f32 = 1.0;
 /// The frame's scale, 16 bytes: what multiplies the colour a pass exports (+4), what it samples
 /// of light the frame's size (+0) and the probe's light (+8). One where nothing pre-exposes.
 const FRAME_SCALE: u32 = 0xDAAF_2AC8;
@@ -224,9 +229,10 @@ const TRANSMITTANCE_ROW: u32 = 0x136D_4AF8;
 // clouds' shadow `0xC6F8AAEE` stays noughts, a depth of nought through the clouds: what the
 // program takes of it is then `saturate(1 + [+0x248])` of the view's record, which carries the
 // editor's share.
-// The three bindings of the indirect light probes stay noughts: the game binds its probe
-// system's own buffers always, and the view's record the frame hands states one probe level the
-// pixel lies outside of, so neither block that reads them is entered.
+// The probes' cell words `0xC44BE1D8` and records `0x669A6134` stay noughts: a cell's word of
+// nought names the probe of the atlas's first tile, in no room, and the records are read only by
+// the block of light from all around, which the second of the two probe levels the frame states
+// keeps the pixel from. The visibility `0x856ACFEF` and the light the frame fills.
 // The cascades' map `0x78262FB4` stays noughts too: a depth of nought is the game's own texel for
 // it while its shadows are off, and every cascade [`CascadeRecord::AT_REST`] states compares in
 // front of it.
@@ -310,7 +316,11 @@ fn floats_at(len: usize, at: usize, floats: &[f32]) -> Vec<u8> {
 fn rest_of(forward: Forward, hash: u32) -> Option<Rest> {
     let lit = forward == Forward::Lit;
     match hash {
-        FADE => Some(Rest::Bytes(floats_at(128, 16, &[1.0; 4]))),
+        FADE => {
+            let mut bytes = floats_at(128, 16, &[FADE_WHOLE; 4]);
+            bytes[..4].copy_from_slice(&FADE_WHOLE.to_le_bytes());
+            Some(Rest::Bytes(bytes))
+        }
         FRAME_SCALE => Some(Rest::Bytes(floats_at(16, 0, &[1.0; 3]))),
         TRANSMITTANCE | LAYER_TRANSMITTANCE => Some(Rest::White),
         LIGHT_RECORDS => Some(Rest::Bytes(LightRecord::AT_REST.bytes())),
@@ -346,8 +356,8 @@ pub(super) fn at_rest(forward: Forward, feed: Feed) -> Result<Feed, Unfed> {
 // Stated: the way to the light (+0xF8 is loaded with it and not used), the roughness modifiers,
 // the haze, the disc, the fog's lookup, the clouds' share, the alpha fade, the probes' jitter,
 // grid and first level, the level count, the glass's remap, the ambient map's place and the
-// reflection's scale. Not reached: +0x0 and +0xDC..+0xEB in the local lights' loop (no light),
-// +0x550..+0x593 in the probes' blocks (the pixel lies outside the one level).
+// reflection's scale, and the probes' atlas, number, tile and cells. Not reached: +0x0 and
+// +0xDC..+0xEB in the local lights' loop (no light).
 const VIEW_LIGHTING_READ: [(u32, u32); 16] = [
     (0x0, 0x10),
     (0xDC, 0xFC),
@@ -409,9 +419,9 @@ pub(super) fn unestablished(module: &naga::Module, feeds: &[Fed]) -> Option<Unfe
     None
 }
 
-/// The dword of the view's lighting record that numbers the heap entry of a probe texture.
-// Sampled only in the second probe block, which the stated record (one level, the pixel outside
-// it) keeps a lit program from entering: the heap's blank entry stands in for a texture never read.
+/// The dword of the view's lighting record that numbers the heap entry of the probes' light.
+// Sampled only in the second probe block, the reflection's, at the place the record's tile and
+// atlas fields give: the frame fills it as it fills the record.
 const PROBE_TEXTURE: u32 = 0x568;
 /// The image instruction's dimension field of a plain two-dimensional texture.
 const DIM_2D: u8 = 1;
@@ -458,7 +468,9 @@ pub(super) fn picked(
         offset: buffer.offset,
     };
     match join(numbered(place, kind), records, table) {
-        Join::Named { named, .. } if named.name_hash == VIEW_LIGHTING => Some(Feed::Blank),
+        Join::Named { named, .. } if named.name_hash == VIEW_LIGHTING => {
+            Some(Feed::Frame(Frame::ProbeRadiance))
+        }
         _ => None,
     }
 }
@@ -468,7 +480,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_lit_stage_s_probe_texture_picked_by_the_view_s_record_is_the_heap_s_blank_entry() {
+    fn a_lit_stage_s_probe_texture_picked_by_the_view_s_record_is_the_frame_s_probe_light() {
         use crate::rdna::{Loc, Lowered, Program};
         use crate::rdna_bind::shading::feed;
         use crate::rdna_bind::{Native, Unbound};
@@ -574,7 +586,10 @@ mod tests {
         };
         assert_eq!(
             fed(&lit, PROBE_TEXTURE, VIEW_LIGHTING),
-            Ok(vec![Feed::Frame(Frame::ViewLighting), Feed::Blank])
+            Ok(vec![
+                Feed::Frame(Frame::ViewLighting),
+                Feed::Frame(Frame::ProbeRadiance)
+            ])
         );
         // Another dword, another record, or a program that is not lit: a number nothing states.
         let refused = Err(Unfed::Unbound(Unbound::Picked));
@@ -683,11 +698,16 @@ mod tests {
             at_rest(Forward::Lit, fit),
             Ok(Feed::Frame(Frame::EnvironmentFit))
         );
-        // The probes' bindings and the cascades' map stay noughts: neither is reached lit.
-        for nought in [0xC44B_E1D8, 0x669A_6134, 0x856A_CFEF, 0x7826_2FB4] {
+        // The probes' cell words and records and the cascades' map stay noughts; the probes'
+        // visibility is the frame's.
+        for nought in [0xC44B_E1D8, 0x669A_6134, 0x7826_2FB4] {
             let fed = at_rest(Forward::Lit, Feed::Zero(Some(nought)));
             assert_eq!(fed, Ok(Feed::Zero(Some(nought))), "0x{nought:08X}");
         }
+        assert_eq!(
+            at_rest(Forward::Lit, Feed::Zero(Some(0x856A_CFEF))),
+            Ok(Feed::Frame(Frame::ProbeVisibility))
+        );
         assert_eq!(
             at_rest(Forward::Lit, Feed::Zero(Some(CASCADES))),
             Ok(Feed::Stated(CascadeRecord::AT_REST.bytes()))
@@ -784,7 +804,10 @@ mod tests {
         };
         assert_eq!(fade.len(), 128);
         assert!((16..32).step_by(4).all(|at| float(&fade, at) == 1.0));
-        assert!(fade[..16].iter().chain(&fade[32..]).all(|b| *b == 0));
+        // A lit surface faded to nought adds no light and lets everything through: the engine's
+        // fade for a draw that is not fading is one.
+        assert_eq!(float(&fade, 0), 1.0, "the entity's fade");
+        assert!(fade[4..16].iter().chain(&fade[32..]).all(|b| *b == 0));
         let Ok(Feed::Stated(scale)) = at_rest(Feed::Zero(Some(FRAME_SCALE))) else {
             panic!("the frame's scale is not stated");
         };

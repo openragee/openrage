@@ -1797,7 +1797,7 @@ impl MeshletScene {
         }
         if writes.light {
             self.write(queue, &self.light, 0, &light);
-            let (writes, written) = self.made.frame.write(queue, &lighting.sky);
+            let (writes, written) = self.made.frame.write(queue, &lighting.sky, lighting.camera);
             self.count(|calls| {
                 calls.writes += writes;
                 calls.written += written;

@@ -23,10 +23,16 @@ pub enum FrameFeed {
     /// The table of what a surface reflects of an even light, by the cosine to the eye across
     /// and the roughness down.
     EnvironmentFit,
+    /// The probes' light, the atlas the view's record lays out ([`probe_light`]).
+    ProbeRadiance,
+    /// How far each probe sees along every way.
+    ProbeVisibility,
 }
 
-/// The view's lighting record, 2,044 bytes, as a lit forward program reads it, with no local
-/// probe of light: the pixel lies outside the one probe level it states.
+/// The view's lighting record, 2,044 bytes, as a lit forward program reads it, with one probe
+/// at the camera holding the light from all around: the pixel lies inside the first of two probe
+/// levels for its reflection and outside the second, past which the light from all around is the
+/// ambient map's.
 // The places a lit program reads, each a field; what it does not read is padding, noughts.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -67,14 +73,37 @@ pub(super) struct ViewLighting {
     _before_grid: [u32; 7],
     /// The probe levels' cells across and up, which divide that noise.
     pub probe_grid: [u32; 2],
-    _before_levels: [u32; 40],
+    /// The first level's middle and its half width across; its half height is `probe_half_z`.
+    // A probe of cell `c` stands at `middle + half * ((c + 0.5) / cells * 2 - 1)`: with one cell,
+    // at the middle.
+    pub probe_middle: [f32; 3],
+    pub probe_half: f32,
+    _between_middles: [u32; 19],
+    pub probe_half_z: f32,
+    _before_levels: [u32; 16],
     /// The first level's place, which the scales times the world's place are added to.
     // The pixel is inside the level where each of the three sums lies within one.
     pub level_place: [f32; 3],
     pub level_scale: f32,
-    _between_levels: [u32; 19],
+    /// The second level's.
+    pub outer_place: [f32; 3],
+    pub outer_scale: f32,
+    _between_levels: [u32; 15],
     pub level_scale_z: f32,
-    _before_count: [u32; 135],
+    _between_heights: [u32; 3],
+    pub outer_scale_z: f32,
+    _before_atlas: [u32; 12],
+    /// One over the probes' atlas's width and height in texels.
+    pub atlas_texel: [f32; 2],
+    _before_texture: [u32; 4],
+    /// The heap entry of the probes' light: the frame binds its own whatever the number.
+    pub probe_texture: u32,
+    _before_tile: [u32; 7],
+    /// The texels a side of a probe's tile inside its border of one; tiles lie 128 to a row.
+    pub probe_tile: u32,
+    /// The cells of a level across and up past which a probe is not taken.
+    pub probe_cells: [u32; 2],
+    _before_count: [u32; 102],
     /// How many probe levels there are: both loops over them test before a second turn.
     pub levels: u32,
     _before_remap: [u32; 8],
@@ -100,10 +129,19 @@ const GLASS_REMAP_ROWS: [f32; 4] = [0.0, 5.0, 1.0, 1.0];
 const REFLECTION_SCALE: f32 = 0.3;
 /// The game's cap on the fog's reach, in metres.
 const FOG_REACH: f32 = 10_000.0;
+/// The texels a side of the probe's tile, inside its border: the editor's, the game's being a
+/// setting.
+pub(super) const PROBE_TILE: u32 = 16;
+/// The atlas's texels a side: one tile and its border.
+const ATLAS: u32 = PROBE_TILE + 2;
 
 impl ViewLighting {
-    /// The record for `sky`, with one probe level the pixel lies outside of.
-    pub(super) fn of(sky: &Sky) -> Self {
+    /// The record for `sky`, with its one probe at `camera`.
+    // A place of exactly one across lies inside the first level for the reflection's test (`<=
+    // 1`) and is no level's inside for the test of the light from all around (`< 1`), which goes
+    // on to the second level; a place of two lies outside that, and the program takes the
+    // ambient map. Only a pixel whose noise is nought (one in 2^24) stops at the first level there.
+    pub(super) fn of(sky: &Sky, camera: Vec3) -> Self {
         let towards = sky.towards.try_normalize().unwrap_or(Vec3::Z);
         let (roughness_mod, disc) = sky.tone.map_or((0.0, 0.0), |t| (t.roughness_mod, t.disc));
         let half_angle = disc.atan();
@@ -138,14 +176,30 @@ impl ViewLighting {
             // ⚠ A grid of nought makes the level test's bounds not a number, and the pixel
             // inside every level.
             probe_grid: [1, 1],
-            _before_levels: [0; 40],
-            level_place: [2.0; 3],
+            // The probe stands at the camera: every face the camera sees faces it, so it weighs.
+            probe_middle: camera.to_array(),
+            probe_half: 1.0,
+            _between_middles: [0; 19],
+            probe_half_z: 1.0,
+            _before_levels: [0; 16],
+            level_place: [1.0, 0.0, 0.0],
             level_scale: 0.0,
-            _between_levels: [0; 19],
+            outer_place: [2.0; 3],
+            outer_scale: 0.0,
+            _between_levels: [0; 15],
             level_scale_z: 0.0,
-            _before_count: [0; 135],
+            _between_heights: [0; 3],
+            outer_scale_z: 0.0,
+            _before_atlas: [0; 12],
+            atlas_texel: [1.0 / ATLAS as f32; 2],
+            _before_texture: [0; 4],
+            probe_texture: 0,
+            _before_tile: [0; 7],
+            probe_tile: PROBE_TILE,
+            probe_cells: [1, 1],
+            _before_count: [0; 102],
             // ⚠ Nought is no rest: the count less one wraps, and the loops run on past the record.
-            levels: 1,
+            levels: 2,
             _before_remap: [0; 8],
             glass_remap: [by_depth, -near * by_depth, most - least, least],
             _before_ambient: [0; 27],
@@ -187,12 +241,25 @@ impl ViewLighting {
         put(offset_of!(Self, alpha_fade), &bits(&self.alpha_fade));
         put(offset_of!(Self, probe_jitter), &bits(&[self.probe_jitter]));
         put(offset_of!(Self, probe_grid), &self.probe_grid);
+        put(offset_of!(Self, probe_middle), &bits(&self.probe_middle));
+        put(offset_of!(Self, probe_half), &bits(&[self.probe_half]));
+        put(offset_of!(Self, probe_half_z), &bits(&[self.probe_half_z]));
         put(offset_of!(Self, level_place), &bits(&self.level_place));
         put(offset_of!(Self, level_scale), &bits(&[self.level_scale]));
+        put(offset_of!(Self, outer_place), &bits(&self.outer_place));
+        put(offset_of!(Self, outer_scale), &bits(&[self.outer_scale]));
         put(
             offset_of!(Self, level_scale_z),
             &bits(&[self.level_scale_z]),
         );
+        put(
+            offset_of!(Self, outer_scale_z),
+            &bits(&[self.outer_scale_z]),
+        );
+        put(offset_of!(Self, atlas_texel), &bits(&self.atlas_texel));
+        put(offset_of!(Self, probe_texture), &[self.probe_texture]);
+        put(offset_of!(Self, probe_tile), &[self.probe_tile]);
+        put(offset_of!(Self, probe_cells), &self.probe_cells);
         put(offset_of!(Self, levels), &[self.levels]);
         put(offset_of!(Self, glass_remap), &bits(&self.glass_remap));
         let ambient = [
@@ -223,6 +290,71 @@ fn fit_texels() -> &'static [u8] {
             .collect()
     })
 }
+
+/// The way a place `(u, v)` of a probe's tile, each from -1 to 1, stands for, as the lit program
+/// lays a tile out: equal areas of the sphere, the upper half inside the diamond `|u| + |v| <= 1`,
+/// the sign of x by u's and of y by v's. A place past an edge is folded back across it, as a
+/// tile's border holds.
+fn way_of(u: f32, v: f32) -> Vec3 {
+    let fold = |a: f32, b: f32| match a.abs() > 1.0 {
+        true => (a.signum() * (2.0 - a.abs()), -b),
+        false => (a, b),
+    };
+    let (u, v) = fold(u, v);
+    let (v, u) = fold(v, u);
+    let (a, b) = (u.abs(), v.abs());
+    let (r, z, along) = match a + b <= 1.0 {
+        true => (a + b, 1.0 - (a + b) * (a + b), b),
+        false => {
+            let r = 2.0 - a - b;
+            (r, r * r - 1.0, 1.0 - a)
+        }
+    };
+    // The share of a quarter turn from +x towards +y.
+    let turn = if r > 0.0 { along / r } else { 0.0 } * std::f32::consts::FRAC_PI_2;
+    let across = (1.0 - z * z).max(0.0).sqrt();
+    Vec3::new(
+        across * turn.cos() * if u < 0.0 { -1.0 } else { 1.0 },
+        across * turn.sin() * if v < 0.0 { -1.0 } else { 1.0 },
+        z,
+    )
+}
+
+/// The light that comes along `way` of what `sky` holds of the surroundings: the probe's nine
+/// numbers where it has them, else the resolve's sky over its ground.
+fn light_along(sky: &Sky, way: Vec3) -> Vec3 {
+    let Some(nine) = &sky.scene.around else {
+        return sky.ground.lerp(sky.sky, way.z * 0.5 + 0.5);
+    };
+    let Vec3 { x, y, z } = way;
+    let weights = [
+        0.282_095,
+        0.488_603 * y,
+        0.488_603 * z,
+        0.488_603 * x,
+        1.092_548 * x * y,
+        1.092_548 * y * z,
+        0.315_392 * (3.0 * z * z - 1.0),
+        1.092_548 * x * z,
+        0.546_274 * (x * x - y * y),
+    ];
+    let held = (nine.iter().zip(weights)).fold(Vec3::ZERO, |sum, (n, w)| sum + *n * w);
+    held.max(Vec3::ZERO)
+}
+
+/// The probe's tile in its atlas, row by row from the top: each texel the light along the way its
+/// middle stands for, the border's the ways past the edges.
+pub(super) fn probe_light(sky: &Sky) -> Vec<Vec3> {
+    let tile = PROBE_TILE as f32;
+    let place = |texel: u32| ((texel as f32 - 0.5) / tile) * 2.0 - 1.0;
+    (0..ATLAS * ATLAS)
+        .map(|i| light_along(sky, way_of(place(i % ATLAS), place(i / ATLAS))))
+        .collect()
+}
+
+/// How far the probe sees along every way, in metres: the farthest a half holds, so that nothing
+/// stands between it and any place it lights.
+const SEES: f32 = 65_504.0;
 
 /// The bytes of the directional light's record.
 const RECORD_BYTES: usize = 340;
@@ -289,6 +421,49 @@ pub(super) struct FrameHeld {
     /// The view's lighting record, each as large as the first stage that bound it asked.
     views: Vec<wgpu::Buffer>,
     fit: Option<wgpu::Texture>,
+    probe: Option<wgpu::Texture>,
+    sees: Option<wgpu::Texture>,
+}
+
+/// A half-float texture of four channels, `side` texels a side.
+fn halves(device: &wgpu::Device, label: &str, side: u32) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width: side,
+            height: side,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba16Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    })
+}
+
+/// Write `texels`, four halves each, into the square `texture`; their bytes.
+fn write_halves(queue: &wgpu::Queue, texture: &wgpu::Texture, texels: &[[f32; 4]]) -> u64 {
+    let side = texture.width();
+    let bytes: Vec<u8> = (texels.iter().flatten())
+        .flat_map(|value| or_io::half::f32_to_half(*value).to_le_bytes())
+        .collect();
+    queue.write_texture(
+        texture.as_image_copy(),
+        &bytes,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(8 * side),
+            rows_per_image: Some(side),
+        },
+        wgpu::Extent3d {
+            width: side,
+            height: side,
+            depth_or_array_layers: 1,
+        },
+    );
+    bytes.len() as u64
 }
 
 /// A buffer of at least `size` bytes, and of `least`, from `held` or made into it.
@@ -347,6 +522,19 @@ impl FrameHeld {
         texture.create_view(&wgpu::TextureViewDescriptor::default())
     }
 
+    /// The probes' light, one tile and its border.
+    fn probe(&mut self, device: &wgpu::Device) -> wgpu::TextureView {
+        let texture =
+            (self.probe).get_or_insert_with(|| halves(device, "meshlet-probe-light", ATLAS));
+        texture.create_view(&wgpu::TextureViewDescriptor::default())
+    }
+
+    /// How far the probe sees, one texel for every way.
+    fn sees(&mut self, device: &wgpu::Device) -> wgpu::TextureView {
+        let texture = (self.sees).get_or_insert_with(|| halves(device, "meshlet-probe-sees", 1));
+        texture.create_view(&wgpu::TextureViewDescriptor::default())
+    }
+
     /// The ambient map as an array of slices.
     fn ambient(&mut self, device: &wgpu::Device) -> wgpu::TextureView {
         let texture = self.ambient.get_or_insert_with(|| {
@@ -371,8 +559,9 @@ impl FrameHeld {
         })
     }
 
-    /// Write what `sky` lights by into each of them made: how many writes, and their bytes.
-    pub(super) fn write(&self, queue: &wgpu::Queue, sky: &Sky) -> (u32, u64) {
+    /// Write what `sky` lights by, seen from `camera`, into each of them made: how many writes,
+    /// and their bytes.
+    pub(super) fn write(&self, queue: &wgpu::Queue, sky: &Sky, camera: Vec3) -> (u32, u64) {
         let (mut writes, mut bytes) = (0, 0);
         if !self.lights.is_empty() {
             let record = directional_light(sky);
@@ -404,7 +593,7 @@ impl FrameHeld {
             bytes += texels.len() as u64;
         }
         if !self.views.is_empty() {
-            let record = ViewLighting::of(sky).bytes();
+            let record = ViewLighting::of(sky, camera).bytes();
             for buffer in &self.views {
                 queue.write_buffer(buffer, 0, &record);
                 writes += 1;
@@ -432,6 +621,17 @@ impl FrameHeld {
             );
             writes += 1;
             bytes += texels.len() as u64;
+        }
+        if let Some(texture) = &self.probe {
+            let texels: Vec<[f32; 4]> = (probe_light(sky).iter())
+                .map(|light| light.extend(1.0).to_array())
+                .collect();
+            bytes += write_halves(queue, texture, &texels);
+            writes += 1;
+        }
+        if let Some(texture) = &self.sees {
+            bytes += write_halves(queue, texture, &[[SEES; 4]]);
+            writes += 1;
         }
         (writes, bytes)
     }
@@ -491,6 +691,21 @@ pub(super) fn bound(
             },
         ) if count.is_none() => {
             textures.push(made.frame.fit(device));
+            Some(Bound::View(textures.len() - 1))
+        }
+        // Sampled filtered at its first level, and gathered.
+        (
+            FrameFeed::ProbeRadiance | FrameFeed::ProbeVisibility,
+            Resource::Texture {
+                dimension: wgpu::TextureViewDimension::D2,
+                sample: wgpu::TextureSampleType::Float { .. },
+                multisampled: false,
+            },
+        ) if count.is_none() => {
+            textures.push(match frame {
+                FrameFeed::ProbeRadiance => made.frame.probe(device),
+                _ => made.frame.sees(device),
+            });
             Some(Bound::View(textures.len() - 1))
         }
         _ => None,
@@ -585,9 +800,19 @@ mod tests {
             (offset_of!(ViewLighting, alpha_fade), 0x3DC),
             (offset_of!(ViewLighting, probe_jitter), 0x3E8),
             (offset_of!(ViewLighting, probe_grid), 0x408),
+            (offset_of!(ViewLighting, probe_middle), 0x410),
+            (offset_of!(ViewLighting, probe_half), 0x41C),
+            (offset_of!(ViewLighting, probe_half_z), 0x46C),
             (offset_of!(ViewLighting, level_place), 0x4B0),
             (offset_of!(ViewLighting, level_scale), 0x4BC),
+            (offset_of!(ViewLighting, outer_place), 0x4C0),
+            (offset_of!(ViewLighting, outer_scale), 0x4CC),
             (offset_of!(ViewLighting, level_scale_z), 0x50C),
+            (offset_of!(ViewLighting, outer_scale_z), 0x51C),
+            (offset_of!(ViewLighting, atlas_texel), 0x550),
+            (offset_of!(ViewLighting, probe_texture), 0x568),
+            (offset_of!(ViewLighting, probe_tile), 0x588),
+            (offset_of!(ViewLighting, probe_cells), 0x58C),
             (offset_of!(ViewLighting, levels), 0x72C),
             (offset_of!(ViewLighting, glass_remap), 0x750),
             (offset_of!(ViewLighting, ambient_place), 0x7CC),
@@ -598,28 +823,84 @@ mod tests {
             assert_eq!(field, byte, "0x{byte:X}");
         }
         // The bytes put each field where the struct lays it.
-        let record = ViewLighting::of(&Sky::default());
+        let record = ViewLighting::of(&Sky::default(), Vec3::new(3.0, -4.0, 5.0));
         let bytes = record.bytes();
         let word = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().expect("four"));
         assert_eq!(word(0x72C), record.levels);
         assert_eq!(float(&bytes, 0x7D8), record.reflection_scale);
         assert_eq!(float(&bytes, 0x4B8), record.level_place[2]);
+        assert_eq!(float(&bytes, 0x4C8), record.outer_place[2]);
+        assert_eq!(float(&bytes, 0x414), -4.0, "the probe's middle");
+        assert_eq!(float(&bytes, 0x46C), record.probe_half_z);
+        assert_eq!(float(&bytes, 0x554), record.atlas_texel[1]);
+        assert_eq!([word(0x588), word(0x58C), word(0x590)], [16, 1, 1]);
         assert!(
             bytes[..0xEC].iter().all(|b| *b == 0),
             "nothing before the light's way"
         );
     }
 
+    /// The reflection's probe block as the lit program enters it, for the pixel at `world` with
+    /// the noise `noise` (0 to 1) of the test of light from all around: the level each loop stops
+    /// at, whether the reflection's block is entered, and the extent that block of light from all
+    /// around is judged by.
+    fn levels_taken(record: &ViewLighting, world: Vec3, noise: f32) -> (u32, bool, u32, f32) {
+        let place = |level: u32| {
+            let (p, s, z) = match level {
+                0 => (record.level_place, record.level_scale, record.level_scale_z),
+                _ => (record.outer_place, record.outer_scale, record.outer_scale_z),
+            };
+            Vec3::new(s * world.x + p[0], s * world.y + p[1], z * world.z + p[2]).abs()
+        };
+        let last = record.levels.wrapping_sub(1);
+        // The do-while of light from all around: on while outside its jittered bounds and the
+        // count less one is past the level.
+        let bound = 1.0 - noise / record.probe_grid[0] as f32;
+        let mut around = 0;
+        while place(around).max_element() > bound && last > around {
+            around += 1;
+        }
+        let extent = if around == last {
+            place(around).max_element()
+        } else {
+            0.0
+        };
+        // The reflection's: on while outside `<= 1` and the level is short of the last.
+        let mut reflected = 0;
+        while place(reflected).max_element() > 1.0 && last > reflected {
+            reflected += 1;
+        }
+        let entered = place(reflected).max_element() < 1.0 || last != reflected;
+        (reflected, entered, around, extent)
+    }
+
     #[test]
-    fn the_view_s_record_states_one_probe_level_the_pixel_lies_outside_of() {
-        let record = ViewLighting::of(&Sky::default());
-        // The loops go on while the count less one is past the level: one level ends both after
-        // their first test, where nought would wrap to the most a word holds.
-        assert_eq!(record.levels, 1);
-        // The pixel's place in the level is the level's place alone, two along each axis: past
-        // one, so outside, and the probes' blocks are passed over for the ambient map.
-        assert_eq!(record.level_place, [2.0; 3]);
-        assert_eq!((record.level_scale, record.level_scale_z), (0.0, 0.0));
+    fn the_view_s_record_sends_the_reflection_to_its_probe_and_the_light_from_all_around_to_the_map(
+    ) {
+        let record = ViewLighting::of(&Sky::default(), Vec3::new(10.0, 0.0, 2.0));
+        // Two levels, each loop held to two turns; nought would wrap to the most a word holds.
+        assert_eq!(record.levels, 2);
+        for world in [Vec3::ZERO, Vec3::new(-300.0, 41.0, 7.5)] {
+            for noise in [1e-7, 0.5, 0.999_999] {
+                let (reflected, entered, around, extent) = levels_taken(&record, world, noise);
+                assert_eq!((reflected, entered), (0, true), "{world} {noise}");
+                // Past the last level by its extent: the block of probes of light from all
+                // around is passed over, and the ambient map taken whole.
+                assert_eq!(around, 1, "{world} {noise}");
+                assert!(extent >= 1.0);
+                assert_eq!((20.0 * (extent - 0.95)).clamp(0.0, 1.0), 1.0);
+            }
+        }
+        // One cell: the probe of cell nought, standing at the level's middle, the camera.
+        let cell = |p: f32| (record.probe_grid[0] as f32 * (p * 0.5 + 0.5) - 0.5).floor();
+        assert_eq!(
+            [cell(record.level_place[0]), cell(record.level_place[1])],
+            [0.0, 0.0]
+        );
+        let middle = Vec3::from_array(record.probe_middle)
+            + record.probe_half * ((0.0 + 0.5) / record.probe_grid[0] as f32 * 2.0 - 1.0);
+        assert_eq!(middle, Vec3::new(10.0, 0.0, 2.0));
+        assert!(record.probe_cells.iter().all(|cells| *cells == 1));
         // The jitter's divisors are not nought, so the bounds it moves stay numbers.
         assert!(record.probe_grid.iter().all(|cells| *cells > 0));
         assert_eq!(record.probe_jitter, 0.25);
@@ -639,7 +920,7 @@ mod tests {
         sky.scene.clouds.open = 0.4;
         sky.scene.clouds.haze = 2.0;
         sky.scene.glass_remap = Some([1.0, 3.0, 0.5, 0.75]);
-        let record = ViewLighting::of(&sky);
+        let record = ViewLighting::of(&sky, Vec3::ZERO);
         // The way towards the light, unlike the directional record's way it travels.
         let towards = Vec3::from_array(record.towards);
         assert!(
@@ -656,7 +937,11 @@ mod tests {
         assert_eq!((weight(1.0), weight(3.0)), (0.5, 0.75));
         // No cycle: no disc, a cosine of one.
         assert_eq!((record.disc_tangent, record.disc_cosine), (0.0, 1.0));
-        assert_ne!(ViewLighting::of(&Sky::default()), record, "the sun moved");
+        assert_ne!(
+            ViewLighting::of(&Sky::default(), Vec3::ZERO),
+            record,
+            "the sun moved"
+        );
     }
 
     #[test]
@@ -748,5 +1033,72 @@ mod tests {
             );
         }
         assert_ne!(ambient_slices(&Sky::at(19.0, 0.5)), slices, "the sky moved");
+    }
+
+    /// The place of a probe's tile, each from nought to one, the lit program samples along the
+    /// unit `way`, in the order of its instructions: a quarter turn's share by the arctangent of
+    /// the lesser of |x| and |y| over the greater, the root of one less |z|, then the upper half's
+    /// diamond or the lower half's corners, signed by x and y.
+    fn place_of(way: Vec3) -> (f32, f32) {
+        let (ax, ay) = (way.x.abs(), way.y.abs());
+        let share = (ax.min(ay) / (ax.max(ay) + 1e-19)).atan() * std::f32::consts::FRAC_2_PI;
+        let turn = if ax < ay { 1.0 - share } else { share };
+        let r = (1.0 - way.z.abs()).sqrt();
+        let (u, v) = match way.z < 0.0 {
+            true => (1.0 - turn * r, 1.0 - r * (1.0 - turn)),
+            false => (r * (1.0 - turn), turn * r),
+        };
+        (u.copysign(way.x) * 0.5 + 0.5, v.copysign(way.y) * 0.5 + 0.5)
+    }
+
+    #[test]
+    fn a_probe_s_tile_holds_along_each_way_the_light_the_lit_program_samples_there() {
+        let ways = [
+            Vec3::Z,
+            -Vec3::Z,
+            Vec3::new(0.48, 0.6, 0.64),
+            Vec3::new(-0.8, 0.36, -0.48),
+            Vec3::new(0.6, -0.8, 0.0),
+            Vec3::new(-0.36, -0.48, -0.8),
+        ];
+        // The tile's way at the place the program samples is the way sampled.
+        for way in ways {
+            let (u, v) = place_of(way);
+            let back = way_of(u * 2.0 - 1.0, v * 2.0 - 1.0);
+            assert!((back - way).length() < 1e-4, "{way}: {back}");
+        }
+        // A border texel past an edge holds the way inside that edge it folds to.
+        assert!((way_of(-1.05, 0.3) - way_of(-0.95, -0.3)).length() < 1e-5);
+        // A corner's, the opposite corner's: every corner is the way straight down.
+        assert!((way_of(1.05, 1.05) - way_of(-0.95, -0.95)).length() < 1e-5);
+        assert!((way_of(1.0, 1.0) + Vec3::Z).length() < 1e-6);
+        // Each texel inside the border holds the light along the way its middle stands for: as
+        // the program reads it, `(1 + tile * place) / atlas`, the texel whose middle that is.
+        let mut sky = Sky::default();
+        sky.scene.around = Some(std::array::from_fn(|i| match i {
+            0 => Vec3::new(5.0, 6.0, 7.0),
+            _ => Vec3::new(0.3, -0.1, 0.2) * i as f32,
+        }));
+        let tile = probe_light(&sky);
+        assert_eq!(tile.len(), (ATLAS * ATLAS) as usize);
+        let tile_side = PROBE_TILE as f32;
+        for (i, j) in [(0u32, 0u32), (3, 11), (15, 15), (7, 0)] {
+            let place = |k: u32| (k as f32 + 0.5) / tile_side;
+            let way = way_of(place(i) * 2.0 - 1.0, place(j) * 2.0 - 1.0);
+            let (u, v) = place_of(way);
+            let texel = |p: f32| (1.0 + tile_side * p - 0.5).round() as u32;
+            assert_eq!((texel(u), texel(v)), (i + 1, j + 1));
+            let held = tile[(texel(v) * ATLAS + texel(u)) as usize];
+            assert!((held - light_along(&sky, way)).length() < 1e-5);
+        }
+        // Where the sky and the ground are two colours: the resolve's, up and down.
+        let two = Sky::default();
+        assert!((light_along(&two, Vec3::Z) - two.sky).length() < 1e-6);
+        assert!((light_along(&two, -Vec3::Z) - two.ground).length() < 1e-6);
+        assert_ne!(
+            probe_light(&Sky::at(19.0, 0.5)),
+            probe_light(&two),
+            "the sky moved"
+        );
     }
 }

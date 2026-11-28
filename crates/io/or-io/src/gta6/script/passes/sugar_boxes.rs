@@ -7,10 +7,11 @@
 //! than the box copies it.
 
 use crate::gta6::script::ir::{
-    self, BinOp, Callee, Expr, ExprSugar, FunctionKey, Head, Kind, Returns, TypeKey, UnOp, Var,
+    self, BinOp, Callee, Expr, ExprSugar, FunctionKey, Head, Kind, Returns, Scalar, TypeKey, UnOp,
+    Var,
 };
 use crate::gta6::script::print;
-use crate::gta6::script::project::{Param, TypeFacts};
+use crate::gta6::script::project::{signatures, Param, TypeFacts};
 use crate::gta6::script::tree::{self, Stmt};
 use crate::gta6::script::{Names, Project};
 
@@ -135,13 +136,13 @@ fn copies(ty: &str, value: &Expr, head: &Head, project: &Project, names: &Names)
     }
     let runtime = runtime_name(ty, names);
     if runtime.is_some_and(|name| INTEGERS.contains(&name)) {
-        return integral(value, head);
+        return integral(value, head, project);
     }
     if runtime == Some(BOOLEAN) {
-        return truth(value, head);
+        return truth(value, head, project);
     }
     match script_value(ty, project) {
-        Some(facts) if enumeration(facts) => integral(value, head),
+        Some(facts) if enumeration(facts) => integral(value, head, project),
         Some(_) => of_type(ty, value, head),
         None => false,
     }
@@ -159,9 +160,44 @@ fn signed_text(value: &Expr) -> bool {
     }
 }
 
+/// `e` under the readings of a call as a method or a property, which change neither the call nor what it yields.
+fn under_call(e: &Expr) -> &Expr {
+    let mut e = e;
+    while let Expr::Sugar {
+        kind: ExprSugar::Method | ExprSugar::Property,
+        e: inner,
+    } = e
+    {
+        e = &**inner;
+    }
+    e
+}
+
+/// The kind of the one cell a call yields, where the project proves it: by the settled signature of the script function called, or of every function a slot's call may reach.
+// ⚠ A native's result is never read here: the project knows only how its result is read.
+fn result_kind<'p>(e: &Expr, head: &Head, project: &'p Project) -> Option<&'p Kind> {
+    let Expr::Call {
+        callee, returns, ..
+    } = under_call(e)
+    else {
+        return None;
+    };
+    if let Callee::Virtual { ty, slot, .. } = callee {
+        let one = returns.is_none_or(|cells| cells == 1);
+        let ty = TypeKey::of_name(ty).filter(|_| one)?;
+        return project.slot_result(ty, *slot);
+    }
+    let held = project
+        .signatures
+        .get(&signatures::key_of(head.program, callee)?)?;
+    let proved = signatures::settled(held) && held.returns == 1 && held.result != Kind::Unknown;
+    proved.then_some(&held.result)
+}
+
 /// Whether `value` is an integer by what it is written as: no float, no truth, no value of several cells.
 // A global's kind is the project's and not the function's: one is no integer by what is written.
-fn integral(value: &Expr, head: &Head) -> bool {
+// A call is one where the project proves it yields an integer.
+fn integral(value: &Expr, head: &Head, project: &Project) -> bool {
     let kind_integral =
         |kind: &Kind| kind.is_integer() || matches!(kind, Kind::Unknown | Kind::Hash);
     let mut value = value;
@@ -182,6 +218,12 @@ fn integral(value: &Expr, head: &Head) -> bool {
         Expr::Cast { to, .. } => !to.kind().is_float(),
         Expr::Load { ty, .. } => !ty.kind().is_float(),
         Expr::Binary { op, at, .. } => !comparison(*op) && kind_integral(at),
+        Expr::Call { .. }
+        | Expr::Sugar {
+            kind: ExprSugar::Method | ExprSugar::Property,
+            ..
+        } => result_kind(value, head, project)
+            .is_some_and(|kind| kind.is_integer() || *kind == Kind::Hash),
         _ => false,
     }
 }
@@ -201,8 +243,9 @@ fn comparison(op: BinOp) -> bool {
     )
 }
 
-/// Whether `value` is a truth by what it is written as.
-fn truth(value: &Expr, head: &Head) -> bool {
+/// Whether `value` is a truth by what it is written as: a call where the project proves it yields one, and a field of one byte the project types a truth, read as its one byte.
+// The field's reading is the one the printer writes bare, so `(bool)` stands before the field itself.
+fn truth(value: &Expr, head: &Head, project: &Project) -> bool {
     match value {
         Expr::Const(c) => c.kind == Kind::Bool,
         Expr::Var(var) => head
@@ -211,6 +254,24 @@ fn truth(value: &Expr, head: &Head) -> bool {
             .is_some_and(|info| info.kind == Kind::Bool),
         Expr::Truth(_) | Expr::Unary { op: UnOp::Not, .. } => true,
         Expr::Binary { op, .. } => comparison(*op),
+        Expr::Sugar {
+            kind: ExprSugar::Field { owner },
+            e,
+        } => match &**e {
+            Expr::Load {
+                ty: Scalar::U8,
+                offset,
+                ..
+            } => project
+                .field(*owner, *offset)
+                .is_some_and(|field| field.kind == Kind::Bool && field.bytes == 1),
+            _ => false,
+        },
+        Expr::Call { .. }
+        | Expr::Sugar {
+            kind: ExprSugar::Method | ExprSugar::Property,
+            ..
+        } => result_kind(value, head, project) == Some(&Kind::Bool),
         _ => false,
     }
 }

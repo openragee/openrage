@@ -410,6 +410,108 @@ fn a_box_is_read_as_a_conversion_only_where_the_conversion_keeps_what_the_box_co
     }
 }
 
+/// A class of a script whose fields the tests type.
+const OWNER: &str = "type_ABCD1234ABCD1234";
+
+#[test]
+fn a_box_of_what_a_call_is_proved_to_yield_or_of_a_field_typed_a_truth_is_its_conversion() {
+    let mut project = types();
+    let yields = |returns: u32, result: Kind| Signature {
+        returns,
+        result,
+        ..Signature::default()
+    };
+    let signed = [
+        (0x400, yields(1, Kind::Bool)),
+        (0x500, yields(1, Kind::I32)),
+        (0x600, yields(1, Kind::Unknown)),
+        (0x700, yields(2, Kind::Bool)),
+    ];
+    for (at, signature) in signed {
+        project
+            .signatures
+            .insert(FunctionKey::new(1, at), signature);
+    }
+    let line = FunctionKey::new(1, 0x800);
+    if let Some(facts) = project
+        .types
+        .get_mut(&TypeKey::of_name(ENUM).unwrap_or(TypeKey(0)))
+    {
+        facts.slots.insert(6, line);
+    }
+    project.slot_results.insert(line, Kind::Bool);
+    let owner = TypeKey::of_name(OWNER).unwrap_or(TypeKey(0));
+    let row = |offset: u32, kind: Kind| crate::gta6::script::project::FieldFacts {
+        offset,
+        bytes: 1,
+        kind,
+    };
+    project
+        .fields
+        .insert(owner, vec![row(0x10, Kind::Bool), row(0x11, Kind::U8)]);
+
+    let ours = |value: Expr| called(own(0x200), vec![value]);
+    let reads = |ty: &str, value: Expr| {
+        let found = read(ours(boxed_as(ty, value.clone())), &project);
+        found == ours(converted(ty, value))
+    };
+    let of = |at: u32| called(own(at), Vec::new());
+    let slot = Callee::Virtual {
+        class: ENUM.to_owned(),
+        method: "Method_6".to_owned(),
+        ty: ENUM.to_owned(),
+        slot: 6,
+    };
+    let on_slot = Expr::sugar(ExprSugar::Method, called(slot, vec![local(4)]));
+    let field = |offset: u32| {
+        let load = Expr::Load {
+            ty: Scalar::U8,
+            addr: Box::new(Expr::Var(Var::Param(0))),
+            offset,
+        };
+        Expr::sugar(ExprSugar::Field { owner }, load)
+    };
+    let boolean = "System.Boolean";
+    assert!(reads(boolean, of(0x400)));
+    assert!(reads(boolean, on_slot));
+    assert!(reads(boolean, field(0x10)));
+    assert!(reads(ENUM, of(0x500)));
+    assert!(reads("System.Int32", of(0x500)));
+    let mut done = read(ours(boxed_as(boolean, of(0x400))), &project);
+    done.desugar();
+    assert_eq!(done, ours(boxed_as(boolean, of(0x400))));
+
+    let native = called(
+        Callee::Native {
+            namespace: None,
+            name: "_0x0000000000000002".to_owned(),
+            hash: 2,
+            rva: 0x20,
+        },
+        Vec::new(),
+    );
+    let stays = [
+        ("a call whose result nothing proves", boolean, of(0x600)),
+        (
+            "a call of a function the project does not hold",
+            boolean,
+            of(0x900),
+        ),
+        ("a call that yields two cells", boolean, of(0x700)),
+        ("a truth made an enum", ENUM, of(0x400)),
+        ("a number made a truth", boolean, of(0x500)),
+        ("a byte no row types a truth", boolean, field(0x11)),
+        (
+            "a native, whose result is known only by how it is read",
+            boolean,
+            native,
+        ),
+    ];
+    for (why, ty, value) in stays {
+        assert!(!reads(ty, value), "{why}");
+    }
+}
+
 #[test]
 fn a_box_of_a_builtin_is_of_the_runtime_type_the_users_list_names_its_index() {
     let project = types();

@@ -1,29 +1,26 @@
 //! Every kind the app edits, taken from a row of the build through the tree's own open: the
 //! smallest edit its editor makes, a save into its row and the plan of the tree's save, printed per
 //! kind as a patched copy, a rebuilt archive and why, no edit function, or no row found. A kind is
-//! tried on up to three rows before a rebuilt archive or a refusal is what it says.
+//! tried on up to three rows spread over its sizes before a rebuilt archive or a refusal is what it
+//! says; one the small archives leave unsettled is looked for in the archives whose tables hold
+//! most rows of its kind.
 
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use or_io::container::rpf::{
-    read_rpf9_body, ChunkPatch, Gta6Mount, GtaViKeys, PatchPlan, Rpf9BodyKind, Rpf9Role,
-    Rpf9Sections,
-};
+use or_io::container::rpf::{read_rpf9_body, GtaViKeys, Rpf9BodyKind, Rpf9Role, Rpf9Sections};
 use or_io::container::RpfArchive;
 use or_io::gta6::headerless::{read_dictionary, Entry, Resource};
 use or_io::gta6::map::MapBody;
 use or_io::gta6::mission_tables::Body;
 
 use super::super::tests::reading_with;
-use super::super::{
-    chains, plan_tree, stored_body, tree_edits, write_planned, Edit, Planned, Saved, Writes,
-};
+use super::super::{plan_tree, tree_edits, Edit, Writes};
 use crate::state::document::{DocumentId, RpfNodeId};
 use crate::state::gta6_edit::is_scanned_dictionary;
 use crate::state::rpf_node::RpfNodeBacking;
@@ -32,19 +29,33 @@ use crate::state::{AppState, DocPayload, Document, ToastType};
 use edits::{
     edit_bound, edit_cell, edit_expression, edit_filter, edit_key, edit_map, edit_material,
     edit_meta, edit_particles, edit_text, edit_texture, edit_types_added, edit_types_member,
-    last_error, NO_ENTITY,
+    last_error, NO_ENTITY, NO_SCALAR,
 };
+use read_back::copied;
+pub(crate) use read_back::overlaid;
+use rows::{ranked, spread, Row};
 
 #[path = "gta6_app_saves_per_kind_edits.rs"]
 mod edits;
+#[path = "gta6_app_saves_per_kind_read_back.rs"]
+mod read_back;
+#[path = "gta6_app_saves_per_kind_rows.rs"]
+mod rows;
 
 const WHAT: &str = "every kind the app edits saved through its tree row of the build";
 const BUILD_ENV: &str = "OPENRAGE_GTA6_BUILD";
 const DOC: DocumentId = 9_700;
-/// No row is opened past this; nextest terminates an app test at 300 s.
+/// No row is opened past this: an attempt starts only while its load's wait ends by then.
 const BUDGET: Duration = Duration::from_secs(200);
-/// An archive is opened only while this much of [`BUDGET`] is left, as its open cannot be stopped.
-const ARCHIVE_LEFT: Duration = Duration::from_secs(40);
+/// No copy is written, or read back, to end past this; nextest terminates an app test at 300 s.
+const END: Duration = Duration::from_secs(260);
+/// An archive this size or smaller is a small one, whose rows are tried as its walk finds them.
+const SMALL_CAP: u64 = 1 << 30;
+/// No row of a small archive is opened past this.
+const SMALL_END: Duration = Duration::from_secs(70);
+/// The other archives' tables are walked only before this; the rest of [`BUDGET`] is shared among
+/// the kinds still unsettled.
+const CENSUS_END: Duration = Duration::from_secs(120);
 /// The longest one archive's tree is walked.
 const WALK: Duration = Duration::from_secs(15);
 /// The longest a row's load, and its save into its row, is waited on.
@@ -56,31 +67,49 @@ const MAX_DEPTH: usize = 3;
 const ROW_CAP: u64 = 512 << 10;
 /// A patched copy is written, and read back, only of an archive this size or smaller; a larger
 /// one's edit is read back from the plan's own bytes laid over the archive.
-const COPY_CAP: u64 = 1 << 30;
-/// The time kept for a plan and a copy past an attempt's two waits, and the least left to write one.
+// ponytail: copies of the 0.5 to 0.8 GB archives took most of the run; the overlay reads the same
+// bytes, and the small archives still prove the copy's own write.
+const COPY_CAP: u64 = 64 << 20;
+/// The least time left before [`END`] to write and read back a copy.
 const COPY_MARGIN: Duration = Duration::from_secs(30);
-/// The rows of a label tried, the smallest first.
-const PER_LABEL: usize = 3;
-/// The rows tried of a label that holds several kinds, spread over its sizes.
+/// The rows tried of a label that holds several kinds, as its walk files them.
 const PER_MIXED_LABEL: usize = 24;
-/// The rows of a kind tried before its last rebuilt archive or refusal is what the table says.
+/// The rows of a kind tried before its last rebuilt archive or refusal is what the table says, and
+/// the rows of a label of one kind tried.
 const TRIES: usize = 3;
+/// The archives an unsettled kind is looked for in.
+const PER_KIND: usize = 2;
 /// The values of a metadata tree looked at for a scalar to edit.
 const VISITS: usize = 100_000;
 
-/// The labels whose rows hold several of the kinds below.
-const MULTI: [&str; 4] = ["PSO", "file", "resource", "headerless metadata"];
-/// The labels whose rows are spread over their sizes: [`MULTI`]'s, and one only some of whose rows
-/// hold what its edit changes (a map data row may hold only instance lists).
-const SPREAD: [&str; 5] = ["PSO", "file", "resource", "headerless metadata", "map data"];
+/// The table kinds whose rows hold several of the kinds below: PSO, file, resource and headerless
+/// metadata.
+const MULTI: [Row; 4] = [
+    Row::Class(0x5D),
+    Row::Class(0xFF),
+    Row::Class(0x0B),
+    Row::Type(0x0B),
+];
+const MIXED: &[Row] = &MULTI;
+/// A table kind only some of whose rows hold what its edit changes (a map data row may hold only
+/// instance lists), so its rows are taken as a mixed kind's.
+const MAP_DATA: Row = Row::Type(0x49);
 /// The labels of rows none of the kinds below is, split at `|`.
 const SKIPPED: &str = "archive|script program|acceleration structure|acceleration dictionary|\
     keyed blob|keyed-blob descriptor|asset index|neighbour table|navigation octree|\
     navigation metadata|cloth|morph target|span grid|object trees|GFX|MoVE network|\
     fragment";
-/// The labels of the type codes no kind is named by, whose rows the app opens by their head, as the
-/// fit census names them; split at `|`.
-const BY_HEAD: &str = "resource 0x12|resource 0x45|resource 0x4d|animation dictionary|dictionary";
+/// The type codes no kind is named by, whose rows the app opens by their head, as the fit census
+/// names them.
+const BY_HEAD: [Row; 5] = [
+    Row::Type(0x12),
+    Row::Type(0x45),
+    Row::Type(0x4D),
+    Row::Type(0x56),
+    Row::Type(0x63),
+];
+/// The line of frame filter dictionaries, and what the walk labels a [`BY_HEAD`] row whose head
+/// holds frame filters.
 const FILTERS: &str = "frame filter dictionary";
 
 /// What a kind is called in the table, which [`kind_of`] names it by.
@@ -88,68 +117,146 @@ type Kind = &'static str;
 
 type Editor = fn(&mut AppState, DocumentId) -> Result<(), String>;
 
-/// A line of the table: its name, the kind of document its rows open as, and the edit its own
-/// editor makes; `None` where no view edits it.
-type Line = (Kind, Kind, Option<Editor>);
+/// A line of the table: its name, the kind of document its rows open as, the edit its own editor
+/// makes (`None` where no view edits it), and the table kinds of the rows it is found in.
+type Line = (Kind, Kind, Option<Editor>, &'static [Row]);
 
 /// The line whose edit adds an archetype, so its save lays the body out anew and is never patched.
 const ADDED: Kind = "map types, archetype added";
 
 const KINDS: [Line; 21] = [
-    ("text table", "text table", Some(edit_text)),
-    ("PSO table form", "PSO table form", Some(edit_meta)),
-    ("PSO P-form", "PSO P-form", Some(edit_meta)),
+    (
+        "text table",
+        "text table",
+        Some(edit_text),
+        &[Row::Type(0x6F)],
+    ),
+    ("PSO table form", "PSO table form", Some(edit_meta), MIXED),
+    // A P-form is the body of a resource row.
+    (
+        "PSO P-form",
+        "PSO P-form",
+        Some(edit_meta),
+        &[Row::Class(0x0B)],
+    ),
     (
         "headerless metadata",
         "headerless metadata",
         Some(edit_meta),
+        MIXED,
     ),
-    ("cutscene", "cutscene", Some(edit_meta)),
-    ("RBF", "RBF", Some(edit_meta)),
-    ("data XML", "data XML", Some(edit_meta)),
-    ("drawable", "drawable", Some(edit_material)),
+    ("cutscene", "cutscene", Some(edit_meta), MIXED),
+    ("RBF", "RBF", Some(edit_meta), MIXED),
+    ("data XML", "data XML", Some(edit_meta), MIXED),
+    (
+        "drawable",
+        "drawable",
+        Some(edit_material),
+        &[Row::Type(0x02)],
+    ),
     (
         "drawable dictionary",
         "drawable dictionary",
         Some(edit_material),
+        &[Row::Type(0x04)],
     ),
     (
         "texture dictionary",
         "texture dictionary",
         Some(edit_texture),
+        &[Row::Type(0x05)],
     ),
-    ("bound", "bound", Some(edit_bound)),
-    ("navigation mesh", "navigation mesh", Some(edit_cell)),
-    ("clip dictionary", "clip dictionary", Some(edit_key)),
-    (FILTERS, FILTERS, Some(edit_filter)),
-    ("expression set", "expression set", Some(edit_expression)),
-    ("map data", "map data", Some(edit_map)),
-    ("map types", "map types", Some(edit_types_member)),
-    (ADDED, "map types", Some(edit_types_added)),
-    ("particles", "particles", Some(edit_particles)),
-    ("height map", "height map", Some(edits::edit_height)),
-    ("mission tables", "mission tables", Some(edit_meta)),
+    ("bound", "bound", Some(edit_bound), &[Row::Type(0x06)]),
+    (
+        "navigation mesh",
+        "navigation mesh",
+        Some(edit_cell),
+        &[Row::Type(0x4F)],
+    ),
+    (
+        "clip dictionary",
+        "clip dictionary",
+        Some(edit_key),
+        &[Row::Type(0x43)],
+    ),
+    (FILTERS, FILTERS, Some(edit_filter), &[Row::Type(0x56)]),
+    (
+        "expression set",
+        "expression set",
+        Some(edit_expression),
+        &[Row::Type(0x63)],
+    ),
+    ("map data", "map data", Some(edit_map), &[MAP_DATA]),
+    (
+        "map types",
+        "map types",
+        Some(edit_types_member),
+        &[Row::Type(0x4A)],
+    ),
+    (
+        ADDED,
+        "map types",
+        Some(edit_types_added),
+        &[Row::Type(0x4A)],
+    ),
+    (
+        "particles",
+        "particles",
+        Some(edit_particles),
+        &[Row::Type(0x48)],
+    ),
+    (
+        "height map",
+        "height map",
+        Some(edits::edit_height),
+        &[Row::Class(0x69)],
+    ),
+    ("mission tables", "mission tables", Some(edit_meta), MIXED),
 ];
 
 /// The first line of the document kind `kind` with an edit that is not yet settled, and its edit; a
 /// kind no line opens as panics, so a misnamed kind fails the test.
 fn line_for(kind: Kind, settled: &HashSet<Kind>) -> Option<(Kind, Editor)> {
     assert!(
-        KINDS.iter().any(|(_, of, _)| *of == kind),
+        KINDS.iter().any(|l| l.1 == kind),
         "{kind} is no kind of the table"
     );
-    let open = |&(line, of, edit): &Line| (of == kind).then_some((line, edit?));
+    let open = |&(line, of, edit, _): &Line| (of == kind).then_some((line, edit?));
     (KINDS.iter())
         .filter_map(open)
         .find(|(line, _)| !settled.contains(line))
 }
 
-/// Whether every line of the kind a row labelled `label` opens as is settled, so none is opened.
+/// Whether `label` is the label of one of `rows`.
+fn is_one_of(label: &str, rows: &[Row]) -> bool {
+    rows.iter().any(|r| r.label() == label)
+}
+
+/// The labels of the rows `line` is found in, as the walk files them.
+fn labels(line: &Line) -> Vec<Cow<'static, str>> {
+    let mut out: Vec<Cow<'static, str>> = line.3.iter().map(|r| r.label()).collect();
+    if line.0 == FILTERS && !out.iter().any(|l| l == FILTERS) {
+        out.push(FILTERS.into());
+    }
+    out
+}
+
+/// The lines found in rows labelled `label`.
+fn lines_of(label: &str) -> Vec<Kind> {
+    (KINDS.iter())
+        .filter(|l| labels(l).iter().any(|x| x == label))
+        .map(|l| l.0)
+        .collect()
+}
+
+/// Whether every line found in rows labelled `label` is settled, so none of them is opened; never
+/// so of a label whose rows hold several kinds or are read by their head.
 fn label_done(label: &str, settled: &HashSet<Kind>) -> bool {
-    let mut lines = KINDS.iter().filter(|(_, of, _)| *of == label).peekable();
-    !MULTI.contains(&label)
-        && lines.peek().is_some()
-        && lines.all(|(line, ..)| settled.contains(line))
+    let lines = lines_of(label);
+    !is_one_of(label, &MULTI)
+        && !is_one_of(label, &BY_HEAD)
+        && !lines.is_empty()
+        && lines.iter().all(|line| settled.contains(line))
 }
 
 /// The kind the document `doc`, opened from a row labelled `label`, is; `None` for any other.
@@ -158,7 +265,7 @@ fn kind_of(doc: &Document, label: &str) -> Option<Kind> {
     Some(match &doc.payload {
         DocPayload::Gta6Text(_) => "text table",
         DocPayload::Gta6Expressions(_) => "expression set",
-        DocPayload::Gta6Anim(_) if label == "clip dictionary" => "clip dictionary",
+        DocPayload::Gta6Anim(_) if Row::Type(0x43).label() == label => "clip dictionary",
         DocPayload::HeightMap(_) => "height map",
         DocPayload::Gta6Drawable(resource) => match &**resource {
             Resource::Bound(_) => "bound",
@@ -300,19 +407,124 @@ fn said_how_it_ended(state: &AppState) -> bool {
 }
 
 /// A row to try: its node, its label and what it holds inflated.
+#[derive(Clone)]
 struct Candidate {
     node: RpfNodeId,
     label: String,
     size: u64,
+    /// Whether its head was read and holds frame filters.
+    by_head: bool,
 }
 
-/// The file rows of the tree `DOC` of `state`, nested archives opened as the tree expands them, the
-/// smallest of each label; a mixed label's spread over its sizes. A row of a [`BY_HEAD`] label that
-/// holds frame filters is labelled [`FILTERS`].
-fn walk(state: &mut AppState, until: Instant) -> Vec<Candidate> {
+/// An archive's tree as its walk left it, and the walk's rows of it by label.
+struct Walked {
+    disk: PathBuf,
+    file: String,
+    tree: RpfDocument,
+    rows: HashMap<String, Vec<Candidate>>,
+}
+
+impl Walked {
+    /// The archive `disk` opened and walked until `until`, as [`walk`] walks it with `heads`.
+    fn open(disk: &Path, until: Instant, heads: bool) -> Option<Self> {
+        let crypto = crate::state::rpf_archive_open::gta6_session::crypto();
+        let tree = (RpfArchive::open_with(disk, crypto).map_err(|e| e.to_string()))
+            .and_then(RpfDocument::new)
+            .ok()?;
+        let mut base = AppState::new();
+        base.documents.push(Document::new(
+            DOC,
+            Some(disk.to_path_buf()),
+            DocPayload::Rpf(tree),
+        ));
+        let rows = walk(&mut base, until, heads);
+        let held = std::mem::take(&mut base.documents)
+            .into_iter()
+            .find(|d| d.id == DOC);
+        let Some(DocPayload::Rpf(tree)) = held.map(|d| d.payload) else {
+            return None;
+        };
+        let file = disk
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        Some(Self {
+            disk: disk.to_path_buf(),
+            file,
+            tree,
+            rows,
+        })
+    }
+
+    /// How many of its rows are labelled as `line` is found.
+    fn held(&self, line: &Line) -> usize {
+        (labels(line).iter())
+            .filter_map(|l| self.rows.get(&**l))
+            .map(Vec::len)
+            .sum()
+    }
+
+    /// Its rows labelled as `line` is found that `keep` keeps, asked of the smallest first, all of
+    /// them spread over their sizes.
+    fn rows_for(&self, line: &Line, mut keep: impl FnMut(&Candidate) -> bool) -> Vec<Candidate> {
+        let mut rows: Vec<&Candidate> = (labels(line).iter())
+            .filter_map(|l| self.rows.get(&**l))
+            .flatten()
+            .collect();
+        rows.sort_by_key(|c| c.size);
+        rows.retain(|c| keep(*c));
+        let picked = spread(rows.len(), rows.len()).into_iter();
+        picked.map(|i| rows[i].clone()).collect()
+    }
+
+    /// Whether the row `node` holds frame filters, as [`holds_filters`] reads its head.
+    fn holds_filters(&self, node: RpfNodeId) -> bool {
+        let session = &self.tree.session;
+        let Some(RpfNodeBacking::ArchiveFile {
+            archive_id,
+            entry_index,
+            ..
+        }) = session.node(node).map(|n| &n.backing)
+        else {
+            return false;
+        };
+        (session.archive(*archive_id)).is_some_and(|a| holds_filters(&a.archive, *entry_index))
+    }
+}
+
+/// The rows of `rows` tried as they are walked: each label's spread over its sizes, the labels in
+/// turns, so each label's first rows come before any label's later ones. A [`BY_HEAD`] label's
+/// rows are its smallest, since a large one, often an animation, can take long to open as nothing
+/// the table edits.
+fn in_turns(rows: &HashMap<String, Vec<Candidate>>) -> Vec<Candidate> {
+    let mut lists: Vec<VecDeque<Candidate>> = Vec::new();
+    for (label, rows) in rows {
+        let many = is_one_of(label, &MULTI) || MAP_DATA.label() == label.as_str();
+        // A label whose rows open as two lines (map types) takes rows enough for both.
+        let want = match many {
+            true => PER_MIXED_LABEL,
+            false => TRIES * lines_of(label).len().max(1),
+        };
+        let picked = match is_one_of(label, &BY_HEAD) {
+            true => (0..want.min(rows.len())).collect(),
+            false => spread(rows.len(), want),
+        };
+        lists.push(picked.into_iter().map(|i| rows[i].clone()).collect());
+    }
+    let mut out = Vec::new();
+    while lists.iter().any(|l| !l.is_empty()) {
+        out.extend(lists.iter_mut().filter_map(VecDeque::pop_front));
+    }
+    out
+}
+
+/// The file rows of the tree `DOC` of `state` by label, each label's smallest first, nested
+/// archives opened as the tree expands them. With `heads`, a row of a [`BY_HEAD`] kind whose head
+/// holds frame filters is labelled [`FILTERS`]; without, no body is read.
+fn walk(state: &mut AppState, until: Instant, heads: bool) -> HashMap<String, Vec<Candidate>> {
     let mut by_label: HashMap<String, Vec<Candidate>> = HashMap::new();
     let Some(root) = session(state).map(RpfEditSession::root_id) else {
-        return Vec::new();
+        return by_label;
     };
     // Nested archives are opened only in the walk's first half, so the second lists what they hold.
     let open_until = Instant::now() + until.saturating_duration_since(Instant::now()) / 2;
@@ -348,17 +560,21 @@ fn walk(state: &mut AppState, until: Instant) -> Vec<Candidate> {
                         || label.starts_with("type ")
                         || label.starts_with("class ");
                     if size > 0 && size <= ROW_CAP && !skipped {
-                        // Each head read inflates its row, so none is read past the walk's end.
-                        if BY_HEAD.split('|').any(|l| l == label)
+                        // Each head read inflates its row, so none is read past the walk's end. A
+                        // row labelled as filters already is left for the kind's own turn to read.
+                        let by_head = heads
+                            && label != FILTERS
+                            && is_one_of(&label, &BY_HEAD)
                             && Instant::now() < until
-                            && holds_filters(&archive, entry_index)
-                        {
+                            && holds_filters(&archive, entry_index);
+                        if by_head {
                             label = FILTERS.to_owned();
                         }
                         by_label.entry(label.clone()).or_default().push(Candidate {
                             node: child,
                             label,
                             size,
+                            by_head,
                         });
                     }
                 }
@@ -379,64 +595,10 @@ fn walk(state: &mut AppState, until: Instant) -> Vec<Candidate> {
             }
         }
     }
-    let mut lists: Vec<VecDeque<Candidate>> = Vec::new();
-    for (label, mut rows) in by_label {
+    for rows in by_label.values_mut() {
         rows.sort_by_key(|c| c.size);
-        let n = rows.len();
-        let spread = SPREAD.contains(&label.as_str());
-        // A label whose rows open as two lines (map types) takes rows enough for both.
-        let lines = (KINDS.iter().filter(|(_, of, _)| *of == label)).count();
-        let want = if spread {
-            PER_MIXED_LABEL
-        } else {
-            PER_LABEL * lines.max(1)
-        };
-        let picked: HashSet<usize> = if spread {
-            (0..want).map(|i| i * n / want).collect()
-        } else {
-            (0..want).collect()
-        };
-        let kept = rows
-            .into_iter()
-            .enumerate()
-            .filter(|(i, _)| picked.contains(i));
-        lists.push(kept.map(|(_, c)| c).collect());
     }
-    // The labels in turns, so each label's smallest rows come before any label's larger ones.
-    let mut out = Vec::new();
-    while lists.iter().any(|l| !l.is_empty()) {
-        out.extend(lists.iter_mut().filter_map(VecDeque::pop_front));
-    }
-    out
-}
-
-/// The body of the entry whose body starts at `at` in the archive `src`, and whether its row is a
-/// headerless resource's.
-fn read_back<R: Read + Seek>(
-    src: &mut R,
-    at: u64,
-    keys: &GtaViKeys,
-) -> Result<(Vec<u8>, bool), String> {
-    let found = chains(&mut *src, &BTreeSet::from([at]), keys)?
-        .remove(&at)
-        .ok_or("the copy holds no entry there")?;
-    let (last, above) = found.chain.split_last().ok_or("the row has no entry")?;
-    let mut mount = Gta6Mount::open_root(&mut *src, keys).map_err(|e| e.to_string())?;
-    for index in above {
-        let next = {
-            let e = (mount.archive.entries.iter().find(|e| e.index == *index))
-                .ok_or("a nested archive is gone")?;
-            mount
-                .open_nested(&mut *src, e, keys)
-                .map_err(|e| e.to_string())?
-        };
-        mount = next;
-    }
-    let e = (mount.archive.entries.iter().find(|e| e.index == *last)).ok_or("the entry is gone")?;
-    let body = mount
-        .read_entry_decrypted(&mut *src, e, keys)
-        .map_err(|e| e.to_string())?;
-    Ok((body, found.headerless))
+    by_label
 }
 
 /// Open `c` of the tree `tree` of the archive `disk` in an app of its own, and when it is a kind
@@ -475,7 +637,7 @@ fn attempt(
     let failed = |why: String| Some((line, Ended::Failed(why)));
     state.toasts.clear();
     match edit(&mut state, doc) {
-        Err(why) if why == NO_ENTITY => return Some((line, Ended::Unfit(why))),
+        Err(why) if why == NO_ENTITY || why == NO_SCALAR => return Some((line, Ended::Unfit(why))),
         Err(why) => return failed(format!("the edit is refused: {why}")),
         Ok(()) => {}
     }
@@ -524,7 +686,7 @@ fn attempt(
                 true => (
                     overlaid(disk, keys, &planned, at, &body),
                     "Patched, and the plan's own bytes over the archive read the edit back (no \
-                     copy written: the archive is over 1 GiB)",
+                     copy written: the archive is over 64 MiB)",
                 ),
                 false => (
                     copied(disk, keys, &planned, at, &body),
@@ -538,206 +700,6 @@ fn attempt(
         }
     };
     Some((line, ended))
-}
-
-/// `planned` written to a copy under a temp dir, refused unless it is a patched copy whose entry at
-/// `at` reads back as `body`.
-fn copied(
-    disk: &Path,
-    keys: &GtaViKeys,
-    planned: &Planned,
-    at: u64,
-    body: &[u8],
-) -> Result<(), String> {
-    let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
-    let out = dir.path().join("copy.rpf");
-    let saved = write_planned(disk, &out, keys, planned)?;
-    if saved != Saved::Patched {
-        return Err(format!("the copy is written as {saved:?}"));
-    }
-    let mut copy = File::open(&out).map_err(|e| e.to_string())?;
-    reads_as_edit(&mut copy, disk, at, keys, body)
-}
-
-/// The archive at `disk` read with every byte `planned` writes laid over it, as its copy would hold
-/// it, refused unless its entry at `at` reads back as `body`; no copy is written.
-pub(crate) fn overlaid(
-    disk: &Path,
-    keys: &GtaViKeys,
-    planned: &Planned,
-    at: u64,
-    body: &[u8],
-) -> Result<(), String> {
-    let mut writes = Vec::new();
-    for plan in &planned.patches {
-        writes.extend(plan_writes(plan)?);
-    }
-    let file = File::open(disk).map_err(|e| e.to_string())?;
-    let mut copy = Overlay {
-        file,
-        writes,
-        pos: 0,
-    };
-    reads_as_edit(&mut copy, disk, at, keys, body)
-}
-
-/// Refused unless the entry at `at` of the archive `copy` reads as `body` and not as the one at
-/// `disk` does, a headerless row's loose form read as its stored sections.
-fn reads_as_edit<R: Read + Seek>(
-    copy: &mut R,
-    disk: &Path,
-    at: u64,
-    keys: &GtaViKeys,
-    body: &[u8],
-) -> Result<(), String> {
-    let (read, headerless) = read_back(copy, at, keys)?;
-    let mut source = File::open(disk).map_err(|e| e.to_string())?;
-    let (source, _) = read_back(&mut source, at, keys)?;
-    if read == source {
-        return Err("the copy holds the entry as the source does: the edit is lost".into());
-    }
-    let want = if headerless {
-        stored_body(body)
-    } else {
-        Some(body.to_vec())
-    };
-    match want.as_deref() == Some(read.as_slice()) {
-        true => Ok(()),
-        false => Err("the copy does not read the edit back".into()),
-    }
-}
-
-/// The bytes `plan` lays at absolute offsets of a copy.
-// ponytail: `PatchPlan` keeps its writes private to or-io, so they are read from its derived Debug
-// form; an accessor there replaces this.
-fn plan_writes(plan: &PatchPlan) -> Result<Vec<(u64, Vec<u8>)>, String> {
-    writes_said(&format!("{plan:?}"))
-}
-
-/// The writes a plan's Debug form `said` states, its last field `writes: [(at, [bytes]), …]`.
-fn writes_said(said: &str) -> Result<Vec<(u64, Vec<u8>)>, String> {
-    let bad = || format!("the plan's writes do not read from {said:.80}");
-    let (_, rest) = said.split_once("writes: [").ok_or_else(bad)?;
-    let rest = rest.strip_suffix("] }").ok_or_else(bad)?;
-    if rest.is_empty() {
-        return Ok(Vec::new());
-    }
-    let mut out = Vec::new();
-    for tuple in rest.split("), (") {
-        let tuple = tuple.trim_start_matches('(').trim_end_matches(')');
-        let (at, bytes) = tuple.split_once(", [").ok_or_else(bad)?;
-        let bytes = bytes.strip_suffix(']').ok_or_else(bad)?;
-        let at = at.parse::<u64>().map_err(|_| bad())?;
-        let bytes = (bytes.split(", ").filter(|b| !b.is_empty()))
-            .map(|b| b.parse::<u8>().map_err(|_| bad()))
-            .collect::<Result<Vec<u8>, String>>()?;
-        out.push((at, bytes));
-    }
-    Ok(out)
-}
-
-/// A file read with `writes` laid over its bytes at their absolute offsets.
-struct Overlay {
-    file: File,
-    writes: Vec<(u64, Vec<u8>)>,
-    pos: u64,
-}
-
-impl Read for Overlay {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.file.seek(SeekFrom::Start(self.pos))?;
-        let n = self.file.read(buf)?;
-        let (start, end) = (self.pos, self.pos + n as u64);
-        for (at, bytes) in &self.writes {
-            let (from, to) = ((*at).max(start), (at + bytes.len() as u64).min(end));
-            if from < to {
-                buf[(from - start) as usize..(to - start) as usize]
-                    .copy_from_slice(&bytes[(from - at) as usize..(to - at) as usize]);
-            }
-        }
-        self.pos = end;
-        Ok(n)
-    }
-}
-
-impl Seek for Overlay {
-    fn seek(&mut self, to: SeekFrom) -> std::io::Result<u64> {
-        self.pos = match to {
-            SeekFrom::Start(at) => at,
-            SeekFrom::End(_) => self.file.seek(to)?,
-            SeekFrom::Current(by) => (self.pos.checked_add_signed(by))
-                .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?,
-        };
-        Ok(self.pos)
-    }
-}
-
-#[test]
-fn a_file_read_through_an_overlay_holds_each_write_at_its_offset_and_the_file_elsewhere() {
-    let dir = tempfile::tempdir().expect("a temp dir");
-    let path = dir.path().join("file");
-    std::fs::write(&path, (0u8..100).collect::<Vec<u8>>()).expect("the file is written");
-    let writes = vec![(10, vec![0xA0, 0xA1, 0xA2]), (98, vec![0xB0, 0xB1])];
-    let file = File::open(&path).expect("the file opens");
-    let mut overlay = Overlay {
-        file,
-        writes,
-        pos: 0,
-    };
-    let mut whole = Vec::new();
-    overlay.read_to_end(&mut whole).expect("it reads");
-    let mut want: Vec<u8> = (0u8..100).collect();
-    want[10..13].copy_from_slice(&[0xA0, 0xA1, 0xA2]);
-    want[98..].copy_from_slice(&[0xB0, 0xB1]);
-    assert_eq!(whole, want);
-    // A read that starts inside a write takes only the write's bytes from there.
-    let mut two = [0u8; 2];
-    overlay.seek(SeekFrom::Start(11)).expect("it seeks");
-    overlay.read_exact(&mut two).expect("it reads");
-    assert_eq!(two, [0xA1, 0xA2]);
-    assert_eq!(overlay.seek(SeekFrom::Current(-3)).expect("it seeks"), 10);
-    assert_eq!(overlay.seek(SeekFrom::End(0)).expect("it seeks"), 100);
-}
-
-#[test]
-fn a_plans_writes_read_from_its_debug_form_are_the_writes_it_holds() {
-    // The same fields as `PatchPlan`, so its derived Debug form is the one `writes_said` reads.
-    #[derive(Debug)]
-    #[allow(dead_code)]
-    struct PatchPlan {
-        base: u64,
-        entry: u32,
-        ciphered: bool,
-        chunks: Vec<ChunkPatch>,
-        writes: Vec<(u64, Vec<u8>)>,
-    }
-    let chunk = ChunkPatch {
-        inflated: 4,
-        ceiling: 3,
-        new_stored: 2,
-        zlib: true,
-        changed: true,
-        optimal: false,
-    };
-    let writes = vec![
-        (4096, vec![0, 255, 7]),
-        (8192, Vec::new()),
-        (12288, vec![1]),
-    ];
-    let plan = PatchPlan {
-        base: 4096,
-        entry: 3,
-        ciphered: true,
-        chunks: vec![chunk, chunk],
-        writes: writes.clone(),
-    };
-    assert_eq!(writes_said(&format!("{plan:?}")), Ok(writes));
-    let none = PatchPlan {
-        writes: Vec::new(),
-        ..plan
-    };
-    assert_eq!(writes_said(&format!("{none:?}")), Ok(Vec::new()));
-    assert!(writes_said("PatchPlan { base: 0 }").is_err());
 }
 
 fn panic_said(payload: &(dyn std::any::Any + Send)) -> String {
@@ -761,12 +723,92 @@ fn archives(root: &Path) -> Vec<(u64, PathBuf)> {
     out
 }
 
-/// Bounded: archives are taken smallest first, each opened only while 40 s of a 200 s budget are
-/// left and walked for at most 15 s through at most 256 nested archives three deep; no row is
-/// opened once less than its two 30 s waits and 30 s for a plan and a copy are left of 200 s. A
-/// patched copy is written under a temp dir only of an archive of at most 1 GiB; a larger one's
-/// edit is read back through the plan's bytes laid over it. Install-gated: it needs the key
-/// snapshot and the build, and skips without them.
+/// What a run's attempts found, line by line.
+struct Run {
+    began: Instant,
+    said: HashMap<Kind, Vec<String>>,
+    unfit: HashMap<Kind, (usize, String)>,
+    settled: HashSet<Kind>,
+    /// The rows tried, by archive and node, so none is tried twice.
+    tried: HashSet<(PathBuf, RpfNodeId)>,
+    panics: Vec<String>,
+    differs: Vec<String>,
+    wrong: Vec<String>,
+}
+
+impl Run {
+    fn all_settled(&self) -> bool {
+        self.settled.len() == KINDS.len()
+    }
+
+    /// `c` of `w` tried once, while its load's wait ends within [`BUDGET`], and how it ended kept.
+    fn try_row(&mut self, w: &Walked, c: &Candidate, keys: &GtaViKeys) {
+        if self.began.elapsed() + STEP > BUDGET || !self.tried.insert((w.disk.clone(), c.node)) {
+            return;
+        }
+        let (settled, until) = (&self.settled, self.began + END);
+        let tried = catch_unwind(AssertUnwindSafe(|| {
+            attempt(&w.tree, &w.disk, c, keys, settled, until)
+        }));
+        let where_ = format!("{}, {} bytes", w.file, c.size);
+        let (line, ended) = match tried {
+            Ok(Some(ended)) => ended,
+            Ok(None) => return,
+            Err(payload) => {
+                let said = panic_said(&*payload);
+                self.panics
+                    .push(format!("a {} row ({where_}) panicked: {said}", c.label));
+                return;
+            }
+        };
+        let (s, settles) = match ended {
+            Ended::Unfit(s) => {
+                let n = self.unfit.entry(line).or_default();
+                *n = (n.0 + 1, format!("{s} ({where_})"));
+                return;
+            }
+            Ended::Patched(s) if line == ADDED => {
+                self.wrong.push(format!("{line}: {s} ({where_})"));
+                (s, true)
+            }
+            Ended::Patched(s) => (s, true),
+            Ended::Differs(s) => {
+                self.differs.push(format!("{line}: {s} ({where_})"));
+                (s, true)
+            }
+            // The add is expected to rebuild, so its first plan settles it.
+            Ended::Rebuilt(s) if line == ADDED => (s, true),
+            Ended::Rebuilt(s) | Ended::Failed(s) => (s, false),
+        };
+        let tries = self.said.entry(line).or_default();
+        tries.push(format!("{s} ({where_})"));
+        if settles || tries.len() >= TRIES {
+            self.settled.insert(line);
+        }
+    }
+}
+
+/// The archives of `census` a line not yet `settled` is looked for in: for each, the
+/// [`PER_KIND`] holding most rows of its kind.
+fn kept(census: &[Walked], settled: &HashSet<Kind>) -> HashSet<usize> {
+    (KINDS.iter())
+        .filter(|l| !settled.contains(l.0))
+        .flat_map(|l| {
+            let counts: Vec<usize> = census.iter().map(|w| w.held(l)).collect();
+            ranked(&counts, PER_KIND)
+        })
+        .collect()
+}
+
+/// Bounded: archives are taken smallest first. A small one (at most 1 GiB) is walked for at most
+/// 15 s and its rows tried until 70 s; every other archive's table is walked, for an equal share of
+/// what is left until 120 s, through at most 256 nested archives three deep, with no body read;
+/// then each kind still unsettled is looked for, for an equal share of what is left, in the two
+/// archives whose tables hold most rows of its kind. No row is opened once its 30 s load would end
+/// past 200 s, and no copy is begun with less than 30 s left of 260 s. A patched copy is written
+/// under a temp dir only of an archive of at most 64 MiB; a larger one's edit is read back through
+/// the plan's bytes laid over it. Install-gated: it needs the key snapshot and the build, and skips
+/// without them.
 #[test]
 fn every_kind_the_app_edits_saved_through_its_tree_row_of_the_build_plans_patched_or_says_why() {
     let began = Instant::now();
@@ -778,96 +820,109 @@ fn every_kind_the_app_edits_saved_through_its_tree_row_of_the_build_plans_patche
     };
     let _serial = crate::ui::theme::serial();
     let _reading = reading_with(Arc::clone(&keys));
-    let mut said: HashMap<Kind, Vec<String>> = HashMap::new();
-    let mut unfit: HashMap<Kind, (usize, String)> = HashMap::new();
-    let mut settled: HashSet<Kind> = (KINDS.iter())
-        .filter_map(|(line, _, edit)| edit.is_none().then_some(*line))
-        .collect();
-    let (mut panics, mut differs, mut wrong) = (Vec::new(), Vec::new(), Vec::new());
-    for (_, disk) in archives(&build) {
-        if began.elapsed() + ARCHIVE_LEFT > BUDGET || settled.len() == KINDS.len() {
-            break;
+    let mut run = Run {
+        began,
+        said: HashMap::new(),
+        unfit: HashMap::new(),
+        settled: (KINDS.iter())
+            .filter_map(|(line, _, edit, _)| edit.is_none().then_some(*line))
+            .collect(),
+        tried: HashSet::new(),
+        panics: Vec::new(),
+        differs: Vec::new(),
+        wrong: Vec::new(),
+    };
+    // The small archives, each label's rows tried as its walk files them; one left part way is
+    // looked in again for a kind still unsettled.
+    let (mut census, mut later) = (Vec::new(), Vec::new());
+    for (size, disk) in archives(&build) {
+        if size > SMALL_CAP || began.elapsed() + WALK > SMALL_END {
+            later.push(disk);
+            continue;
         }
-        let file = disk
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let crypto = crate::state::rpf_archive_open::gta6_session::crypto();
-        let Ok(tree) = (RpfArchive::open_with(&disk, crypto).map_err(|e| e.to_string()))
-            .and_then(RpfDocument::new)
-        else {
+        let until = (Instant::now() + WALK).min(began + SMALL_END);
+        let Some(walked) = Walked::open(&disk, until, true) else {
             continue;
         };
-        let mut base = AppState::new();
-        base.documents.push(Document::new(
-            DOC,
-            Some(disk.clone()),
-            DocPayload::Rpf(tree),
-        ));
-        let until = (Instant::now() + WALK).min(began + BUDGET);
-        let candidates = walk(&mut base, until);
-        let held = std::mem::take(&mut base.documents)
-            .into_iter()
-            .find(|d| d.id == DOC);
-        drop(base);
-        let Some(DocPayload::Rpf(tree)) = held.map(|d| d.payload) else {
-            continue;
-        };
-        for c in &candidates {
-            // An attempt waits twice, then plans and copies, so it starts only while all of that fits.
-            if began.elapsed() + 2 * STEP + COPY_MARGIN > BUDGET || settled.len() == KINDS.len() {
+        let mut cut = false;
+        for c in in_turns(&walked.rows) {
+            if run.all_settled() {
                 break;
             }
-            if label_done(&c.label, &settled) {
-                continue;
+            if began.elapsed() > SMALL_END {
+                cut = true;
+                break;
             }
-            let tried = catch_unwind(AssertUnwindSafe(|| {
-                attempt(&tree, &disk, c, &keys, &settled, began + BUDGET)
-            }));
-            let where_ = format!("{file}, {} bytes", c.size);
-            let (line, ended) = match tried {
-                Ok(Some(ended)) => ended,
-                Ok(None) => continue,
-                Err(payload) => {
-                    panics.push(format!(
-                        "a {} row ({where_}) panicked: {}",
-                        c.label,
-                        panic_said(&*payload)
-                    ));
-                    continue;
-                }
+            if !label_done(&c.label, &run.settled) {
+                run.try_row(&walked, &c, &keys);
+            }
+        }
+        if cut {
+            census.push(walked);
+        }
+    }
+    // Every other archive's table, kept while a kind still unsettled is looked for in it.
+    for (at, disk) in later.iter().enumerate() {
+        let left = (began + CENSUS_END).saturating_duration_since(Instant::now());
+        if left.is_zero() || run.all_settled() {
+            break;
+        }
+        let share = (left / (later.len() - at) as u32).min(WALK);
+        census.extend(Walked::open(disk, Instant::now() + share, false));
+        let keep = kept(&census, &run.settled);
+        let mut i = 0;
+        census.retain(|_| {
+            i += 1;
+            keep.contains(&(i - 1))
+        });
+    }
+    // Each kind still unsettled, those of one table kind first, for an equal share of what is left.
+    let mut open: Vec<Line> = (KINDS.into_iter())
+        .filter(|l| !run.settled.contains(l.0))
+        .collect();
+    open.sort_by_key(|l| l.3.iter().any(|r| MULTI.contains(r)));
+    let last = began + BUDGET - STEP;
+    for (n, line) in open.iter().enumerate() {
+        if run.settled.contains(line.0) {
+            continue;
+        }
+        let now = Instant::now();
+        let until = now + last.saturating_duration_since(now) / (open.len() - n) as u32;
+        // An animation row can take long to open, so one is opened only once its head, read in the
+        // first half of the kind's time, holds filters.
+        let (filters, heads_until) = (line.0 == FILTERS, now + (until - now) / 2);
+        let counts: Vec<usize> = census.iter().map(|w| w.held(line)).collect();
+        'kind: for i in ranked(&counts, PER_KIND) {
+            let w = &census[i];
+            let keep = |c: &Candidate| {
+                !filters || c.by_head || (Instant::now() < heads_until && w.holds_filters(c.node))
             };
-            let (s, settles) = match ended {
-                Ended::Unfit(s) => {
-                    let n = unfit.entry(line).or_default();
-                    *n = (n.0 + 1, format!("{s} ({where_})"));
-                    continue;
+            for c in w.rows_for(line, keep) {
+                if run.settled.contains(line.0) || Instant::now() > until {
+                    break 'kind;
                 }
-                Ended::Patched(s) if line == ADDED => {
-                    wrong.push(format!("{line}: {s} ({where_})"));
-                    (s, true)
-                }
-                Ended::Patched(s) => (s, true),
-                Ended::Differs(s) => {
-                    differs.push(format!("{line}: {s} ({where_})"));
-                    (s, true)
-                }
-                // The add is expected to rebuild, so its first plan settles it.
-                Ended::Rebuilt(s) if line == ADDED => (s, true),
-                Ended::Rebuilt(s) | Ended::Failed(s) => (s, false),
-            };
-            let tries = said.entry(line).or_default();
-            tries.push(format!("{s} ({where_})"));
-            if settles || tries.len() >= TRIES {
-                settled.insert(line);
+                run.try_row(w, &c, &keys);
             }
         }
     }
-    // A run that opened nothing, or patched nothing, found nothing to judge the kinds by.
+    let Run {
+        mut said,
+        mut unfit,
+        panics,
+        differs,
+        wrong,
+        ..
+    } = run;
+    // A run that opened nothing, or patched nothing, found nothing to judge the kinds by; and every
+    // kind of the table was driven to a patched copy on the build, so the build holds rows of each.
     let opened_any = !said.is_empty();
     let patched_any = (said.values().flatten()).any(|s| s.starts_with("Patched"));
+    let unfound: Vec<Kind> = (KINDS.iter())
+        .filter(|l| l.2.is_some() && !said.contains_key(l.0) && !unfit.contains_key(l.0))
+        .map(|l| l.0)
+        .collect();
     let table: Vec<(Kind, Vec<String>)> = (KINDS.iter())
-        .map(|(line, _, edit)| {
+        .map(|(line, _, edit, _)| {
             let lines = match (edit, said.remove(line), unfit.remove(line)) {
                 (None, ..) => vec!["no edit function".to_owned()],
                 (Some(_), Some(tries), _) => tries,
@@ -911,4 +966,8 @@ fn every_kind_the_app_edits_saved_through_its_tree_row_of_the_build_plans_patche
         "no row of the build opened as a kind the app edits: {table:?}"
     );
     assert!(patched_any, "no kind planned a patched copy: {table:?}");
+    assert!(
+        unfound.is_empty(),
+        "the build holds rows of these kinds, yet none was found: {unfound:?}"
+    );
 }

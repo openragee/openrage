@@ -272,6 +272,63 @@ fn an_unchanged_body_patches_to_a_byte_identical_copy() {
 }
 
 #[test]
+fn a_stopped_copy_leaves_no_file_and_a_whole_one_is_told_to_its_end() {
+    let file = built(vec![("docs/a.txt", Rpf9NewBody::Chunked(body()))]);
+    let (_dir, src, out) = on_disk(&file);
+    let mut new = body();
+    new[0x10000..0x20000].copy_from_slice(&noise(0x10000, 8));
+    let patch = BodyPatch {
+        base: 0,
+        entry: 0,
+        body: new.clone(),
+    };
+    let plan = || plan_patch(&mut Cursor::new(&file[..]), &keys(), &patch).expect("planned");
+    let mut partial = out.as_os_str().to_owned();
+    partial.push(".partial");
+    let partial = PathBuf::from(partial);
+    let len = file.len() as u64;
+
+    // Stopped before a byte is copied, and stopped once every byte is.
+    for stop_at in [0, len] {
+        let mut asked_after = 0;
+        let mut stopped = false;
+        let refused = write_planned_copy_with(&src, &out, &keys(), vec![plan()], &mut |done, _| {
+            asked_after += usize::from(stopped);
+            stopped = stopped || done >= stop_at;
+            !stopped
+        });
+        assert!(
+            matches!(&refused, Err(CopyRefusal::Stopped { out: o }) if *o == out),
+            "{refused:?}"
+        );
+        assert!(refused.unwrap_err().to_string().contains("stopped"));
+        assert_eq!(asked_after, 0, "a stopped copy is not asked again");
+        assert!(
+            !out.exists() && !partial.exists(),
+            "a stopped copy leaves no file"
+        );
+        assert_eq!(
+            std::fs::read(&src).unwrap(),
+            file,
+            "the source is untouched"
+        );
+    }
+
+    let mut told = Vec::new();
+    let report = write_planned_copy_with(&src, &out, &keys(), vec![plan()], &mut |done, total| {
+        told.push((done, total));
+        true
+    })
+    .expect("the copy is written");
+    assert_eq!(told.first(), Some(&(0, len)));
+    assert_eq!(told.last(), Some(&(len, len)), "the tick reaches the total");
+    assert!(told.windows(2).all(|w| w[0].0 <= w[1].0), "{told:?}");
+    assert_eq!(report.chunks_changed, 1);
+    assert_eq!(read_back(&out, 0, 0), new);
+    assert!(!partial.exists(), "the partial copy is renamed");
+}
+
+#[test]
 fn a_stored_chunk_takes_any_content_of_its_length() {
     let file = built(vec![("docs/a.txt", Rpf9NewBody::Chunked(body()))]);
     let (_dir, src, out) = on_disk(&file);
@@ -1297,7 +1354,17 @@ fn a_chunk_within_the_margin_that_no_try_fits_is_refused_saying_what_was_tried()
         "{optimal}"
     );
     assert!(harder.untried.is_empty(), "{harder:?}");
-    assert!(harder.tried.contains(&"250 rounds"), "{harder:?}");
+    // A part this short makes the 256 KiB and stored-run tries repeat the first's parse, so they are skipped.
+    assert_eq!(
+        harder.tried,
+        [
+            "15 rounds with no early stop",
+            "one block a part",
+            "60 rounds",
+            "250 rounds"
+        ],
+        "{harder:?}"
+    );
     assert!(harder.smallest >= optimal);
     let said = PatchRefusal::ChunkDoesNotFit {
         entry: 0,

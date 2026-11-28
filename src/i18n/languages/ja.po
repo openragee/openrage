@@ -15496,8 +15496,8 @@ msgstr "アニメーションレコードには少なくとも1つのボーン�
 msgid "A track's mode is 0, 1 or 2."
 msgstr "トラックのモードは0、1、2のいずれかです。"
 
-msgid "Copy places a copy after the track or bone it copies and Add a new one after the last; either, or a removal, moves what follows it at save. A changed filter keeps its signature as read unless another of the dictionary holds the same tracks, since what it is computed from is not known."
-msgstr "コピーは、コピーしたトラックまたはボーンの後ろに複製を置き、追加は最後の後ろに新しいものを置きます。どちらも、また削除も、保存時に後続を移動します。変更したフィルターは、辞書の別のフィルターが同じトラックを持たない限り、読み込んだ署名を保ちます。署名が何から計算されるかは分かっていません。"
+msgid "Copy places a copy after the track or bone it copies and Add a new one after the last; either, or a removal, moves what follows it at save. A changed filter is signed with the signature its tracks give."
+msgstr "コピーは、コピーしたトラックまたはボーンの後ろに複製を置き、追加は最後の後ろに新しいものを置きます。どちらも、また削除も、保存時に後続を移動します。変更したフィルターには、そのトラックから得られる署名が付けられます。"
 
 msgid "Cannot save: open the audio container this animation came from, which it is written back into."
 msgstr "保存できません。このアニメーションの書き戻し先である、取り出し元のオーディオコンテナを開いてください。"
@@ -17667,3 +17667,18 @@ msgid "{count} texture: {why}"
 msgid_plural "{count} textures: {why}"
 msgstr[0] "テクスチャ {count} 個：{why}"
 msgstr[1] "テクスチャ {count} 個：{why}"
+
+msgid "Writing the save of {file}"
+msgstr "{file}の保存を書き込み中"
+
+msgid "writing {file}, {done} of {total}"
+msgstr "{file}を書き込み中、{total}中{done}"
+
+msgid "the copy was stopped, and the partly written file is removed"
+msgstr "コピーは中止され、途中まで書き込まれたファイルは削除されます"
+
+msgid "The box or stream distance of entity {index}'s archetype is not known, so the map's extents were grown to hold its position only."
+msgstr "エンティティ {index} のアーキタイプのボックスまたはストリーム距離が不明なため、マップの範囲はその位置を含むだけ広げられました。"
+
+msgid "This body was opened from its row of a GTA VI archive's tree: Save writes its edits into that row, and the archive's Save as… writes a new file, a patched copy where the body fits its entry's chunks, whose table is unchanged and which no run of the game has loaded, else a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "この本体は GTA VI アーカイブのツリーの行から開かれました。「保存」は編集をその行に書き込み、アーカイブの「名前を付けて保存…」は新しいファイルを書き込みます。本体がエントリのチャンクに収まれば、テーブルが変わらず、ゲームのどの実行でもまだ読み込まれていないパッチ済みコピーになり、そうでなければ再構築されたアーカイブになります。テーブルに署名できるのは作成者だけなので、ゲームはそれを拒否します。"

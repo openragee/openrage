@@ -208,6 +208,10 @@ pub struct Sgd5Binding {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Sgd5Table {
     pub resources: Vec<Sgd5Resource>,
+    /// Each resource's name, the string its record points at by the u16 at +0x08; `None` where
+    /// that word is 0, and the game then names the record by its hash in lower-case hex.
+    #[serde(default)]
+    pub resource_names: Vec<Option<String>>,
     pub constants: Vec<Sgd5Constant>,
     /// Name hash and value.
     pub annotations: Vec<(u32, u32)>,
@@ -254,11 +258,11 @@ pub struct Sgd5Constant {
 }
 
 impl Sgd5Table {
-    /// The pool string that hashes to `hash`: only samplers have one.
+    /// The name the resource record of `hash` points at: only samplers state one.
     pub fn name_of(&self, hash: u32) -> Option<&str> {
-        (self.names.iter())
-            .find(|n| name_hash32(n.as_bytes()) == hash)
-            .map(String::as_str)
+        (self.resources.iter().zip(&self.resource_names))
+            .filter(|(r, _)| r.name_hash == hash)
+            .find_map(|(_, name)| name.as_deref())
     }
 }
 
@@ -419,7 +423,7 @@ impl Sgd5File {
 
 /// The shader definitions the material code reads, one per effect of `files`, keyed by name hash.
 // Each parameter of an effect's first table keeps the name hash its record states at +0x10 and,
-// as its semantic, the hash at +0x14 a drawable states; it is named where the pool names it and
+// as its semantic, the hash at +0x14 a drawable states; it is named where its record names it and
 // `hash_XXXXXXXX` elsewhere, and keeps the default its table sets.
 pub fn shader_definitions(
     title: impl Into<String>,
@@ -823,9 +827,31 @@ fn table(b: &[u8], at: usize) -> Read<(usize, Sgd5Table)> {
             let members = &out.constants[first..first + members];
             fits_rooms(members, resource.buffer_size, at + 4 + r)?;
         }
+        let name = resource_name(t, r, pool_at, resource.name_hash, at)?;
+        out.resource_names.push(name);
         out.resources.push(resource);
     }
     Ok((at + 4 + size, out))
+}
+
+/// The NUL-terminated name the resource record at `r` of table `t` points at by the u16 at +0x08,
+/// an offset from the record; `None` where that word is 0. Every name read lies in the pool.
+fn resource_name(t: &[u8], r: usize, pool_at: usize, hash: u32, at: usize) -> Read<Option<String>> {
+    let offset = usize::from(u16::from_le_bytes([t[r + 8], t[r + 9]]));
+    if offset == 0 {
+        return Ok(None);
+    }
+    let name = (t.get(r + offset..))
+        .filter(|_| r + offset >= pool_at)
+        .and_then(|tail| tail.iter().position(|c| *c == 0).map(|end| &tail[..end]))
+        .filter(|name| !name.is_empty());
+    match name {
+        Some(name) => Ok(Some(String::from_utf8_lossy(name).into_owned())),
+        None => Err(invalid(
+            at + 4 + r,
+            format!("resource {hash:08X} states its name at +{offset:#X} from its record, where its table's pool holds no NUL-terminated name"),
+        )),
+    }
 }
 
 /// Each NUL-terminated run of printable ASCII in `pool`, at most its last 64 characters.

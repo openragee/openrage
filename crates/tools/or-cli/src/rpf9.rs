@@ -72,7 +72,7 @@ usage:
   openrage-cli rpf9 list <archive.rpf> [inner/path] [--names <dir>] [--keys <snapshot>] [--exe <game.exe>] [--groups] [--nested] [--strings] [--json]
   openrage-cli rpf9 extract <archive.rpf> <dest-dir> [inner/path] [--entry <selector>] [--filter <substr>] [--kind <archive|resource|media|0xNN|kind label>] [--dry-run] [--decrypt] [--strings] [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
   openrage-cli rpf9 tree-install <build-root> [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
-      (mount order: the archives at the build root by path, then the folders under pack/ by the type and order their setups state, a folder of no setup last, though where the game mounts one was not read; how the game breaks a tie of order was not read, so packs that tie mount by path; a path two archives name is listed once, from the later)
+      (mount order: the archives at the build root by path, then the folders under pack/ by the type, order and minorOrder their setups state, a folder of no setup last, though where the game mounts one was not read; packs whose type, order and minorOrder tie mount in the order of the game's pack lists, which were not found in this install, so they mount by path; a path two archives name is listed once, from the later)
   openrage-cli rpf9 pack <archive.rpf> [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
   openrage-cli rpf9 find <install-dir> [--name <substr>] [--hash <hex>] [--kind <archive|resource|media|0xNN|kind label>] [--names <dir>] [--keys <snapshot>] [--exe <game.exe>]
   openrage-cli rpf9 census <build-root> [--names <dir>] [--keys <snapshot>] [--exe <game.exe>] [--out <dir>] [--top-only]
@@ -435,10 +435,7 @@ fn print_listing(archive: &Gta6Archive, show_groups: bool, depth: usize, strings
         println!("{indent}entries:");
     }
     for (entry, kind) in archive.entries.iter().zip(entry_kinds(archive)) {
-        let size = entry
-            .size()
-            .map(|s| format!("{s:>10}"))
-            .unwrap_or_else(|| "         -".to_string());
+        let size = size_cell(entry.real);
         let cipher = if entry.cipher.is_some() {
             " [cipher]"
         } else {
@@ -460,6 +457,11 @@ fn print_listing(archive: &Gta6Archive, show_groups: bool, depth: usize, strings
             None => {}
         }
     }
+}
+
+/// A listing's size column: the real size, a row past 4 GiB included, or `-` where the row states none.
+fn size_cell(real: Option<u64>) -> String {
+    real.map_or_else(|| format!("{:>10}", "-"), |s| format!("{s:>10}"))
 }
 
 /// The JSON array for a listing: one object per entry with its name, hash, extent and cipher flag.

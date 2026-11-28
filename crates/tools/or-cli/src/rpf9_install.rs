@@ -1,7 +1,7 @@
 //! `rpf9 tree-install`: every path of an install, merged across its archives in the order the game
 //! mounts them, and `rpf9 pack`: one archive printed whole, each nested archive indented under its row.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -11,7 +11,7 @@ use or_io::container::rpf::gta6_kinds::entry_kinds;
 use or_io::container::rpf::{
     Gta6Archive, Gta6Class, Gta6Entry, Gta6EntryExtra, Gta6Mount, GtaViKeys, NameResolver,
 };
-use or_title::dlc::SetupData;
+use or_title::dlc::{SetupContentType, SetupData};
 use or_title::gta6_mount::table::Table;
 use or_title::gta6_mount::{read_documents_by_table, Document, Registry};
 
@@ -161,42 +161,73 @@ fn setups_of(path: &Path, keys: &GtaViKeys) -> Option<Vec<Document>> {
     }
 }
 
-/// Whether two setups adjacent in mount order state the same type and order, so that neither
-/// states which mounts first.
-fn tie(a: &SetupData, b: &SetupData) -> bool {
-    let both_level = a.is_level_pack && b.is_level_pack;
-    a.content_type == b.content_type
-        && a.order == b.order
-        && (!both_level || a.minor_order == b.minor_order)
+/// What the game sorts packs by: the setup's type, then its order, then its minorOrder, whatever the
+/// type; two setups of equal keys tie, and the game keeps them in the order it registered them.
+fn mount_key(setup: &SetupData) -> (u8, i32, i32) {
+    // ponytail: the game compares the type enum's numeric value, which was not read; this is the
+    // rank the registry gives the types.
+    let rank = match setup.content_type {
+        SetupContentType::TitleUpdate => 0,
+        SetupContentType::LevelPack => 1,
+        SetupContentType::CompatPack => 2,
+        SetupContentType::PaidPack => 3,
+        SetupContentType::Unknown => 4,
+    };
+    (rank, setup.order, setup.minor_order)
 }
 
 /// `archives` in the order the game mounts them: those at `root` first (the base content, mounted at
-/// start-up), each by path; then the folders under `pack/` in the order of the setup each holds, as
-/// `registry` orders them, a folder of no setup after every other; packs whose setups tie, and the
-/// archives of one folder, by path.
+/// start-up), each by path; then the folders under `pack/` by the [`mount_key`] of the setup each
+/// holds, a folder of no setup after every other; packs that tie in the order of `listed`, the pack
+/// folders in the order the game's pack lists register them, a folder it does not name after every
+/// one it does; then by path, as are the archives of one folder. A folder whose every setup is named
+/// as one registered before it (in that order, ignoring case) is dropped, as the game drops a pack
+/// of a name it holds.
 pub(super) fn mount_order(
     root: &Path,
     mut archives: Vec<PathBuf>,
     registry: &Registry,
+    listed: &[PathBuf],
 ) -> Vec<PathBuf> {
-    // ponytail: the registry breaks a tie of order by the setups' name hash, GTA V's rule; how GTA VI
-    // breaks one was not read in its code, and every setup the build ships states order 1, so a tie
-    // keeps the path order.
-    let mut places = Vec::with_capacity(registry.packs.len());
-    for (at, pack) in registry.packs.iter().enumerate() {
-        let tied = at > 0 && tie(&registry.packs[at - 1].setup, &pack.setup);
-        let place = places.last().map_or(0, |last| last + usize::from(!tied));
-        places.push(place);
-    }
-    let place = |archive: &Path| {
+    let key_of = |archive: &Path| {
         (registry.packs.iter())
-            .position(|pack| pack.archive.parent() == archive.parent())
-            .map_or(usize::MAX, |at| places[at])
+            .filter(|pack| pack.archive.parent() == archive.parent())
+            .map(|pack| mount_key(&pack.setup))
+            .min()
     };
+    let registered = |archive: &Path| {
+        (listed.iter())
+            .position(|folder| archive.parent() == Some(folder.as_path()))
+            .unwrap_or(usize::MAX)
+    };
+    // ponytail: the first registered of two packs of one name is kept; the game keeps one by a bit
+    // of the pack (+0x1F8) that was not read.
+    let mut packs: Vec<_> = registry.packs.iter().collect();
+    packs.sort_by_key(|pack| (registered(&pack.archive), pack.archive.clone()));
+    let (mut names, mut kept, mut repeated) = (HashSet::new(), HashSet::new(), HashSet::new());
+    for pack in packs {
+        let name = pack.setup.name_hash.to_ascii_lowercase();
+        match name.is_empty() || names.insert(name) {
+            true => kept.insert(pack.archive.parent()),
+            false => repeated.insert(pack.archive.parent()),
+        };
+    }
+    archives.retain(|archive| {
+        let folder = archive.parent();
+        folder == Some(root) || kept.contains(&folder) || !repeated.contains(&folder)
+    });
     archives.sort_by_cached_key(|archive| {
-        let in_pack = archive.parent() != Some(root);
-        let at = if in_pack { place(archive) } else { 0 };
-        (in_pack, at, archive.clone())
+        if archive.parent() == Some(root) {
+            return (false, false, None, 0, archive.clone());
+        }
+        let key = key_of(archive);
+        (
+            true,
+            key.is_none(),
+            key,
+            registered(archive),
+            archive.clone(),
+        )
     });
     archives
 }
@@ -210,7 +241,9 @@ pub(super) fn do_tree_install(
 ) -> Result<Tree, String> {
     let found = build_archives(root);
     let registry = pack_registry(root, &found, keys);
-    let archives = mount_order(root, found, &registry);
+    // ponytail: the game's two pack lists were not found in the build, so no folder is listed and
+    // packs that tie mount by path.
+    let archives = mount_order(root, found, &registry, &[]);
     if archives.is_empty() {
         return Err(format!("no .rpf under {}", root.display()));
     }

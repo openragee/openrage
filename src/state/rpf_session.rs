@@ -21,6 +21,8 @@ type SortedChildren = (
     super::explorer::SortOrder,
     Vec<RpfNodeId>,
     Arc<[RpfNodeId]>,
+    // The bytes each sorted child groups by, once a grouping by size asked.
+    Option<Arc<[Option<u64>]>>,
 );
 
 pub struct RpfEditSession {

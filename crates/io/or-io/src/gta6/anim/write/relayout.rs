@@ -178,6 +178,8 @@ pub(super) fn edit(resource: &AnimResource, edit: &AnimEdit) -> Result<AnimResou
         let flags = (animation.flags & !MOVER_FLAG) | if moved { MOVER_FLAG } else { 0 };
         put(&mut out, at + 0x20, &flags.to_le_bytes());
     }
+    // Every clip that plays the animation takes its signature at 0x2C into its own at 0x38.
+    super::super::signature::resign_clips(section, &mut out)?;
     let mut edited = if stored {
         read_stored(&out)?
     } else {

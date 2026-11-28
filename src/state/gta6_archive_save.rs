@@ -7,7 +7,7 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use or_io::container::rpf::{BodyForm, GtaViKeys, Rpf9ArchiveWriter};
+use or_io::container::rpf::{BodyForm, GtaViKeys, Rpf9ArchiveWriter, Rpf9Place};
 
 use crate::platform::file_dialogs;
 use crate::state::document::DocumentId;
@@ -16,7 +16,7 @@ use crate::state::gta6_resource_save::EditedSave;
 use crate::state::rpf_archive_open::tree_verbs::{
     as_read_said, patched_said, plan_save, with_kept, write_planned, Replaced, Saved,
 };
-use crate::state::{AppState, DocPayload, Document};
+use crate::state::{AppState, DocPayload, Document, RpfNodeBacking};
 
 /// How a save into a copy of a document's archive ended: the document, and the copy written and
 /// how, or why it was refused.
@@ -25,8 +25,8 @@ type Ended = (DocumentId, Result<(PathBuf, Saved), String>);
 /// What makes the body a save into a copy writes, on the save's worker.
 type Body = Box<dyn FnOnce() -> Result<Vec<u8>, String> + Send>;
 
-/// A save into a copy checked before its file is picked: the document, the archive it was read
-/// out of, the body's offset there, the row's name and what makes the body.
+/// A save into a copy checked before its file is picked: the document, the archive copied, the
+/// body's offset there, the row's name and what makes the body.
 struct Pending {
     id: DocumentId,
     archive: PathBuf,
@@ -56,10 +56,57 @@ fn archive_origin(path: &Path) -> Option<(PathBuf, u64)> {
 }
 
 impl AppState {
+    /// Where the body at `path` sits in the archive its open tree's row reads, which a Save as…
+    /// made the copy, and the row's path in the tree; `None` for a body no open tree's row holds.
+    fn tree_row_place(&self, path: &Path) -> Option<(Rpf9Place, String)> {
+        let row = crate::state::rpf_archive_open::tree_open::row_of(self, path)?;
+        let DocPayload::Rpf(rpf) = &self.document(row.parent_doc_id)?.payload else {
+            return None;
+        };
+        let RpfNodeBacking::ArchiveFile {
+            archive_id,
+            entry_index,
+            ..
+        } = &rpf.session.node(row.entry_id)?.backing
+        else {
+            return None;
+        };
+        let place = rpf
+            .session
+            .archive(*archive_id)?
+            .archive
+            .rpf9_place(*entry_index)?;
+        // The row's path inside the file on disk: the tree's path is from its root, which may be a
+        // folder holding the archive.
+        let shown = crate::state::rpf_archive_open::tree_open::shown(path);
+        let inner = (shown
+            .as_deref()
+            .and_then(|s| s.strip_prefix(&place.file).ok()))
+        .map(|p| {
+            (p.iter().map(|c| c.to_string_lossy()))
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .or_else(|| rpf.session.path_of(row.entry_id))?;
+        Some((place, inner))
+    }
+
+    /// The archive a save into a copy of the body at `path` copies and the body's offset there:
+    /// its tree row's archive, else the archive it was read out of.
+    fn copy_origin(&self, path: &Path) -> Option<(PathBuf, u64)> {
+        match self.tree_row_place(path) {
+            Some((place, _)) => Some((place.file, place.offset)),
+            None => archive_origin(path),
+        }
+    }
+
     /// Whether the active document was read out of a GTA VI archive, so a copy of it can take it.
     pub(crate) fn can_save_into_archive_copy(&self) -> Result<(), &'static str> {
         let doc = self.active_document.and_then(|id| self.document(id));
-        match doc.and_then(|d| d.path.as_deref()).and_then(archive_origin) {
+        match doc
+            .and_then(|d| d.path.as_deref())
+            .and_then(|p| self.copy_origin(p))
+        {
             Some(_) => Ok(()),
             None => Err(tr!(
                 "Only a document opened from a GTA VI archive is saved into a copy of it"
@@ -70,7 +117,7 @@ impl AppState {
     /// The name the dialog offers: the archive's own, marked as an edited copy.
     pub(crate) fn archive_copy_name(&self) -> Option<String> {
         let doc = self.document(self.active_document?)?;
-        let (archive, _) = archive_origin(doc.path.as_deref()?)?;
+        let (archive, _) = self.copy_origin(doc.path.as_deref()?)?;
         Some(format!(
             "{}_edited.rpf",
             archive.file_stem()?.to_string_lossy()
@@ -100,7 +147,11 @@ impl AppState {
     }
 
     #[cfg(test)]
-    fn save_into_archive_copy_with(&mut self, out: PathBuf, keys: Keys) -> bool {
+    pub(in crate::state) fn save_into_archive_copy_with(
+        &mut self,
+        out: PathBuf,
+        keys: Keys,
+    ) -> bool {
         match self.pending_copy() {
             Ok(pending) => self.write_copy_on_worker(pending, out, keys),
             Err(why) => self.refused_copy(why),
@@ -115,7 +166,7 @@ impl AppState {
         let id = self.active_document.ok_or_else(|| refused().to_string())?;
         let doc = self.document(id).ok_or_else(|| refused().to_string())?;
         let (archive, offset) = (doc.path.as_deref())
-            .and_then(archive_origin)
+            .and_then(|p| self.copy_origin(p))
             .ok_or_else(|| refused().to_string())?;
         // The row's name as the tree shows it, where the document was opened from a tree's row.
         let name = (doc.path.as_deref())
@@ -161,6 +212,10 @@ impl AppState {
     /// path there; `None` for a document opened any other way.
     pub(crate) fn tree_row_origin(&self, doc_id: DocumentId) -> Option<(PathBuf, String)> {
         let path = self.document(doc_id)?.path.as_deref()?;
+        // The tree's own archive, which a Save as… made the copy, while the tree is open.
+        if let Some((place, inner)) = self.tree_row_place(path) {
+            return Some((place.file, inner));
+        }
         let shown = crate::state::rpf_archive_open::tree_open::shown(path)?;
         let (archive, _) = crate::state::rpf9_scan::scanned_body(path)?;
         let inner = match shown.strip_prefix(archive) {

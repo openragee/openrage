@@ -225,7 +225,7 @@ pub fn triangles(selection: &Selection, drawable: &Drawable) -> Option<Vec<Trace
 }
 
 /// The name hashes of the effects of `container` whose geometry is [`described_twice`].
-#[cfg(feature = "gta5")]
+#[cfg(feature = "fxc")]
 pub fn twice_described(
     container: &crate::gta5::shaders::sgd5::Sgd5File,
 ) -> std::collections::HashSet<u32> {

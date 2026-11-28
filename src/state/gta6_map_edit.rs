@@ -202,11 +202,33 @@ impl AppState {
                 DocPayload::Meta(meta) => meta.parsed.as_ref().map(|p| &p.instance),
                 _ => None,
             });
-        let root = (tree.and_then(super::gta6_map_extents::extents_of))
-            .map_or_else(Vec::new, |held| {
+        let (root, position_only) = (tree.and_then(super::gta6_map_extents::extents_of))
+            .map_or_else(Default::default, |held| {
                 super::gta6_map_extents::grown(held, &e, archetype.as_ref(), pose)
             });
-        self.set_scanned_entity(index, &values, &root, label)
+        self.set_scanned_entity(index, &values, &root, label)?;
+        self.say_position_only(index, position_only);
+        Ok(())
+    }
+
+    /// Say that the extents of the shown map hold entity `index`'s position only, where they do.
+    fn say_position_only(&mut self, index: usize, position_only: bool) {
+        if position_only {
+            self.show_warning_toast(tr!(
+                "The box or stream distance of entity {index}'s archetype is not known, so the map's extents were grown to hold its position only.",
+                index = index
+            ));
+        }
+    }
+
+    /// What the Details of the shown map's entity says of where its edits are saved: into its row
+    /// where a GTA VI tree's row opened it, else only as a file of its own.
+    pub(crate) fn scanned_map_save_note(&self) -> &'static str {
+        let path = self.scanned_map().map(|s| s.path.as_path());
+        match path.and_then(|p| super::rpf_archive_open::tree_open::row_of(self, p)) {
+            Some(_) => tr!("This body was opened from its row of a GTA VI archive's tree: Save writes its edits into that row, and the archive's Save as… writes a new file, a patched copy where the body fits its entry's chunks, whose table is unchanged and which no run of the game has loaded, else a rebuilt archive, which the game refuses because only its maker can sign the table."),
+            None => crate::i18n::tr(super::rpf9_scan::READ_ONLY_BODY),
+        }
     }
 
     /// The layout of the interior archetype of word `word` that an open body or the shown map's
@@ -294,10 +316,10 @@ impl AppState {
             scale_xy: e.scale_xy,
             scale_z: e.scale_z,
         };
-        let root = (self
+        let (root, position_only) = (self
             .scanned_tree()
             .and_then(super::gta6_map_extents::extents_of))
-        .map_or_else(Vec::new, |held| {
+        .map_or_else(Default::default, |held| {
             super::gta6_map_extents::grown(held, &e, archetype.as_ref(), pose)
         });
         let mut values = vec![
@@ -327,7 +349,9 @@ impl AppState {
             }
         }
         let label = tr!("Retyped entity {index}", index = index);
-        self.set_scanned_entity(index, &values, &root, label)
+        self.set_scanned_entity(index, &values, &root, label)?;
+        self.say_position_only(index, position_only);
+        Ok(())
     }
 
     /// The scanned map's metadata tree, where its document is open and read.
@@ -829,17 +853,160 @@ mod tests {
             .place_scanned_entity(0, pose, "Moved entity 0".into())
             .expect("placed");
         state.refresh_scanned_map();
-        // 40 m past x = 480 reaches 520; no archetype box is known, so entitiesExtents stays.
+        // 40 m past x = 480 reaches 520; no archetype box is known, so entitiesExtents holds the
+        // position only, and the move says so.
         let moved = shown(&state);
         assert_eq!(moved.streaming_extents.max, [520.0, 500.0, 500.0]);
         assert_eq!(moved.streaming_extents.min, [-500.0; 3]);
-        assert_eq!(moved.entities_extents, read.entities_extents);
+        assert_eq!(moved.entities_extents.max, [480.0, 50.0, 50.0]);
+        assert_eq!(moved.entities_extents.min, read.entities_extents.min);
         assert_eq!(moved.entities[0].position, [480.0, 0.0, 0.0]);
+        assert!(warned_position_only(&state));
 
         assert_eq!(state.undo().as_deref(), Some("Moved entity 0"));
         state.refresh_scanned_map();
         assert_eq!(shown(&state).streaming_extents, read.streaming_extents);
+        assert_eq!(shown(&state).entities_extents, read.entities_extents);
         assert_eq!(shown(&state).entities[0].position, e.position);
+    }
+
+    fn warned_position_only(state: &AppState) -> bool {
+        (state.toasts.iter()).any(|t| t.message.contains("grown to hold its position only"))
+    }
+
+    #[test]
+    fn a_move_inside_the_extents_of_an_entity_whose_archetype_is_not_known_changes_no_extent() {
+        let _serial = crate::ui::theme::serial();
+        let dir = tempfile::tempdir().expect("a scratch directory");
+        let path: PathBuf = dir.path().join("0x38.rbm");
+        let e = entity(false, WORD, 0xAAAA_0001);
+        let read = map(vec![e.clone()]);
+        super::super::gta6_map::keep_read(&path, MapBody::Data(read.clone()));
+        let mut root = tree(std::slice::from_ref(&e));
+        for (member, v) in [
+            ("entitiesExtentsMin", read.entities_extents.min),
+            ("entitiesExtentsMax", read.entities_extents.max),
+            ("streamingExtentsMin", read.streaming_extents.min),
+            ("streamingExtentsMax", read.streaming_extents.max),
+        ] {
+            root.set(name(lit(member.as_bytes())), Value::Vec3(v));
+        }
+        let mut meta = MetaDocument::empty();
+        meta.parsed.as_mut().expect("a tree").instance = root;
+        let mut state = AppState::new();
+        let doc = state.insert_document(path, DocPayload::Meta(meta), None, None);
+        state.active_document = Some(doc);
+        state.refresh_scanned_map();
+
+        let pose = Pose {
+            position: Vec3::new(-49.5, 0.0, 0.0),
+            rotation: Quat::IDENTITY,
+            scale_xy: 1.0,
+            scale_z: 1.0,
+        };
+        state
+            .place_scanned_entity(0, pose, "Moved entity 0".into())
+            .expect("placed");
+        state.refresh_scanned_map();
+        let moved = shown(&state);
+        assert_eq!(moved.entities[0].position, [-49.5, 0.0, 0.0]);
+        assert_eq!(moved.entities_extents, read.entities_extents);
+        assert_eq!(moved.streaming_extents, read.streaming_extents);
+        assert!(!warned_position_only(&state));
+        let tree = state.scanned_tree().expect("the tree");
+        assert_eq!(
+            super::super::gta6_map_extents::extents_of(tree),
+            Some((read.entities_extents, read.streaming_extents)),
+            "no extent member is set"
+        );
+    }
+
+    #[test]
+    fn a_scanned_map_s_details_say_it_is_read_only_until_a_tree_row_opened_it() {
+        use std::io::Cursor;
+
+        use or_io::container::rpf::gta6_container_write::{build, Rpf9IndexKey, Rpf9NewBody};
+        use or_io::container::rpf::{
+            write_rpf9_resource, Gta6Context, NameResolver, Rpf9Form, Rpf9Sections,
+        };
+        use or_io::container::RpfArchive;
+        use or_io::gta6::hash::name_hash64;
+
+        use crate::state::rpf_archive_open::gta6_session;
+        use crate::state::rpf_archive_open::tree_verbs::tests::{rbm_section, synthetic_keys};
+        use crate::state::rpf_session::RpfDocument;
+        use crate::state::Document;
+
+        const TREE: DocumentId = 9_710;
+        const MAP: &str = "data/map.ymap";
+        let _serial = crate::ui::theme::serial();
+        let keys = synthetic_keys().expect("the synthetic snapshot parses");
+        let mut names = NameResolver::new();
+        names.insert(name_hash64(MAP.as_bytes()), MAP);
+        let _reading = gta6_session::hold(Gta6Context {
+            keys: Arc::clone(&keys),
+            names: Arc::new(names),
+        });
+        let loose = write_rpf9_resource(&Rpf9Sections {
+            form: Rpf9Form::BlockMapped,
+            virtual_section: rbm_section(),
+            physical: Vec::new(),
+        })
+        .expect("a loose resource");
+        let entries = [(
+            MAP.to_owned(),
+            Rpf9NewBody::Resource {
+                type_code: 0x02,
+                loose,
+            },
+        )];
+        let key = Rpf9IndexKey {
+            key_id: 0xDEAD_BEEF,
+            iv: [0x33; 16],
+        };
+        let plan = build(&entries, or_io::platform::Platform::XboxSeries, &key, &keys)
+            .expect("the archive builds");
+        let mut bytes = Vec::new();
+        (plan.write_to(&mut Cursor::new(Vec::<u8>::new()), &mut bytes))
+            .expect("the archive is laid out");
+        let dir = tempfile::tempdir().expect("a scratch directory");
+        let archive_path = dir.path().join("source.rpf");
+        std::fs::write(&archive_path, bytes).expect("the archive is written");
+
+        let path: PathBuf = dir.path().join("0x48.rbm");
+        let entities = vec![entity(false, WORD, 0xAAAA_0001)];
+        super::super::gta6_map::keep_read(&path, MapBody::Data(map(entities.clone())));
+        let mut meta = MetaDocument::empty();
+        meta.parsed.as_mut().expect("a tree").instance = tree(&entities);
+        let mut state = AppState::new();
+        let doc = state.insert_document(path.clone(), DocPayload::Meta(meta), None, None);
+        state.active_document = Some(doc);
+        state.refresh_scanned_map();
+        let read_only = crate::i18n::tr(super::super::rpf9_scan::READ_ONLY_BODY);
+        assert_eq!(state.scanned_map_save_note(), read_only, "no row opened it");
+
+        let archive = RpfArchive::open_with(&archive_path, gta6_session::crypto())
+            .expect("the archive opens");
+        let rows = RpfDocument::new(archive).expect("the tree lists");
+        (state.documents).push(Document::new(
+            TREE,
+            Some(archive_path),
+            DocPayload::Rpf(rows),
+        ));
+        let node = {
+            let Some(DocPayload::Rpf(rpf)) = state.document(TREE).map(|d| &d.payload) else {
+                panic!("the tree is open");
+            };
+            let session = &rpf.session;
+            (session.all_nodes().into_iter())
+                .find(|&id| session.node(id).is_some_and(|n| n.name == "map.ymap"))
+                .expect("the row is listed")
+        };
+        crate::state::rpf_archive_open::tree_open::name(&state, &path, TREE, node);
+        let note = state.scanned_map_save_note();
+        assert_ne!(note, read_only, "a row opened it");
+        assert!(note.contains("into that row"), "{note}");
+        assert!(note.contains("no run of the game"), "{note}");
     }
 
     #[test]

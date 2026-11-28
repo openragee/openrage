@@ -2,8 +2,8 @@
 //! OpenRage reopens, and the tree's edits save to a new file, as a patched copy whose table is
 //! byte-identical when every edit is a body that fits its entry's chunks, else through the GTA VI
 //! writer as a rebuilt archive, which the game refuses because only its maker can sign the table.
-//! Which of the two is planned on a worker before anything is written, as a job the list shows and
-//! stops, and a question before the save dialog says it.
+//! Which of the two is planned on a worker before anything is written, and then written, as a job
+//! the list shows and stops, and a question before the save dialog says it.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::File;
@@ -13,9 +13,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use or_io::container::rpf::gta6_container_write::Rpf9NewBody;
 use or_io::container::rpf::{
-    gta6_patch::OPTIMAL_CAP, read_rpf9_body, write_planned_copy, write_rpf9_resource, BodyForm,
-    Gta6Class, Gta6Mount, GtaViKeys, PatchPlan, Rpf9ArchiveWriter, Rpf9Sections, RpfEntry,
-    RpfVersion, RPF9_MAGIC, RPF9_SLOT,
+    gta6_patch::copy_ticking, gta6_patch::write_planned_copy_with, gta6_patch::OPTIMAL_CAP,
+    read_rpf9_body, write_rpf9_resource, BodyForm, Gta6Class, Gta6Mount, GtaViKeys, PatchPlan,
+    Rpf9ArchiveWriter, Rpf9Sections, RpfEntry, RpfVersion, RPF9_MAGIC, RPF9_SLOT,
 };
 use or_io::container::RpfArchive;
 
@@ -193,14 +193,26 @@ pub(crate) fn write_planned(
     keys: &GtaViKeys,
     planned: &Planned,
 ) -> Result<Saved, String> {
+    write_planned_with(source, out, keys, planned, &mut |_, _| true)
+}
+
+/// [`write_planned`], telling `tick` the bytes copied of all where the copy is the source's with
+/// bodies patched or none; `false` from it stops the write, and it leaves no file.
+fn write_planned_with(
+    source: &Path,
+    out: &Path,
+    keys: &GtaViKeys,
+    planned: &Planned,
+    tick: &mut dyn FnMut(u64, u64) -> bool,
+) -> Result<Saved, String> {
     new_file(out, source)?;
     match planned.writes() {
         Writes::AsRead => {
-            copy_new(source, out)?;
+            copy_new(source, out, tick)?;
             return Ok(Saved::AsRead);
         }
         Writes::Patched => {
-            write_planned_copy(source, out, keys, planned.patches.clone())
+            write_planned_copy_with(source, out, keys, planned.patches.clone(), tick)
                 .map_err(|e| e.to_string())?;
             return Ok(Saved::Patched);
         }
@@ -214,8 +226,13 @@ pub(crate) fn write_planned(
     })
 }
 
-/// Copy `source` byte for byte into the new file `out`; a refused copy leaves nothing there.
-fn copy_new(source: &Path, out: &Path) -> Result<(), String> {
+/// Copy `source` byte for byte into the new file `out`, telling `tick` the bytes copied; a refused
+/// or stopped copy leaves nothing there.
+fn copy_new(
+    source: &Path,
+    out: &Path,
+    tick: &mut dyn FnMut(u64, u64) -> bool,
+) -> Result<(), String> {
     let mut from = File::open(source).map_err(|e| format!("{}: {e}", source.display()))?;
     // `create_new` refuses any file that exists, so the cleanup below only removes one made here.
     let mut to = std::fs::OpenOptions::new()
@@ -223,13 +240,18 @@ fn copy_new(source: &Path, out: &Path) -> Result<(), String> {
         .create_new(true)
         .open(out)
         .map_err(|e| format!("{}: {e}", out.display()))?;
-    let copied = std::io::copy(&mut from, &mut to).and_then(|_| to.flush());
+    let copied = (copy_ticking(&mut from, &mut to, tick).map_err(|e| e.to_string()))
+        .and_then(|went| to.flush().map(|()| went).map_err(|e| e.to_string()));
     drop(to);
-    if let Err(e) = copied {
-        let _ = std::fs::remove_file(out);
-        return Err(format!("{}: {e}", out.display()));
-    }
-    Ok(())
+    let why = match copied {
+        Ok(true) => return Ok(()),
+        Ok(false) => {
+            tr!("the copy was stopped, and the partly written file is removed").to_string()
+        }
+        Err(e) => e,
+    };
+    let _ = std::fs::remove_file(out);
+    Err(format!("{}: {why}", out.display()))
 }
 
 /// A tree's save planned on a worker: its document, the edit it was at, the archive, and the keys
@@ -602,7 +624,7 @@ pub(crate) fn write_plan(
 }
 
 /// Plan the archive at `source` with `edits` made as a job the list shows, reading only, then write
-/// it into the new file `out` as planned.
+/// it into the new file `out` as planned, as the same job.
 fn write_tree(
     source: &Path,
     edits: &[Edit],
@@ -610,7 +632,9 @@ fn write_tree(
     keys: &GtaViKeys,
 ) -> Result<Saved, Unplanned> {
     let planned = plan_job::tracked(source, |tick| plan_tree_with(source, edits, keys, tick))?;
-    Ok(write_planned(source, out, keys, &planned)?)
+    plan_job::tracked_write(source, out, |tick| {
+        write_planned_with(source, out, keys, &planned, tick)
+    })
 }
 
 /// Plan the archive at `source` with `edits` made, reading only: a patched copy where every edit is
@@ -742,8 +766,9 @@ impl AppState {
         let out = out.to_path_buf();
         std::thread::spawn(move || {
             let said = match held {
-                Some(plan) => write_planned(&source, &out, &plan.keys, &plan.planned)
-                    .map_err(Unplanned::Refused),
+                Some(plan) => plan_job::tracked_write(&source, &out, |tick| {
+                    write_planned_with(&source, &out, &plan.keys, &plan.planned, tick)
+                }),
                 None => (keys().map_err(Unplanned::Refused))
                     .and_then(|keys| write_tree(&source, &edits, &out, &keys)),
             };
@@ -856,6 +881,7 @@ impl AppState {
                         "Cannot save into a copy of the archive: {reason}",
                         reason = why
                     ));
+                    self.jobs.record(JobKind::Save, Outcome::Failed, why);
                     continue;
                 }
             };
@@ -895,6 +921,7 @@ impl AppState {
                         "Cannot save into a copy of the archive: {reason}",
                         reason = why
                     ));
+                    self.jobs.record(JobKind::Save, Outcome::Failed, why);
                     continue;
                 }
             };
@@ -907,6 +934,10 @@ impl AppState {
                 }
             }
             self.file_replaced(&out);
+            let folder = out.parent().map(Path::to_path_buf);
+            let then = folder.map_or(Then::Nothing, Then::OpenFolder);
+            let said = tr!("Saved {name}", name = out.display());
+            self.jobs.record(JobKind::Save, Outcome::Done(then), said);
             let (tables, bodies, kept) = match saved {
                 Saved::AsRead => {
                     self.show_toast(as_read_said(&file));

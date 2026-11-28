@@ -15496,8 +15496,8 @@ msgstr "Um registro de animação mantém pelo menos um osso."
 msgid "A track's mode is 0, 1 or 2."
 msgstr "O modo de uma faixa é 0, 1 ou 2."
 
-msgid "Copy places a copy after the track or bone it copies and Add a new one after the last; either, or a removal, moves what follows it at save. A changed filter keeps its signature as read unless another of the dictionary holds the same tracks, since what it is computed from is not known."
-msgstr "Copiar coloca uma cópia depois da faixa ou do osso que copia, e Adicionar coloca um novo depois do último; qualquer um deles, ou uma remoção, move o que vem depois ao salvar. Um filtro alterado mantém a assinatura como foi lida, a menos que outro do dicionário tenha as mesmas faixas, pois não se sabe a partir de que ela é calculada."
+msgid "Copy places a copy after the track or bone it copies and Add a new one after the last; either, or a removal, moves what follows it at save. A changed filter is signed with the signature its tracks give."
+msgstr "Copiar coloca uma cópia depois da faixa ou do osso que copia, e Adicionar coloca um novo depois do último; qualquer um deles, ou uma remoção, move o que vem depois ao salvar. Um filtro alterado é assinado com a assinatura que as suas faixas dão."
 
 msgid "Cannot save: open the audio container this animation came from, which it is written back into."
 msgstr "Não é possível salvar: abra o contêiner de áudio de onde veio esta animação, no qual ela é gravada de volta."
@@ -17667,3 +17667,18 @@ msgid "{count} texture: {why}"
 msgid_plural "{count} textures: {why}"
 msgstr[0] "{count} textura: {why}"
 msgstr[1] "{count} texturas: {why}"
+
+msgid "Writing the save of {file}"
+msgstr "Gravando o salvamento de {file}"
+
+msgid "writing {file}, {done} of {total}"
+msgstr "gravando {file}, {done} de {total}"
+
+msgid "the copy was stopped, and the partly written file is removed"
+msgstr "a cópia foi interrompida, e o arquivo gravado em parte é removido"
+
+msgid "The box or stream distance of entity {index}'s archetype is not known, so the map's extents were grown to hold its position only."
+msgstr "A caixa ou a distância de streaming do arquétipo da entidade {index} não é conhecida, então as extensões do mapa foram ampliadas apenas para conter a sua posição."
+
+msgid "This body was opened from its row of a GTA VI archive's tree: Save writes its edits into that row, and the archive's Save as… writes a new file, a patched copy where the body fits its entry's chunks, whose table is unchanged and which no run of the game has loaded, else a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "Este corpo foi aberto a partir da sua linha na árvore de um archive do GTA VI: Salvar grava as suas edições nessa linha, e Salvar como… do archive grava um arquivo novo, uma cópia corrigida quando o corpo cabe nos blocos da sua entrada, cuja tabela não muda e que nenhuma execução do jogo carregou, senão um archive reconstruído, que o jogo recusa porque só o seu criador pode assinar a tabela."

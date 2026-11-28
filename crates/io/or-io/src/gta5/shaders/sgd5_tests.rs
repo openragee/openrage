@@ -40,6 +40,12 @@ fn record(code: u8, slot: u16, members: u8, first: u16, size: u32, hash: u32) ->
     r
 }
 
+/// `record` naming itself by the string `offset` bytes after its start.
+fn named(mut record: Vec<u8>, offset: usize) -> Vec<u8> {
+    record[8..10].copy_from_slice(&(offset as u16).to_le_bytes());
+    record
+}
+
 /// A constant whose record states `hash` at +0x10 and `key` at +0x14.
 fn constant(code: u8, count: u16, offset: u16, hash: u32, key: u32) -> Vec<u8> {
     let mut r = vec![code, 0];
@@ -133,9 +139,10 @@ fn effect() -> Vec<u8> {
     e.extend_from_slice(&le(&bound));
     e.extend_from_slice(&le(&[LAYOUT_REFERENCE]));
     // A sampler, a texture and a constant buffer whose two members follow it; the second member
-    // states another hash at +0x14 than at +0x10.
+    // states another hash at +0x14 than at +0x10. The sampler names itself by the pool's first
+    // string, past the five records from its own start.
     let resources = [
-        record(0x23, 3, 0, 0, 0, hash("DiffuseSampler")),
+        named(record(0x23, 3, 0, 0, 0, hash("DiffuseSampler")), 5 * RECORD),
         record(0x02, 72, 0, 0, 0, hash("diffusetex")),
         record(CONSTANT_BUFFER, 1, 2, RECORD as u16, 0x40, hash("locals")),
     ];
@@ -727,4 +734,72 @@ fn a_constant_of_type_0x00_0x0f_or_0x03_is_refused_where_its_room_does_not_fit_i
         &[],
     );
     assert!(super::table(&bytes, 0).is_err());
+}
+
+#[test]
+fn a_resource_is_named_by_the_string_its_record_points_at_and_one_stating_0_by_none() {
+    // Three records, then the pool at 8 + 3 × 24: the first points at the pool's first string, the
+    // second states 0 though the pool holds a string that hashes to it, and the third points at
+    // that string under another hash.
+    let pool_at = 8 + 3 * RECORD;
+    let resources = [
+        named(record(0x23, 1, 0, 0, 0, hash("gBumpSampler")), pool_at - 8),
+        record(0x02, 2, 0, 0, 0, hash("other")),
+        named(
+            record(0x23, 3, 0, 0, 0, hash("gDetailSampler")),
+            pool_at + 13 - (8 + 2 * RECORD),
+        ),
+    ];
+    let bytes = table(&resources, &[], &[], b"gBumpSampler\0other\0");
+    let (_, t) = super::table(&bytes, 0).expect("read");
+    assert_eq!(
+        t.resource_names,
+        [
+            Some("gBumpSampler".to_string()),
+            None,
+            Some("other".to_string())
+        ]
+    );
+    assert_eq!(t.name_of(hash("gbumpsampler")), Some("gBumpSampler"));
+    assert_eq!(
+        t.name_of(hash("other")),
+        None,
+        "a pool string names no record that does not point at it"
+    );
+    assert_eq!(t.name_of(hash("gDetailSampler")), Some("other"));
+}
+
+#[test]
+fn a_resource_name_outside_its_table_s_pool_or_with_no_nul_is_refused_by_the_record_s_hash() {
+    let pool_at = 8 + RECORD;
+    let read = |offset: usize, pool: &[u8]| {
+        let resource = named(record(0x23, 1, 0, 0, 0, hash("gBumpSampler")), offset);
+        super::table(&table(&[resource], &[], &[], pool), 0)
+    };
+    assert!(read(pool_at - 8, &b"gBumpSampler\0"[..]).is_ok());
+    for (offset, pool, what) in [
+        (
+            pool_at - 8 + 64,
+            &b"gBumpSampler\0"[..],
+            "past the table's end",
+        ),
+        (4, &b"gBumpSampler\0"[..], "inside its own record"),
+        (
+            pool_at - 8,
+            &b"gBumpSampler"[..],
+            "no NUL before the table's end",
+        ),
+        (pool_at - 8, &b"\0"[..], "an empty name"),
+    ] {
+        match read(offset, pool) {
+            Err(Sgd5Error::Invalid { at, why }) => {
+                assert_eq!(at, 4 + 8, "{what}: refused at the record");
+                assert!(
+                    why.contains(&format!("{:08X}", hash("gBumpSampler"))),
+                    "{what}: {why}"
+                );
+            }
+            other => panic!("{what} was read: {other:?}"),
+        }
+    }
 }

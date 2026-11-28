@@ -4,10 +4,8 @@
 //! growth, which moves every pointer past it; an entry that held none takes an array at the
 //! section's end.
 //!
-//! ⚠ A filter's signature at 0x0C follows from its elements by no rule anyone found: a changed
-//! filter takes the signature of another filter of the dictionary whose elements are the same
-//! bytes, 0 when it holds none, and else keeps the one it was read with; a record's word at 0x68
-//! is kept as read.
+//! A changed filter takes the signature at 0x0C its elements give, 0 when it holds none; a
+//! record's word at 0x68 follows from no rule anyone found and is kept as read.
 
 use super::bytes::{sections, u32_at, Bytes};
 use super::dictionary::entry_of;
@@ -62,8 +60,6 @@ struct Read {
     first: Option<usize>,
     elements: Vec<Vec<u8>>,
     pointers: Vec<usize>,
-    /// Every other frame filter's element bytes and signature.
-    signatures: Vec<(Vec<u8>, u32)>,
 }
 
 /// The element each of `count` edited ones is built over: the one at its place where the number
@@ -120,18 +116,92 @@ pub fn write_filter_tracks(
         put(&mut element, 0x2C, t.word_2c);
         bytes.extend(element);
     }
-    let old: Vec<u8> = read.elements.concat();
-    let signature = match bytes.is_empty() {
-        true => Some(0),
-        false if bytes == old => None,
-        false => (read.signatures.iter()).find_map(|(held, s)| (*held == bytes).then_some(*s)),
-    };
+    let changed = bytes != read.elements.concat();
     relay(sections, code, &FILTER, read, tracks.len(), &bytes)?;
-    if let Some(signature) = signature {
-        let at = entry_at(&sections.virtual_section, code)? + SIGNATURE;
-        sections.virtual_section[at..at + 4].copy_from_slice(&signature.to_le_bytes());
+    if changed {
+        sign(&mut sections.virtual_section, code)?;
     }
     Ok(())
+}
+
+/// The frame filter of `code` given the signature at 0x0C its elements give.
+pub(super) fn sign(virtual_section: &mut [u8], code: u32) -> Result<(), HeaderlessError> {
+    let refuse = HeaderlessError::NotInPlace("no entry of the dictionary has that code");
+    let (at, signature) = sections(virtual_section, None, |v, _| {
+        let at = entry_of(v, code)?.ok_or(refuse)?;
+        Ok((at, filter_signature(v, at)?))
+    })?;
+    virtual_section[at + SIGNATURE..at + SIGNATURE + 4].copy_from_slice(&signature.to_le_bytes());
+    Ok(())
+}
+
+/// The signature the elements of the frame filter at `at` give: one CRC-32 over them all.
+// Per element in stored order: its first and second name where not empty, its weight, its id, the
+// low byte of its mode and its track. The file holds it without the XOR with 0x55F5B477 the game
+// applies at load, so a filter of no element holds 0.
+fn filter_signature(v: Bytes, at: usize) -> Result<u32, HeaderlessError> {
+    let count = usize::from(v.u16(FILTER.what, at + FILTER.count)?);
+    if count == 0 {
+        return Ok(0);
+    }
+    let first = v.to(FILTER.what, at + FILTER.pointer)?;
+    let mut crc = flate2::Crc::new();
+    for e in (0..count).map(|i| first + FILTER.stride * i) {
+        let element = v.get(FILTER.what, e, FILTER.stride)?;
+        crc.update(element_name(v, e + 0x08)?);
+        crc.update(element_name(v, e + 0x18)?);
+        for field in [0x04..0x08, 0x00..0x04, 0x2C..0x2D, 0x28..0x2C] {
+            crc.update(&element[field]);
+        }
+    }
+    Ok(crc.sum())
+}
+
+/// The text of an element's 16-byte name at `at`: inline, its length in byte 15 with the top bit
+/// set, or a pointer and a u16 length.
+fn element_name<'a>(v: Bytes<'a>, at: usize) -> Result<&'a [u8], HeaderlessError> {
+    let what = "frame filter track name";
+    let field = v.get(what, at, 16)?;
+    if field[15] & 0x80 != 0 {
+        let len = usize::from(field[15] & 0x7F);
+        if len > 15 {
+            return Err(HeaderlessError::Constant {
+                what: "frame filter track name's inline length, which 15 bytes bound",
+                at: at as u64 + 15,
+                found: len as u64,
+            });
+        }
+        return Ok(&field[..len]);
+    }
+    match usize::from(v.u16(what, at + 8)?) {
+        0 => Ok(&[]),
+        len => v.get(what, v.to(what, at)?, len),
+    }
+}
+
+/// Each frame filter of the dictionary `virtual_section` holds: its code, the signature it states
+/// and the one its elements give.
+#[cfg(test)]
+pub(super) fn filter_signatures(
+    virtual_section: &[u8],
+) -> Result<Vec<(u32, u32, u32)>, HeaderlessError> {
+    sections(virtual_section, None, |v, _| {
+        let count = usize::from(v.u16("code count", 0x28)?);
+        let mut filters = Vec::new();
+        if count == 0 {
+            return Ok(filters);
+        }
+        let (codes, entries) = (v.to("codes", 0x20)?, v.to("entries", 0x30)?);
+        for i in 0..count {
+            let at = v.to("entry", entries + 8 * i)?;
+            if is_filter(v, at) {
+                let code = v.u32("code", codes + 4 * i)?;
+                let stored = v.u32("frame filter", at + SIGNATURE)?;
+                filters.push((code, stored, filter_signature(v, at)?));
+            }
+        }
+        Ok(filters)
+    })
 }
 
 /// The animation record of `code` given `bones`, in any number and order.
@@ -187,19 +257,9 @@ pub(super) fn is_record(v: Bytes, at: usize) -> bool {
             .is_some()
 }
 
-/// The bytes of the elements of the frame filter at `at`.
-fn filter_elements(v: Bytes, at: usize) -> Result<Vec<u8>, HeaderlessError> {
-    let count = usize::from(v.u16(FILTER.what, at + FILTER.count)?);
-    if count == 0 {
-        return Ok(Vec::new());
-    }
-    let first = v.to(FILTER.what, at + FILTER.pointer)?;
-    Ok(v.get(FILTER.what, first, count * FILTER.stride)?.to_vec())
-}
-
-/// The entry of `code` of the kind `layout` states, its elements as read, every word of the
+/// The entry of `code` of the kind `layout` states, its elements as read, and every word of the
 /// dictionary its readers name a pointer (the root's, each entry's, and each frame filter's and
-/// animation record's), and every other frame filter's elements and signature.
+/// animation record's).
 fn read_entry(virtual_section: &[u8], code: u32, layout: &Layout) -> Result<Read, ElementsError> {
     let read = sections(virtual_section, None, |v, _| {
         let refuse = HeaderlessError::NotInPlace;
@@ -227,7 +287,6 @@ fn read_entry(virtual_section: &[u8], code: u32, layout: &Layout) -> Result<Read
             }
         };
         let mut pointers = vec![0x08, 0x10, 0x20, 0x30];
-        let mut signatures = Vec::new();
         if let Some(entries) = v.ptr("entries", 0x30)? {
             for i in 0..usize::from(v.u16("code count", 0x28)?) {
                 let slot = entries + 8 * i;
@@ -235,10 +294,6 @@ fn read_entry(virtual_section: &[u8], code: u32, layout: &Layout) -> Result<Read
                 let entry = v.to("entry", slot)?;
                 if is_filter(v, entry) {
                     pointers.extend([entry + 0x18, entry + 0x28, entry + 0x38]);
-                    if entry != at {
-                        let signature = v.u32("frame filter", entry + SIGNATURE)?;
-                        signatures.push((filter_elements(v, entry)?, signature));
-                    }
                 } else if is_record(v, entry) {
                     pointers.push(entry + 0x20);
                     // A name of 15 bytes or fewer lies inline, its length in its last byte.
@@ -252,7 +307,6 @@ fn read_entry(virtual_section: &[u8], code: u32, layout: &Layout) -> Result<Read
             first,
             elements,
             pointers,
-            signatures,
         })
     })?;
     Ok(read)

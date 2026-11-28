@@ -104,6 +104,7 @@ fn the_root_archives_mount_before_the_packs() {
             root.join("a.rpf"),
         ],
         &Registry::default(),
+        &[],
     );
     assert_eq!(
         order,
@@ -196,6 +197,7 @@ fn packs_whose_setups_tie_mount_by_path_and_a_folder_of_no_setup_mounts_last() {
             root.join("z.rpf"),
         ],
         &registry,
+        &[],
     );
     assert_eq!(
         order,
@@ -208,6 +210,108 @@ fn packs_whose_setups_tie_mount_by_path_and_a_folder_of_no_setup_mounts_last() {
             pack("0", "none.rpf"),
         ]
     );
+}
+
+fn setup(content_type: SetupContentType, order: i32, minor_order: i32) -> SetupData {
+    SetupData {
+        content_type,
+        order,
+        minor_order,
+        is_level_pack: content_type == SetupContentType::LevelPack,
+        ..SetupData::default()
+    }
+}
+
+/// The folders of `packs`, each an archive `pack/<folder>/<folder>.rpf` holding its setup, in the
+/// order they mount when the game's pack lists register the folders of `listed` in that order.
+fn pack_order(packs: &[(&str, SetupData)], listed: &[&str]) -> Vec<String> {
+    let root = Path::new("build");
+    let archive = |folder: &str| root.join("pack").join(folder).join(format!("{folder}.rpf"));
+    let registry = Registry::of(
+        (packs.iter())
+            .map(|(folder, setup)| (archive(folder), vec![Document::Setup(setup.clone())]))
+            .collect(),
+    );
+    let listed: Vec<PathBuf> = (listed.iter()).map(|f| root.join("pack").join(f)).collect();
+    let archives = (packs.iter()).map(|(folder, _)| archive(folder)).collect();
+    (mount_order(root, archives, &registry, &listed).iter())
+        .map(|p| p.parent().and_then(Path::file_name))
+        .map(|name| name.map_or_else(String::new, |n| n.to_string_lossy().into_owned()))
+        .collect()
+}
+
+#[test]
+fn the_tie_compares_minor_order_whatever_the_type() {
+    let compat = SetupContentType::CompatPack;
+    assert_ne!(
+        mount_key(&setup(compat, 1, 0)),
+        mount_key(&setup(compat, 1, 1))
+    );
+    assert_eq!(
+        mount_key(&setup(compat, 1, 1)),
+        mount_key(&setup(compat, 1, 1))
+    );
+}
+
+#[test]
+fn packs_of_one_type_and_order_mount_by_minor_order_then_in_the_order_of_the_pack_lists() {
+    let compat = SetupContentType::CompatPack;
+    let packs = [
+        ("a", setup(compat, 1, 1)),
+        ("b", setup(compat, 1, 0)),
+        ("c", setup(compat, 1, 0)),
+    ];
+    assert_eq!(pack_order(&packs, &["c", "b", "a"]), ["c", "b", "a"]);
+}
+
+#[test]
+fn two_level_packs_mount_by_order_then_minor_order_ascending() {
+    let level = SetupContentType::LevelPack;
+    let packs = [
+        ("a", setup(level, 2, 0)),
+        ("b", setup(level, 1, 1)),
+        ("c", setup(level, 1, 0)),
+    ];
+    assert_eq!(pack_order(&packs, &[]), ["c", "b", "a"]);
+}
+
+#[test]
+fn the_type_decides_before_the_order() {
+    let packs = [
+        ("a", setup(SetupContentType::CompatPack, 0, 0)),
+        ("b", setup(SetupContentType::LevelPack, 5, 0)),
+        ("c", setup(SetupContentType::TitleUpdate, 9, 0)),
+    ];
+    assert_eq!(pack_order(&packs, &[]), ["c", "b", "a"]);
+}
+
+#[test]
+fn packs_that_tie_fully_keep_the_order_of_the_pack_lists_and_an_unlisted_one_mounts_after() {
+    let compat = SetupContentType::CompatPack;
+    let packs = [
+        ("a", setup(compat, 1, 0)),
+        ("b", setup(compat, 1, 0)),
+        ("c", setup(compat, 1, 0)),
+        ("d", setup(compat, 1, 0)),
+    ];
+    assert_eq!(pack_order(&packs, &["c", "a", "b"]), ["c", "a", "b", "d"]);
+    assert_eq!(pack_order(&packs, &[]), ["a", "b", "c", "d"]);
+}
+
+#[test]
+fn of_two_packs_of_one_name_only_the_first_registered_mounts() {
+    let named = |name: &str, order| SetupData {
+        name_hash: name.to_owned(),
+        ..setup(SetupContentType::CompatPack, order, 0)
+    };
+    // The one dropped is the later registered, not the one that would mount later.
+    let packs = [
+        ("a", named("dlc", 2)),
+        ("b", named("DLC", 1)),
+        ("c", named("other", 3)),
+    ];
+    assert_eq!(pack_order(&packs, &[]), ["a", "c"]);
+    assert_eq!(pack_order(&packs, &["b", "a"]), ["b", "c"]);
 }
 
 #[test]
@@ -357,8 +461,16 @@ fn the_install_tree_of_the_build_merges_every_archive_in_mount_order() {
     let keys = GtaViKeys::from_file(&snapshot).expect("the key snapshot parses");
     let registry = pack_registry(&build, &build_archives(&build), &keys);
     assert!(!registry.packs.is_empty(), "the packs' setups are read");
-    // Measured on the build: every setup states order 1, so the packs tie and mount by path.
+    // Measured on the build: every setup states order 1, so packs of one type and minorOrder tie,
+    // and with the game's pack lists not found they mount by path, as the help says.
     assert!(registry.packs.iter().all(|pack| pack.setup.order == 1));
+    assert!(super::super::USAGE.contains("in the order of the game's pack lists"));
+    let pack_dir = build.join("pack");
+    let folders: std::collections::BTreeSet<_> = (build_archives(&build).iter())
+        .filter(|p| p.starts_with(&pack_dir))
+        .filter_map(|p| p.parent().map(Path::to_path_buf))
+        .collect();
+    assert_eq!(folders.len(), 9, "the build's archive folders under pack/");
     // Every archive under pack/ whose table lists a setup gives a pack, so none moves for want of one.
     for path in build_archives(&build)
         .iter()

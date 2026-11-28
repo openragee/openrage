@@ -15625,8 +15625,8 @@ msgstr "В записи анимации остаётся хотя бы одна
 msgid "A track's mode is 0, 1 or 2."
 msgstr "Режим дорожки равен 0, 1 или 2."
 
-msgid "Copy places a copy after the track or bone it copies and Add a new one after the last; either, or a removal, moves what follows it at save. A changed filter keeps its signature as read unless another of the dictionary holds the same tracks, since what it is computed from is not known."
-msgstr "Копировать ставит копию после копируемой дорожки или кости, а Добавить ставит новую после последней; и то и другое, как и удаление, при сохранении сдвигает то, что следует дальше. Изменённый фильтр сохраняет подпись в прочитанном виде, если только другой фильтр словаря не содержит те же дорожки, так как неизвестно, из чего она вычисляется."
+msgid "Copy places a copy after the track or bone it copies and Add a new one after the last; either, or a removal, moves what follows it at save. A changed filter is signed with the signature its tracks give."
+msgstr "Копировать ставит копию после копируемой дорожки или кости, а Добавить ставит новую после последней; и то и другое, как и удаление, при сохранении сдвигает то, что следует дальше. Изменённый фильтр подписывается подписью, которую дают его дорожки."
 
 msgid "Cannot save: open the audio container this animation came from, which it is written back into."
 msgstr "Невозможно сохранить: откройте аудиоконтейнер, из которого взята эта анимация; она записывается обратно в него."
@@ -17832,3 +17832,18 @@ msgid_plural "{count} textures: {why}"
 msgstr[0] "{count} текстура: {why}"
 msgstr[1] "{count} текстуры: {why}"
 msgstr[2] "{count} текстур: {why}"
+
+msgid "Writing the save of {file}"
+msgstr "Запись сохранения {file}"
+
+msgid "writing {file}, {done} of {total}"
+msgstr "запись {file}, {done} из {total}"
+
+msgid "the copy was stopped, and the partly written file is removed"
+msgstr "копирование остановлено, и частично записанный файл удаляется"
+
+msgid "The box or stream distance of entity {index}'s archetype is not known, so the map's extents were grown to hold its position only."
+msgstr "Рамка или дистанция подгрузки архетипа сущности {index} неизвестна, поэтому границы карты расширены только так, чтобы вместить её позицию."
+
+msgid "This body was opened from its row of a GTA VI archive's tree: Save writes its edits into that row, and the archive's Save as… writes a new file, a patched copy where the body fits its entry's chunks, whose table is unchanged and which no run of the game has loaded, else a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "Это тело открыто из своей строки в дереве архива GTA VI: «Сохранить» записывает его правки в эту строку, а «Сохранить как…» архива записывает новый файл — исправленную копию, если тело умещается в блоки своей записи: её таблица не изменена, и ни один запуск игры её не загружал; иначе пересобранный архив, который игра отвергает, потому что подписать таблицу может только её создатель."

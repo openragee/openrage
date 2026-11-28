@@ -1,5 +1,6 @@
 //! A dictionary's frame filter weights and animation record values written back in place, over the
-//! entries the reader read; every other word of an entry is kept as it was read.
+//! entries the reader read; every other word of an entry is kept as it was read, but for a filter's
+//! signature, which a changed weight writes anew.
 
 use super::bytes::{sections, u32_at};
 use super::dictionary::entry_of;
@@ -48,9 +49,15 @@ pub fn write_filter_weights(
         }
         Ok(first)
     })?;
+    let mut changed = false;
     for (i, t) in tracks.iter().enumerate() {
         let at = first + TRACK_LEN * i + 0x04;
+        changed |= virtual_section[at..at + 4] != t.weight.to_le_bytes();
         virtual_section[at..at + 4].copy_from_slice(&t.weight.to_le_bytes());
+    }
+    // A weight is an input of the filter's signature.
+    if changed {
+        super::write_filter_tracks::sign(virtual_section, code)?;
     }
     Ok(())
 }

@@ -150,6 +150,25 @@ pub fn measured_bytes(session: &RpfEditSession, id: RpfNodeId) -> Option<u64> {
     }
 }
 
+/// The bytes file row `id` sorts and groups by: what its Size cell shows, which for a GTA VI row is
+/// its row's or its held body's sections, else [`RpfEditSession::size_for`].
+pub fn sorted_bytes(session: &RpfEditSession, id: RpfNodeId) -> Option<u64> {
+    let Some(RpfNodeBacking::ArchiveFile {
+        archive_id,
+        entry_index,
+        ..
+    }) = session.node(id).map(|node| &node.backing)
+    else {
+        return session.size_for(id);
+    };
+    match (session.archive(*archive_id)).and_then(|slot| slot.archive.rpf9_row(*entry_index)) {
+        // ponytail: while a worker measures a held body the row sorts by its row's size, and a
+        // folder's sorted cache keeps that until its next edit.
+        Some(row) => measured_bytes(session, id).or(Some(row.real)),
+        None => session.size_for(id),
+    }
+}
+
 /// A held body and the size of the sections it stands for, `None` until measured.
 type Measured = (Weak<Vec<u8>>, Option<u64>);
 
@@ -181,11 +200,14 @@ fn held_size(archive: &RpfArchive, entry_index: u32, held: &Arc<Vec<u8>>) -> Opt
     None
 }
 
-/// The inflated length of the sections a loose GTA VI resource holds; `None` for bytes that are no such file.
+/// The inflated length of the sections a loose GTA VI resource holds, or of the whole body where a
+/// read finds no sections in it; `None` for bytes no read takes.
 fn sections_len(loose: &[u8]) -> Option<u64> {
     let (find, body) = read_rpf9_body(std::io::Cursor::new(loose), 0, u64::MAX).ok()?;
-    let sections = Rpf9Sections::of(&find, &body)?;
-    Some((sections.virtual_section.len() + sections.physical.len()) as u64)
+    Some(match Rpf9Sections::of(&find, &body) {
+        Some(sections) => (sections.virtual_section.len() + sections.physical.len()) as u64,
+        None => body.len() as u64,
+    })
 }
 
 /// A GTA VI file's sizes and cipher as its table's row states them: its entry's sizes are 32-bit
@@ -670,6 +692,33 @@ mod tests {
         assert_eq!(total, inner.len() as u64 + 3);
     }
 
+    #[test]
+    fn a_gta_v_row_sorts_by_the_size_it_sorted_by_before() {
+        let mut builder = RpfBuilder::default();
+        builder
+            .insert_with("a.txt", b"aaaa".to_vec(), false)
+            .unwrap();
+        builder.insert_with("b.txt", b"bb".to_vec(), false).unwrap();
+        let mut session = RpfEditSession::from_archive(builder.build().unwrap()).unwrap();
+        let edited = session.children_of(session.root_id())[0];
+        session.set_bytes_for(edited, vec![7; 9]).unwrap();
+        for id in session.all_nodes() {
+            assert_eq!(sorted_bytes(&session, id), session.size_for(id));
+        }
+        assert_eq!(sorted_bytes(&session, edited), Some(9));
+    }
+
+    #[test]
+    fn a_held_body_with_no_sections_a_read_finds_counts_what_it_inflates_to() {
+        use std::io::Write;
+        let content = b"a body that is no block-mapped resource. ".repeat(64);
+        let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
+        z.write_all(&content).unwrap();
+        let stream = z.finish().unwrap();
+        assert!(stream.len() < content.len());
+        assert_eq!(sections_len(&stream), Some(content.len() as u64));
+    }
+
     mod gta6 {
         use std::io::Cursor;
         use std::sync::Arc;
@@ -787,6 +836,67 @@ mod tests {
                 .expect("held");
             assert_eq!(size(&session, named), Some(5));
             assert_eq!(listed_bytes(&session, named), 5);
+        }
+
+        #[test]
+        fn an_edited_headerless_row_sorts_groups_and_totals_by_the_size_its_cell_shows() {
+            use crate::state::explorer::{
+                grouped_children, sorted_children, GroupKey, SizeBucket, SortKey, SortOrder,
+            };
+            let _serial = crate::ui::theme::serial();
+            let _reading = reading(&["data/model.ydr", "data/plain.bin"]);
+            let dir = tempfile::tempdir().expect("a scratch directory");
+            // Sections past 16 KiB of zeros, whose loose form deflates to far less.
+            const SECTIONS: usize = 0x5000;
+            let mut grown = rbm_section();
+            grown.resize(SECTIONS, 0);
+            let held = loose(grown);
+            assert!(
+                held.len() * 4 < SECTIONS,
+                "the loose form is shorter than its sections"
+            );
+            // A plain row whose size lies between the loose form's length and the sections'.
+            let between = vec![0x5Au8; (held.len() + SECTIONS) / 2];
+            let resource = Rpf9NewBody::Resource {
+                type_code: 0x02,
+                loose: loose(rbm_section()),
+            };
+            let entries = [
+                ("data/model.ydr".to_owned(), resource),
+                ("data/plain.bin".to_owned(), Rpf9NewBody::Chunked(between)),
+            ];
+            let mut session = tree(dir.path(), built(&entries));
+            let (model, plain) = (row(&session, "model.ydr"), row(&session, "plain.bin"));
+            session.set_bytes_for(model, held.clone()).expect("held");
+            assert_eq!(
+                sorted_bytes(&session, model),
+                Some(rbm_section().len() as u64),
+                "while its held body is measured it sorts by its row's size"
+            );
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while measured_bytes(&session, model).is_none() {
+                assert!(std::time::Instant::now() < deadline, "never measured");
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            assert_eq!(session.size_for(model), Some(held.len() as u64));
+            assert_eq!(size(&session, model), Some(SECTIONS as u64));
+            assert_eq!(sorted_bytes(&session, model), Some(SECTIONS as u64));
+            assert_eq!(listed_bytes(&session, model), SECTIONS as u64);
+
+            let folder = (session.node(model))
+                .and_then(|n| n.parent)
+                .expect("its folder");
+            let order = SortOrder {
+                key: SortKey::Size,
+                descending: true,
+            };
+            assert_eq!(sorted_children(&session, folder, order), [model, plain]);
+            let groups = grouped_children(&session, 0, folder, order, GroupKey::Size);
+            let model_group = groups.iter().find(|g| g.rows.contains(&model));
+            assert_eq!(
+                model_group.map(|g| g.label.as_str()),
+                Some(SizeBucket::of(Some(SECTIONS as u64)).label())
+            );
         }
 
         #[test]

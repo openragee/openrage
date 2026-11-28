@@ -23,6 +23,7 @@ fn a_body_that_is_no_program_is_a_line_and_a_row_and_never_the_end() {
             options: Options::default(),
             threads: 2,
             said: &[],
+            summary: false,
         };
         exported(&bodies, read, Names::default(), asks, out)
     };
@@ -38,13 +39,13 @@ fn a_body_that_is_no_program_is_a_line_and_a_row_and_never_the_end() {
     let (first, second) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     run(Some(first.path())).expect("the export goes on");
     run(Some(second.path())).expect("the export goes on");
-    for file in [PROJECT_FILE, SCRIPTS_FILE] {
+    for file in [PROJECT_FILE, SCRIPTS_FILE, INDEX_FILE] {
         let written = std::fs::read(first.path().join(file)).unwrap();
         let again = std::fs::read(second.path().join(file)).unwrap();
         assert_eq!(written, again, "{file}");
     }
     // A body that failed left its row, and no source.
-    assert_eq!(std::fs::read_dir(first.path()).unwrap().count(), 2);
+    assert_eq!(std::fs::read_dir(first.path()).unwrap().count(), 3);
     let scripts = std::fs::read(first.path().join(SCRIPTS_FILE)).unwrap();
     let scripts: Value = serde_json::from_slice(&scripts).unwrap();
     assert_eq!(scripts["level"], "source");
@@ -63,6 +64,154 @@ fn a_body_that_is_no_program_is_a_line_and_a_row_and_never_the_end() {
     );
     let status = row["status"].as_str().unwrap_or_default();
     assert!(status.starts_with("failed: "), "{status}");
+    assert_eq!(row["classes"], Value::from(0));
+    assert_eq!(row["not_lifted"], Value::Array(Vec::new()));
+
+    // The index has a row a body, each saying why it failed, under its head, and the last line under them.
+    let index = std::fs::read_to_string(first.path().join(INDEX_FILE)).unwrap();
+    let rows: Vec<&str> = index
+        .lines()
+        .filter(|line| line.starts_with("| "))
+        .collect();
+    assert_eq!(rows.len(), 3, "{index}");
+    assert!(
+        rows[0].starts_with("| Source | Program | Name |"),
+        "{index}"
+    );
+    assert!(rows[1].starts_with("| - | "), "{index}");
+    assert!(rows[1].contains(" | - | failed: `"), "{index}");
+    assert!(index.contains("no names list supplied"), "{index}");
+    assert!(index.trim_end().ends_with(lines[2].as_str()), "{index}");
+}
+
+#[test]
+fn a_summary_prints_the_failures_and_the_totals_as_a_table_in_place_of_a_line_a_program() {
+    let zeros = [vec![0u8; 8], vec![0x11; 56]].concat();
+    let bodies = [body("a", zeros)];
+    let asks = Asks {
+        options: Options::default(),
+        threads: 1,
+        said: &[],
+        summary: true,
+    };
+    let (lines, failed) = exported(&bodies, "a folder", Names::default(), asks, None).unwrap();
+    assert_eq!(failed, 1);
+    assert!(lines[0].starts_with("a: failed: "), "{lines:?}");
+    assert!(
+        !lines.iter().any(|line| line.starts_with("total: ")),
+        "{lines:?}"
+    );
+    let row = |what: &str| lines.iter().find(|line| line.starts_with(what)).cloned();
+    // Every row is as wide as the widest, its count at the right.
+    let programs = row("programs ").expect("a row of programs");
+    assert!(programs.ends_with(" 1"), "{programs}");
+    assert!(
+        row("failed ").is_some_and(|line| line.ends_with(" 1")),
+        "{lines:?}"
+    );
+    assert!(
+        row("classes ").is_some_and(|line| line.ends_with(" 0")),
+        "{lines:?}"
+    );
+    let widths: BTreeSet<usize> = lines[1..].iter().map(String::len).collect();
+    assert_eq!(widths.len(), 1, "{lines:?}");
+
+    let mut total = Stats {
+        functions: 12,
+        ..Stats::default()
+    };
+    total.constructs[0] = 3;
+    let table = table(2, 0, 1, 4, &total);
+    let functions = |line: &String| line.starts_with("functions ") && line.ends_with(" 12");
+    assert!(table.iter().any(functions), "{table:?}");
+    let read = format!("constructs read: {}", CONSTRUCTS[0]);
+    assert!(table
+        .iter()
+        .any(|line| line.starts_with(&read) && line.ends_with(" 3")));
+    // A construct none was read of has no row.
+    let other = format!("constructs read: {}", CONSTRUCTS[1]);
+    assert!(
+        !table.iter().any(|line| line.starts_with(&other)),
+        "{table:?}"
+    );
+}
+
+#[test]
+fn a_source_counts_its_classes_and_names_each_function_it_writes_with_no_body() {
+    let text = "\
+// project: `project.json`
+// left out: 4 byte(s) from 000040
+class Demo : Base
+{
+    class Inner
+    {
+    }
+    void Run()
+    {
+        if (x)
+        {
+        }
+    }
+}
+
+public static class Program_0A0B0C0D // 0x000000
+{
+}
+
+struct Pair
+{
+}
+class Wide : Base,
+    DemoSecond,
+    DemoThird
+{
+}
+class Cut : Base,
+    DemoSecond
+enum Kind
+{
+}
+var x = new class
+{
+}
+    // func_000040: no body (a demo reason: of words)
+// demo_run at 0x000080: the listing holds no body (another)
+// func_0000C0: a note
+// a note at 0x10: no body (it names no function)
+";
+    assert_eq!(classes_in(text), 4);
+    assert_eq!(unlifted_in(text), ["func_000040", "demo_run"]);
+    assert_eq!(classes_in("class Demo\n  {\n"), 0);
+
+    let wrote = |incomplete: usize, unlifted: Vec<String>| Wrote {
+        stats: Stats {
+            incomplete,
+            ..Stats::default()
+        },
+        classes: 0,
+        unlifted,
+    };
+    assert_eq!(unlifted(&wrote(0, Vec::new())), "none");
+    assert_eq!(unlifted(&wrote(1, Vec::new())), "1");
+    let many: Vec<String> = (0..NAMED_UNLIFTED + 2)
+        .map(|n| format!("demo_{n}"))
+        .collect();
+    let said = unlifted(&wrote(many.len(), many));
+    let first = format!("{}: `demo_0`, `demo_1`, ", NAMED_UNLIFTED + 2);
+    assert!(said.starts_with(&first), "{said}");
+    assert!(
+        said.ends_with(&format!("`demo_{}` and 2 more", NAMED_UNLIFTED - 1)),
+        "{said}"
+    );
+}
+
+#[test]
+fn a_cell_of_the_index_is_a_code_span_on_one_line_whatever_text_it_holds() {
+    assert_eq!(code("demo_program"), "`demo_program`");
+    assert_eq!(code("a|b"), "`a\\|b`");
+    assert_eq!(code("one\ntwo"), "`one two`");
+    assert_eq!(code("a`b"), "``a`b``");
+    assert_eq!(code("`a"), "`` `a ``");
 }
 
 #[test]

@@ -892,3 +892,16 @@ fn a_project_built_in_memory_reads_the_folder_beside_the_program_and_says_so() {
         "{none}"
     );
 }
+
+#[test]
+fn a_summary_is_an_exports_and_said_unused_by_any_other_verb() {
+    let summary = asked(&words(&["x", "--summary"]));
+    assert!(
+        summary.wrong.is_none() && summary.summary,
+        "{:?}",
+        summary.wrong
+    );
+    assert!(unused(Verb::Export, &summary).is_empty());
+    assert_eq!(unused(Verb::Decompile, &summary), ["--summary"]);
+    assert!(!asked(&words(&["x"])).summary);
+}

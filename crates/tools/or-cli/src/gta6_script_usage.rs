@@ -23,7 +23,7 @@ Usage: openrage-cli script <src> [--natives|--strings|--statics|--functions] [--
        openrage-cli script list <archive.rpf> [inner/path] [--json]
        openrage-cli script export <build-folder|archive.rpf|folder> [-o <folder>]
                                   [--level <name>] [--no <pass>]... [--threads <n>]
-                                  [--labels <file>]...
+                                  [--labels <file>]... [--summary]
        openrage-cli script passes
        openrage-cli script names-search <program|folder>... [--words <file>]... [-o <file>]
        openrage-cli script natives --unnamed <program|folder>... [--project <file>]
@@ -71,9 +71,12 @@ Usage: openrage-cli script <src> [--natives|--strings|--statics|--functions] [--
               then writes one otherwise than the code it was read from.
               With -o <folder> it writes there project.json (what the programs state of
               each other: types, fields, signatures, calls), one .cs per program written
-              with it, and scripts.json (what was read, where each program is, with which
-              lists, level and passes). A program that fails is reported and the export
-              goes on; it exits non-zero if any did.
+              with it, scripts.json (what was read, where each program is, with which
+              lists, level and passes), and index.md, a table for a person to read: each
+              source with its program, its name where a list gives one, its functions and
+              classes, and what was not lifted. A program that fails is reported and the
+              export goes on; it exits non-zero if any did. --summary prints, in place of
+              a line a program, the programs that failed and the totals as a table.
   passes      The passes and the level each belongs to, one per line, as --no and --level
               take them. A name no pass reads yet is marked `rebuilds nothing yet`.
   names-search  A names list of what a word search proves of the programs' types, fields

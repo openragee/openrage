@@ -1,18 +1,20 @@
 //! `script export`: every program of a build folder, an archive or a folder decompiled with the
-//! project of them all, counted a line each, and written into one folder where one is named.
+//! project of them all, counted a line each, and written into one folder where one is named, with
+//! an index of its sources a person reads.
 //!
 //! ⚠ The same input, lists and options write the same bytes: no file holds a time, an absolute
 //! path or a machine's name.
 
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
+use std::fmt::Write as _;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use or_io::gta6::script::program::Program;
 use or_io::gta6::script::project::index;
-use or_io::gta6::script::{Names, Options, Project, Stats};
+use or_io::gta6::script::{Names, Options, Project, Stats, CONSTRUCTS};
 use serde::Serialize;
 
 use super::super::lifted::{over, THREADS};
@@ -20,6 +22,24 @@ use super::source::{self, Body};
 use super::{Asked, Decompile, PROJECT_FILE};
 
 const SCRIPTS_FILE: &str = "scripts.json";
+
+/// The file an export writes its index of sources to, for a person to read.
+const INDEX_FILE: &str = "index.md";
+
+/// The functions not lifted an index row names at most; the rest it counts.
+const NAMED_UNLIFTED: usize = 16;
+
+/// The words a class head may carry before `class`.
+const CLASS_MODIFIERS: [&str; 8] = [
+    "public",
+    "private",
+    "protected",
+    "internal",
+    "static",
+    "sealed",
+    "abstract",
+    "partial",
+];
 
 /// What `scripts.json` holds: what was read, with what, and where each program is.
 #[derive(Serialize)]
@@ -46,8 +66,19 @@ struct Row {
     archive: Option<String>,
     entry: Option<String>,
     functions: usize,
+    /// The classes its source declares, nested ones too; 0 for a body that failed.
+    classes: usize,
+    /// The functions its source writes with no body, by the names their comments give them.
+    not_lifted: Vec<String>,
     imports: Vec<String>,
     status: String,
+}
+
+/// What one program's source holds beside what decompiling it counted.
+struct Wrote {
+    stats: Stats,
+    classes: usize,
+    unlifted: Vec<String>,
 }
 
 /// What the first pass keeps of one program.
@@ -78,6 +109,7 @@ pub(super) fn run(asked: &Asked) -> Result<(String, bool), String> {
         options: super::options(asked),
         threads: asked.threads.unwrap_or(THREADS),
         said: &said,
+        summary: asked.summary,
     };
     let out = asked.out.as_deref();
     let (mut lines, failed) = exported(&found.bodies, read, lists.names, asks, out)?;
@@ -102,9 +134,11 @@ pub struct Asks<'a> {
     pub threads: usize,
     /// More lines for the header of each source, each without its `// `.
     pub said: &'a [String],
+    /// `--summary`: the programs that failed and a table of the totals, in place of a line a program.
+    pub summary: bool,
 }
 
-/// Decompiles every body with the project of them all, and writes that project, a source each and what was read into `out` where one is given; a line a body and a total, and how many bodies failed.
+/// Decompiles every body with the project of them all, and writes that project, a source each, what was read and an index into `out` where one is given; a line a body and a total, and how many bodies failed.
 // ⚠ A body that does not read or does not decompile is a line and a row, never the end.
 pub fn exported(
     bodies: &[Body],
@@ -169,13 +203,18 @@ pub fn exported(
             if let Some(file) = file {
                 write(file, text.as_bytes())?;
             }
-            Ok(stats)
+            Ok(Wrote {
+                stats,
+                classes: classes_in(&text),
+                unlifted: unlifted_in(&text),
+            })
         })
     });
 
     let (mut lines, mut total) = (Vec::new(), Stats::default());
-    let (mut failed, mut alone) = (0, 0);
+    let (mut failed, mut alone, mut classes) = (0, 0, 0);
     let mut rows = Vec::with_capacity(bodies.len());
+    let mut indexed = Vec::with_capacity(bodies.len());
     for (((body, stated), file), outcome) in jobs.iter().zip(&outcomes) {
         let stated: Option<&Stated> = Result::as_ref(stated).ok();
         let note = match stated.and_then(|stated| stated.left_out.as_ref()) {
@@ -186,9 +225,12 @@ pub fn exported(
             None => String::new(),
         };
         let status = match outcome {
-            Ok(stats) => {
-                total.add(stats);
-                lines.push(format!("{}: {}{note}", body.label, counts(stats)));
+            Ok(wrote) => {
+                total.add(&wrote.stats);
+                classes += wrote.classes;
+                if !asks.summary {
+                    lines.push(format!("{}: {}{note}", body.label, counts(&wrote.stats)));
+                }
                 "ok".to_owned()
             }
             Err(why) => {
@@ -202,6 +244,7 @@ pub fn exported(
             let imports = p.imports.iter();
             imports.map(|import| super::hex(import.program)).collect()
         };
+        let wrote = outcome.as_ref().ok();
         rows.push(Row {
             file: (*file).clone().filter(|_| outcome.is_ok()),
             program: program.map(|p| super::hex(p.program)),
@@ -212,15 +255,24 @@ pub fn exported(
             archive: body.archive.clone(),
             entry: (body.entry.as_ref()).map(|entry| format!("0x{:016x}", entry.name64)),
             functions: program.map_or(0, |p| p.functions.len()),
+            classes: wrote.map_or(0, |wrote| wrote.classes),
+            not_lifted: wrote.map_or_else(Vec::new, |wrote| wrote.unlifted.clone()),
             imports: program.map_or_else(Vec::new, imports),
             status,
         });
+        if let Some(row) = rows.last() {
+            indexed.push(index_row(row, outcome));
+        }
     }
-    lines.push(format!(
+    let last = format!(
         "total: {} program(s), {failed} failed, {alone} that gave the project no part: {}",
         bodies.len(),
         counts(&total)
-    ));
+    );
+    match asks.summary {
+        true => lines.extend(table(bodies.len(), failed, alone, classes, &total)),
+        false => lines.push(last.clone()),
+    }
 
     let scripts = Scripts {
         format: 1,
@@ -235,7 +287,206 @@ pub fn exported(
     let mut text = serde_json::to_vec_pretty(&scripts).map_err(|e| e.to_string())?;
     text.push(b'\n');
     write(SCRIPTS_FILE, &text)?;
+    let names_said = super::names_sentence(&names);
+    write(
+        INDEX_FILE,
+        index(&scripts, &names_said, &indexed, &last).as_bytes(),
+    )?;
     Ok((lines, failed))
+}
+
+/// What `index.md` holds: how the sources were written, a row a program, and the export's last line.
+fn index(scripts: &Scripts<'_>, names: &str, rows: &[String], last: &str) -> String {
+    let off = match scripts.off.is_empty() {
+        true => "none".to_owned(),
+        false => scripts.off.join(", "),
+    };
+    let mut out = String::new();
+    let _ = writeln!(out, "# GTA VI scripts\n");
+    let _ = writeln!(
+        out,
+        "{} program(s) read from {}, each decompiled at the {} level, passes off: {off}, with \
+         `{}`, the project of them all. `{SCRIPTS_FILE}` says where each program was read from.\n",
+        scripts.programs.len(),
+        scripts.read,
+        scripts.level,
+        scripts.project
+    );
+    let _ = writeln!(out, "Names: {names}.\n");
+    let _ = writeln!(
+        out,
+        "| Source | Program | Name | Functions | Classes | Not lifted |"
+    );
+    let _ = writeln!(out, "|---|---|---|--:|--:|---|");
+    for row in rows {
+        let _ = writeln!(out, "{row}");
+    }
+    let _ = writeln!(out, "\n{last}");
+    out
+}
+
+/// One program's row of the index: its source, hash and name, its functions and classes, and what was not lifted, or why it failed.
+fn index_row(row: &Row, outcome: &Result<Wrote, String>) -> String {
+    let none = || "-".to_owned();
+    let linked = |file: &str| format!("[{}]({file})", code(file));
+    let source = row.file.as_deref().map_or_else(none, linked);
+    let program = row.program.clone().unwrap_or_else(none);
+    let name = row.name.as_deref().map_or_else(none, code);
+    let (functions, classes, missing) = match outcome {
+        Ok(wrote) => (
+            wrote.stats.functions.to_string(),
+            wrote.classes.to_string(),
+            unlifted(wrote),
+        ),
+        Err(why) => (
+            row.functions.to_string(),
+            none(),
+            format!("failed: {}", code(why)),
+        ),
+    };
+    format!("| {source} | {program} | {name} | {functions} | {classes} | {missing} |")
+}
+
+/// What an index row says was not lifted: none, else how many and the names the source gives them.
+// ⚠ The count is the decompile's, the names the source's comments: at the lowest level a
+// function with no body is a head over a comment that names none.
+fn unlifted(wrote: &Wrote) -> String {
+    let count = wrote.stats.incomplete;
+    if count == 0 {
+        return "none".to_owned();
+    }
+    let named = wrote.unlifted.iter().take(NAMED_UNLIFTED);
+    let named: Vec<String> = named.map(|name| code(name)).collect();
+    let mut out = format!("{count}");
+    if !named.is_empty() {
+        let _ = write!(out, ": {}", named.join(", "));
+    }
+    let more = wrote.unlifted.len().saturating_sub(NAMED_UNLIFTED);
+    if more > 0 {
+        let _ = write!(out, " and {more} more");
+    }
+    out
+}
+
+/// `text` as a code span of a table cell: on one line, each `|` escaped, between fences longer than any run of backticks in it.
+fn code(text: &str) -> String {
+    let text = text.replace(['\n', '\r'], " ").replace('|', "\\|");
+    let (mut longest, mut run) = (0, 0);
+    for c in text.chars() {
+        run = if c == '`' { run + 1 } else { 0 };
+        longest = longest.max(run);
+    }
+    let fence = "`".repeat(longest + 1);
+    // A span that starts or ends on a backtick needs a space between it and the fence.
+    let pad = match text.starts_with('`') || text.ends_with('`') {
+        true => " ",
+        false => "",
+    };
+    format!("{fence}{pad}{text}{pad}{fence}")
+}
+
+/// How many classes `text` declares: each line that is a class head as the printer writes one, with a `{` alone under it at its indent.
+// A head too long for its line goes on over lines indented under it, each but the last ending on
+// a comma.
+fn classes_in(text: &str) -> usize {
+    let mut lines = text.lines().peekable();
+    let mut classes = 0;
+    while let Some(line) = lines.next() {
+        let head = line.trim_start();
+        let indent = &line[..line.len() - head.len()];
+        if !class_head(head) {
+            continue;
+        }
+        let deeper = |next: &str| {
+            let rest = next.strip_prefix(indent);
+            rest.is_some_and(|rest| rest.starts_with("    "))
+        };
+        if head.trim_end().ends_with(',') {
+            while lines.peek().is_some_and(|next| deeper(next)) {
+                let last = lines
+                    .next()
+                    .is_some_and(|next| !next.trim_end().ends_with(','));
+                if last {
+                    break;
+                }
+            }
+        }
+        let opens = (lines.peek()).is_some_and(|next| next.strip_prefix(indent) == Some("{"));
+        classes += usize::from(opens);
+    }
+    classes
+}
+
+/// Whether `head` is a class head: modifiers, `class`, a name, and what it derives from; no statement.
+fn class_head(head: &str) -> bool {
+    // A listing's own syntax ends a head with its offset as a comment.
+    let head = head.split(" //").next().unwrap_or(head);
+    if head.contains(['(', '=', ';']) {
+        return false;
+    }
+    let mut words = head.split_whitespace();
+    let class = words.find(|word| !CLASS_MODIFIERS.contains(word));
+    let name = words.next().map(|name| name.trim_end_matches(':'));
+    class == Some("class") && name.is_some_and(is_name)
+}
+
+fn is_name(word: &str) -> bool {
+    !word.is_empty() && word.chars().all(|c| c.is_alphanumeric() || c == '_')
+}
+
+/// The functions `text` writes with no body, by the name each comment that stands for one gives it, in the order written.
+// The two shapes the printer writes: `// func_000040: no body (why)` and `// name at 0x000040: the
+// listing holds no body (why)`.
+fn unlifted_in(text: &str) -> Vec<String> {
+    let named = |line: &str| -> Option<String> {
+        let comment = line.trim_start().strip_prefix("// ")?;
+        let (name, rest) = comment.split_once(": ")?;
+        let name = match name.split_once(" at 0x") {
+            Some((name, at)) => {
+                let hex = !at.is_empty() && at.bytes().all(|b| b.is_ascii_hexdigit());
+                (hex && rest.starts_with("the listing holds no body (")).then_some(name)?
+            }
+            None => rest.starts_with("no body (").then_some(name)?,
+        };
+        is_name(name).then(|| name.to_owned())
+    };
+    text.lines().filter_map(named).collect()
+}
+
+/// The counts of the export's last line, a row each, for `--summary`.
+fn table(programs: usize, failed: usize, alone: usize, classes: usize, s: &Stats) -> Vec<String> {
+    let mut rows: Vec<(String, usize)> = [
+        ("programs", programs),
+        ("failed", failed),
+        ("gave the project no part", alone),
+        ("functions", s.functions),
+        ("classes", classes),
+        ("not lifted", s.incomplete),
+        ("statements in", s.statements_in),
+        ("statements out", s.statements_out),
+        ("gotos left", s.gotos_out),
+        ("temporaries in", s.temporaries_in),
+        ("temporaries out", s.temporaries_out),
+        ("native calls", s.native_calls),
+        ("native calls named", s.natives_named),
+    ]
+    .into_iter()
+    .map(|(what, count)| (what.to_owned(), count))
+    .collect();
+    let read = CONSTRUCTS.iter().zip(s.constructs);
+    rows.extend(
+        read.filter(|(_, count)| *count > 0)
+            .map(|(kind, count)| (format!("constructs read: {kind}"), count)),
+    );
+    let wide = rows.iter().map(|(what, _)| what.len()).max().unwrap_or(0);
+    let digits = rows
+        .iter()
+        .map(|(_, n)| n.to_string().len())
+        .max()
+        .unwrap_or(1);
+    let rows = rows.iter();
+    rows.map(|(what, n)| format!("{what:<wide$}  {n:>digits$}"))
+        .collect()
 }
 
 /// Reads one program, and its part of the project where it gives one.

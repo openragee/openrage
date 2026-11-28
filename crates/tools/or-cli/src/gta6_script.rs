@@ -141,6 +141,8 @@ struct Asked {
     exe: Option<PathBuf>,
     entry: Option<String>,
     threads: Option<usize>,
+    /// `--summary`: an export prints a table of its totals in place of a line a program.
+    summary: bool,
     help: bool,
     /// The first thing wrong with the arguments, were they for a GTA VI script.
     wrong: Option<String>,
@@ -284,6 +286,7 @@ fn asked(args: &[String]) -> Asked {
             "--json" => asked.json = true,
             "--with-classes" => asked.with_classes = true,
             "--alone" => asked.alone = true,
+            "--summary" => asked.summary = true,
             // GTA V's listing has a column of bytes to leave out, and this one has none.
             "--no-bytes" => {}
             // GTA V's script holds the first values of its statics, and this container holds none.
@@ -387,6 +390,7 @@ fn unused(verb: Verb, asked: &Asked) -> Vec<&'static str> {
             "--project",
         ),
         (asked.alone && verb != Verb::Decompile, "--alone"),
+        (asked.summary && verb != Verb::Export, "--summary"),
         (
             asked.threads.is_some() && !(verb == Verb::Export || (asked.auto && reads_code)),
             "--threads",

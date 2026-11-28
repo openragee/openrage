@@ -1359,3 +1359,302 @@ fn a_label_a_list_of_guesses_gives_a_native_names_no_variable() {
     assert_eq!(name_of(&f, held), None);
     assert_eq!(did.roles, 0);
 }
+
+/// `base.<the field at offset> = value` through `p0`: one store to a field of `owner`.
+fn field_store(owner: TypeKey, offset: u32, value: Expr) -> tree::Stmt {
+    let stored = Stmt::Store {
+        kind: crate::gta6::script::ir::StoreKind::I32,
+        addr: var(Var::Param(0)),
+        offset,
+        value,
+    };
+    tree::Stmt::Sugar(Box::new(tree::Sugar::Group {
+        kind: tree::Group::Field { owner },
+        parts: vec![stored],
+    }))
+}
+
+/// The read of the field at `offset` of `owner` through `p0`, as the fields pass marks it.
+fn field_read(owner: TypeKey, offset: u32) -> Expr {
+    let load = Expr::Load {
+        ty: Scalar::U64,
+        addr: Box::new(var(Var::Param(0))),
+        offset,
+    };
+    Expr::sugar(ExprSugar::Field { owner }, load)
+}
+
+#[test]
+fn a_constructors_parameter_kept_in_one_named_field_takes_its_name_however_else_it_is_read() {
+    let owner = TypeKey(0xA0);
+    let mut names = Names::default();
+    names.fields.insert((owner, 0x10), "_quills".to_owned());
+    names.fields.insert((owner, 0x14), "Flonk".to_owned());
+    let body = || {
+        let used = |v: Var| eval(native("USE", 0xD5, vec![var(v)]));
+        vec![
+            // Kept, and handed on.
+            field_store(owner, 0x10, var(Var::Param(1))),
+            used(Var::Param(1)),
+            // Kept, and given another value.
+            field_store(owner, 0x14, var(Var::Param(2))),
+            assign(Var::Param(2), int(5)),
+            used(Var::Param(2)),
+            // Kept in two fields.
+            field_store(owner, 0x10, var(Var::Param(3))),
+            field_store(owner, 0x14, var(Var::Param(3))),
+            used(Var::Param(3)),
+            // The receiver, kept in a field and read as the place of every store.
+            field_store(owner, 0x14, var(Var::Param(0))),
+        ]
+    };
+    let constructor = Member {
+        owner,
+        role: Role::Constructor,
+        is_static: false,
+        slot: None,
+    };
+    let mut project = Project::default();
+    project
+        .members
+        .insert(FunctionKey::new(0x1122_3344, 0x40), constructor);
+    let options = Options::baseline().with(Pass::RoleNames);
+    let (f, _) = applied(head(4, 0), body(), &Context::new(&names, &project, options));
+    let params: Vec<Option<&str>> = (0..4).map(|n| name_of(&f, Var::Param(n))).collect();
+    assert_eq!(params, [None, Some("quills"), None, None]);
+
+    // A method that is no constructor hands on what it is handed as it likes.
+    let (plain, _) = applied(head(4, 0), body(), &with(&names, &[Pass::RoleNames]));
+    assert_eq!(name_of(&plain, Var::Param(1)), None);
+    let off = Context::new(&names, &project, Options::baseline());
+    let (off, _) = applied(head(4, 0), body(), &off);
+    assert_eq!(name_of(&off, Var::Param(1)), None);
+}
+
+#[test]
+fn a_field_a_base_type_declares_names_what_is_read_from_it_and_stored_to_it() {
+    let (base, derived) = (TypeKey(0xB0), TypeKey(0xB1));
+    let mut names = Names::default();
+    names.fields.insert((base, 0x10), "_quills".to_owned());
+    let mut project = Project::default();
+    let facts = TypeFacts {
+        base: Some(base),
+        ..TypeFacts::default()
+    };
+    project.types.insert(derived, facts);
+    let a = Var::Local(0);
+    let body = || {
+        vec![
+            assign(a, field_read(derived, 0x10)),
+            field_store(derived, 0x10, var(Var::Param(1))),
+        ]
+    };
+    let options = Options::baseline().with(Pass::RoleNames);
+    let (f, _) = applied(head(2, 1), body(), &Context::new(&names, &project, options));
+    assert_eq!(
+        (name_of(&f, Var::Param(1)), name_of(&f, a)),
+        (Some("quills"), Some("quills_2"))
+    );
+    // With no base the type itself declares no field there.
+    let (alone, _) = applied(head(2, 1), body(), &with(&names, &[Pass::RoleNames]));
+    assert_eq!(
+        (name_of(&alone, Var::Param(1)), name_of(&alone, a)),
+        (None, None)
+    );
+}
+
+#[test]
+fn a_variable_given_an_arrays_length_is_length() {
+    let (a, b) = (Var::Local(0), Var::Local(1));
+    let length = || intrinsic("array_length", vec![var(Var::Param(0))]);
+    let body = || {
+        vec![
+            assign(a, length()),
+            // A slot given a length and something else holds neither.
+            assign(b, length()),
+            assign(b, native("GET_DEMO_THING", 0xA1, vec![])),
+        ]
+    };
+    let names = Names::default();
+    let (f, _) = applied(head(1, 2), body(), &with(&names, &[Pass::RoleNames]));
+    assert_eq!((name_of(&f, a), name_of(&f, b)), (Some("length"), None));
+    let (off, _) = applied(head(1, 2), body(), &with(&names, &[]));
+    assert_eq!(name_of(&off, a), None);
+}
+
+/// `d = new System.Delegate(); ctor(d, p0, function)`: a delegate made in `d` of `function`, bound to `p0`.
+fn delegate(d: Var, function: Expr) -> tree::Stmt {
+    let made = Stmt::Assign {
+        target: d,
+        value: object("System.Delegate"),
+    };
+    let args = vec![var(d), var(Var::Param(0)), function];
+    tree::Stmt::Sugar(Box::new(tree::Sugar::Group {
+        kind: tree::Group::Delegate,
+        parts: vec![made, Stmt::Eval(intrinsic("delegate_ctor", args))],
+    }))
+}
+
+#[test]
+fn a_delegate_takes_the_name_of_the_method_it_is_made_of() {
+    let program = 0x1122_3344;
+    let mut names = Names::default();
+    let key = FunctionKey::new(program, 0x200);
+    names.functions.insert(key, "OnQuillDropped".to_owned());
+    names
+        .methods
+        .insert((TypeKey(0xA0), 4), "Wobble".to_owned());
+    let mut project = Project::default();
+    let derived = TypeFacts {
+        base: Some(TypeKey(0xA0)),
+        ..TypeFacts::default()
+    };
+    project.types.insert(TypeKey(0xA1), derived);
+    let function = |at: u32| Expr::FunctionRef { program, at };
+    let slot = Expr::VirtualFunctionRef {
+        receiver: Box::new(var(Var::Param(0))),
+        ty: VmType {
+            name: "type_00000000000000A1".to_owned(),
+            byte_size: 16,
+            id: 3,
+            flags: 0,
+        },
+        slot: 4,
+    };
+    let [by_function, by_slot, lambda, unnamed, twice] = [0, 1, 2, 3, 4].map(Var::Local);
+    let all = [by_function, by_slot, lambda, unnamed, twice];
+    let body = || {
+        vec![
+            // The top byte of a reference's offset holds its flags.
+            delegate(by_function, function(0x0100_0200)),
+            delegate(by_slot, slot.clone()),
+            delegate(lambda, Expr::sugar(ExprSugar::Lambda, function(0x200))),
+            delegate(unnamed, function(0x300)),
+            delegate(twice, function(0x200)),
+            assign(twice, int(0)),
+            eval(native("USE", 0xD5, all.iter().copied().map(var).collect())),
+        ]
+    };
+    let options = Options::baseline().with(Pass::RoleNames);
+    let (f, _) = applied(head(1, 5), body(), &Context::new(&names, &project, options));
+    let named: Vec<Option<&str>> = all.iter().map(|v| name_of(&f, *v)).collect();
+    assert_eq!(
+        named,
+        [Some("onQuillDropped"), Some("wobble"), None, None, None]
+    );
+    let (off, _) = applied(head(1, 5), body(), &with(&names, &[]));
+    assert!(all.iter().all(|v| name_of(&off, *v).is_none()));
+
+    // A function whose name camel case leaves as it is: the variable would hide the function it binds.
+    names.functions.insert(key, "zorpify".to_owned());
+    let cx = Context::new(&names, &project, options);
+    let (f, _) = applied(head(1, 5), body(), &cx);
+    assert_eq!(name_of(&f, by_function), Some("zorpify_2"));
+}
+
+/// `foreach` over `source` by `local_9` stepped from zero, the item read into `item` and used.
+fn stepped_foreach(source: Expr, item: Var) -> tree::Stmt {
+    let index = Var::Local(9);
+    let start = Stmt::Assign {
+        target: index,
+        value: int(0),
+    };
+    let step = Stmt::Assign {
+        target: index,
+        value: Expr::binary(BinOp::Add, var(index), int(1)),
+    };
+    let read = Stmt::Assign {
+        target: item,
+        value: intrinsic("array_get_u64", vec![source.clone(), var(index)]),
+    };
+    let length = intrinsic("array_length", vec![source]);
+    tree::Stmt::Sugar(Box::new(tree::Sugar::Foreach {
+        setup: vec![start],
+        cond: Expr::binary(BinOp::Lt, var(index), length),
+        item: Box::new(read),
+        body: vec![eval(native("USE", 0xD5, vec![var(item)]))],
+        step: Some(Box::new(step)),
+        after: Vec::new(),
+    }))
+}
+
+#[test]
+fn a_foreach_item_takes_the_singular_of_the_named_field_it_goes_through_else_item() {
+    let owner = TypeKey(0xA0);
+    let mut names = Names::default();
+    names.fields.insert((owner, 0x10), "_snorkels".to_owned());
+    names.fields.insert((owner, 0x18), "Gurnboxes".to_owned());
+    names.fields.insert((owner, 0x20), "Quills".to_owned());
+    let [held, through, boxed, other, twice] = [0, 1, 2, 3, 4].map(Var::Local);
+    let made = Var::Value { at: 0x80, index: 0 };
+    let body = || {
+        vec![
+            // Through a variable given the field once, through a field that is no plain plural,
+            // and through a parameter.
+            assign(held, field_read(owner, 0x10)),
+            stepped_foreach(var(held), through),
+            stepped_foreach(field_read(owner, 0x18), boxed),
+            stepped_foreach(var(Var::Param(1)), other),
+            // An item given a value outside its loop too.
+            stepped_foreach(field_read(owner, 0x10), twice),
+            assign(twice, int(2)),
+            // The item the `foreach` pass made, through the field itself.
+            stepped_foreach(field_read(owner, 0x20), made),
+        ]
+    };
+    let made_head = || {
+        let mut made_head = head(2, 10);
+        let item = VarInfo {
+            name: Some("item".to_owned()),
+            ..VarInfo::new(Width::Cell)
+        };
+        made_head.vars.insert(made, item);
+        made_head
+    };
+    let (f, _) = applied(made_head(), body(), &with(&names, &[Pass::RoleNames]));
+    let named = |v: Var| name_of(&f, v);
+    assert_eq!(
+        [named(held), named(through), named(boxed), named(other)],
+        [
+            Some("snorkels"),
+            Some("snorkel"),
+            Some("item_2"),
+            Some("item_3")
+        ]
+    );
+    assert_eq!((named(twice), named(made)), (None, Some("quill")));
+
+    let (off, _) = applied(made_head(), body(), &with(&names, &[]));
+    assert_eq!(
+        (name_of(&off, through), name_of(&off, made)),
+        (None, Some("item"))
+    );
+}
+
+#[test]
+fn only_a_plural_that_ends_in_a_plain_s_has_a_singular() {
+    for (plural, one) in [
+        ("snorkels", Some("snorkel")),
+        ("flonkles", Some("flonkle")),
+        ("quillIds", Some("quillId")),
+        ("gurnboxes", None),
+        ("flonkies", None),
+        ("quillus", None),
+        ("snorkelss", None),
+        ("zas", None),
+        ("FLONKs", None),
+        ("quill", None),
+        // A keyword names nothing.
+        ("events", None),
+    ] {
+        assert_eq!(singular(plural).as_deref(), one, "{plural}");
+    }
+    for (name, made) in [
+        ("item", true),
+        ("item_12", true),
+        ("item_", false),
+        ("items", false),
+    ] {
+        assert_eq!(made_item(name), made, "{name}");
+    }
+}

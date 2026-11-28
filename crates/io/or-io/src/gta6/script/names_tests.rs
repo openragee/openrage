@@ -1061,3 +1061,30 @@ fn every_row_of_the_tables_a_package_ships_is_read_by_its_column_names() {
     assert!(names.hash_slots.contains(&(0xD1, 2)));
     assert_eq!(names.native_at(0x0102_0304), Some(0xAA));
 }
+
+#[test]
+fn a_table_of_programs_a_package_ships_names_each_by_both_its_hashes_and_a_later_list_still_overrides(
+) {
+    let name = "zorbleplaza";
+    let (short, long) = (folded32(name), name_hash64(name.as_bytes()));
+    let programs = format!(
+        "program_hash\tfile_hash64\tname\tevidence\n\
+         0x{short:08X}\t0x{long:016X}\t{name}\ta note\n\
+         0x0000ABCD\t0x00000000000000E5\t\t\n"
+    );
+    let mut names = Names::default();
+    assert_eq!(names.read_list("programs", &programs), Ok(2));
+    assert_eq!(names.rows, [(1, 0)], "a row with no name is passed over");
+    assert_eq!(names.program(u64::from(short)), Some(name));
+    assert_eq!(names.program(long), Some(name));
+    assert_eq!(names.program(0xABCD), None);
+
+    // After the tables a package ships, a list the user gives stands in place of a builtin's name.
+    let head = "type_index\tmethod_index\twrapper_path\n";
+    let shipped = format!("{head}4\t2\tDemo.Flask.Swirl\n");
+    assert_eq!(names.read_list("shipped", &shipped), Ok(1));
+    let mine = format!("{head}4\t2\tDemo.Flask.Twirl\n");
+    assert_eq!(names.read_list("mine", &mine), Ok(0));
+    assert_eq!(names.builtin(4, 2), Some("Demo.Flask.Twirl"));
+    assert_eq!(names.program(long), Some(name));
+}

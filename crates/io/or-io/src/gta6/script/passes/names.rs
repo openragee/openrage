@@ -9,9 +9,8 @@
 //! value takes the parameter's name it is passed as however else it is read, one fetched once
 //! by a call or a load takes the name of the script type it is proved to hold, and the index a
 //! `for` counts with is `i`, `j` or `k`, which loops side by side share where each declares its
-//! own; under `native-params`
-//! the pointer parameter a native fills a variable through names it. Natives, types and programs
-//! take their names where the printer writes them, from [`Names`].
+//! own; under `native-params` the pointer parameter a native fills a variable through names it.
+//! Natives, types and programs take their names where the printer writes them, from [`Names`].
 //!
 //! ⚠ A name is a label and changes no code, but a wrong one misleads: a variable assigned twice,
 //! one whose address is taken, or one two parameters name differently keeps its slot name.
@@ -26,7 +25,7 @@ use crate::gta5::script::natives::{NativeName, NativeParam};
 use crate::gta6::script::class::Role;
 use crate::gta6::script::ir::{
     BinOp, Callee, Const, Expr, ExprSugar, FunctionKey, Head, Kind, Stmt, TypeKey, Var, VarInfo,
-    Width,
+    Width, FUNCTION_OFFSET,
 };
 use crate::gta6::script::names::Names;
 use crate::gta6::script::print;
@@ -38,6 +37,9 @@ const MAX_BASES: usize = 64;
 
 /// The names of the index a `for` counts with, by how many counted loops it is nested in.
 const COUNTERS: [&str; 3] = ["i", "j", "k"];
+
+/// The name of the item of a `foreach` where no named field it goes through gives a singular.
+const ITEM: &str = "item";
 
 /// Names each variable of `f` that one fact names: the named native it holds the result of, or the named parameter it is always passed as.
 pub fn run(f: &mut tree::Function, names: &Names, stats: &mut Stats) {
@@ -72,6 +74,7 @@ fn apply(f: &mut tree::Function, cx: &Context<'_>) -> Did {
         facts,
         mut taken,
         loops,
+        items,
     } = gather(&f.body, &f.head, cx);
     taken.insert(f.head.name.clone());
     taken.extend(f.head.vars.values().filter_map(|info| info.name.clone()));
@@ -80,6 +83,11 @@ fn apply(f: &mut tree::Function, cx: &Context<'_>) -> Did {
     if member.is_some_and(|member| member.role == Role::Setter) {
         taken.insert("value".to_owned());
     }
+    // An instance constructor's first parameter is its receiver, written `this`.
+    let constructor = member.filter(|member| member.role == Role::Constructor);
+    let receiver = constructor
+        .filter(|member| !member.is_static)
+        .map(|_| Var::Param(0));
     let exposed: Vec<u32> = facts
         .iter()
         .filter_map(|(var, facts)| match var {
@@ -99,16 +107,39 @@ fn apply(f: &mut tree::Function, cx: &Context<'_>) -> Did {
         false => BTreeSet::new(),
     };
     let mut shared: BTreeMap<&str, String> = BTreeMap::new();
+    let more = cx.options.on(Pass::RoleNames);
+    let items = match more {
+        true => singulars(&items, &facts, &exposed, &f.head),
+        false => BTreeMap::new(),
+    };
 
     // In the order of the variables, so that which of two takes the bare name never changes.
-    let more = cx.options.on(Pass::RoleNames);
     for (var, facts) in &facts {
-        let named = (f.head.vars.get(var)).is_some_and(|info| info.name.is_some());
+        // ⚠ The item a `foreach` is given only by the loop, and none other: a value given
+        // otherwise, or written through an address, is another variable's.
+        let item = items
+            .get(var)
+            .filter(|_| only_items(*var, facts, &exposed, &f.head));
+        let held = (f.head.vars.get(var)).and_then(|info| info.name.as_deref());
+        if let Some(held) = held {
+            // The item the `foreach` pass made is named only for being one: a singular says more.
+            if let (true, Some(Some(singular))) = (made_item(held), item) {
+                let name = unique(singular, &mut taken);
+                if let Some(info) = f.head.vars.get_mut(var) {
+                    info.name = Some(name);
+                    did.roles += 1;
+                }
+            }
+            continue;
+        }
         let typed = more.then(|| typed_role(*var, &f.head, cx.names)).flatten();
-        let role = role(*var, facts, &exposed, &f.head, more, typed);
+        let made_with = constructor.is_some() && matches!(var, Var::Param(_));
+        let made_with = made_with && receiver != Some(*var);
+        let role = role(*var, facts, &exposed, &f.head, more, typed, made_with);
+        let item_role = item.map(|one| one.clone().unwrap_or_else(|| ITEM.to_owned()));
+        let role = role.or(item_role);
         let counter = counters.get(var).copied().filter(|_| role.is_none());
-        let role = role.or_else(|| counter.map(str::to_owned));
-        let Some(role) = role.filter(|_| !named) else {
+        let Some(role) = role.or_else(|| counter.map(str::to_owned)) else {
             continue;
         };
         let name = match counter.filter(|_| scoped.contains(var)) {
@@ -267,6 +298,24 @@ struct Facts {
     counted: u32,
     /// The assignments whose value is a call or a load, whatever it calls or loads.
     fetched: u32,
+    /// The role the method a delegate made by an assignment is bound to gives, the assignments that make one, and whether two give different roles.
+    binds: Option<String>,
+    binding: u32,
+    binds_apart: bool,
+    /// The role of the named field an assignment reads, and the assignments that read one.
+    field_read: Option<String>,
+    fields_read: u32,
+    /// The assignments that are the item of a `foreach`.
+    items: u32,
+}
+
+/// What a `foreach` goes through, as far as names go.
+enum Gone {
+    /// A field a list names, by the role its name gives.
+    Field(String),
+    /// A variable: a named field where it is given one value and that value is a read of one.
+    Held(Var),
+    Other,
 }
 
 /// One `for` that counts with a variable.
@@ -287,6 +336,8 @@ struct Gathered {
     taken: BTreeSet<String>,
     /// Every `for` whose head counts with one variable, an outer loop before the loops in it.
     loops: Vec<Counted>,
+    /// The item of each `foreach`, with what the loop goes through.
+    items: Vec<(Var, Gone)>,
 }
 
 // An explicit stack: a body nests as deep as its listing does.
@@ -358,6 +409,9 @@ fn gather(body: &[tree::Stmt], head: &Head, cx: &Context<'_>) -> Gathered {
                     {
                         gathered.stored(*owner, parts, cx);
                     }
+                    if cx.options.on(Pass::RoleNames) {
+                        gathered.made(sugar, cx);
+                    }
                     let parts = sugar.parts();
                     for s in parts.simples {
                         gathered.simple(s, head, cx);
@@ -393,6 +447,15 @@ impl Gathered {
             Expr::Call { .. } | Expr::Load { .. } | Expr::LoadBytes { .. }
         ) {
             self.facts.entry(*target).or_default().fetched += 1;
+        }
+        let read = cx
+            .options
+            .on(Pass::RoleNames)
+            .then(|| field_role(value, cx));
+        if let Some(role) = read.flatten() {
+            let facts = self.facts.entry(*target).or_default();
+            facts.fields_read += 1;
+            facts.field_read = Some(role);
         }
         if let Some(role) = result_role(value, cx.names) {
             let facts = self.facts.entry(*target).or_default();
@@ -432,6 +495,13 @@ impl Gathered {
                     self.passed(native, args, head, cx.options.on(Pass::NativeParams));
                 }
             }
+            // A function bound by its name is written by it: a variable of that name would hide it.
+            Expr::FunctionRef { program, at } => {
+                let key = FunctionKey::new(*program, at & FUNCTION_OFFSET);
+                if let Some(name) = cx.names.function(key) {
+                    self.taken.insert(name.to_owned());
+                }
+            }
             _ => {}
         });
     }
@@ -448,13 +518,51 @@ impl Gathered {
             let Expr::Var(var) = bare(value) else {
                 continue;
             };
-            let Some(role) = cx.names.field(owner, *offset).and_then(camel) else {
+            let Some(role) = field_name(owner, *offset, cx).and_then(camel) else {
                 continue;
             };
             let facts = self.facts.entry(*var).or_default();
             facts.stored += 1;
             facts.stored_apart |= (facts.stored_as.as_ref()).is_some_and(|held| *held != role);
             facts.stored_as = Some(role);
+        }
+    }
+
+    /// Notes the role the method a delegate made is bound to gives the variable it is made in, and the item of a `foreach` with what the loop goes through.
+    fn made(&mut self, sugar: &tree::Sugar, cx: &Context<'_>) {
+        match sugar {
+            tree::Sugar::Group {
+                kind: tree::Group::Delegate,
+                parts,
+            } => {
+                let Some((target, role)) = bound(parts, cx) else {
+                    return;
+                };
+                let facts = self.facts.entry(target).or_default();
+                facts.binding += 1;
+                facts.binds_apart |= (facts.binds.as_ref()).is_some_and(|held| *held != role);
+                facts.binds = Some(role);
+            }
+            tree::Sugar::Foreach {
+                setup,
+                cond,
+                item,
+                step,
+                ..
+            } => {
+                let Stmt::Assign { target, .. } = &**item else {
+                    return;
+                };
+                let source = collection(setup, cond, item, step.as_deref());
+                let gone = match source.map(|source| (field_role(source, cx), bare(source))) {
+                    Some((Some(role), _)) => Gone::Field(role),
+                    Some((None, Expr::Var(var))) => Gone::Held(*var),
+                    _ => Gone::Other,
+                };
+                self.facts.entry(*target).or_default().items += 1;
+                self.items.push((*target, gone));
+            }
+            _ => {}
         }
     }
 
@@ -578,6 +686,48 @@ fn counters(
     lettered.collect()
 }
 
+/// The singular each `foreach` item takes from the named field its loops go through; `None` where one of them goes through no such field, gives no singular, or gives another.
+fn singulars(
+    items: &[(Var, Gone)],
+    facts: &BTreeMap<Var, Facts>,
+    exposed: &[u32],
+    head: &Head,
+) -> BTreeMap<Var, Option<String>> {
+    let mut found: BTreeMap<Var, Option<String>> = BTreeMap::new();
+    for (item, gone) in items {
+        let field = match gone {
+            Gone::Field(role) => Some(role.as_str()),
+            Gone::Held(var) => held_field(*var, facts, exposed, head),
+            Gone::Other => None,
+        };
+        let one = field.and_then(singular);
+        let held = found.entry(*item).or_insert_with(|| one.clone());
+        if *held != one {
+            *held = None;
+        }
+    }
+    found
+}
+
+/// The role of the named field `var` holds, where reading it is the one value `var` is given and no address reaches it.
+fn held_field<'f>(
+    var: Var,
+    facts: &'f BTreeMap<Var, Facts>,
+    exposed: &[u32],
+    head: &Head,
+) -> Option<&'f str> {
+    let facts = facts.get(&var)?;
+    let one = facts.assigned == 1 && facts.fields_read == 1 && facts.addresses == 0;
+    let local = !matches!(var, Var::Param(_) | Var::Global { .. }) && !covered(var, exposed, head);
+    facts.field_read.as_deref().filter(|_| one && local)
+}
+
+/// Whether `var` is given values only as the item of `foreach` loops, and none through an address.
+fn only_items(var: Var, facts: &Facts, exposed: &[u32], head: &Head) -> bool {
+    let local = !matches!(var, Var::Param(_) | Var::Global { .. }) && !covered(var, exposed, head);
+    facts.items > 0 && facts.items == facts.assigned && facts.addresses == 0 && local
+}
+
 /// The indices the printer declares in the head of every loop they count, where no construct holds the loop: two of them of one letter may share its name.
 // ⚠ C# allows one name to two variables only where neither's scope holds the other's. Such an
 // index is mentioned in its loops alone, and two indices of one letter never count loops nested
@@ -601,14 +751,9 @@ fn held_role(value: &Expr, head: &Head, cx: &Context<'_>) -> Option<String> {
         match value {
             Expr::Cast { e, .. } => value = &**e,
             Expr::Sugar {
-                kind: ExprSugar::Field { owner },
-                e,
-            } => {
-                let (Expr::Load { offset, .. } | Expr::LoadBytes { offset, .. }) = &**e else {
-                    return None;
-                };
-                return camel(cx.names.field(*owner, *offset)?);
-            }
+                kind: ExprSugar::Field { .. },
+                ..
+            } => return field_role(value, cx),
             Expr::Sugar { e, .. } => value = &**e,
             Expr::NewObject(ty) => {
                 // A type nothing names is no role, whatever its hash spells.
@@ -618,6 +763,12 @@ fn held_role(value: &Expr, head: &Head, cx: &Context<'_>) -> Option<String> {
                 };
                 return type_role(name);
             }
+            // C# reads an array's length as `a.Length`.
+            Expr::Call {
+                callee: Callee::Intrinsic { name, .. },
+                args,
+                ..
+            } if name == "array_length" && args.len() == 1 => return Some("length".to_owned()),
             Expr::Call {
                 callee: Callee::Intrinsic { name, .. },
                 ..
@@ -637,21 +788,218 @@ fn method_name<'a>(callee: &'a Callee, head: &Head, cx: &Context<'a>) -> Option<
         Callee::Local { at, .. } => cx.names.function(FunctionKey::new(head.program, *at)),
         Callee::Import { program, at, .. } => cx.names.function(FunctionKey::new(*program, *at)),
         Callee::Builtin { path, .. } => path.rsplit('.').next(),
-        Callee::Virtual { ty, slot, .. } => {
-            let mut key = TypeKey::of_name(ty)?;
-            for _ in 0..MAX_BASES {
-                if let Some(name) = cx.names.method(key, *slot) {
-                    return Some(name);
-                }
-                key = cx.project.types.get(&key)?.base?;
-            }
-            None
-        }
+        Callee::Virtual { ty, slot, .. } => slot_name(TypeKey::of_name(ty)?, *slot, cx),
         _ => None,
     }
 }
 
-/// The role one fact gives `var`: the result of a native, then the parameter of one, then what else it holds, or the parameter it is filled through; under `more` also a role every value it is given has, the role of its type `typed` where a call or a load gives its one value, and a parameter's name its one value is passed as.
+/// The name a list gives virtual slot `slot` of `ty`, looked for on the type and then on its bases.
+fn slot_name<'a>(ty: TypeKey, slot: u32, cx: &Context<'a>) -> Option<&'a str> {
+    let mut key = ty;
+    for _ in 0..MAX_BASES {
+        if let Some(name) = cx.names.method(key, slot) {
+            return Some(name);
+        }
+        key = cx.project.types.get(&key)?.base?;
+    }
+    None
+}
+
+/// The name a list gives the field at byte `offset` of `owner` or of a base of it, as the printer writes the field.
+fn field_name<'a>(owner: TypeKey, offset: u32, cx: &Context<'a>) -> Option<&'a str> {
+    let mut key = owner;
+    for _ in 0..MAX_BASES {
+        if let Some(name) = cx.names.field(key, offset) {
+            return Some(name);
+        }
+        key = cx.project.types.get(&key)?.base?;
+    }
+    None
+}
+
+/// The role of the named field `value` reads, under its casts and source readings.
+fn field_role(value: &Expr, cx: &Context<'_>) -> Option<String> {
+    let mut value = value;
+    loop {
+        match value {
+            Expr::Sugar {
+                kind: ExprSugar::Field { owner },
+                e,
+            } => {
+                let (Expr::Load { offset, .. } | Expr::LoadBytes { offset, .. }) = &**e else {
+                    return None;
+                };
+                return camel(field_name(*owner, *offset, cx)?);
+            }
+            Expr::Cast { e, .. } | Expr::Sugar { e, .. } => value = &**e,
+            _ => return None,
+        }
+    }
+}
+
+/// The variable a delegate `parts` make is held in, with the role the method it is bound to gives, where a list names that method.
+// ⚠ Only the form the printer writes as `d = x.Method`: the object made, then constructed on
+// itself. A lambda is written in place and has no name, whatever its function is called.
+fn bound(parts: &[Stmt], cx: &Context<'_>) -> Option<(Var, String)> {
+    let [Stmt::Assign { target, value }, Stmt::Eval(call)] = parts else {
+        return None;
+    };
+    if !matches!(bare(value), Expr::NewObject(_)) {
+        return None;
+    }
+    let Expr::Call { args, .. } = bare(call) else {
+        return None;
+    };
+    let [object, _, function] = args.as_slice() else {
+        return None;
+    };
+    if *bare(object) != Expr::Var(*target) {
+        return None;
+    }
+    let mut function = function;
+    loop {
+        match function {
+            Expr::Sugar {
+                kind: ExprSugar::Lambda,
+                ..
+            } => return None,
+            Expr::Cast { e, .. } | Expr::Sugar { e, .. } => function = &**e,
+            _ => break,
+        }
+    }
+    let name = match function {
+        // The top byte of a reference's offset holds its flags.
+        Expr::FunctionRef { program, at } => {
+            (cx.names).function(FunctionKey::new(*program, at & FUNCTION_OFFSET))
+        }
+        Expr::VirtualFunctionRef { ty, slot, .. } => slot_name(TypeKey::of(ty)?, *slot, cx),
+        // The lifter tells two overloads of one builtin apart after `__`.
+        Expr::BuiltinFunctionRef { ty, method } => (cx.names.builtin(*ty, *method)?)
+            .rsplit('.')
+            .next()
+            .and_then(|name| name.split("__").next()),
+        _ => None,
+    }?;
+    Some((*target, camel(name)?))
+}
+
+/// What a `foreach` goes through, as the printer reads its parts: the array an index steps over, the collection a struct enumerator is made from, or what the enumerator each round asks is taken from.
+fn collection<'e>(
+    setup: &'e [Stmt],
+    cond: &'e Expr,
+    item: &'e Stmt,
+    step: Option<&'e Stmt>,
+) -> Option<&'e Expr> {
+    if let Some(step) = step {
+        return indexed(setup, item, step);
+    }
+    if let Some((_, source)) = super::sugar_statements::enumerated(setup, cond) {
+        return Some(source);
+    }
+    let Some(Stmt::Assign { target, value }) = setup.last() else {
+        return None;
+    };
+    let asked = matches!(receiver(cond), Some(Expr::Var(var)) if var == target);
+    asked.then(|| receiver(value)).flatten()
+}
+
+/// The array the item of a `foreach` is read from at an index that its setup starts at zero and its step moves.
+fn indexed<'e>(setup: &[Stmt], item: &'e Stmt, step: &Stmt) -> Option<&'e Expr> {
+    let [Stmt::Assign {
+        target: index,
+        value: start,
+    }] = setup
+    else {
+        return None;
+    };
+    let (
+        Stmt::Assign { value, .. },
+        Stmt::Assign {
+            target: stepped, ..
+        },
+    ) = (item, step)
+    else {
+        return None;
+    };
+    let Expr::Call {
+        callee: Callee::Intrinsic { name, .. },
+        args,
+        ..
+    } = bare(value)
+    else {
+        return None;
+    };
+    let [array, at] = args.as_slice() else {
+        return None;
+    };
+    let read = name.starts_with("array_get_") && *integral(at) == Expr::Var(*index);
+    (read && index == stepped && is_zero(start)).then_some(array)
+}
+
+/// What a test asks of the call it makes, under its readings and a comparison with zero: the call's first argument.
+fn receiver(e: &Expr) -> Option<&Expr> {
+    let mut e = e;
+    loop {
+        match e {
+            Expr::Cast { e: inner, .. }
+            | Expr::Sugar { e: inner, .. }
+            | Expr::Truth(inner)
+            | Expr::Unary { e: inner, .. } => e = &**inner,
+            Expr::Binary {
+                op: BinOp::Eq | BinOp::Ne,
+                l,
+                r,
+                ..
+            } if is_zero(r) => e = &**l,
+            Expr::Call { args, .. } => return args.first(),
+            _ => return None,
+        }
+    }
+}
+
+/// `e` under the readings of it as an integer, which leave its bits.
+fn integral(e: &Expr) -> &Expr {
+    let mut e = e;
+    while let Expr::Cast { to, e: inner } = e {
+        if to.kind().is_float() {
+            break;
+        }
+        e = &**inner;
+    }
+    e
+}
+
+/// Whether `e` is a constant with no bit set, under any reading of it.
+fn is_zero(e: &Expr) -> bool {
+    let mut e = e;
+    while let Expr::Cast { e: inner, .. } | Expr::Truth(inner) = e {
+        e = &**inner;
+    }
+    matches!(e, Expr::Const(c) if c.bits == 0)
+}
+
+/// `snorkel` for `snorkels`: the singular of a plural that ends in a plain `s`; `None` for any other word, `boxes`, `entries`, `status` and `ids` among them.
+// ⚠ Only where dropping the `s` leaves the word: after a hiss or a vowel an `s` may be part of
+// it or of an `-es`, and a stem of two letters is more often a short word than a plural.
+fn singular(plural: &str) -> Option<String> {
+    let stem = plural.strip_suffix('s')?;
+    let last = stem.chars().last()?;
+    let plain = last.is_ascii_lowercase() && !matches!(last, 's' | 'u' | 'i');
+    let before = stem.strip_suffix('e').and_then(|rest| rest.chars().last());
+    let es = before.is_some_and(|c| matches!(c, 's' | 'x' | 'z' | 'h' | 'i' | 'o'));
+    if !plain || es || stem.len() < 3 {
+        return None;
+    }
+    spelled(stem).filter(|stem| !stem.starts_with('@'))
+}
+
+/// Whether `name` is one the `foreach` pass makes for an item no variable of the listing holds: `item`, or `item_` and a number.
+fn made_item(name: &str) -> bool {
+    let number = |n: &str| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit());
+    name == "item" || name.strip_prefix("item_").is_some_and(number)
+}
+
+/// The role one fact gives `var`: the result of a native, then the parameter of one, then what else it holds, or the parameter it is filled through; under `more` also a role every value it is given has, the role of its type `typed` where a call or a load gives its one value, and a parameter's name its one value is passed as; `made_with` where `var` is a parameter of a constructor other than its receiver.
 // ⚠ One slot may be several variables whose lives do not meet. Under `more` a slot assigned
 // several times takes a role only where every assignment gives that one role, and a parameter's
 // name names only a slot given one value, which is then what the parameter is passed.
@@ -662,6 +1010,7 @@ fn role(
     head: &Head,
     more: bool,
     typed: Option<String>,
+    made_with: bool,
 ) -> Option<String> {
     if matches!(var, Var::Global { .. }) {
         return None;
@@ -691,6 +1040,15 @@ fn role(
     let kept = facts.read > 0 && facts.read == facts.stored && !facts.stored_apart;
     let given = holds_one || (matches!(var, Var::Param(_)) && facts.assigned == 0);
     if let Some(role) = facts.stored_as.as_ref().filter(|_| kept && given) {
+        return Some(role.clone());
+    }
+    // What a constructor is handed and keeps in one named field is that field, however else it is read.
+    let made_from = more && made_with && facts.assigned == 0 && facts.stored > 0;
+    if let Some(role) = (facts.stored_as.as_ref()).filter(|_| made_from && !facts.stored_apart) {
+        return Some(role.clone());
+    }
+    let binding = every(facts.binding, facts.binds_apart);
+    if let Some(role) = facts.binds.as_ref().filter(|_| holds_one || binding) {
         return Some(role.clone());
     }
     let holding = every(facts.holding, facts.holds_apart);

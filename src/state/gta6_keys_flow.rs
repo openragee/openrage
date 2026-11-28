@@ -153,7 +153,14 @@ mod tests {
         let ps5 = tempfile::tempdir().expect("a PlayStation 5 install folder");
         keep_prefs_in(config.path());
         let mut prefs = Prefs::default();
-        let exe = |game: Game, dir: &tempfile::TempDir| dir.path().join(game.executable_name());
+        // The PlayStation 5 profile names no executable: the dump's is found as `eboot.bin`.
+        let exe = |game: Game, dir: &tempfile::TempDir| {
+            let name = match game == Game::GtaVIPs5 {
+                true => "eboot.bin",
+                false => game.executable_name(),
+            };
+            dir.path().join(name)
+        };
         for (game, dir) in [(Game::GtaVI, &xbox), (Game::GtaVIPs5, &ps5)] {
             std::fs::write(exe(game, dir), b"not an executable").expect("write");
             prefs.game_paths.set(game, Some(dir.path().to_path_buf()));

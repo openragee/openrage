@@ -8,14 +8,12 @@
 //! `eboot.bin`), and every such body is taken to three points, the first two the same code on both
 //! builds:
 //!
-//!  * **container** — [`Program::read`] parses the header and the tables. It hard-codes the Xbox
-//!    build id and native-anchor, so it refuses a PlayStation 5 program by name at byte 0x24 (the
-//!    check copy); that is a named refusal, never plausible nonsense.
+//!  * **container** — [`Program::read`] parses the header and the tables. It selects the build id
+//!    and native-anchor stamp from the build the file states (header +0x1C), so a program of either
+//!    measured build reads; a build it has not measured is refused by name, never read as nonsense.
 //!  * **instruction set** — the code region (from the header's own code pointer and length) is
-//!    decoded with the shared opcode table ([`compiled`]), the per-executable check-copy stamp
-//!    first set to what the Xbox reader expects so the stamp does not gate the decode. Every
-//!    instruction decoding means the bytecode, the opcode table and the word/operand ciphers are
-//!    the ones both builds share.
+//!    decoded with the shared opcode table ([`compiled`]). Every instruction decoding means the
+//!    bytecode, the opcode table and the word/operand ciphers are the ones both builds share.
 //!  * **the stamp** — each program's check copy is `(hash ^ anchor).rotate_left(12)`; the anchor it
 //!    implies is collected, and a build whose programs all imply one anchor proves the container
 //!    format is the same and only that one per-executable constant differs.
@@ -37,7 +35,7 @@ use std::path::{Path, PathBuf};
 
 use or_io::container::rpf::gta6_extract::extract_snapshot;
 use or_io::container::rpf::{Gta6Mount, GtaViKeys};
-use or_io::gta6::script::compiled::{self, check_copy};
+use or_io::gta6::script::compiled;
 use or_io::gta6::script::opcode;
 use or_io::gta6::script::program::Program;
 use or_io::Platform;
@@ -61,7 +59,7 @@ struct Measure {
     programs: usize,
     /// Programs the container reader ([`Program::read`]) parsed.
     read: usize,
-    /// Programs the container reader refused by name (it hard-codes the Xbox build's stamp).
+    /// Programs the container reader refused by name (a build it has not measured).
     refused: usize,
     /// Programs whose whole code region decoded under the one opcode table (stamp neutralised).
     decoded: usize,
@@ -145,7 +143,7 @@ fn body(bytes: &[u8], m: &mut Measure) {
     }
     m.programs += 1;
 
-    // The container reader: Xbox reads, PlayStation 5 is refused by name at the check copy (0x24).
+    // The container reader selects the stamp from the build the file states, so both builds read.
     match Program::read(bytes) {
         Ok(_) => m.read += 1,
         Err(_) => m.refused += 1,
@@ -157,11 +155,9 @@ fn body(bytes: &[u8], m: &mut Measure) {
     let anchor = check.rotate_right(12) ^ hash;
     *m.anchors.entry(anchor).or_default() += 1;
 
-    // The instruction set, free of the per-executable stamp: set the check copy to what the shared
-    // header reader expects for this hash, leaving the code region untouched, and decode it whole.
-    let mut neutral = bytes.to_vec();
-    neutral[0x24..0x28].copy_from_slice(&check_copy(hash).to_le_bytes());
-    let Ok(program) = compiled::Compiled::open(&neutral) else {
+    // The instruction set: decode the whole code region under the one opcode table. The header
+    // reader accepts either measured build's check copy, so the real body decodes with no edit.
+    let Ok(program) = compiled::Compiled::open(bytes) else {
         return;
     };
     let mut opcodes = BTreeSet::new();
@@ -336,6 +332,16 @@ fn ps5_script_programs_are_the_same_package_and_instruction_set_as_xbox() {
         if m.programs == 0 {
             continue;
         }
+        // The container reader reads every program of each measured build, none refused by name.
+        assert_eq!(
+            m.read,
+            m.programs,
+            "{}: {} of {} script programs were refused by the container reader; it must read \
+             every program of a measured build",
+            platform.label(),
+            m.refused,
+            m.programs,
+        );
         assert_eq!(
             m.decoded,
             m.programs,

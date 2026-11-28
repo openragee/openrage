@@ -455,6 +455,8 @@ fn surface(
         // Data cut short of a record is drawn as a group has threads: nothing of it is lost.
         primitives: largest_meshlet(&geometry.index_data, meshlets).unwrap_or(VERTICES / 3),
         forward: (pass.forward.as_ref()).map(|blend| forward::forward_of(blend, geometry)),
+        // ⚠ A terrain cell's own program winds the faces turned to the eye clockwise on the screen.
+        two_sided: super::gta6_terrain::reads_a_tile(pass),
     };
     (meshlets > 0).then_some((surface, zeroed))
 }
@@ -908,6 +910,39 @@ mod tests {
         // Cut inside its last record's first dword, it is drawn as a group has threads.
         assert_eq!(stated(&[5, 77], 13), Some((2, VERTICES / 3)));
         assert_eq!(stated(&[], 0), None, "no meshlet, no surface");
+    }
+
+    #[test]
+    fn a_surface_of_a_terrain_cell_draws_both_faces_and_another_does_not() {
+        let geometry = Geometry {
+            shader: 0,
+            vertex_count: 0,
+            channels: Vec::new(),
+            triangles: Vec::new(),
+            positions: Ok(Vec::new()),
+            vertices: Default::default(),
+            vertex_data: Vec::new(),
+            index_data: bytes_of(&[1, 0, 0, 0, 0, 0, 0]),
+        };
+        let shader = Shader {
+            name_hash: 1,
+            texture_keys: Vec::new(),
+            parameters: Vec::new(),
+        };
+        let two_sided = |pass: &Arc<Gta6ShadingPass>| {
+            let none = &mut |_: u64| None;
+            let drawn = surface(pass, &geometry, &shader, &mut |_| None, None, none);
+            drawn.map(|(surface, _)| surface.two_sided)
+        };
+        let mut terrain = (*pass(&[])).clone();
+        terrain.pixel.feeds.push(Fed {
+            group: 1,
+            binding: 0,
+            feed: Filled::Terrain(or_cli::gta6_terrain::Terrain::Record),
+            header: Some(372),
+        });
+        assert_eq!(two_sided(&Arc::new(terrain)), Some(true));
+        assert_eq!(two_sided(&pass(&[])), Some(false));
     }
 
     #[test]

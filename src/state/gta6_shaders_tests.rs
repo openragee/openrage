@@ -745,6 +745,7 @@ fn two_effects_whose_passes_come_to_the_same_two_stages_draw_by_one_pass_of_the_
             feeds: Default::default(),
             meshlets: 1,
             primitives: 1,
+            two_sided: false,
             forward: None,
         };
         built.hold(&surface, true);

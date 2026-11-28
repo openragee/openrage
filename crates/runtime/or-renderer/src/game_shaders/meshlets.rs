@@ -203,6 +203,9 @@ pub struct MeshletSurface {
     /// How it is laid over the lit frame where it is a forward surface; `None` for a deferred one.
     // A pass is built once for its two stages and the way they are laid on.
     pub forward: Option<Forward>,
+    /// Whether a pass into the targets draws both faces: a terrain cell, whose own program winds
+    /// the faces turned to the eye clockwise on the screen.
+    pub two_sided: bool,
 }
 
 /// A buffer the frame writes the view into, and where.
@@ -740,11 +743,13 @@ const BUILD_STACK: usize = 64 << 20;
 
 /// The passes built so far, by the two stages a surface draws with: a pass is built once for a
 /// device, whatever models it then draws, on a worker, so that a frame never waits for one.
-/// A pass by the places of its two stages and, for a forward one, how it is laid on.
+/// A pass by the places of its two stages, for a forward one how it is laid on, and whether it
+/// draws both faces.
 type PassKey = (
     usize,
     usize,
     Option<(wgpu::BlendState, wgpu::ColorWrites, Option<wgpu::Face>)>,
+    bool,
 );
 
 #[derive(Default)]
@@ -847,6 +852,7 @@ impl MeshletPipelines {
             Arc::as_ptr(&surface.vertex) as usize,
             Arc::as_ptr(&surface.fragment) as usize,
             surface.forward.as_ref().map(Forward::state),
+            surface.two_sided,
         )
     }
 
@@ -866,7 +872,7 @@ impl MeshletPipelines {
             let slot = Slot::default();
             let (theirs, device) = (Arc::clone(&slot), device.clone());
             let stages = (Arc::clone(&surface.vertex), Arc::clone(&surface.fragment));
-            let forward = surface.forward;
+            let (forward, two_sided) = (surface.forward, surface.two_sided);
             // No more at once than the machine spares.
             let limit = or_job::workers();
             let workers = self.workers.get_or_insert_with(|| match compiled.clone() {
@@ -882,7 +888,7 @@ impl MeshletPipelines {
                 }
                 let cache = compiled.as_ref().map(|(cache, _)| &**cache);
                 let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    build_checked(&device, stages, cache, forward)
+                    build_checked(&device, stages, cache, forward, two_sided)
                 }))
                 .unwrap_or_else(|_| Err("building the pass stopped on an internal error".into()));
                 *theirs.lock().unwrap_or_else(|p| p.into_inner()) = Some(built.map(Arc::new));
@@ -923,15 +929,18 @@ fn build_checked(
     stages: (Arc<naga::Module>, Arc<naga::Module>),
     compiled: Option<&wgpu::PipelineCache>,
     forward: Option<Forward>,
+    two_sided: bool,
 ) -> Result<Built, String> {
     let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
     let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let started = std::time::Instant::now();
-    let built = build(device, stages.clone(), compiled, forward);
+    let built = build(device, stages.clone(), compiled, forward, two_sided);
     let refused = pollster::block_on(validation.pop()).or(pollster::block_on(internal.pop()));
     tracing::info!(elapsed = ?started.elapsed(), refused = refused.is_some(), "a GTA VI pass was built for the device");
     if super::kept_dx12::forget_handed(refused.is_some()) {
-        return super::kept_dx12::without(|| build_checked(device, stages, compiled, forward));
+        return super::kept_dx12::without(|| {
+            build_checked(device, stages, compiled, forward, two_sided)
+        });
     }
     if let Some(error) = refused {
         return Err(error.to_string());
@@ -968,19 +977,23 @@ fn stages_drawn(
 }
 
 /// The faces a pass culls: a forward pass's own; a pass into the targets the back faces, as the
-/// game's draw lists do, unless its pixel stage reads which face it is on.
+/// game's draw lists do, unless it is `two_sided` or its pixel stage reads which face it is on.
 // ⚠ A model's card seen from both sides is two coincident faces wound apart: drawn with neither
 // culled, under `GreaterEqual` the face turned away wins the tie and is lit from behind.
 // ponytail: a placement that mirrors (negative determinant) winds its faces the other way; such an
 // instance would need the front face turned per draw.
-fn culled(fragment: &naga::Module, forward: Option<&Forward>) -> Option<wgpu::Face> {
+fn culled(
+    fragment: &naga::Module,
+    forward: Option<&Forward>,
+    two_sided: bool,
+) -> Option<wgpu::Face> {
     let facing = naga::Binding::BuiltIn(naga::BuiltIn::FrontFacing);
     let reads_facing = (fragment.entry_points.iter())
         .flat_map(|entry| &entry.function.arguments)
         .any(|argument| argument.binding.as_ref() == Some(&facing));
     match forward {
         Some(forward) => forward.cull,
-        None if reads_facing => None,
+        None if reads_facing || two_sided => None,
         None => Some(wgpu::Face::Back),
     }
 }
@@ -992,6 +1005,7 @@ fn build(
     stages: (Arc<naga::Module>, Arc<naga::Module>),
     compiled: Option<&wgpu::PipelineCache>,
     forward: Option<Forward>,
+    two_sided: bool,
 ) -> Result<Built, String> {
     // The two stages come linked: the vertex stage gives the locations the pixel stage takes.
     let (mut vertex, mut fragment) =
@@ -1049,7 +1063,7 @@ fn build(
         },
         primitive: wgpu::PrimitiveState {
             front_face: forward::FRONT,
-            cull_mode: culled(&fragment, forward.as_ref()),
+            cull_mode: culled(&fragment, forward.as_ref(), two_sided),
             ..Default::default()
         },
         depth_stencil: Some(wgpu::DepthStencilState {

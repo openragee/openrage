@@ -66,6 +66,7 @@ fn a_surface_whose_pass_is_built_draws_by_it_while_its_map_is_still_decoded() {
         feeds: BTreeMap::from([((0, 0), view), ((1, 0), Feed::Textures(vec![None]))]),
         meshlets: 1,
         primitives: 1,
+        two_sided: false,
         forward: None,
     };
     let read = || {

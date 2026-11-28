@@ -72,6 +72,7 @@ mod tests {
             feeds: BTreeMap::new(),
             meshlets: 2,
             primitives: 5,
+            two_sided: false,
             forward: None,
         }
     }

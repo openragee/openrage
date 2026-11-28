@@ -149,6 +149,7 @@ pub(super) fn surface() -> MeshletSurface {
         feeds,
         meshlets: 2,
         primitives: 1,
+        two_sided: false,
         forward: None,
     }
 }
@@ -730,7 +731,7 @@ fn an_image_of_colour_carries_the_levels_below_its_first_and_another_does_not() 
 }
 
 #[test]
-fn a_pass_into_the_targets_culls_back_faces_unless_its_pixel_stage_reads_the_facing() {
+fn a_pass_into_the_targets_culls_back_faces_unless_two_sided_or_its_pixel_stage_reads_the_facing() {
     let one_sided =
         wgsl("@fragment fn main() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }");
     let two_sided = wgsl(
@@ -738,6 +739,7 @@ fn a_pass_into_the_targets_culls_back_faces_unless_its_pixel_stage_reads_the_fac
             return select(vec4<f32>(0.0), vec4<f32>(1.0), front);
         }",
     );
-    assert_eq!(culled(&one_sided, None), Some(wgpu::Face::Back));
-    assert_eq!(culled(&two_sided, None), None);
+    assert_eq!(culled(&one_sided, None, false), Some(wgpu::Face::Back));
+    assert_eq!(culled(&two_sided, None, false), None);
+    assert_eq!(culled(&one_sided, None, true), None, "a terrain cell");
 }

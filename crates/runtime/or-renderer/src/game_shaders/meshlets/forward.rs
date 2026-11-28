@@ -700,6 +700,7 @@ mod tests {
             feeds: Default::default(),
             meshlets: 1,
             primitives: 1,
+            two_sided: false,
             forward: Some(Forward {
                 blend,
                 writes: wgpu::ColorWrites::ALL,
@@ -941,6 +942,7 @@ struct Out { @location(0) light: vec4<f32>, @location(1) through: vec4<f32> }
             ]),
             meshlets: 2,
             primitives: 1,
+            two_sided: false,
             forward: Some(Forward {
                 blend: wgpu::BlendState {
                     color: wgpu::BlendComponent {
@@ -1109,6 +1111,7 @@ struct Out { @location(0) light: vec4<f32>, @location(1) through: vec4<f32> }
             ]),
             meshlets: 2,
             primitives: 1,
+            two_sided: false,
             forward: Some(Forward {
                 blend: wgpu::BlendState {
                     color: summed(wgpu::BlendFactor::One, wgpu::BlendFactor::Src1),

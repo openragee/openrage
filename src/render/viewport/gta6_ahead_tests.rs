@@ -54,6 +54,7 @@ fn surface(x: f32) -> MeshletSurface {
         feeds: BTreeMap::from([((0, 0), view), ((0, 1), about)]),
         meshlets: 1,
         primitives: 1,
+        two_sided: false,
         forward: None,
     }
 }

@@ -102,8 +102,9 @@ const ITEM: &str = "item, item_2 and on is the element a foreach reads where the
 /// What a header says of the names of variables, which no list gives.
 const DERIVED: &str = "a variable named otherwise than by its slot (p1, local_2, v_.., stack_..) \
                        has a name derived from the native, the type, the field or the getter its \
-                       value comes from or goes to, or is i, j or k where it only counts a loop \
-                       and indexes with the count, and no list names a variable";
+                       value comes from or goes to, or the script type a list names that it is \
+                       proved to hold, or is i, j or k where it only counts a loop, loops side by \
+                       side sharing one, and no list names a variable";
 
 /// The comment that says what the words of a file mean, by the passes that write them.
 fn words(options: &Options) -> String {
@@ -145,6 +146,37 @@ const CONVERT_TO_INT32: &str = "System.Convert.ToInt32";
 const STRUCT: u32 = 0x04;
 const GENERATED: u32 = 0x10_0000;
 
+/// Whether the flags of a value type say an enum: no struct, and nothing the compiler made.
+pub(crate) fn enum_flags(facts: &TypeFacts) -> bool {
+    facts.flags & (STRUCT | GENERATED) == 0
+}
+
+/// The facts of the enum of a script the type named `ty` is, in `project`.
+pub(super) fn script_enum<'p>(ty: &str, project: &'p Project) -> Option<&'p TypeFacts> {
+    let facts = project.types.get(&TypeKey::of_name(ty)?)?;
+    (facts.is_value() && enum_flags(facts)).then_some(facts)
+}
+
+/// Whether a value of the type whose keyword is `keyword`, or of the enum `enumeration` states, is equal to another exactly where its bits are: a number of no fraction, a `bool`, a `char`, or an enum of a script.
+// ⚠ Never a float: `Equals` holds of two NaNs, which `==` does not.
+pub(super) fn bits_equal(keyword: &str, enumeration: Option<&TypeFacts>) -> bool {
+    let plain = [
+        "bool", "byte", "sbyte", "short", "ushort", "int", "uint", "long", "ulong", "char",
+    ];
+    plain.contains(&keyword) || enumeration.is_some()
+}
+
+/// Whether no value of an enum of a script is past an `int`'s range: one of fewer than four bytes, or of four whose constants hold one below zero, which only a signed one can.
+pub(crate) fn enum_fits_int(facts: &TypeFacts) -> bool {
+    facts.byte_size <= 2 || (facts.byte_size == 4 && facts.constants.iter().any(|c| *c < 0))
+}
+
+/// Whether no value of the type whose keyword is `keyword`, or of the enum `enumeration` states, is past an `int`'s range.
+pub(super) fn fits_int(keyword: &str, enumeration: Option<&TypeFacts>) -> bool {
+    let small = ["byte", "sbyte", "short", "ushort", "int", "char"];
+    small.contains(&keyword) || enumeration.is_some_and(enum_fits_int)
+}
+
 /// What a header says of text read from a lifted listing.
 pub(super) const LISTING: &str =
     "a lifted listing, the text another decompiler wrote of this script";
@@ -173,6 +205,11 @@ pub fn method(
     cx: &Context<'_>,
 ) {
     method_in(out, method, class, depth, cx, &Lambdas::new());
+}
+
+/// Where true C# writes a member among those of its class: constructors, the finalizer, properties, then methods.
+pub(super) fn member_rank(method: &Method) -> u8 {
+    members::rank(method)
 }
 
 /// Whether the passes on ask for text a C# parser reads: any pass beyond the four `decompile` always ran.
@@ -1009,6 +1046,7 @@ impl<'a> Writer<'a> {
                     false => None,
                 };
                 let narrow = narrow.or_else(|| self.returned_whole(value));
+                let narrow = narrow.or_else(|| self.returned_zero(value));
                 let value = narrow.unwrap_or_else(|| self.value(value));
                 self.line(indent, &format!("return {value};"));
             }
@@ -1137,7 +1175,8 @@ impl<'a> Writer<'a> {
                     return self.lowered(sugar, indent);
                 };
                 self.simples(read.shown, indent);
-                let awaited = self.value(read.awaited);
+                // `await` binds as a unary operator does: a choice or a comparison it awaits is in parentheses.
+                let awaited = self.expr(bits(read.awaited), UNARY);
                 match read.taken {
                     // The one statement that asks the awaiter for its result takes what the `await` yields.
                     async_await::Taken::Assigned(target) => {
@@ -1305,7 +1344,7 @@ impl<'a> Writer<'a> {
             ExprSugar::Property => Some(Pass::Properties),
             ExprSugar::Operator => Some(Pass::Operators),
             ExprSugar::Lambda => Some(Pass::Lambdas),
-            ExprSugar::Coalesce | ExprSugar::NullConditional => Some(Pass::NullOps),
+            ExprSugar::Coalesce | ExprSugar::NullConditional | ExprSugar::Is => Some(Pass::NullOps),
             ExprSugar::Concat => Some(Pass::Concat),
             ExprSugar::Out | ExprSugar::Ref => Some(Pass::RefOut),
             ExprSugar::Tuple => Some(Pass::Tuples),
@@ -1453,7 +1492,8 @@ impl<'a> Writer<'a> {
                 };
                 if let (Some(to), [value]) = (to, args.as_slice()) {
                     let to = self.type_name(to);
-                    let text = format!("({to}){}", self.expr(value, cast_operand(&to)));
+                    let (operand, binds) = self.spelled(value);
+                    let text = format!("({to}){}", cast_wrap(&to, operand, binds));
                     return (text, UNARY);
                 }
             }
@@ -1471,6 +1511,18 @@ impl<'a> Writer<'a> {
             }
             (ExprSugar::Tuple, Expr::Cells(items)) => {
                 return (format!("({})", self.list(items)), POSTFIX);
+            }
+            (ExprSugar::Is, test) => {
+                if let Some((holds, ty, value)) =
+                    crate::gta6::script::passes::sugar_expressions::type_test(test)
+                {
+                    // As weak as `as`, so that a comparison puts it in parentheses.
+                    let text = format!("{} is {}", self.expr(value, 9), self.type_name(ty));
+                    return match holds {
+                        true => (text, 6),
+                        false => (format!("!({text})"), UNARY),
+                    };
+                }
             }
             _ => {}
         }
@@ -1813,13 +1865,16 @@ impl<'a> Writer<'a> {
             return self.list(passed);
         }
         let slots = self.slots(callee, args);
+        let takers = self.taken_kinds(callee, args);
         let mut items = Vec::with_capacity(passed.len());
         for (n, arg) in args.iter().enumerate().skip(from) {
-            let narrow = match slots.get(n) {
-                Some(Some(exact)) => self.narrow(arg, *exact),
+            // What the parameter is said first: a float it takes is no `int` without its cast.
+            let given = takers.get(n).and_then(|kind| self.given(kind, arg));
+            let narrow = match (&given, slots.get(n)) {
+                (None, Some(Some(exact))) => self.narrow(arg, *exact),
                 _ => None,
             };
-            items.push(narrow.unwrap_or_else(|| self.value(arg)));
+            items.push(given.or(narrow).unwrap_or_else(|| self.value(arg)));
         }
         items.join(", ")
     }
@@ -1848,6 +1903,21 @@ impl<'a> Writer<'a> {
         let headed = self.sharp && self.task.is_none() && self.head.returns == Returns::Cells;
         let whole = bytes.is_multiple_of(8) && cells == Some(bytes / 8);
         (headed && whole).then(|| self.place_of(addr, *offset, false, Some(*bytes)).0)
+    }
+
+    /// Zero cells a function returns, as `default` where its head is written with as many cells as the project proves it returns: the head's type says which.
+    fn returned_zero(&self, value: &Expr) -> Option<String> {
+        let Expr::ZeroSlots(cells) = bits(value) else {
+            return None;
+        };
+        let key = FunctionKey::new(self.head.program, self.head.at);
+        let proved = self.project.signatures.get(&key);
+        let headed = self.sharp
+            && self.options.on(Pass::Kinds)
+            && self.task.is_none()
+            && self.head.returns == Returns::Cells;
+        let whole = *cells >= 2 && proved.is_some_and(|sig| sig.returns == *cells);
+        (headed && whole).then(|| "default".to_owned())
     }
 
     /// One side of a type's own equality: zero cells are as many as the other side holds.
@@ -2132,7 +2202,7 @@ impl<'a> Writer<'a> {
             } if bytes.is_multiple_of(8) => {
                 let (place, binds) = self.place_of(addr, *offset, false, Some(*bytes));
                 let cells = self.kind_text(&Kind::Aggregate(bytes / 8));
-                let text = format!("({cells}){}", wrap(place, binds, cast_operand(&cells)));
+                let text = format!("({cells}){}", cast_wrap(&cells, place, binds));
                 return (text, UNARY);
             }
             Expr::LoadBytes {
@@ -2642,20 +2712,9 @@ impl<'a> Writer<'a> {
         }
     }
 
-    /// Whether a value of the type named `ty` is equal to another exactly where its bits are: a number of no fraction, a `bool`, a `char`, or an enum of a script.
-    // ⚠ Never a float: `Equals` holds of two NaNs, which `==` does not.
+    /// Whether a value of the type named `ty` is equal to another exactly where its bits are.
     fn equal_by_bits(&self, ty: &str) -> bool {
-        let keyword = self.type_name(ty);
-        let plain = [
-            "bool", "byte", "sbyte", "short", "ushort", "int", "uint", "long", "ulong", "char",
-        ];
-        plain.contains(&keyword.as_str()) || self.enumeration(ty).is_some()
-    }
-
-    /// The facts of the enum of a script the type named `ty` is.
-    fn enumeration(&self, ty: &str) -> Option<&TypeFacts> {
-        let facts = self.project.types.get(&TypeKey::of_name(ty)?)?;
-        (facts.is_value() && facts.flags & (STRUCT | GENERATED) == 0).then_some(facts)
+        bits_equal(&self.type_name(ty), script_enum(ty, self.project))
     }
 
     /// The two values `object.Equals(box<T>(a), box<T>(b))` holds equal: one type's two values, which C# compares with `==`.
@@ -2693,13 +2752,7 @@ impl<'a> Writer<'a> {
             return None;
         }
         let (ty, value) = self.boxed(boxed)?;
-        let keyword = self.type_name(ty);
-        let small = ["byte", "sbyte", "short", "ushort", "int", "char"];
-        let fits = small.contains(&keyword.as_str())
-            || self.enumeration(ty).is_some_and(|facts| {
-                facts.byte_size <= 2
-                    || (facts.byte_size == 4 && facts.constants.iter().any(|c| *c < 0))
-            });
+        let fits = fits_int(&self.type_name(ty), script_enum(ty, self.project));
         fits.then_some(("int", value))
     }
 
@@ -2823,7 +2876,8 @@ impl<'a> Writer<'a> {
             [value] if name.starts_with("cast<") => {
                 let ty = name.strip_prefix("cast<")?.strip_suffix('>')?;
                 let ty = self.type_name(ty);
-                let text = format!("({ty}){}", self.expr(value, cast_operand(&ty)));
+                let (operand, binds) = self.spelled(value);
+                let text = format!("({ty}){}", cast_wrap(&ty, operand, binds));
                 Some((text, UNARY))
             }
             [value] => {
@@ -3682,6 +3736,17 @@ pub(super) fn cast_operand(ty: &str) -> u8 {
     match KEYWORDS.contains(&ty) {
         true => UNARY,
         false => POSTFIX,
+    }
+}
+
+/// `text`, which binds at `binds`, as what a cast to `ty` stands before: in parentheses only where C# would not read the two as one cast.
+// ⚠ C# reads `(T)` as a cast of any type before `(`, `!` and `~`, so a cast, a negation or a
+// complement needs none there; before `-`, `*` or `&` only a keyword's cast is one.
+pub(super) fn cast_wrap(ty: &str, text: String, binds: u8) -> String {
+    let opens = text.starts_with('(') || text.starts_with('!') || text.starts_with('~');
+    match binds == UNARY && opens {
+        true => text,
+        false => wrap(text, binds, cast_operand(ty)),
     }
 }
 

@@ -3384,3 +3384,53 @@ fn the_words_of_a_header_say_what_a_dot_and_an_arrow_are_where_fields_is_on() {
     let off = words(&Options::default().without(Pass::Fields)).replace("\n//   ", " ");
     assert!(!off.contains(MEMBER), "{off}");
 }
+
+#[test]
+fn zero_cells_returned_as_wide_as_the_head_says_are_its_default() {
+    use crate::gta6::script::project::Signature;
+    let names = Names::default();
+    let mut head = head();
+    head.returns = Returns::Cells;
+    let f = function_of(head, vec![tree::Stmt::Return(Some(Expr::ZeroSlots(2)))]);
+    let mut project = Project::default();
+    let own = Signature {
+        params: Vec::new(),
+        returns: 2,
+        result: Kind::Unknown,
+    };
+    project
+        .signatures
+        .insert(FunctionKey::new(0x1122_3344, 0x40), own);
+    let cx = Context::new(&names, &project, Options::at(Level::Structured));
+    let text = written_in(&f, &cx);
+    assert!(text.starts_with("Cells2 func_000040("), "{text}");
+    assert!(text.contains("    return default;\n"), "{text}");
+
+    // ⚠ A head that says no count keeps the count beside the zeroes, and so does `kinds` off.
+    let alone = written_in(&f, &at(&names, Level::Structured));
+    assert!(alone.contains("    return default(Cells2);\n"), "{alone}");
+    let off = Options::at(Level::Structured).without(Pass::Kinds);
+    let text = written_in(&f, &Context::new(&names, &project, off));
+    assert!(text.contains("    return default(Cells2);\n"), "{text}");
+}
+
+#[test]
+fn a_cast_to_a_named_type_takes_a_cast_or_a_complement_without_parentheses() {
+    let named = |e: Expr| sharp(&intrinsic("cast<type_0123456789ABCDEF>", vec![e]));
+    let unary = |op: UnOp| Expr::Unary {
+        op,
+        e: Box::new(local(1)),
+    };
+    let cast = Expr::cast(Scalar::I32, local(1));
+    assert_eq!(named(cast), "(type_0123456789ABCDEF)(int)local_1");
+    assert_eq!(
+        named(unary(UnOp::BitNot)),
+        "(type_0123456789ABCDEF)~local_1"
+    );
+    // ⚠ Before a sign, a star or an ampersand the cast of a name would read as an operator.
+    assert_eq!(named(unary(UnOp::Neg)), "(type_0123456789ABCDEF)(-local_1)");
+    let taken = address(Var::Local(1), 0);
+    assert_eq!(named(taken), "(type_0123456789ABCDEF)(&local_1)");
+    let sum = Expr::binary(BinOp::Add, local(1), local(2));
+    assert_eq!(named(sum), "(type_0123456789ABCDEF)(local_1 + local_2)");
+}

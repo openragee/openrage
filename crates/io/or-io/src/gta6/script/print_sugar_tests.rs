@@ -668,6 +668,29 @@ fn an_await_and_a_yield_are_written_as_what_they_take_and_give() {
     DEMO.USE(local_2);
 ";
     assert_eq!(lines(&[], body()), whole);
+    // What it awaits is a choice: `await` binds before the choice does, so the choice is in parentheses.
+    let chosen = Sugar::Await {
+        before: vec![assign(
+            Var::Local(1),
+            Expr::Select {
+                cond: Box::new(param(0)),
+                then: Box::new(local_call(0x100, vec![param(0)])),
+                els: Box::new(param(1)),
+            },
+        )],
+        ready: local_call(0x104, vec![local(1)]),
+        suspend: vec![tree::Stmt::Return(None)],
+        resumed: Label::At(0x200),
+        resume: Vec::new(),
+        after: vec![assign(Var::Local(2), local_call(0x108, vec![local(1)]))],
+    };
+    let written = lines(&[], vec![sugar(chosen), used(vec![local(2)])]);
+    let line = written.lines().find(|line| line.contains("await"));
+    let line = line.unwrap_or_default();
+    assert!(
+        line.starts_with("    local_2 = await (") && line.ends_with(");"),
+        "{written}"
+    );
     let lowered = lines(&[Pass::Await], body());
     assert!(!lowered.contains("await"), "{lowered}");
     // The arm taken while ready writes nothing, so the test is written the other way round.

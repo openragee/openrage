@@ -36,6 +36,38 @@ fn only_hands_back(body: &[tree::Stmt], back: &Expr) -> bool {
     true
 }
 
+/// The role `method` is written in as a member of its class: its own where the function has the shape that role's form needs, else a method's.
+pub(super) fn written_role(method: &Method) -> Role {
+    let head = &method.function.head;
+    // The receiver of a method that is not static is its first parameter.
+    let received = u32::from(!method.is_static && head.params > 0);
+    let passed = head.params - received;
+    let void = head.returns == Returns::Void;
+    let shaped = match method.role {
+        Role::Constructor => received == 1 && void,
+        Role::StaticConstructor => head.params == 0 && void,
+        Role::Finalizer => received == 1 && passed == 0 && void,
+        Role::Getter => passed == 0 && !void,
+        Role::Setter => passed == 1 && void,
+        _ => false,
+    };
+    match shaped {
+        true => method.role,
+        false => Role::Method,
+    }
+}
+
+/// Where a member stands among those of its class: constructors, the finalizer, properties, then methods.
+pub(super) fn rank(method: &Method) -> u8 {
+    match written_role(method) {
+        Role::StaticConstructor => 0,
+        Role::Constructor => 1,
+        Role::Finalizer => 2,
+        Role::Getter | Role::Setter => 3,
+        _ => 4,
+    }
+}
+
 impl Writer<'_> {
     /// Writes `method` as a member of the class whose key and name are given; as a function of the program where none is.
     pub(super) fn as_member(&mut self, method: &Method, class: Option<(TypeKey, &str)>) {
@@ -79,8 +111,6 @@ impl Writer<'_> {
         if received == 1 {
             self.this = Some(Var::Param(0));
         }
-        let passed = head.params - received;
-        let void = head.returns == Returns::Void;
         let fixed = if method.is_static { "static " } else { "" };
         let slot = match (method.slot, method.overrides, method.is_static) {
             (Some(_), true, false) => "override ",
@@ -103,21 +133,22 @@ impl Writer<'_> {
             Some((_, property)) => property.to_owned(),
             None => name.clone(),
         };
-        match method.role {
-            Role::Constructor if received == 1 && void => {
+        // ⚠ By the one rule the class orders its members by.
+        match written_role(method) {
+            Role::Constructor => {
                 let text = format!("{class}({})", self.params(body));
                 self.bodied(text, class, body);
             }
-            Role::StaticConstructor if head.params == 0 && void => {
+            Role::StaticConstructor => {
                 self.bodied(format!("static {class}()"), class, body);
             }
-            Role::Finalizer if received == 1 && passed == 0 && void => {
+            Role::Finalizer => {
                 self.bodied(format!("~{class}()"), class, body);
             }
-            Role::Getter if passed == 0 && !void => {
+            Role::Getter => {
                 self.property(method, slot, &property, None, body);
             }
-            Role::Setter if passed == 1 && void => {
+            Role::Setter => {
                 let value = Some(Var::Param(received));
                 self.property(method, slot, &property, value, body);
             }

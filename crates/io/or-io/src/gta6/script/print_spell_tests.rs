@@ -238,3 +238,151 @@ fn bytes_taken_out_of_a_group_of_cells_or_a_call_are_a_field_of_the_one_they_lie
     let text = Writer::in_context(&mut out, &cx, &head).simple(&stored);
     assert_eq!(text, "p0->f_10 = (long)(uint)p1.f_4");
 }
+
+/// A natives list of one native, `ZQ.ZQ_SET_PACE`, at the hash the tests' calls of a native use, with parameters of the types given.
+fn paced(types: &[&str]) -> crate::gta6::script::Names {
+    use crate::gta5::script::natives::{NativeDb, NativeName, NativeParam};
+    let params = types.iter().enumerate().map(|(n, ty)| NativeParam {
+        ty: (*ty).to_owned(),
+        name: format!("zq{n}"),
+    });
+    let listed = NativeName {
+        namespace: Some("ZQ".to_owned()),
+        name: "ZQ_SET_PACE".to_owned(),
+        params: params.collect(),
+        returns: None,
+    };
+    crate::gta6::script::Names {
+        natives: Some(NativeDb::from_names("a test's", [(0xA1, listed)])),
+        ..crate::gta6::script::Names::default()
+    }
+}
+
+/// The statement that evaluates `call`, as true C# writes it with the names, the project and the options given.
+fn called_in(
+    names: &crate::gta6::script::Names,
+    project: &crate::gta6::script::Project,
+    options: crate::gta6::script::Options,
+    call: Expr,
+) -> String {
+    let cx = crate::gta6::script::Context::new(names, project, options);
+    let (head, mut out) = (crate::gta6::script::print::tests::head(), String::new());
+    let s = crate::gta6::script::ir::Stmt::Eval(call);
+    Writer::in_context(&mut out, &cx, &head).simple(&s)
+}
+
+#[test]
+fn what_a_natives_list_says_a_parameter_is_gives_zero_cells_their_type_and_bits_their_float() {
+    use crate::gta6::script::print::tests::{int, native};
+    use crate::gta6::script::{Level, Options, Pass, Project};
+    let structured = Options::at(Level::Structured);
+    let pace = || {
+        let bits = Expr::Const(Const {
+            bits: 0x4040_0000,
+            kind: Kind::I32,
+        });
+        native("ZQ_SET_PACE", vec![Expr::ZeroSlots(2), int(7), bits])
+    };
+    let names = paced(&["Ped", "int", "float"]);
+    let text = called_in(&names, Project::empty(), structured, pace());
+    assert_eq!(text, "ZQ.ZQ_SET_PACE(default(Handle), 7, 3.0f)");
+    let names = paced(&["Vector3", "int", "float"]);
+    let text = called_in(&names, Project::empty(), structured, pace());
+    assert_eq!(text, "ZQ.ZQ_SET_PACE(default(Vector3), 7, 3.0f)");
+
+    // ⚠ A list that does not answer each argument with one parameter says nothing of any.
+    let unsaid = "ZQ.ZQ_SET_PACE(default(Cells2), 7, 0x40400000 /* 3.0f */)";
+    let names = paced(&["Ped", "int", "float", "BOOL"]);
+    let text = called_in(&names, Project::empty(), structured, pace());
+    assert_eq!(text, unsaid);
+    let names = paced(&["int", "int", "float"]);
+    let text = called_in(&names, Project::empty(), structured, pace());
+    assert_eq!(text, unsaid);
+    // An integer the list types is no float.
+    let names = paced(&["Ped", "int", "int"]);
+    let text = called_in(&names, Project::empty(), structured, pace());
+    assert_eq!(
+        text,
+        "ZQ.ZQ_SET_PACE(default(Handle), 7, 0x40400000 /* 3.0f */)"
+    );
+    // With `kinds` off the arguments are what they were.
+    let names = paced(&["Ped", "int", "float"]);
+    let off = structured.without(Pass::Kinds);
+    assert_eq!(called_in(&names, Project::empty(), off, pace()), unsaid);
+}
+
+#[test]
+fn what_the_project_proves_a_parameter_is_gives_zero_cells_their_type_and_bits_their_float() {
+    use crate::gta6::script::print::tests::{high, int};
+    use crate::gta6::script::project::{Param, Signature};
+    use crate::gta6::script::{Level, Names, Options, Project};
+    let param = |kind: Kind, cells: u32| Param { kind, cells };
+    let signature = Signature {
+        params: vec![
+            param(Kind::F32, 1),
+            param(Kind::Handle, 2),
+            param(Kind::Unknown, 1),
+        ],
+        returns: 0,
+        result: Kind::Unknown,
+    };
+    let mut project = Project::default();
+    project
+        .signatures
+        .insert(FunctionKey::new(0x1122_3344, 0x100), signature);
+    let call = |args: Vec<Expr>| Expr::Call {
+        callee: Callee::Local {
+            at: 0x100,
+            name: "func_000100".to_owned(),
+        },
+        args,
+        returns: Some(0),
+    };
+    let (names, structured) = (Names::default(), Options::at(Level::Structured));
+    let text_of = |args: Vec<Expr>| called_in(&names, &project, structured, call(args));
+    let minus_one = || {
+        Expr::Const(Const {
+            bits: 0xFFFF_FFFF_BF80_0000,
+            kind: Kind::I64,
+        })
+    };
+    // The float only where the parameter is one: one of no proved kind keeps the number.
+    let text = text_of(vec![minus_one(), Expr::ZeroSlots(2), minus_one()]);
+    let expected = "func_000100(-1.0f, default(Handle), (int)0xBF800000 /* -1.0f */)";
+    assert_eq!(text, expected);
+
+    // ⚠ Bits of no float a script states, and a constant whose upper half is no widening, stay numbers.
+    let text = text_of(vec![int(5), Expr::ZeroSlots(2), int(1)]);
+    assert_eq!(text, "func_000100(5, default(Handle), 1)");
+    let odd = Expr::Const(Const {
+        bits: 0x0000_0001_3F80_0000,
+        kind: Kind::I64,
+    });
+    let text = text_of(vec![odd, Expr::ZeroSlots(2), high()]);
+    assert!(text.starts_with("func_000100(0x13F800000, "), "{text}");
+    // ⚠ An argument of other cells than its parameter takes: nothing from it on answers one.
+    let text = text_of(vec![Expr::ZeroSlots(2), minus_one()]);
+    let expected = "func_000100(default(Cells2), (int)0xBF800000 /* -1.0f */)";
+    assert_eq!(text, expected);
+}
+
+#[test]
+fn a_float_parameter_takes_a_numbers_bits_as_its_float_only_where_a_script_could_state_it() {
+    assert_eq!(
+        taken_float(&Const::i32(0x3F80_0000)).as_deref(),
+        Some("1.0f")
+    );
+    let tenth = of(0x3DCC_CCCD, Kind::Unknown);
+    assert_eq!(taken_float(&tenth).as_deref(), Some("0.1f"));
+    // No NaN, no infinity, no number below the normal ones, and never a float or a hash, whose own literal stands.
+    let kept = [
+        Const::i32(0x7FC0_0000),
+        Const::i32(0x7F80_0000),
+        Const::i32(1),
+        Const::f32(1.0),
+        of(0x3F80_0000, Kind::Hash),
+    ];
+    for c in &kept {
+        assert_eq!(taken_float(c), None, "{c:?}");
+    }
+}

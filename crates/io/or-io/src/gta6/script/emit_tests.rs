@@ -212,11 +212,6 @@ class type_0123456789ABCDEF : type_00000000000000AA
         this.f_8 = p1;
     }
 
-    override Cell Method_3(Cell p1) // func_000060
-    {
-        return (int)this.f_8 + (int)p1;
-    }
-
     Cell func_000080 => (int)this.f_8;
 
     Cell func_0000A0
@@ -225,6 +220,11 @@ class type_0123456789ABCDEF : type_00000000000000AA
         {
             this.f_18 = value;
         }
+    }
+
+    override Cell Method_3(Cell p1) // func_000060
+    {
+        return (int)this.f_8 + (int)p1;
     }
 
     static void func_0000C0(Cell p0)
@@ -834,4 +834,112 @@ fn the_globals_and_statics_a_program_names_are_declared_with_their_kinds_before_
     assert!(!text.contains("Global_10;"), "{text}");
     let text = file(&program(), &names, &project, Options::default()).text;
     assert!(!text.contains("// the globals and statics"), "{text}");
+}
+
+#[test]
+fn a_class_writes_its_constructors_then_its_properties_then_its_methods_each_by_offset() {
+    let (names, project) = (Names::default(), Project::default());
+    let got = tree::Stmt::Return(Some(load(Scalar::I32, 0x8)));
+    let made = store(StoreKind::I32, 0x8, p(1));
+    // ⚠ A constructor that hands back a value has no constructor's form: it is a method, and stands with them.
+    let handed = tree::Stmt::Return(Some(p(1)));
+    let mut zq = class(0x7A, ClassKind::Class);
+    zq.methods = vec![
+        member(
+            Role::Method,
+            false,
+            function(0x10, 1, Returns::Void, Vec::new()),
+        ),
+        member(
+            Role::Getter,
+            false,
+            function(0x20, 1, Returns::Cell, vec![got]),
+        ),
+        member(
+            Role::Constructor,
+            false,
+            function(0x30, 2, Returns::Void, vec![made]),
+        ),
+        member(
+            Role::Constructor,
+            false,
+            function(0x08, 2, Returns::Cell, vec![handed]),
+        ),
+    ];
+    let unit = Unit {
+        program: PROGRAM,
+        imports: Vec::new(),
+        classes: vec![zq],
+        functions: Vec::new(),
+        front: None,
+    };
+    let text = file(&unit, &names, &project, Options::default()).text;
+    let at = |name: &str| text.find(name).unwrap_or(usize::MAX);
+    let order = [
+        "type_000000000000007A(Cell p1) // func_000030",
+        "Cell func_000020 => ",
+        "Cell func_000008(Cell p1)",
+        "void func_000010()",
+    ];
+    assert!(
+        order.windows(2).all(|pair| at(pair[0]) < at(pair[1])),
+        "{text}"
+    );
+    // One blank line between two members, and none after the brace that opens the class.
+    assert!(text.contains("\n{\n    type_000000000000007A("), "{text}");
+    assert!(text.contains("}\n\n    Cell func_000020 => "), "{text}");
+
+    // The form of old writes them by offset alone.
+    let old = file(&unit, &names, &project, Options::baseline()).text;
+    let at = |name: &str| old.find(name).unwrap_or(usize::MAX);
+    let heads = [
+        "func_000008(",
+        "func_000010(",
+        "func_000020(",
+        "func_000030(",
+    ];
+    assert!(
+        heads.windows(2).all(|pair| at(pair[0]) < at(pair[1])),
+        "{old}"
+    );
+}
+
+#[test]
+fn an_enum_writes_its_members_and_its_values_by_value() {
+    let mut project = Project::default();
+    let facts = TypeFacts {
+        byte_size: 4,
+        flags: 0x08,
+        constants: vec![7, 0, 4, 1],
+        ..TypeFacts::default()
+    };
+    project.types.insert(TypeKey(2), facts);
+    let unit = Unit {
+        program: PROGRAM,
+        imports: Vec::new(),
+        classes: vec![class(2, ClassKind::Enum)],
+        functions: Vec::new(),
+        front: None,
+    };
+    let text = file(&unit, &Names::default(), &project, Options::default()).text;
+    assert!(
+        text.ends_with("{\n    // values: 0, 1, 4, 7\n}\n"),
+        "{text}"
+    );
+    let mut names = Names::default();
+    for (value, name) in [(7, "zqSeven"), (1, "zqOne"), (4, "zqFour")] {
+        names
+            .enum_members
+            .insert((TypeKey(2), value), name.to_owned());
+    }
+    let text = file(&unit, &names, &project, Options::default()).text;
+    let expected = "\
+{
+    zqOne = 1,
+    zqFour = 4,
+    zqSeven = 7,
+    // values no list names a member of: 0
+}
+";
+    assert!(text.ends_with(expected), "{text}");
 }

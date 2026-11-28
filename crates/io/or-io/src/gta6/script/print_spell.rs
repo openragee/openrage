@@ -12,7 +12,8 @@ use crate::gta6::script::ir::{
 use crate::gta6::script::Pass;
 
 use super::{
-    bits, callee_name, flat_cells, is_zero, readable_const, reread, wrap, Writer, POSTFIX, UNARY,
+    bits, callee_name, cells_of, flat_cells, is_zero, readable_const, reread, wrap, Writer,
+    POSTFIX, UNARY,
 };
 
 /// The base types a name is looked for on: no hierarchy is that deep, and a ring of bases must end.
@@ -128,6 +129,29 @@ pub(super) fn round_float(c: &Const) -> Option<f32> {
     (c.kind.is_integer() || c.kind == Kind::Unknown)
         .then_some(f32::from_bits(low))
         .filter(|_| widened && round)
+}
+
+/// The literal of the float a float parameter reads the bits of `c` as, where `c` is a constant of no float kind of its own whose 32 bits are a float of a size a script states.
+// ⚠ Only for a constant a float parameter takes: what takes it says the kind, never the bits.
+fn taken_float(c: &Const) -> Option<String> {
+    let low = c.bits as u32;
+    let half = c.bits >> 32;
+    let widened = half == 0 || (half == 0xFFFF_FFFF && low >> 31 == 1);
+    // Between 2^-27 and 2^24, and so never a NaN, an infinity or a number below the normal ones.
+    let sized = (100..=150).contains(&((low >> 23) & 0xFF));
+    let own = c.kind.is_integer() || c.kind == Kind::Unknown;
+    (own && widened && sized).then(|| literal(&Const::f32(f32::from_bits(low))))
+}
+
+/// The kind a natives list's parameter of this type is to a constant or to zero cells handed it, and the cells it takes.
+// ⚠ The cells by the kinds pass's own rule, so that a list fits a call here exactly where it
+// fits it there.
+fn listed_param(ty: &str) -> (Kind, u32) {
+    match crate::gta6::script::passes::types::listed_wide(ty) {
+        Some(kind) => (kind, 2),
+        None if ty == "float" => (Kind::F32, 1),
+        None => (Kind::Unknown, 1),
+    }
 }
 
 /// Whether a value of `kind` fills 32 bits and no more, so that the sign a constant is widened with says nothing to what holds it.
@@ -264,6 +288,83 @@ impl Writer<'_> {
             return None;
         }
         narrow_literal(&folded(e)?)
+    }
+
+    /// The kind each argument of a call is taken as, where what takes it states one: the project's signature of the function or of the slot, or a natives list's parameters where each answers one argument; up to the first argument that fills other cells than its parameter takes.
+    pub(super) fn taken_kinds(&self, callee: &Callee, args: &[Expr]) -> Vec<Kind> {
+        let signed = |key: FunctionKey| -> Vec<(Kind, u32)> {
+            let params = self
+                .project
+                .signatures
+                .get(&key)
+                .map(|sig| sig.params.as_slice());
+            let params = params.unwrap_or_default().iter();
+            params
+                .map(|param| (param.kind.clone(), param.cells))
+                .collect()
+        };
+        let params: Vec<(Kind, u32)> = match callee {
+            Callee::Native { hash, .. } => {
+                let Some(native) = self.names.native(*hash) else {
+                    return Vec::new();
+                };
+                let params: Vec<(Kind, u32)> =
+                    native.params.iter().map(|p| listed_param(&p.ty)).collect();
+                // ⚠ A list of another build fits only where it states as many parameters as the
+                // call has arguments and each takes the cells of its own.
+                let cells = |arg: &Expr| cells_of(arg, self.head);
+                let fits = params.len() == args.len()
+                    && params
+                        .iter()
+                        .zip(args)
+                        .all(|((_, n), arg)| cells(arg) == Some(*n));
+                if !fits {
+                    return Vec::new();
+                }
+                params
+            }
+            Callee::Local { at, .. } => signed(FunctionKey::new(self.head.program, *at)),
+            Callee::Import { program, at, .. } => signed(FunctionKey::new(*program, *at)),
+            Callee::Virtual { ty, slot, .. } => {
+                let params = TypeKey::of_name(ty)
+                    .and_then(|owner| self.project.slot_parameters(owner, *slot));
+                let params = params.unwrap_or_default().iter();
+                params
+                    .map(|param| (param.kind.clone(), param.cells))
+                    .collect()
+            }
+            _ => return Vec::new(),
+        };
+        let mut kinds = Vec::with_capacity(args.len());
+        for (arg, (kind, cells)) in args.iter().zip(params) {
+            if cells_of(arg, self.head) != Some(cells) {
+                break;
+            }
+            kinds.push(kind);
+        }
+        kinds
+    }
+
+    /// `arg` as what takes it as `kind` is given it, where that kind says more than its form: zero cells as the default of a handle, a vector or a value type, and a constant's bits as the float a float parameter reads; `None` elsewhere.
+    // ⚠ The kind is that of the parameter, never one read off the bits: the bits are written
+    // unchanged, as the literal of the kind that takes them.
+    pub(super) fn given(&self, kind: &Kind, arg: &Expr) -> Option<String> {
+        if !(self.sharp && self.options.on(Pass::Kinds)) {
+            return None;
+        }
+        let arg = bits(arg);
+        match (kind, arg) {
+            (Kind::Handle | Kind::Vector | Kind::Value { .. }, Expr::ZeroSlots(cells)) => {
+                let held = match kind {
+                    Kind::Value { cells: held, .. } => *held,
+                    _ => 2,
+                };
+                let fits = held > 0 && held == *cells;
+                fits.then(|| format!("default({})", self.kind_text(kind)))
+            }
+            (Kind::F32, _) => taken_float(&folded(arg)?),
+            _ => None,
+        }
     }
 
     /// The name a function of a program is written under: the user's, else the one its front end gave it.

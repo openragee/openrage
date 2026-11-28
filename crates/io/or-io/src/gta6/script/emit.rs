@@ -98,7 +98,13 @@ fn source(unit: &Unit, cx: &Context<'_>, stats: &Stats) -> String {
             field_line(&mut out, class, field, depth + 1, cx);
         }
         let mut methods: Vec<&Method> = class.methods.iter().collect();
-        methods.sort_by_key(|method| method.function.head.at);
+        // True C# writes constructors, then properties, then methods, each by offset; the form
+        // of old by offset alone.
+        let sharp = print::true_csharp(&cx.options);
+        methods.sort_by_key(|method| {
+            let rank = if sharp { print::member_rank(method) } else { 0 };
+            (rank, method.function.head.at)
+        });
         // One blank line before a member that is no field, unless it is the first thing in the class.
         let mut written = !fields.is_empty();
         for method in methods {
@@ -246,7 +252,7 @@ fn bodies(unit: &Unit) -> Vec<&[tree::Stmt]> {
 /// The lambdas of a unit whose bodies are written where they are bound and left out of their closure class, by offset.
 // ⚠ Each is a body the unit names once, where a function that is no lambda binds it: read
 // with another program that names it too, that program would name a function written nowhere.
-fn in_place<'u>(unit: &'u Unit, cx: &Context<'_>) -> Lambdas<'u> {
+pub(crate) fn in_place<'u>(unit: &'u Unit, cx: &Context<'_>) -> Lambdas<'u> {
     let mut bodies = Lambdas::new();
     if !(cx.options.on(Pass::Lambdas) && cx.options.on(Pass::Delegates)) {
         return bodies;
@@ -381,20 +387,21 @@ fn opened(out: &mut String, class: &Class, name: &str, depth: usize, cx: &Contex
     if class.kind != ClassKind::Enum {
         return;
     }
-    // The values an enum's constants take: a member each where a list names it, the rest said.
-    let constants = cx
+    // The values an enum's constants take, by value: a member each where a list names it, the rest said.
+    let mut constants = cx
         .project
         .types
         .get(&class.key)
-        .map(|facts| facts.constants.as_slice())
+        .map(|facts| facts.constants.clone())
         .unwrap_or_default();
+    constants.sort_unstable();
     let members = match as_enum {
         true => enum_members(class.key, cx),
         false => Vec::new(),
     };
     let mut left: Vec<String> = Vec::new();
     let mut written: BTreeSet<i64> = BTreeSet::new();
-    for value in constants {
+    for value in &constants {
         let line = members.iter().find(|(held, _)| held == value);
         match line.filter(|_| written.insert(*value)) {
             Some((_, line)) => {

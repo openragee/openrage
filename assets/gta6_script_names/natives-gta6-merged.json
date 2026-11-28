@@ -1215,16 +1215,6 @@
    "estimate": "CLOCK::GET_MINUTE_FROM_SECONDS",
    "estimate_confidence": "low"
   },
-  "0x07B414C1EA578383": {
-   "name": "_0x07B414C1EA578383",
-   "confidence": "unnamed",
-   "rva": "0x04C154C0",
-   "arg_cells": 1,
-   "return_cells": 0,
-   "calls": 80,
-   "estimate": "NETWORK::NETWORK_SET_TEAM_ONLY_CHAT",
-   "estimate_confidence": "low"
-  },
   "0x07B4887FF02E094C": {
    "name": "_0x07B4887FF02E094C",
    "confidence": "unnamed",
@@ -1689,16 +1679,6 @@
    "return_cells": 0,
    "calls": 54,
    "estimate": "PED::SET_AI_AWARENESS_LEVEL",
-   "estimate_confidence": "low"
-  },
-  "0x0A928622DD3031B6": {
-   "name": "_0x0A928622DD3031B6",
-   "confidence": "unnamed",
-   "rva": "0x04C16E00",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 1,
-   "estimate": "OBJECT::SET_ENTITY_FLAG_SUPPRESS_SHADOW",
    "estimate_confidence": "low"
   },
   "0x0AA0D35B0AD89469": {
@@ -2937,16 +2917,6 @@
    "estimate": "PED::TASK_PERSCHAR_FOLLOW_PLAYER",
    "estimate_confidence": "low"
   },
-  "0x10BB3CFC3250A9D5": {
-   "name": "_0x10BB3CFC3250A9D5",
-   "confidence": "unnamed",
-   "rva": "0x04A927B0",
-   "arg_cells": 6,
-   "return_cells": 0,
-   "calls": 1,
-   "estimate": "VEHICLE::SET_VEHICLE_CAN_EJECT_PEDS",
-   "estimate_confidence": "low"
-  },
   "0x10C356DB91BC37FE": {
    "name": "_0x10C356DB91BC37FE",
    "confidence": "unnamed",
@@ -3757,16 +3727,6 @@
    "return_cells": 0,
    "calls": 39,
    "estimate": "VEHICLE::SET_VEHICLE_RECORDING_PLAYBACK",
-   "estimate_confidence": "low"
-  },
-  "0x15A8D414E7A35DC4": {
-   "name": "_0x15A8D414E7A35DC4",
-   "confidence": "unnamed",
-   "rva": "0x04A8DDC0",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 27,
-   "estimate": "VEHICLE::SET_AIRCRAFT_BLADES_SPEED",
    "estimate_confidence": "low"
   },
   "0x15BCF836160842C5": {
@@ -10367,14 +10327,6 @@
    "estimate": "OBJECT::IS_LOCKED_DOOR_OPEN",
    "estimate_confidence": "low"
   },
-  "0x3AE90DD31506F196": {
-   "name": "_0x3AE90DD31506F196",
-   "confidence": "unnamed",
-   "rva": "0x03CD8E40",
-   "arg_cells": 2,
-   "return_cells": 0,
-   "calls": 33
-  },
   "0x3AF152C8B50EC629": {
    "name": "_0x3AF152C8B50EC629",
    "confidence": "unnamed",
@@ -10762,16 +10714,6 @@
    "calls": 2,
    "estimate": "DATAFILE::PARSEDDATA_TRY_GET_STRING",
    "estimate_confidence": "low"
-  },
-  "0x3D4DCE627CB666A2": {
-   "name": "_0x3D4DCE627CB666A2",
-   "confidence": "unnamed",
-   "rva": "0x04A92B60",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 28,
-   "estimate": "VEHICLE::SET_VEHICLE_DONT_TERMINATE_TASK_WHEN_ACHIEVED",
-   "estimate_confidence": "medium"
   },
   "0x3D56226E656A4724": {
    "name": "_0x3D56226E656A4724",
@@ -11567,16 +11509,6 @@
    "return_cells": 2,
    "calls": 165,
    "estimate": "MISC::VECTOR_SLERP",
-   "estimate_confidence": "low"
-  },
-  "0x41E264A6206A2CCB": {
-   "name": "_0x41E264A6206A2CCB",
-   "confidence": "unnamed",
-   "rva": "0x04461FE0",
-   "arg_cells": 1,
-   "return_cells": 0,
-   "calls": 2,
-   "estimate": "STREAMING::SET_DITCH_POLICE_MODELS",
    "estimate_confidence": "low"
   },
   "0x42048AA32DF5BD8A": {
@@ -14373,16 +14305,6 @@
    "return_cells": 1,
    "calls": 2,
    "estimate": "ITEMDATABASE::GET_BUNDLE_IS_VISIBLE",
-   "estimate_confidence": "low"
-  },
-  "0x5071F60BB354A77E": {
-   "name": "_0x5071F60BB354A77E",
-   "confidence": "unnamed",
-   "rva": "0x03E88A30",
-   "arg_cells": 2,
-   "return_cells": 1,
-   "calls": 11,
-   "estimate": "MISC::GET_PRECIPITATION_LEVEL_FOR_WEATHER",
    "estimate_confidence": "low"
   },
   "0x5079DD0EC2ECD28B": {
@@ -17786,16 +17708,6 @@
    "estimate": "HUD::UIPROMPT_SET_VISIBILITY_MODE",
    "estimate_confidence": "low"
   },
-  "0x62D6FDFEA82F839E": {
-   "name": "_0x62D6FDFEA82F839E",
-   "confidence": "unnamed",
-   "rva": "0x03E90240",
-   "arg_cells": 1,
-   "return_cells": 0,
-   "calls": 2,
-   "estimate": "MISC::SET_CLOUD_COVERAGE",
-   "estimate_confidence": "low"
-  },
   "0x62D7F2A8EC299D67": {
    "name": "_0x62D7F2A8EC299D67",
    "confidence": "unnamed",
@@ -20485,18 +20397,6 @@
    "estimate": "PED::GET_WITNESS_STATE",
    "estimate_confidence": "low"
   },
-  "0x72311B09CC69CACF": {
-   "name": "_0x72311B09CC69CACF",
-   "confidence": "unnamed",
-   "scripthook_vi_guess": "SET_CALMED_WAVE_HEIGHT_SCALER",
-   "scripthook_vi_confidence": "inferred-medium",
-   "rva": "0x04A8E870",
-   "arg_cells": 1,
-   "return_cells": 0,
-   "calls": 2,
-   "estimate": "VEHICLE::SET_BOATS_DENSITY_MULTIPLIER_THIS_FRAME",
-   "estimate_confidence": "low"
-  },
   "0x723168B594433AC4": {
    "name": "_0x723168B594433AC4",
    "confidence": "unnamed",
@@ -20667,16 +20567,6 @@
    "return_cells": 0,
    "calls": 42,
    "estimate": "PLAYER::PLAYER_REVIVE_IN_PLACE",
-   "estimate_confidence": "low"
-  },
-  "0x738FA490DB1C35C1": {
-   "name": "_0x738FA490DB1C35C1",
-   "confidence": "unnamed",
-   "rva": "0x044C3000",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 2,
-   "estimate": "TASK::SET_ENTITY_IS_CARRIABLE",
    "estimate_confidence": "low"
   },
   "0x739CE144D3B98AE5": {
@@ -22713,16 +22603,6 @@
    "estimate": "PLAYER::IS_STORY_PROTAGONIST_ACTIVE",
    "estimate_confidence": "low"
   },
-  "0x80EDDF9E68B3948F": {
-   "name": "_0x80EDDF9E68B3948F",
-   "confidence": "unnamed",
-   "rva": "0x04A8E380",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 2,
-   "estimate": "WEAPON::SET_ATTACHED_WEAPON_VISIBLE",
-   "estimate_confidence": "low"
-  },
   "0x80F03F9F84F9BF26": {
    "name": "_0x80F03F9F84F9BF26",
    "confidence": "unnamed",
@@ -24378,16 +24258,6 @@
    "arg_cells": 8,
    "return_cells": 0,
    "calls": 1297
-  },
-  "0x8A6F13E7CB1538E6": {
-   "name": "_0x8A6F13E7CB1538E6",
-   "confidence": "unnamed",
-   "rva": "0x04BF8930",
-   "arg_cells": 4,
-   "return_cells": 0,
-   "calls": 9,
-   "estimate": "AUDIO::SET_ENTITY_AUDIO_FLAG",
-   "estimate_confidence": "low"
   },
   "0x8A7A172421D89484": {
    "name": "_0x8A7A172421D89484",
@@ -29264,16 +29134,6 @@
    "estimate": "UNLOCK::UNLOCK_IS_VALID",
    "estimate_confidence": "medium"
   },
-  "0xA69487C411F10BD8": {
-   "name": "_0xA69487C411F10BD8",
-   "confidence": "unnamed",
-   "rva": "0x04BF8430",
-   "arg_cells": 4,
-   "return_cells": 0,
-   "calls": 4,
-   "estimate": "AUDIO::SET_AMBIENT_ZONE_VOLUME",
-   "estimate_confidence": "low"
-  },
   "0xA695E3A53E47CFC5": {
    "name": "_0xA695E3A53E47CFC5",
    "confidence": "unnamed",
@@ -30275,16 +30135,6 @@
    "return_cells": 0,
    "calls": 1,
    "estimate": "VEHICLE::SET_VEHICLE_MOD_COLOUR",
-   "estimate_confidence": "low"
-  },
-  "0xAD1D7BF5EC838174": {
-   "name": "_0xAD1D7BF5EC838174",
-   "confidence": "unnamed",
-   "rva": "0x044C30D0",
-   "arg_cells": 1,
-   "return_cells": 0,
-   "calls": 8,
-   "estimate": "TASK::SET_HEADLOOK_IN_VEHICLE_DISABLED",
    "estimate_confidence": "low"
   },
   "0xAD3F87AD7F34AACB": {
@@ -34941,16 +34791,6 @@
    "estimate": "PLAYER::PLAYER_ADD_KNOWN_CHARACTER",
    "estimate_confidence": "low"
   },
-  "0xC4FFB93352332618": {
-   "name": "_0xC4FFB93352332618",
-   "confidence": "unnamed",
-   "rva": "0x044C3210",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 1,
-   "estimate": "TASK::SET_HELI_MISSION_SPEED",
-   "estimate_confidence": "low"
-  },
   "0xC50B713D7C403882": {
    "name": "_0xC50B713D7C403882",
    "confidence": "unnamed",
@@ -37332,16 +37172,6 @@
    "return_cells": 0,
    "calls": 1,
    "estimate": "STREAMING::SET_SWITCH_TARGET_PED",
-   "estimate_confidence": "low"
-  },
-  "0xD156EE4F49B5BE78": {
-   "name": "_0xD156EE4F49B5BE78",
-   "confidence": "unnamed",
-   "rva": "0x03E847C0",
-   "arg_cells": 2,
-   "return_cells": 0,
-   "calls": 2,
-   "estimate": "LAW::FORCE_POLICE_RESPONSE_FOR_INCIDENT",
    "estimate_confidence": "low"
   },
   "0xD164F9540BA81328": {
@@ -42858,16 +42688,6 @@
    "estimate": "ENTITY::SET_ENTITY_KINEMATIC_TARGET",
    "estimate_confidence": "low"
   },
-  "0xEE2CB9F59BC22092": {
-   "name": "_0xEE2CB9F59BC22092",
-   "confidence": "unnamed",
-   "rva": "0x04BF4230",
-   "arg_cells": 8,
-   "return_cells": 1,
-   "calls": 1,
-   "estimate": "AUDIO::GET_SCHEDULED_SPEECH_TIME",
-   "estimate_confidence": "low"
-  },
   "0xEE35B42DB169C5D0": {
    "name": "_0xEE35B42DB169C5D0",
    "confidence": "unnamed",
@@ -43442,16 +43262,6 @@
    "return_cells": 1,
    "calls": 3,
    "estimate": "VEHICLE::GET_AUTOPILOT_ACTIVE",
-   "estimate_confidence": "low"
-  },
-  "0xF19471FB56B0CACB": {
-   "name": "_0xF19471FB56B0CACB",
-   "confidence": "unnamed",
-   "rva": "0x04BF8880",
-   "arg_cells": 2,
-   "return_cells": 0,
-   "calls": 182,
-   "estimate": "AUDIO::SET_CONVERSATION_SUBTITLES_ENABLED",
    "estimate_confidence": "low"
   },
   "0xF1A556FF345A1F7A": {
@@ -45972,6 +45782,16 @@
    "calls": 3,
    "estimate": "PLAYER::SET_PLAYER_BUY_PRICE_MULTIPLIER",
    "estimate_confidence": "low"
+  },
+  "0x8A6F13E7CB1538E6": {
+   "name": "_0x8A6F13E7CB1538E6",
+   "confidence": "unnamed",
+   "rva": "0x04BF8930",
+   "arg_cells": 4,
+   "return_cells": 0,
+   "calls": 9,
+   "estimate": "ENTITY::SET_ENTITY_ATTACHED_OFFSET",
+   "estimate_confidence": "medium"
   }
  },
  "TASK": {
@@ -48122,6 +47942,22 @@
    "arg_cells": 8,
    "return_cells": 0,
    "calls": 219
+  },
+  "0xA69487C411F10BD8": {
+   "name": "SET_ANIM_RATE",
+   "confidence": "context+layout",
+   "rva": "0x04BF8430",
+   "arg_cells": 4,
+   "return_cells": 0,
+   "calls": 4
+  },
+  "0xF19471FB56B0CACB": {
+   "name": "SET_ENABLE_SPEED_RESTRAIN_FOR_WAYPOINT_RECORDING_LEADER",
+   "confidence": "context+layout",
+   "rva": "0x04BF8880",
+   "arg_cells": 2,
+   "return_cells": 0,
+   "calls": 182
   }
  },
  "PED": {
@@ -51383,6 +51219,14 @@
    "arg_cells": 1,
    "return_cells": 1,
    "calls": 48
+  },
+  "0x5071F60BB354A77E": {
+   "name": "GET_EVENT_EXISTS",
+   "confidence": "context+layout",
+   "rva": "0x03E88A30",
+   "arg_cells": 2,
+   "return_cells": 1,
+   "calls": 11
   }
  },
  "AUDIO": {
@@ -52009,6 +51853,14 @@
    "arg_cells": 3,
    "return_cells": 0,
    "calls": 5
+  },
+  "0x80EDDF9E68B3948F": {
+   "name": "SET_ANIMAL_MOOD",
+   "confidence": "context+layout",
+   "rva": "0x04A8E380",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 2
   }
  },
  "VEHICLE": {
@@ -53843,7 +53695,7 @@
   },
   "0x2D591A002FDD2F1D": {
    "name": "RESET_VEHICLE_WHEELS",
-   "confidence": "model-verified-medium",
+   "confidence": "context+layout+model",
    "scripthook_vi_guess": "RESET_VEHICLE_WHEELS",
    "scripthook_vi_confidence": "inferred-medium",
    "rva": "0x04A8D960",
@@ -53853,7 +53705,7 @@
   },
   "0x796B354617DD1CEB": {
    "name": "SET_BIKE_ON_STAND",
-   "confidence": "model-verified-medium",
+   "confidence": "context+layout+model",
    "rva": "0x04A8E560",
    "arg_cells": 4,
    "return_cells": 0,
@@ -54066,6 +53918,54 @@
    "arg_cells": 2,
    "return_cells": 0,
    "calls": 19
+  },
+  "0x0A928622DD3031B6": {
+   "name": "SET_DISABLE_TURRET_MOVEMENT",
+   "confidence": "context+layout",
+   "rva": "0x04C16E00",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 1
+  },
+  "0xC4FFB93352332618": {
+   "name": "SET_FORKLIFT_FORK_HEIGHT",
+   "confidence": "context+layout",
+   "rva": "0x044C3210",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 1
+  },
+  "0x15A8D414E7A35DC4": {
+   "name": "SET_AIRCRAFT_PILOT_SKILL_NOISE_SCALAR",
+   "confidence": "context+layout",
+   "rva": "0x04A8DDC0",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 27
+  },
+  "0x10BB3CFC3250A9D5": {
+   "name": "SET_VEHICLE_DAMAGE_SCALES",
+   "confidence": "context+layout",
+   "rva": "0x04A927B0",
+   "arg_cells": 6,
+   "return_cells": 0,
+   "calls": 1
+  },
+  "0x3D4DCE627CB666A2": {
+   "name": "SET_VEHICLE_DISABLE_TOWING",
+   "confidence": "context+layout",
+   "rva": "0x04A92B60",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 28
+  },
+  "0xAD1D7BF5EC838174": {
+   "name": "SET_FLEEING_VEHICLES_USE_SWITCHED_OFF_NODES",
+   "confidence": "context+layout",
+   "rva": "0x044C30D0",
+   "arg_cells": 1,
+   "return_cells": 0,
+   "calls": 8
   }
  },
  "GRAPHICS": {
@@ -54817,6 +54717,14 @@
    "arg_cells": 11,
    "return_cells": 1,
    "calls": 58
+  },
+  "0xD156EE4F49B5BE78": {
+   "name": "FORCE_PARTICLE_FX_IN_VEHICLE_INTERIOR",
+   "confidence": "context+layout",
+   "rva": "0x03E847C0",
+   "arg_cells": 2,
+   "return_cells": 0,
+   "calls": 2
   }
  },
  "MAP": {
@@ -56516,6 +56424,14 @@
    "arg_cells": 3,
    "return_cells": 0,
    "calls": 1
+  },
+  "0x738FA490DB1C35C1": {
+   "name": "_SET_ENTITY_LIGHTS_OFF",
+   "confidence": "context+layout",
+   "rva": "0x044C3000",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 2
   }
  },
  "MISC": {
@@ -57148,6 +57064,22 @@
    "arg_cells": 1,
    "return_cells": 0,
    "calls": 2
+  },
+  "0x62D6FDFEA82F839E": {
+   "name": "SET_CLOUD_SETTINGS_OVERRIDE",
+   "confidence": "context+layout",
+   "rva": "0x03E90240",
+   "arg_cells": 1,
+   "return_cells": 0,
+   "calls": 2
+  },
+  "0xEE2CB9F59BC22092": {
+   "name": "HAS_BULLET_IMPACTED_IN_BOX",
+   "confidence": "context+layout",
+   "rva": "0x04BF4230",
+   "arg_cells": 8,
+   "return_cells": 1,
+   "calls": 1
   }
  },
  "INVENTORY": {
@@ -59667,6 +59599,14 @@
    "arg_cells": 2,
    "return_cells": 0,
    "calls": 4
+  },
+  "0x3AE90DD31506F196": {
+   "name": "SHAKE_SCRIPT_GLOBAL",
+   "confidence": "context+layout",
+   "rva": "0x03CD8E40",
+   "arg_cells": 2,
+   "return_cells": 0,
+   "calls": 33
   }
  },
  "CAM": {
@@ -62809,6 +62749,14 @@
    "arg_cells": 1,
    "return_cells": 0,
    "calls": 48
+  },
+  "0x07B414C1EA578383": {
+   "name": "NETWORK_SET_VEHICLE_DRIVEN_LOCATION",
+   "confidence": "context+layout",
+   "rva": "0x04C154C0",
+   "arg_cells": 1,
+   "return_cells": 0,
+   "calls": 80
   }
  },
  "PAD": {
@@ -63615,6 +63563,14 @@
    "arg_cells": 1,
    "return_cells": 0,
    "calls": 4
+  },
+  "0x41E264A6206A2CCB": {
+   "name": "SET_ALL_MAPDATA_CULLED",
+   "confidence": "context+layout",
+   "rva": "0x04461FE0",
+   "arg_cells": 1,
+   "return_cells": 0,
+   "calls": 2
   }
  },
  "TXD": {
@@ -63745,6 +63701,16 @@
    "arg_cells": 4,
    "return_cells": 1,
    "calls": 8
+  },
+  "0x72311B09CC69CACF": {
+   "name": "SET_CALMED_WAVE_HEIGHT_SCALER",
+   "confidence": "context+layout",
+   "scripthook_vi_guess": "SET_CALMED_WAVE_HEIGHT_SCALER",
+   "scripthook_vi_confidence": "inferred-medium",
+   "rva": "0x04A8E870",
+   "arg_cells": 1,
+   "return_cells": 0,
+   "calls": 2
   }
  },
  "SYSTEM": {

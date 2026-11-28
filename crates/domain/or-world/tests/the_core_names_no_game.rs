@@ -15,13 +15,10 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 /// The modules of the core that name a game, by their path under its `src`.
-const NAMES_A_GAME: &[&str] = &["streaming_rules.rs"];
+const NAMES_A_GAME: &[&str] = &[];
 
 /// The modules of the core that name no game and lean on one that does: the module, and the one it leans on.
-const LEANS_ON: &[(&str, &str)] = &[
-    ("interior_portals.rs", "streaming_rules.rs"),
-    ("streaming.rs", "streaming_rules.rs"),
-];
+const LEANS_ON: &[(&str, &str)] = &[];
 
 fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")

@@ -1,7 +1,5 @@
 use super::*;
-use or_world::streaming_rules::{
-    PORTAL_ALLOW_CLOSING, PORTAL_LINK as LINK, PORTAL_MIRROR as MIRROR,
-};
+use crate::streaming_rules::{PORTAL_ALLOW_CLOSING, PORTAL_LINK as LINK, PORTAL_MIRROR as MIRROR};
 
 /// Three rooms 4 m long in a row along x, 4 m wide and 3 high: a front door from the outside into
 /// room 1 at x = 0, a door from room 1 into room 2 at x = 4 and one from room 2 into room 3 at
@@ -100,7 +98,7 @@ fn inside_the_sky_s_ambient_light_comes_in_through_the_openings_to_the_outside_a
     // Room 2 has no opening to the outside, even beside the door into room 1.
     assert_eq!(at(2, [4.0, 0.0, 1.0]), [0.0, 0.0]);
     // What stands in room 0 stands outdoors.
-    assert_eq!(at(0, [1.0, 0.0, 1.0]), or_renderer::OUTDOORS);
+    assert_eq!(at(0, [1.0, 0.0, 1.0]), crate::ambient::OUTDOORS);
     // A mirror on the front, or a link to another interior, lets in none of the sky's.
     for flags in [MIRROR, LINK] {
         let mut shut = portals.clone();

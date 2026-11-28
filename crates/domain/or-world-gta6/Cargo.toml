@@ -6,7 +6,7 @@ authors.workspace = true
 license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
-description = "GTA VI's world behind the world contract: its index with its kept file, mount binding, scan and states, its occluders, its material record and its lights' law"
+description = "GTA VI's world behind the world contract: its index with its kept file, mount binding, scan and states, the maps streamed around a camera and what of them draws, its interiors, its occluders, its material record and its lights' law"
 
 [dependencies]
 bytemuck.workspace = true

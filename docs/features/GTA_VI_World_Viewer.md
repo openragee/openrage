@@ -86,7 +86,9 @@ hours it states.
 
 ## Streaming and level of detail
 
-`crates/domain/or-world/src/streaming.rs` holds the rules, with no file or device in them:
+`crates/domain/or-world/src/streaming.rs` holds the rules, with no file or device in them, and
+`crates/domain/or-world-gta6/src/stream.rs` streams the maps and selects what draws by them, on a
+thread of its own (`crates/domain/or-world-gta6/src/stream_world.rs`):
 
 - A map is wanted while the camera is within the sphere of the box it streams by: about the box's
   middle, of the box's smallest half extent and 50 m; a box under a metre of half extent on any

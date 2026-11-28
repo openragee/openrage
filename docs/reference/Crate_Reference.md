@@ -1710,7 +1710,7 @@ written before it, and failed with the key snapshot kept from `index::build`. Th
 `src/state/gta6_worldview/index_shell.rs` (the configuration folder and key snapshot it opens with,
 and `land_and_water`) and every file of the viewer that names the renderer or the app. ⚠ A line a
 moved file logs below an error no longer reaches the terminal, and one below `info` no longer
-reaches the Log panel: both are filtered by crate (`src/diagnostics/mod.rs`). Left: parts 4 and 5;
+reaches the Log panel: both are filtered by crate (`src/diagnostics/mod.rs`). Left: the rest of part 4 and part 5;
 the adapter's title and its line in `or-worlds`, which wait for the readers a title opens
 with, since an `Entry` of the registry is a title and can state none without one; and the pool's workers keeping their open files in the contract's `Worker`. The
 contract as built changes the later parts: the world thread is rewritten around the core's driver,
@@ -1779,6 +1779,59 @@ written; at the second start it was held after 1.0 s with no archive read. The 9
 built afresh, through the new kept file and on the second start, and 37 of them failed once with
 the link's far stand-ins zeroed. The same test at the revision before took 181 s to hold an index
 built afresh, on a machine other lanes were building on.
+
+**or-world-gta6, the selecting half.** The fourth part of
+[R71b](../direction/Roadmap.md#r71b-the-gta-vi-world-behind-the-contract) moved the selecting half
+of the viewer and rewrote none of it.
+
+- **What moved.** `stream` (`crates/domain/or-world-gta6/src/stream.rs`: `Streamer`, the maps
+  around a camera and the selection of what draws, `select_asking`) with its child modules: the
+  read of a map body, the far stand-ins, the census, grass, and `World`, the world's own thread
+  (`crates/domain/or-world-gta6/src/stream_world.rs`); `interior` and `interior_rooms`, the
+  interiors a map places and the walk through their rooms; `ambient`, the two ambient scales an
+  instance states, which `or-renderer` now takes from the adapter and names again as its own; and
+  `streaming_rules`, the rules read from the build. The core keeps in
+  `crates/domain/or-world/src/streaming_rules.rs` what its forest and its portal walk call
+  (`map_streaming_sphere`, `distance_alpha` and the constants they and the walk read), and the
+  adapter's module names those again beside its own.
+- **What the app keeps.** `src/state/gta6_worldview/stream_grass.rs` is the one method of the
+  app's `Viewer` that stood in the moved file, and `src/state/gta6_worldview/stream_viewer_tests.rs`
+  the two tests that build a `Viewer` to see a dead thread started again. The other tests of the
+  moved files run under their names in the adapter. The feature `made-up` also builds what the
+  app's tests drive a `Streamer` and a `World` by.
+- **What held.** `the_world_reads_as_its_reference_says` held after the move to the digests
+  written before it: 961 of 961 on the GTA VI build of this machine, 2026-11-28.
+- **Why the suite and the screen count one map apart.** At the city stop the suite's selection
+  wants 3,189 maps and the screen's dump 3,190 (`the_world_reads_as_its_reference_says` against
+  the dump of the reference script, 2026-11-27 and 2026-11-28). The one map is script-managed,
+  holds no node, and is a parent of another. A `Streamer` that reads it while it is wanted only
+  for itself finds it empty and wants it no more; one that first read it as a parent, as the
+  screen does from where its camera starts, keeps it, and still wants it for itself at the city.
+  The nodes in the forest are the same either way (32,430). ⚠ So the count of maps wanted
+  follows the path of the camera, and what draws does not.
+
+Left of the part, and what stands in its way. The world's thread still streams and selects
+through GTA VI's own `Streamer`, the occluders and the lights still have their own loops and
+pools, and `select_asking` is whole. The core's `Driver` cannot hold GTA VI as both are built:
+
+- **It is made over a `WorldInstall`**, which wants a model reader and a look; GTA VI's are
+  the fifth part's.
+- **A wanted map's parents.** The driver wants them whatever switches them. GTA VI leaves out a
+  parent that is not switched on and follows none of its own, unless it is one that holds nothing
+  and is a link alone.
+- **A map's modes are not in its gate**, so the driver would stream a map of a mode that is off.
+- **A map found empty** is wanted no more by GTA VI, and the driver has no word for it: the
+  maps wanted, which the digests and the dumps hold, would differ.
+- **A selection's swaps.** `Drawn` hands a body its nodes and lists that draw; the parents held
+  for their children and the children waited for, which GTA VI lays out as chunks a frame swaps,
+  are in the forest's selection and not in what a body is handed.
+- **What crosses bodies.** A batch level hides instances of its parent list, which another map
+  may hold, a far stand-in yields to a tree any map places, and the walk through rooms marks what every map
+  placed outdoors as casting only; `lay` is called once a body.
+- **Interiors.** GTA VI's stand outside the forest and draw by the rooms seen from the camera;
+  the driver's are bodies in the forest.
+- **A model's key.** `AssetKey` is 64 bits and GTA VI's `ModelRef` is an archive, an offset and
+  an entry, so the adapter needs a table between them.
 
 **The world core.** The modules of `or-world` name no game and are what every title's
 world sits behind ([R71a](../direction/Roadmap.md#r71a-the-world-contract-the-conformance-kit-and-the-fake-title),

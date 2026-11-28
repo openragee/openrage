@@ -5,13 +5,13 @@
 //!
 //! ⚠ Room 0 is the outside of every other room: a portal to it is a door or window of the shell.
 
-use glam::{Mat4, Vec3};
-use or_io::gta6::timecycle::ARTIFICIAL_AMBIENT_LUX;
-use or_world::interior_portals::{self as rules, LinkTarget, RoomRef};
-use or_world::streaming_rules::{
+use crate::streaming_rules::{
     camera_portal_factor, portal_is_shut, portal_leads_outside, uses_interior_ambient, PortalDoor,
     PORTAL_LINK, PORTAL_MIRROR,
 };
+use glam::{Mat4, Vec3};
+use or_io::gta6::timecycle::ARTIFICIAL_AMBIENT_LUX;
+use or_world::interior_portals::{self as rules, LinkTarget, RoomRef};
 
 /// How many portals deep a camera looks.
 const DEPTH: u32 = 8;
@@ -22,9 +22,9 @@ const LINKED: f32 = 0.5;
 
 /// A room's box, in the interior's space.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) struct RoomBox {
-    pub(super) min: Vec3,
-    pub(super) max: Vec3,
+pub struct RoomBox {
+    pub min: Vec3,
+    pub max: Vec3,
 }
 
 impl RoomBox {
@@ -39,14 +39,14 @@ impl RoomBox {
 
 /// A portal between two rooms, with its four corners in the interior's space and its flags.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) struct Opening {
-    pub(super) rooms: [u32; 2],
-    pub(super) corners: [Vec3; 4],
-    pub(super) flags: u32,
+pub struct Opening {
+    pub rooms: [u32; 2],
+    pub corners: [Vec3; 4],
+    pub flags: u32,
     /// Whether it is shut as the interior stands at rest: its own entities are seen, nothing past it.
-    pub(super) shut: bool,
+    pub shut: bool,
     /// Whether a door the map places stands in it: the sky does not come in through it.
-    pub(super) door: bool,
+    pub door: bool,
 }
 
 /// Whether a portal of `flags` that holds `doors` doors is shut as the interior stands when it is
@@ -54,7 +54,7 @@ pub(super) struct Opening {
 /// a link, whose doors never reach it, is open.
 // ⚠ Inferred: a placed door stands at rest unopened, and the placed interior's proxy is set.
 // ponytail: no door keeps its portal open by its own flags or its archetype's, which the viewer does not read.
-pub(super) fn shut_at_rest(flags: u32, doors: usize) -> bool {
+pub fn shut_at_rest(flags: u32, doors: usize) -> bool {
     let at_rest = PortalDoor {
         open_ratio: 0.0,
         keeps_open: false,
@@ -67,19 +67,19 @@ pub(super) fn shut_at_rest(flags: u32, doors: usize) -> bool {
 /// through the portals to the outside it sees the outside through, `None` where nothing of the
 /// outside is hidden.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub(super) struct Seen {
-    pub(super) rooms: Vec<bool>,
-    pub(super) portals: Vec<bool>,
-    pub(super) outside: Option<Vec<Planes>>,
+pub struct Seen {
+    pub rooms: Vec<bool>,
+    pub portals: Vec<bool>,
+    pub outside: Option<Vec<Planes>>,
 }
 
 /// Whether the sphere of `radius` about `p` reaches into the pyramid of `planes` through `eye`.
-pub(super) fn reaches(planes: &[Vec3], eye: Vec3, p: Vec3, radius: f32) -> bool {
+pub fn reaches(planes: &[Vec3], eye: Vec3, p: Vec3, radius: f32) -> bool {
     planes.iter().all(|normal| normal.dot(p - eye) >= -radius)
 }
 
 /// The room other than room 0 whose box holds `eye`, the smallest where boxes overlap.
-pub(super) fn room_of(rooms: &[RoomBox], eye: Vec3) -> Option<usize> {
+pub fn room_of(rooms: &[RoomBox], eye: Vec3) -> Option<usize> {
     (rooms.iter().enumerate().skip(1))
         .filter(|(_, room)| room.holds(eye))
         .min_by(|(_, a), (_, b)| a.volume().total_cmp(&b.volume()))
@@ -91,7 +91,7 @@ pub(super) fn room_of(rooms: &[RoomBox], eye: Vec3) -> Option<usize> {
 // ⚠ Measured: a prop on a shelf or against a wall has a sphere that passes the room's box, and lit
 // as outdoors it stood four stops and more over the room. Inferred: a shell's piece is wider than
 // the room it walls.
-pub(super) fn room_around(rooms: &[RoomBox], p: Vec3, radius: f32) -> Option<usize> {
+pub fn room_around(rooms: &[RoomBox], p: Vec3, radius: f32) -> Option<usize> {
     (rooms.iter().enumerate().skip(1))
         .filter(|(_, room)| room.holds(p) && 2.0 * radius < (room.max - room.min).length())
         .min_by(|(_, a), (_, b)| a.volume().total_cmp(&b.volume()))
@@ -99,7 +99,7 @@ pub(super) fn room_around(rooms: &[RoomBox], p: Vec3, radius: f32) -> Option<usi
 }
 
 /// Planes through the camera, each a unit normal: a point `p` is inside where `normal · (p − eye) ≥ 0` for each.
-pub(super) type Planes = Vec<Vec3>;
+pub type Planes = Vec<Vec3>;
 
 /// The planes through `eye` and each edge of `polygon`, each facing its middle.
 fn pyramid(eye: Vec3, polygon: &[Vec3]) -> Planes {
@@ -118,7 +118,7 @@ fn pyramid(eye: Vec3, polygon: &[Vec3]) -> Planes {
 }
 
 /// The plane of an opening, as a unit normal and a point on it; `None` for one with no area.
-pub(super) fn plane_of(corners: &[Vec3; 4]) -> Option<(Vec3, Vec3)> {
+pub fn plane_of(corners: &[Vec3; 4]) -> Option<(Vec3, Vec3)> {
     let normal = (corners[2] - corners[0]).cross(corners[3] - corners[1]);
     let normal = normal.try_normalize()?;
     Some((normal, corners.iter().copied().sum::<Vec3>() / 4.0))
@@ -126,21 +126,21 @@ pub(super) fn plane_of(corners: &[Vec3; 4]) -> Option<(Vec3, Vec3)> {
 
 /// An interior a camera may see into: its rooms and portals in its own space, and what takes a
 /// point of the world into that space.
-pub(super) struct Shell<'a> {
-    pub(super) rooms: &'a [RoomBox],
-    pub(super) portals: &'a [Opening],
-    pub(super) own: Mat4,
+pub struct Shell<'a> {
+    pub rooms: &'a [RoomBox],
+    pub portals: &'a [Opening],
+    pub own: Mat4,
 }
 
 /// What a camera sees of the shells around it.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub(super) struct Walked {
+pub struct Walked {
     /// By shell: the rooms and portals it sees; from a room, the pyramids in the world the outside is seen through.
-    pub(super) seen: Vec<Seen>,
+    pub seen: Vec<Seen>,
     /// The shell and room the camera stands in.
-    pub(super) standing: Option<(usize, usize)>,
+    pub standing: Option<(usize, usize)>,
     /// The room the camera stands in, or, where the factor takes the interior's light, the room past the nearest portal to the outside.
-    pub(super) inside: Option<(usize, usize)>,
+    pub inside: Option<(usize, usize)>,
 }
 
 /// `shell` as the build's walk takes it: its portals in the world, each room's portals, its box in the world.
@@ -220,7 +220,7 @@ fn link(interiors: &mut [rules::Interior]) {
 // ponytail: the world's thread is told where the camera stands and not where it looks, so each
 // portal passes the frustum's test, as though the camera looked every way; narrow it with the
 // view's planes if the rooms drawn cost.
-pub(super) fn walk(shells: &[Shell<'_>], eye: Vec3) -> Walked {
+pub fn walk(shells: &[Shell<'_>], eye: Vec3) -> Walked {
     let mut interiors: Vec<rules::Interior> = shells.iter().map(walked).collect();
     link(&mut interiors);
     let standing = (shells.iter().enumerate())
@@ -345,7 +345,7 @@ const REFLECTANCE: f32 = 0.5;
 // openings), so the architect's average daylight factor, `W θ / (A (1 − R²))` for openings of area
 // W in a room of surface A, stands for what its tracing brings in. It states no artificial ambient
 // light either, and the lighting keeps as much of the sky's reflection as the greater of the two.
-pub(super) fn ambient_of(
+pub fn ambient_of(
     rooms: &[RoomBox],
     portals: &[Opening],
     room: u32,
@@ -353,7 +353,7 @@ pub(super) fn ambient_of(
     flux: f32,
 ) -> [f32; 2] {
     let Some(of) = rooms.get(room as usize).filter(|_| room != 0) else {
-        return or_renderer::OUTDOORS;
+        return crate::ambient::OUTDOORS;
     };
     let outward = portals.iter().filter(|o| {
         let [a, b] = o.rooms;

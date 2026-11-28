@@ -3418,6 +3418,7 @@ dependencies = [
  "or-test-support",
  "or-title",
  "or-transport",
+ "or-world-gta6",
  "pollster",
  "raw-window-handle",
  "rayon",

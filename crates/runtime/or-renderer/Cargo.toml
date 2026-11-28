@@ -59,6 +59,8 @@ image.workspace = true
 or-io = { workspace = true, features = ["gta6"] }
 # The day's floor on a light direction, which the shadow direction shares.
 or-title.workspace = true
+# The ambient scales an instance of the GTA VI world states, which the G-buffer's program unpacks.
+or-world-gta6.workspace = true
 # The frame and game clock a shots run fixes, so that two runs draw the same frames.
 or-transport.workspace = true
 # The workers that build a GTA VI pass: no more at once than the machine spares.

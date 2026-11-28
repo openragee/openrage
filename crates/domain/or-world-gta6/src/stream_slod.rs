@@ -7,7 +7,7 @@ use std::sync::Arc;
 use glam::Vec3;
 use or_io::gta6::map::stream::StreamGrassList;
 
-use super::super::index::{ArchetypeRow, ModelRef, WorldIndex};
+use crate::index::{ArchetypeRow, ModelRef, WorldIndex};
 
 /// A list of far stand-ins that draws, as the card pass takes it.
 #[derive(Debug, Clone, PartialEq)]

@@ -18,9 +18,9 @@ use or_io::meta::binary::rbm::schema::RbmModel;
 use or_world::interior_portals::point_polygon_distance;
 use or_world::streaming::{Level, View, FADE_SMALL, SMALL};
 
-use super::index::{BodyRow, ModelRef, WorldIndex};
-use super::interior_rooms::{self, Opening, RoomBox, Seen};
-use super::stream::{Chunk, Instance, Rows};
+use crate::index::{BodyRow, ModelRef, WorldIndex};
+use crate::interior_rooms::{self, Opening, RoomBox, Seen};
+use crate::stream::{Chunk, Instance, Rows};
 
 /// The bytes a body of interiors is read to.
 const BODY_LIMIT: u64 = 256 << 20;
@@ -49,22 +49,22 @@ fn stretch(m: Mat4) -> f32 {
 
 /// One entity an interior draws, in the world.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) struct Child {
-    pub(super) model: ModelRef,
-    pub(super) rows: Rows,
+pub struct Child {
+    pub model: ModelRef,
+    pub rows: Rows,
     /// The sphere of its model.
-    pub(super) centre: Vec3,
-    pub(super) radius: f32,
+    pub centre: Vec3,
+    pub radius: f32,
     /// How far from where it stands it draws.
-    pub(super) lod_dist: f32,
+    pub lod_dist: f32,
     /// Which of the view's scales its distance takes.
-    pub(super) level: Level,
+    pub level: Level,
     /// The hours it draws in, bit `h` for the hour from `h`: its archetype's.
-    pub(super) hours: u32,
+    pub hours: u32,
     /// The room or portal that holds it.
-    pub(super) location: EntitySetLocation,
+    pub location: EntitySetLocation,
     /// How much of the natural and of the artificial ambient light it takes.
-    pub(super) ambient: [f32; 2],
+    pub ambient: [f32; 2],
 }
 
 impl Child {
@@ -82,11 +82,11 @@ impl Child {
 
 /// A room as the frame and the panel name it.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) struct RoomNames {
-    pub(super) name: u32,
-    pub(super) timecycle: u32,
-    pub(super) secondary_timecycle: u32,
-    pub(super) blend: f32,
+pub struct RoomNames {
+    pub name: u32,
+    pub timecycle: u32,
+    pub secondary_timecycle: u32,
+    pub blend: f32,
 }
 
 /// The interior and room a camera stands in, and the time-cycle modifiers the room names.
@@ -102,36 +102,36 @@ pub struct Inside {
 
 /// One interior as a map places it.
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct Placed {
+pub struct Placed {
     /// The instance's place among its map's entities.
-    pub(super) entity: usize,
-    pub(super) name: u32,
+    pub entity: usize,
+    pub name: u32,
     /// The sphere of the interior's box.
-    pub(super) centre: Vec3,
-    pub(super) radius: f32,
+    pub centre: Vec3,
+    pub radius: f32,
     /// How far from `centre` the camera may be while the contents draw.
-    pub(super) lod_dist: f32,
-    pub(super) children: Vec<Child>,
+    pub lod_dist: f32,
+    pub children: Vec<Child>,
     /// What takes a point of the world into the interior's own space, where its rooms stand.
-    pub(super) own: Mat4,
-    pub(super) rooms: Vec<RoomBox>,
-    pub(super) names: Vec<RoomNames>,
-    pub(super) portals: Vec<Opening>,
+    pub own: Mat4,
+    pub rooms: Vec<RoomBox>,
+    pub names: Vec<RoomNames>,
+    pub portals: Vec<Opening>,
     /// The luminous flux of each room's lamps, in lumens.
-    pub(super) flux: Vec<f32>,
+    pub flux: Vec<f32>,
     /// The doors the map places in the openings of its shell.
-    pub(super) doors: Vec<InOpening>,
+    pub doors: Vec<InOpening>,
 }
 
 /// A door the map places in an opening of an interior's shell, in the interior's space.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) struct InOpening {
+pub struct InOpening {
     /// Where it stands: its hinge.
-    pub(super) at: Vec3,
+    pub at: Vec3,
     /// The opening's normal, out of the interior.
-    pub(super) out: Vec3,
+    pub out: Vec3,
     /// The ambient scales its face turned into the room takes: the room's, the opening it shuts left out.
-    pub(super) inward: [f32; 2],
+    pub inward: [f32; 2],
 }
 
 /// The luminous flux of `light`, in lumens, its intensity taken in candelas: all round for a
@@ -170,20 +170,20 @@ fn room_at(interior: &Interior, location: EntitySetLocation) -> u32 {
 
 /// The rooms a camera sees of each interior in range it looks into, by the map and place of the
 /// interior's instance.
-pub(super) type RoomsSeen = HashMap<(u32, u32), Vec<bool>>;
+pub type RoomsSeen = HashMap<(u32, u32), Vec<bool>>;
 
 /// Whether a lamp of room `room` of the interior placed at `at` lights what a camera that sees
 /// `rooms` sees: one of a room the camera does not see lights none of it, and one of an interior
 /// whose contents do not draw lights nothing.
 // ⚠ GTA V's rule: an interior's lights are those of the rooms its portals show, and a lamp is
 // its entity's, there while the entity is.
-pub(super) fn lit(rooms: &RoomsSeen, at: (u32, u32), room: u32) -> bool {
+pub fn lit(rooms: &RoomsSeen, at: (u32, u32), room: u32) -> bool {
     (rooms.get(&at)).is_some_and(|seen| seen.get(room as usize).copied().unwrap_or(true))
 }
 
 /// `interior` as `instance` places it: each entity it draws that the index has a model for; the
 /// doors its map places, `map_doors` in the world, close the openings of its shell they stand in.
-pub(super) fn place(
+pub fn place(
     index: &WorldIndex,
     instance: &InteriorInstance,
     interior: &Interior,
@@ -320,7 +320,7 @@ pub(super) fn place(
 
 impl Placed {
     /// What the walk takes of it.
-    pub(super) fn shell(&self) -> interior_rooms::Shell<'_> {
+    pub fn shell(&self) -> interior_rooms::Shell<'_> {
         interior_rooms::Shell {
             rooms: &self.rooms,
             portals: &self.portals,
@@ -329,7 +329,7 @@ impl Placed {
     }
 
     /// This interior and its room `room`, as a camera inside it stands in them.
-    pub(super) fn inside(&self, room: usize) -> Option<Inside> {
+    pub fn inside(&self, room: usize) -> Option<Inside> {
         let names = self.names.get(room)?;
         Some(Inside {
             interior: self.name,
@@ -341,7 +341,7 @@ impl Placed {
     }
 
     /// Whether a camera at `eye` is within the interior's own distance, scaled as its high level's.
-    pub(super) fn in_range(&self, eye: Vec3, view: &View) -> bool {
+    pub fn in_range(&self, eye: Vec3, view: &View) -> bool {
         // A camera inside the interior's own sphere is in range whatever distance it states.
         let scale = view.scales[Level::Hd as usize];
         eye.distance(self.centre) <= (self.lod_dist * scale).max(self.radius)
@@ -351,7 +351,7 @@ impl Placed {
     /// ambient light of what stands there: a map's props and lists placed inside its shell.
     // ⚠ Inferred: an instance whose sphere fits in a room is in it; a shell's walls, wider than their
     // room, keep the outdoors'.
-    pub(super) fn shade(&self, chunks: &[Chunk], instances: &mut [Instance]) {
+    pub fn shade(&self, chunks: &[Chunk], instances: &mut [Instance]) {
         let reach = |c: Vec3, r: f32| c.distance(self.centre) <= r + self.radius;
         let scale = stretch(self.own);
         for chunk in chunks.iter().filter(|c| reach(c.centre, c.radius)) {
@@ -394,11 +394,11 @@ impl Placed {
                 (j, along.dot(door.out))
             })
             .max_by(|a, b| a.1.abs().total_cmp(&b.1.abs()))?;
-        Some(or_renderer::world::by_face(axis, out, door.inward))
+        Some(crate::ambient::by_face(axis, out, door.inward))
     }
 
     /// Whether the sphere of `radius` about `p` in the world reaches into one of the interior's rooms.
-    pub(super) fn reaches_a_room(&self, p: Vec3, radius: f32) -> bool {
+    pub fn reaches_a_room(&self, p: Vec3, radius: f32) -> bool {
         let (p, r) = (self.own.transform_point3(p), radius * stretch(self.own));
         (self.rooms.iter().skip(1))
             .any(|room| p.clamp(room.min, room.max).distance_squared(p) <= r * r)
@@ -407,7 +407,7 @@ impl Placed {
     /// Call `draw` with each child of what `seen` holds a camera of `view` sees at the hour `hour`,
     /// 0 to 23, how far from the camera it stands and how opaque it draws, the interior itself
     /// drawing `fade` opaque.
-    pub(super) fn each(
+    pub fn each(
         &self,
         view: &View,
         hour: u32,
@@ -491,7 +491,7 @@ fn with_interiors(
 
 /// The interiors the map body of these two sections places, each from its archetype's body, read
 /// through `files`; a map that places none costs one look at `map`.
-pub(super) fn read_placed(
+pub fn read_placed(
     index: &WorldIndex,
     files: &mut HashMap<u32, File>,
     map: &StreamMap,
@@ -522,7 +522,7 @@ pub(super) fn read_placed(
 
 /// The lights the archetypes of `interior`'s contents hold, in the world under `instance`, each
 /// with the room it is in.
-pub(super) fn lights_of(
+pub fn lights_of(
     index: &WorldIndex,
     instance: &InteriorInstance,
     interior: &Interior,
@@ -549,7 +549,7 @@ pub(super) fn lights_of(
 }
 
 /// The boxes the lamps of each room light, by the place of its interior's instance and the room.
-pub(super) type RoomBoxes = HashMap<[u32; 2], Vec<Mat4>>;
+pub type RoomBoxes = HashMap<[u32; 2], Vec<Mat4>>;
 
 /// How much larger than its stated box a room is taken to be on each side, in metres, so that its own walls lie in it.
 // ⚠ Assumed: thinner than an outer wall, so the far face of a wall stays out.
@@ -570,7 +570,7 @@ fn room_bounds(interior: &Interior, outer: Mat4, room: u32) -> Option<Mat4> {
 
 /// The boxes a lamp of room `room` of `interior` placed by `outer` lights: its room's, and for each portal of the room but a mirror, the room it opens on and the opening's own box, `PORTAL_DEPTH` either side of it; none for room 0.
 // ponytail: every portal counts as open; the door rule if a shut door shows light through it.
-pub(super) fn light_bounds(interior: &Interior, outer: Mat4, room: u32) -> Vec<Mat4> {
+pub fn light_bounds(interior: &Interior, outer: Mat4, room: u32) -> Vec<Mat4> {
     let Some(own) = room_bounds(interior, outer, room) else {
         return Vec::new();
     };
@@ -602,7 +602,7 @@ pub(super) fn light_bounds(interior: &Interior, outer: Mat4, room: u32) -> Vec<M
 /// each with the place of its interior's instance among the map's entities, its room, and whether it
 /// stands inside its room's box; and the boxes [`light_bounds`] gives each room that holds a lamp,
 /// by the instance's place and the room.
-pub(super) fn lights_placed(
+pub fn lights_placed(
     index: &WorldIndex,
     files: &mut HashMap<u32, File>,
     model: &RbmModel,

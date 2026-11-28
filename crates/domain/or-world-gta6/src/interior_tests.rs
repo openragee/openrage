@@ -2,8 +2,8 @@ use or_io::gta6::map::interior::{InteriorChild, InteriorRoom, InteriorSet};
 use or_io::gta6::map::links::{EntitySetLocation, Portal, Room};
 use or_world::streaming::FADE;
 
-use super::super::index::tests_support::index_of;
 use super::*;
+use crate::index::tests_support::index_of;
 
 /// A chair that draws to 20 m and a lamp that draws to 50, each with a model, and a ghost with none.
 const CHAIR: u64 = 100;
@@ -160,11 +160,11 @@ fn a_door_in_an_opening_takes_the_outdoors_on_its_face_turned_out_and_the_room_s
     let spun = rows([0.0, -1.0, 0.0], [1.0, 0.0, 0.0]);
     assert_eq!(
         placed.door_ambient(&unturned),
-        Some(or_renderer::world::by_face(1, 1.0, [0.0, 0.0]))
+        Some(crate::ambient::by_face(1, 1.0, [0.0, 0.0]))
     );
     assert_eq!(
         placed.door_ambient(&spun),
-        Some(or_renderer::world::by_face(0, -1.0, [0.0, 0.0]))
+        Some(crate::ambient::by_face(0, -1.0, [0.0, 0.0]))
     );
     let mut elsewhere = unturned;
     elsewhere[1][3] = 20.0;

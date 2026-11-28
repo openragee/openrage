@@ -75,7 +75,7 @@ struct Told {
 
 /// What a selection waits for, handed out before the selection is whole.
 #[derive(Default)]
-pub(in super::super) struct Asked {
+pub struct Asked {
     pub version: u64,
     /// Where the camera stood for it.
     pub eye: Vec3,
@@ -97,19 +97,14 @@ pub(super) struct Shared {
 
 /// The world as a thread of its own streams and selects it, so that a frame only reads what was
 /// selected last and never waits for the selection.
-pub(in super::super) struct World {
+pub struct World {
     pub(super) shared: Arc<Shared>,
     thread: std::thread::JoinHandle<()>,
 }
 
 impl World {
     /// The world of `index` about a camera at `eye`, its distances `scale`d, that never takes in the maps `skipped`.
-    pub(in super::super) fn new(
-        index: Arc<WorldIndex>,
-        eye: Vec3,
-        scale: f32,
-        skipped: HashSet<u32>,
-    ) -> Self {
+    pub fn new(index: Arc<WorldIndex>, eye: Vec3, scale: f32, skipped: HashSet<u32>) -> Self {
         let shared = Arc::new(Shared {
             told: Mutex::new(Told {
                 eye,
@@ -130,7 +125,7 @@ impl World {
     }
 
     /// The maps the thread took in since its last whole selection: for a thread that died, what it is taken to have died on.
-    pub(in super::super) fn unproven(&self) -> Vec<u32> {
+    pub fn unproven(&self) -> Vec<u32> {
         (self
             .shared
             .unproven
@@ -140,8 +135,8 @@ impl World {
     }
 
     /// Say the thread took `map` in, as the thread does before it takes one.
-    #[cfg(test)]
-    pub(in super::super) fn took(&self, map: u32) {
+    #[cfg(any(test, feature = "made-up"))]
+    pub fn took(&self, map: u32) {
         (self
             .shared
             .unproven
@@ -151,13 +146,13 @@ impl World {
     }
 
     /// Whether the thread ended though it was not stopped: a panic in a build that unwinds.
-    pub(in super::super) fn died(&self) -> bool {
+    pub fn died(&self) -> bool {
         self.thread.is_finished()
     }
 
     /// End the thread as a panic on it would.
-    #[cfg(test)]
-    pub(in super::super) fn end(&self) {
+    #[cfg(any(test, feature = "made-up"))]
+    pub fn end(&self) {
         (self.shared.told.lock().unwrap_or_else(|p| p.into_inner())).stopped = true;
         self.shared.woken.notify_one();
     }
@@ -175,7 +170,7 @@ impl World {
     }
 
     /// Say where the camera is and the scale of its distances.
-    pub(in super::super) fn look(&self, eye: Vec3, scale: f32) {
+    pub fn look(&self, eye: Vec3, scale: f32) {
         self.tell_of(|told| {
             let changed = (told.eye, told.scale) != (eye, scale);
             (told.eye, told.scale) = (eye, scale);
@@ -184,7 +179,7 @@ impl World {
     }
 
     /// Say the hour of the day, 0.0 to 24.0: a time archetype draws inside its hours alone.
-    pub(in super::super) fn set_hour(&self, hour: f32) {
+    pub fn set_hour(&self, hour: f32) {
         self.tell_of(|told| {
             let changed = hour_of(told.hour) != hour_of(hour);
             told.hour = hour;
@@ -194,7 +189,7 @@ impl World {
 
     /// Say the band past its distance each level fades out over, by `Level as usize`, in metres:
     /// [`fade_of`] the install's visual settings.
-    pub(in super::super) fn set_fade(&self, fade: [f32; Level::COUNT]) {
+    pub fn set_fade(&self, fade: [f32; Level::COUNT]) {
         self.tell_of(|told| {
             let changed = told.fade != fade;
             told.fade = fade;
@@ -203,7 +198,7 @@ impl World {
     }
 
     /// Say what of the game is switched on: a map it does not allow is not streamed in.
-    pub(in super::super) fn set_enabled(&self, enabled: Enabled) {
+    pub fn set_enabled(&self, enabled: Enabled) {
         self.tell_of(|told| {
             told.enabled = Some(enabled);
             true
@@ -211,7 +206,7 @@ impl World {
     }
 
     /// Say which models came to the device, will never come, or left it.
-    pub(in super::super) fn tell(&self, models: &mut Vec<(ModelRef, Option<bool>)>) {
+    pub fn tell(&self, models: &mut Vec<(ModelRef, Option<bool>)>) {
         if models.is_empty() {
             return;
         }
@@ -222,18 +217,18 @@ impl World {
     }
 
     /// Whether something was told the thread that the last selection does not stand on yet.
-    pub(in super::super) fn unselected(&self) -> bool {
+    pub fn unselected(&self) -> bool {
         let times = (self.shared.told.lock().unwrap_or_else(|p| p.into_inner())).times;
         self.shared.done.load(std::sync::atomic::Ordering::Acquire) != times
     }
 
     /// What was selected last.
-    pub(in super::super) fn latest(&self) -> Arc<Selected> {
+    pub fn latest(&self) -> Arc<Selected> {
         Arc::clone(&self.shared.latest.lock().unwrap_or_else(|p| p.into_inner()))
     }
 
     /// What the selection under way, or the last, waits for.
-    pub(in super::super) fn asked(&self) -> Arc<Asked> {
+    pub fn asked(&self) -> Arc<Asked> {
         Arc::clone(&self.shared.asked.lock().unwrap_or_else(|p| p.into_inner()))
     }
 }

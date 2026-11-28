@@ -8,8 +8,8 @@ use glam::{Mat4, Quat, Vec3};
 use or_io::gta6::map::stream::{StreamGrassList, StreamLink, StreamMap};
 use or_world::streaming::{Category, Extent, Kind, Level, Node, ParentRef};
 
-use super::super::index::{ModelRef, WorldIndex, ALL_HOURS};
 use super::grass;
+use crate::index::{ModelRef, WorldIndex, ALL_HOURS};
 
 /// The rows of a 3×4 matrix: the model's axes, with the translation in the fourth column.
 pub type Rows = [[f32; 4]; 3];
@@ -148,11 +148,11 @@ pub(super) struct Loaded {
     /// The prop lists, then the grass lists.
     pub(super) lists: Vec<List>,
     /// The interiors the map places, each with its contents in the world.
-    pub(super) interiors: Vec<super::super::interior::Placed>,
+    pub(super) interiors: Vec<crate::interior::Placed>,
 }
 
 /// What a worker read of a map: its nodes for the forest, and what draws at each.
-pub(in super::super) struct ReadMap {
+pub struct ReadMap {
     pub(super) nodes: Vec<Node>,
     pub(super) loaded: Loaded,
 }
@@ -203,7 +203,7 @@ fn list_node(
 }
 
 /// The nodes of `map` and what draws at each, by the archetypes and models of `index`.
-pub(in super::super) fn read_map(index: &WorldIndex, map: &StreamMap) -> ReadMap {
+pub fn read_map(index: &WorldIndex, map: &StreamMap) -> ReadMap {
     let count = map.entities.len() + map.prop_lists.len() + map.grass.len();
     let (mut nodes, mut drawn) = (Vec::with_capacity(count), Vec::with_capacity(count));
     let of = |word: u64| {

@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use or_io::gta6::map::stream::GrassInstance;
 use or_io::gta6::map::Aabb;
 
-use super::super::super::index::tests_support::index_of;
 use super::*;
+use crate::index::tests_support::index_of;
 
 const OAK: u64 = 100;
 const PALM: u64 = 200;

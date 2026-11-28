@@ -44,6 +44,10 @@ const ELSEWHERE: &[(&str, &str)] = &[
         "same",
     ),
     (
+        "src/state/gta6_worldview/stream.rs",
+        "where the plan of the world says the selecting half of the GTA VI viewer stood before R71b moved it to `crates/domain/or-world-gta6`",
+    ),
+    (
         "crates/or-io/src/rage_types/frag.rs",
         "one of the 20 files in `archive/ydd-clothing-preview`; `or-io` is the \
          pre-split facade crate, and the path not resolving is the roadmap's \

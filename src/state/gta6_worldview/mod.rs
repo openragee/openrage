@@ -13,15 +13,15 @@ use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use glam::Vec3;
 use or_job::{Cancel, Progress};
 use or_renderer::FlyCamera;
-use or_world::streaming_rules::FOCUS_JUMP_DISTANCE;
+use or_world_gta6::streaming_rules::FOCUS_JUMP_DISTANCE;
 
 use crate::state::jobs::{JobKind, Outcome, RunningJob, Then};
 use crate::ui::panels::log::grouped;
 
+#[path = "stream_grass.rs"]
+mod grass;
 #[path = "index_shell.rs"]
 pub(crate) mod index;
-mod interior;
-mod interior_rooms;
 pub(crate) mod lights;
 mod lights_corona;
 mod lights_distant;
@@ -34,7 +34,9 @@ pub(crate) mod sky;
 mod sky_night;
 mod sky_weather;
 mod slod_look;
-pub(crate) mod stream;
+#[cfg(test)]
+#[path = "stream_viewer_tests.rs"]
+mod stream_viewer;
 pub(crate) mod terrain;
 mod texture;
 pub(crate) mod water;
@@ -49,7 +51,8 @@ pub use texture::CpuTexture;
 use index::{Enabled, ModelRef, WorldIndex};
 use or_io::gta6::map::lights_lod;
 use or_world::pool;
-use or_world_gta6::{lights_law, lights_vars, occluders};
+pub(crate) use or_world_gta6::stream;
+use or_world_gta6::{interior, lights_law, lights_vars};
 use pool::{soonest, Pool};
 use stream::{Selected, Streaming, World};
 use texture::{OpenPacks, Places};
@@ -607,7 +610,7 @@ impl Viewer {
 
     /// Give the readers every model waited for that is not on the device, highest request priority first.
     fn want_models(&mut self) {
-        use or_world::streaming_rules::{
+        use or_world_gta6::streaming_rules::{
             request_priority, BAND_LOW_DETAIL, BAND_OTHER, BAND_VISIBLE,
         };
         // ⚠ The readers serve the least first: a priority is handed them negated.

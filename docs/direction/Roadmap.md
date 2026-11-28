@@ -10751,7 +10751,7 @@ scan of every row, and an interior's refusal kept for the world's life.
 children are loaded; the kit fails by a rule's name on a fake built to break that rule; a key a fake
 adapter returns that no catalog holds fails the language gate; a line that names a game in a core
 module outside the ledger fails the architecture test; and the GTA V forest's suites and the tests
-of `src/state/gta6_worldview/stream_tests.rs` pass with no body changed.
+of `crates/domain/or-world-gta6/src/stream_tests.rs` pass with no body changed.
 
 ### R71b The GTA VI world behind the contract
 
@@ -10766,9 +10766,14 @@ the model, texture and look readers, whose outputs are rewritten on the core's
 
 **Where it stands.** Parts 1 to 3 are built: the reference
 ([how a part makes and compares one](../guides/Development_Workflow.md#the-reference-of-the-gta-vi-world-screen)),
-the closed move, and the index on the core's kept file, after which the digests held (961 of 961,
-`the_world_reads_as_its_reference_says`, 2026-11-27); the shots were not run, and the adapter
-states no title yet. The detail is under "or-world-gta6" in
+the closed move, and the index on the core's kept file. Of part 4 the move is built and the
+rewrite is not: the selecting half (`stream` with its child modules, the world's thread among
+them, `interior` and `interior_rooms`), the two ambient symbols it took from the renderer and the
+rules of streaming, but for what the forest and the portal walk call, are in `or-world-gta6`, and
+the digests held after it (961 of 961, `the_world_reads_as_its_reference_says`, 2026-11-28). Left
+of part 4: the thread on the core's `Driver`, the split of `select_asking`, and the occluders and
+the lights in the one read of a body. The shots were not run, and the adapter states no title
+yet. The detail, with what the driver cannot hold of GTA VI as built, is under "or-world-gta6" in
 [Crate_Reference.md](../reference/Crate_Reference.md#domain-crates).
 
 **Depends on.** [R71a](#r71a-the-world-contract-the-conformance-kit-and-the-fake-title); from its second part

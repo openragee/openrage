@@ -7,16 +7,14 @@ use std::fs::File;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use crate::streaming_rules::{BAND_INTERIOR_HIGH, BAND_INTERIOR_LOW, BAND_LOW_DETAIL, BAND_OTHER};
 use glam::Vec3;
 use or_io::container::rpf::{read_rpf9_body, Rpf9BodyKind, Rpf9ZlibRun};
 use or_io::gta5::data::visual_settings::VisualSettings;
 use or_world::streaming::{Extent, Forest, Kind, Level, NodeId, NodeState, View, FADE};
-use or_world::streaming_rules::{
-    BAND_INTERIOR_HIGH, BAND_INTERIOR_LOW, BAND_LOW_DETAIL, BAND_OTHER,
-};
 
-use super::index::{Enabled, ModelRef, WorldIndex};
-use super::pool::Pool;
+use crate::index::{Enabled, ModelRef, WorldIndex};
+use or_world::pool::Pool;
 
 #[path = "stream_census.rs"]
 mod census;
@@ -32,11 +30,11 @@ mod world;
 pub use census::Census;
 pub use read::Rows;
 use read::{place, stretch, Drawn, Instances, Loaded};
-pub(super) use read::{read_map, ReadMap};
+pub use read::{read_map, ReadMap};
 pub use slod::{CardList, Species};
 #[cfg(test)]
 use world::velocity_at;
-pub(super) use world::World;
+pub use world::World;
 
 /// The bytes a map body is read to.
 const BODY_LIMIT: u64 = 256 << 20;
@@ -47,7 +45,7 @@ const NOON: f32 = 12.0;
 
 /// The band past its distance each level fades out over, as the install's visual settings state
 /// it, by `Level as usize`, in metres; [`FADE`] where they do not.
-pub(super) fn fade_of(settings: &VisualSettings) -> [f32; Level::COUNT] {
+pub fn fade_of(settings: &VisualSettings) -> [f32; Level::COUNT] {
     ["hd", "lod", "slod1", "slod2", "slod3", "orphanhd", "slod4"]
         .map(|level| settings.get_f32(&format!("lod.fadedist.{level}"), FADE))
 }
@@ -143,9 +141,9 @@ pub struct Selected {
     /// The occluders of the occluder maps around the camera; the same list until one comes or goes.
     pub occluders: Arc<[Arc<or_io::gta6::map::occluders::MapOccluders>]>,
     /// The interior and room the camera stands in, where it stands in one.
-    pub inside: Option<super::interior::Inside>,
+    pub inside: Option<crate::interior::Inside>,
     /// The rooms the camera sees of each interior it looks into.
-    pub(super) rooms_seen: super::interior::RoomsSeen,
+    pub rooms_seen: crate::interior::RoomsSeen,
     /// From the room the camera stands in, the pyramids through it the outside is seen through, as
     /// unit normals in the world; `None` where nothing of the outside is hidden.
     pub outside_through: Option<Vec<Vec<Vec3>>>,
@@ -168,7 +166,7 @@ impl Models {
 }
 
 /// The maps around the camera.
-pub(super) struct Streamer {
+pub struct Streamer {
     index: Arc<WorldIndex>,
     /// Each far stand-in id's species, worked out once from the index.
     species: Arc<[Species]>,
@@ -190,8 +188,8 @@ pub(super) struct Streamer {
     hour: u32,
     readers: Pool<u32, Option<ReadMap>>,
     /// The occluder maps, streamed by a tier of their own: they hold nothing the forest draws.
-    occluders: super::occluders::Occluders,
-    pub(super) streaming: Streaming,
+    occluders: crate::occluders::Occluders,
+    pub streaming: Streaming,
     /// When each map body waited for was first asked for.
     asked_at: HashMap<u32, Instant>,
     /// The maps taken in since the last selection that was made whole: what a thread that dies is taken to have died on.
@@ -251,13 +249,13 @@ fn hour_of(hour: f32) -> u32 {
 }
 
 impl Streamer {
-    #[cfg(test)]
-    pub(super) fn new(index: Arc<WorldIndex>) -> Self {
+    #[cfg(any(test, feature = "made-up"))]
+    pub fn new(index: Arc<WorldIndex>) -> Self {
         Self::skipping(index, HashSet::new(), Arc::default())
     }
 
     /// The maps around the camera of `index`, `skipped` never taken in, saying in `unproven` the maps it takes in until a selection is made whole.
-    pub(super) fn skipping(
+    pub fn skipping(
         index: Arc<WorldIndex>,
         skipped: HashSet<u32>,
         unproven: Arc<Mutex<Vec<u32>>>,
@@ -287,12 +285,12 @@ impl Streamer {
                 let map = or_io::gta6::map::stream::open(virtual_section, physical).ok()?;
                 let mut read = read_map(&shared, &map);
                 read.loaded.interiors =
-                    super::interior::read_placed(&shared, files, &map, virtual_section, physical);
+                    crate::interior::read_placed(&shared, files, &map, virtual_section, physical);
                 Some(read)
             },
         );
         let species = slod::species(&index);
-        let occluders = super::occluders::Occluders::new(Arc::clone(&index));
+        let occluders = crate::occluders::Occluders::new(Arc::clone(&index));
         Self {
             index,
             species,
@@ -314,13 +312,13 @@ impl Streamer {
     }
 
     /// How many map bodies and occluder maps are asked for and not read yet.
-    #[cfg(test)]
-    pub(super) fn waiting(&self) -> usize {
+    #[cfg(any(test, feature = "made-up"))]
+    pub fn waiting(&self) -> usize {
         self.streaming.maps_waiting + self.occluders.waiting()
     }
 
     /// Switch on what `enabled` names in place of what was on; whether that is a change.
-    pub(super) fn set_enabled(&mut self, enabled: Enabled) -> bool {
+    pub fn set_enabled(&mut self, enabled: Enabled) -> bool {
         if self.enabled == enabled {
             return false;
         }
@@ -331,7 +329,7 @@ impl Streamer {
     }
 
     /// Set the hour of the day, 0.0 to 24.0; whether a time archetype may come or go by it.
-    pub(super) fn set_hour(&mut self, hour: f32) -> bool {
+    pub fn set_hour(&mut self, hour: f32) -> bool {
         let hour = hour_of(hour);
         let changed = self.hour != hour;
         self.hour = hour;
@@ -340,7 +338,7 @@ impl Streamer {
 
     /// Work out the maps the camera of `view` wants, ask for those not loaded and let go of the
     /// rest; whether a map came or went.
-    pub(super) fn stream(&mut self, view: &View) -> bool {
+    pub fn stream(&mut self, view: &View) -> bool {
         let mut changed = false;
         let now = Instant::now();
         for (name, read) in self.readers.take(|| true) {
@@ -457,12 +455,8 @@ impl Streamer {
 
     /// What draws for the camera of `view`; `ready` says whether a model is on the device, and
     /// `None` that it never will be.
-    #[cfg(test)]
-    pub(super) fn select(
-        &mut self,
-        view: &View,
-        ready: &dyn Fn(ModelRef) -> Option<bool>,
-    ) -> Selected {
+    #[cfg(any(test, feature = "made-up"))]
+    pub fn select(&mut self, view: &View, ready: &dyn Fn(ModelRef) -> Option<bool>) -> Selected {
         self.select_asking(view, ready, &mut |_, _| {})
     }
 
@@ -548,7 +542,7 @@ impl Streamer {
             radius: drawn.radius * stretch(&rows),
             fade,
             tint,
-            ambient: or_renderer::OUTDOORS,
+            ambient: crate::ambient::OUTDOORS,
             cast_only: false,
         };
         // An entity's instance, `fade` signed; whether it has one.
@@ -779,13 +773,13 @@ impl Streamer {
         // chunk an interior, as opaque as its instance.
         let outdoors = out.instances.len();
         // The interiors in range, in one order whatever the maps' order, and what the camera sees of them.
-        let mut near: Vec<(u32, &super::interior::Placed)> = (loaded.iter())
+        let mut near: Vec<(u32, &crate::interior::Placed)> = (loaded.iter())
             .flat_map(|(name, map)| map.interiors.iter().map(move |i| (*name, i)))
             .filter(|(_, i)| i.in_range(eye, view))
             .collect();
         near.sort_by_key(|(name, i)| (*name, i.entity));
         let shells: Vec<_> = near.iter().map(|(_, i)| i.shell()).collect();
-        let walked = super::interior_rooms::walk(&shells, eye);
+        let walked = crate::interior_rooms::walk(&shells, eye);
         out.inside = (walked.inside).and_then(|(k, room)| near.get(k)?.1.inside(room));
         let mut through = None;
         for (k, ((name, interior), seen)) in near.iter().zip(&walked.seen).enumerate() {
@@ -838,10 +832,10 @@ impl Streamer {
             let sees = |i: &Instance| {
                 interior.reaches_a_room(i.centre, i.radius)
                     || (through.iter())
-                        .any(|p| super::interior_rooms::reaches(p, eye, i.centre, i.radius))
+                        .any(|p| crate::interior_rooms::reaches(p, eye, i.centre, i.radius))
             };
             for instance in &mut out.instances[..outdoors] {
-                if instance.ambient == or_renderer::OUTDOORS && !sees(instance) {
+                if instance.ambient == crate::ambient::OUTDOORS && !sees(instance) {
                     instance.cast_only = true;
                 }
             }

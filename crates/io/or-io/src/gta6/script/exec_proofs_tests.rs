@@ -386,3 +386,90 @@ fn an_address_said_to_reach_a_bound_that_goes_further_is_caught() {
     let stored = straight(1, vec![kept], int(0));
     assert_eq!(denied(&stored, &reaching(8, 8)).as_deref(), Some("reach"));
 }
+
+#[test]
+fn an_object_of_another_type_handed_as_the_receiver_of_a_member_is_caught() {
+    let callee = FunctionKey::new(PROGRAM, CALLED);
+    let member = Member {
+        owner: key(WANT),
+        role: Role::Method,
+        is_static: false,
+        slot: None,
+    };
+    let mut project = Project::default();
+    project.members.insert(callee, member);
+    project.types = types(&[(WANT, None), (OTHER, None)]);
+    let handed = straight(
+        0,
+        vec![set(0, made(OTHER)), called(vec![local(0), int(1)])],
+        int(0),
+    );
+    assert_eq!(denied(&handed, &project).as_deref(), Some("member"));
+    // An object of the owner, or of a type derived from it, is one of it.
+    let own = straight(
+        0,
+        vec![set(0, made(WANT)), called(vec![local(0), int(1)])],
+        int(0),
+    );
+    assert_eq!(denied(&own, &project), None);
+    project.types = types(&[(WANT, None), (OTHER, Some(WANT))]);
+    assert_eq!(denied(&handed, &project), None);
+    // Only the first cell is the receiver.
+    project.types = types(&[(WANT, None), (OTHER, None)]);
+    let second = straight(
+        0,
+        vec![set(0, made(OTHER)), called(vec![int(1), local(0)])],
+        int(0),
+    );
+    assert_eq!(denied(&second, &project), None);
+    // A static member takes no receiver.
+    if let Some(member) = project.members.get_mut(&callee) {
+        member.is_static = true;
+    }
+    assert_eq!(denied(&handed, &project), None);
+}
+
+#[test]
+fn an_object_of_another_type_handed_through_a_slot_whose_line_types_the_cell_is_caught() {
+    let filled = FunctionKey::new(PROGRAM, CALLED);
+    let through = |relations: &[(&str, Option<&str>)]| {
+        let mut project = Project {
+            types: types(relations),
+            ..Project::default()
+        };
+        if let Some(holder) = project.types.get_mut(&key(HOLDER)) {
+            holder.slots.insert(3, filled);
+        }
+        let params = vec![
+            Param {
+                kind: Kind::Unknown,
+                cells: 1,
+            },
+            Param {
+                kind: Kind::Object(WANT.to_owned()),
+                cells: 1,
+            },
+        ];
+        project.slot_params.insert(filled, params);
+        project
+    };
+    let call = Expr::Call {
+        callee: Callee::Virtual {
+            class: HOLDER.to_owned(),
+            method: "Method_3".to_owned(),
+            ty: HOLDER.to_owned(),
+            slot: 3,
+        },
+        args: vec![local(1), local(0)],
+        returns: Some(0),
+    };
+    let f = straight(
+        0,
+        vec![set(0, made(OTHER)), set(1, made(HOLDER)), Stmt::Eval(call)],
+        int(0),
+    );
+    let unrelated = through(&[(WANT, None), (OTHER, None), (HOLDER, None)]);
+    assert_eq!(denied(&f, &unrelated).as_deref(), Some("typed parameter"));
+    let derived = through(&[(WANT, None), (OTHER, Some(WANT)), (HOLDER, None)]);
+    assert_eq!(denied(&f, &derived), None);
+}

@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use super::*;
+use crate::gta6::script::class;
 use crate::gta6::script::ir::{Const, VmType};
 use crate::gta6::script::lift::LiftError;
 use crate::gta6::script::opcode::Op;
@@ -830,17 +831,17 @@ fn reread(f: tree::Function, cx: &Context<'_>) -> Option<Result<(), ReparseError
     Some(reparse::agrees(&done, &source))
 }
 
-/// Takes `f` through the passes `cx` asks once, and reads back both what the readable form writes of it with each construct as what it holds, and what the source level writes of it as its own text; `None` where it does not lower.
+/// Reads back of a function the passes `cx` asks are done with both what the readable form writes of it with each construct as what it holds, and what the source level writes of it as its own text.
 // ⚠ Both texts are of no names list. The first sees of a construct the statements it holds, as
-// the before/after check does; the second how the source level spells the construct.
-fn reread_both(
-    f: tree::Function,
+// the before/after check does; the second how the source level spells the construct, read with
+// the project the printer had: what it decides of a boxed value is held as the printer decided it.
+fn reread_done(
+    done: tree::Function,
     cx: &Context<'_>,
-) -> Option<(Result<(), ReparseError>, Result<(), ReparseError>)> {
-    let done = function_in(f, cx, &mut Stats::default()).ok()?;
+) -> (Result<(), ReparseError>, Result<(), ReparseError>) {
     let mut own = String::new();
     print::function_in(&mut own, &done, cx);
-    let sharp = reparse::agrees_source(&done, &own, cx.options, false);
+    let sharp = reparse::agrees_source_with(&done, &own, cx.options, false, cx.project);
     let tree::Function { head, body } = done;
     let lowered = tree::Function {
         head,
@@ -848,7 +849,52 @@ fn reread_both(
     };
     let mut source = String::new();
     print::function(&mut source, &lowered, cx.names);
-    Some((reparse::agrees(&lowered, &source), sharp))
+    (reparse::agrees(&lowered, &source), sharp)
+}
+
+/// Reads back each function of a listing's unit that binds a lambda in place as the export writes it: with the body of each written where it binds it, read as the lambda's parameters and body against the body's own tree.
+// ⚠ Not as the export writes a function that makes the object of a closure class it writes
+// nowhere: there its object is read away first, which the check does not see. Nor an `async`
+// method, whose head and returns the export writes as the method's.
+fn read_bound(
+    stem: &str,
+    listing: &Listing<'_>,
+    finished: Vec<tree::Function>,
+    cx: &Context<'_>,
+    found: &mut Found,
+) {
+    let (functions, steps) = passes::async_await::joined_steps(finished, cx);
+    let mut unit = passes::classes::unit(listing.program, listing.imports.clone(), functions, cx);
+    crate::gta6::script::machines_hidden(&mut unit, &steps, cx);
+    let lambdas = crate::gta6::script::emit::in_place(&unit, cx);
+    if lambdas.is_empty() {
+        return;
+    }
+    let mut methods: Vec<&class::Method> = unit.functions.iter().collect();
+    let mut open: Vec<&class::Class> = unit.classes.iter().collect();
+    while let Some(class) = open.pop() {
+        methods.extend(&class.methods);
+        open.extend(&class.nested);
+    }
+    for method in methods {
+        let f = &method.function;
+        if method.role == class::Role::Lambda || method.is_async || f.head.incomplete.is_some() {
+            continue;
+        }
+        let sited = print::bound_in_place(f, &lambdas, cx);
+        if sited.is_empty() {
+            continue;
+        }
+        found.count("functions that bind a lambda in place", 1);
+        found.count("lambdas written in place", sited.len() as u64);
+        let at = format!("{stem}: {}", f.head.name);
+        let read = caught(|| {
+            let mut text = String::new();
+            print::method_in(&mut text, method, None, 0, cx, &lambdas);
+            reparse::agrees_source_binding(f, &text, cx.options, cx.project, &lambdas, &sited)
+        });
+        found.read_back(&at, read.map(Some));
+    }
 }
 
 #[test]
@@ -861,12 +907,12 @@ fn every_function_written_reads_back_as_the_function() {
     let whole = whole_project();
     let found = each(&paths, |path| {
         let (mut first, mut every) = (Found::default(), Found::default());
-        let mut third = Found::default();
+        let (mut third, mut fourth) = (Found::default(), Found::default());
         let text = std::fs::read_to_string(path).expect("the listing is text");
         let stem = stem(path);
         let Ok(listing) = Listing::open(&text) else {
             first.wrong("listings refused", &stem, "does not open");
-            return (first, every, third);
+            return (first, every, third, fourth);
         };
         // What the passes of the source level know of the program: the project named, else its own part of one.
         let own = match &whole {
@@ -882,6 +928,8 @@ fn every_function_written_reads_back_as_the_function() {
         let project = whole.as_ref().or(own.as_ref()).unwrap_or(Project::empty());
         let four = Context::baseline(&names);
         let all = Context::new(&names, project, Options::default());
+        // The functions the passes are done with, which the export writes as a unit.
+        let mut finished = Vec::new();
         // A function at a time: what one came to is counts, and the words of the first differences.
         for f in listing.functions() {
             let Ok(f) = f else {
@@ -891,7 +939,16 @@ fn every_function_written_reads_back_as_the_function() {
             let at = format!("{stem}: {}", f.head.name);
             let again = f.clone();
             first.read_back(&at, caught(|| reread(f, &four)));
-            let (lowered, sharp) = match caught(|| reread_both(again, &all)) {
+            let done = caught(|| function_in(again, &all, &mut Stats::default()).ok());
+            let read = match done {
+                Some(Some(done)) => {
+                    finished.push(done.clone());
+                    caught(|| Some(reread_done(done, &all)))
+                }
+                Some(None) => Some(None),
+                None => None,
+            };
+            let (lowered, sharp) = match read {
                 Some(Some((lowered, sharp))) => (Some(Some(lowered)), Some(Some(sharp))),
                 Some(None) => (Some(None), Some(None)),
                 None => (None, None),
@@ -902,25 +959,44 @@ fn every_function_written_reads_back_as_the_function() {
             every.keep(SHOWN);
             third.keep(SHOWN);
         }
-        (first, every, third)
+        let bound = caught(|| {
+            let mut found = Found::default();
+            read_bound(&stem, &listing, finished, &all, &mut found);
+            found
+        });
+        match bound {
+            Some(found) => fourth = found,
+            None => fourth.wrong(
+                "panics",
+                &stem,
+                "the unit, the printer or the reader panicked",
+            ),
+        }
+        fourth.keep(SHOWN);
+        (first, every, third, fourth)
     });
-    let (mut firsts, mut everys, mut owns) = (Vec::new(), Vec::new(), Vec::new());
-    for (first, every, own) in found {
+    let (mut firsts, mut everys) = (Vec::new(), Vec::new());
+    let (mut owns, mut bounds) = (Vec::new(), Vec::new());
+    for (first, every, own, bound) in found {
         firsts.push(first);
         everys.push(every);
         owns.push(own);
+        bounds.push(bound);
     }
     let (mut first, mut every) = (Found::all(firsts), Found::all(everys));
-    let mut own = Found::all(owns);
+    let (mut own, mut bound) = (Found::all(owns), Found::all(bounds));
     first.keep(SHOWN);
     every.keep(SHOWN);
     own.keep(SHOWN);
+    bound.keep(SHOWN);
     first.report("REREAD, the four first passes");
     every.report("REREAD, every pass, each construct as what it holds");
     // ⚠ A form the reader does not hold yet is counted by its name under "parts at", and compared
     // no further than it: the count says how much of the text is held, and is no failure.
     own.report("REREAD, every pass, the source level's own text");
-    assert!(first.wrong.is_empty() && every.wrong.is_empty() && own.wrong.is_empty());
+    bound.report("REREAD, every pass, a function with the lambdas it binds written in place");
+    let none = |found: &Found| found.wrong.is_empty();
+    assert!(none(&first) && none(&every) && none(&own) && none(&bound));
 }
 
 #[test]

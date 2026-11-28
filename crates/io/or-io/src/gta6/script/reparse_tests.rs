@@ -1120,7 +1120,7 @@ fn a_form_not_read_back_yet_is_counted_by_name_and_not_compared() {
     );
     let cached = "    local_0 = Global_28 ??= Global_20.func_000100;\n";
     assert_eq!(source_says(one(), cached), Ok(false));
-    let tested = "    local_0 = p0 is type_0123456789ABCDEF;\n";
+    let tested = "    local_0 = p0 is type_0123456789ABCDEF t;\n";
     assert_eq!(unread_of(one(), tested).as_deref(), Some("is"));
     // A label of a case by its text is not held; one by its number is, and is no assignment.
     let by_text = "    goto case Hash(\"x\");\n";

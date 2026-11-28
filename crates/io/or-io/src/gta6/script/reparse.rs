@@ -7,7 +7,7 @@
 //! ⚠ What that form leaves out is not checked: a cast dropped where it counted reads the same.
 
 use std::cell::Cell;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
 
 use super::decode::TYPE_TOKEN;
@@ -15,11 +15,15 @@ use super::ir::{
     BinOp, Callee, Const, Expr, ExprSugar, Head, Kind, Scalar, Stmt, StoreKind, UnOp, Var,
 };
 use super::names::Names;
+use super::passes::closures::Inline;
 use super::passes::sugar_statements::enumerated;
 use super::passes::{async_await, closures};
-use super::print::{callee_name, cells_of, declared_at, reads_through};
+use super::print::{
+    bits_equal, callee_name, cells_of, declared_at, fits_int, reads_through, script_enum,
+    true_csharp,
+};
 use super::tree;
-use super::{Level, Options, Pass};
+use super::{Level, Options, Pass, Project};
 
 /// The deepest that blocks or expressions nest, in text that is read and in a function that is compared.
 const MAX_DEPTH: u32 = 128;
@@ -83,6 +87,10 @@ pub fn agrees_within(f: &tree::Function, text: &str, limit: usize) -> Result<(),
                 sharp: None,
                 sites: HashSet::new(),
                 this: None,
+                project: None,
+                lambdas: None,
+                sited: BTreeSet::new(),
+                bound: None,
             };
             compare(&held.nodes(&f.body, 0)?, &body)
         }
@@ -107,6 +115,47 @@ pub fn agrees_source_within(
     receiver: bool,
     limit: usize,
 ) -> Result<(), ReparseError> {
+    agrees_written(f, text, options, receiver, limit, None, None)
+}
+
+/// [`agrees_source`] of a text written with the project the printer had, which decides how a boxed value compared or converted is written.
+pub fn agrees_source_with(
+    f: &tree::Function,
+    text: &str,
+    options: Options,
+    receiver: bool,
+    project: &Project,
+) -> Result<(), ReparseError> {
+    agrees_written(f, text, options, receiver, MAX_NODES, Some(project), None)
+}
+
+/// [`agrees_source_with`] of the text of a function written with the bodies `sited` names of `lambdas` where it binds them, as the export writes it: each lambda is read back as its parameters and its body.
+#[cfg(test)]
+pub(crate) fn agrees_source_binding(
+    f: &tree::Function,
+    text: &str,
+    options: Options,
+    project: &Project,
+    lambdas: &BTreeMap<u32, &tree::Function>,
+    sited: &BTreeSet<u32>,
+) -> Result<(), ReparseError> {
+    let bound = Some((lambdas, sited));
+    agrees_written(f, text, options, false, MAX_NODES, Some(project), bound)
+}
+
+/// The lambdas a text is written with in place, and the offsets of those its function binds.
+type Bound<'b> = (&'b BTreeMap<u32, &'b tree::Function>, &'b BTreeSet<u32>);
+
+/// [`agrees_source_within`], with the project the printer had where it is given, and the lambdas written in place where they are.
+fn agrees_written(
+    f: &tree::Function,
+    text: &str,
+    options: Options,
+    receiver: bool,
+    limit: usize,
+    project: Option<&Project>,
+    bound: Option<Bound<'_>>,
+) -> Result<(), ReparseError> {
     let held = Held {
         head: &f.head,
         names: Names::default(),
@@ -115,10 +164,14 @@ pub fn agrees_source_within(
         sharp: Some(options),
         this: receiver.then_some(Var::Param(0)),
         sites: declared_at(&f.body, &f.head),
+        project,
+        lambdas: bound.map(|(lambdas, _)| lambdas),
+        sited: bound.map(|(_, sited)| sited.clone()).unwrap_or_default(),
+        bound: None,
     };
     let this = receiver.then(|| held.var(Var::Param(0)));
     let mut read_back = None;
-    read_in(text, limit, this, &mut |name, body| {
+    read_in(text, limit, this, bound.is_some(), &mut |name, body| {
         if name == f.head.name && read_back.is_none() {
             read_back = Some(body);
         }
@@ -977,6 +1030,8 @@ struct Parser<'a> {
     limit: usize,
     /// The name of the variable `this` and `base` stand for, where the text is a method's.
     this: Option<String>,
+    /// Whether a delegate bound to a lambda, as a statement of its own, is read as the lambda's parameters and body: else every lambda is a form not read.
+    lambdas: bool,
 }
 
 /// Reads every function of `text`, each of no more than `limit` statements and operands, hands each to `each` and returns the simple statements read.
@@ -986,14 +1041,15 @@ fn read(
     limit: usize,
     each: &mut dyn FnMut(String, Vec<Node>),
 ) -> Result<usize, ReparseError> {
-    read_in(text, limit, None, each)
+    read_in(text, limit, None, false, each)
 }
 
-/// [`read`], with `this` and `base` read as the variable `this` names where it names one.
+/// [`read`], with `this` and `base` read as the variable `this` names where it names one, and with a lambda bound by a statement read where `lambdas` says.
 fn read_in(
     text: &str,
     limit: usize,
     this: Option<String>,
+    lambdas: bool,
     each: &mut dyn FnMut(String, Vec<Node>),
 ) -> Result<usize, ReparseError> {
     let mut parser = Parser {
@@ -1008,6 +1064,7 @@ fn read_in(
         left: limit,
         limit,
         this,
+        lambdas,
     };
     parser.bump()?;
     while parser.tok != Tok::End {
@@ -1144,6 +1201,11 @@ impl<'a> Parser<'a> {
 
     /// A type as a declaration or a cast names it: `var[2]`, `int[]`, `void*`.
     fn ty(&mut self) -> Result<String, ReparseError> {
+        self.ty_of(true)
+    }
+
+    /// A type where `nullable` says whether a `?` after it may make it nullable: never the type an `is` tests, which `x is T ? a : b` chooses by.
+    fn ty_of(&mut self, nullable: bool) -> Result<String, ReparseError> {
         let mut text = self.type_name()?;
         loop {
             if self.eat("[")? {
@@ -1156,7 +1218,7 @@ impl<'a> Parser<'a> {
                 text.push(']');
             } else if self.eat("*")? {
                 text.push('*');
-            } else if self.is("?") && self.nullable_ahead() {
+            } else if nullable && self.is("?") && self.nullable_ahead() {
                 self.bump()?;
                 text.push('?');
             } else {
@@ -1297,6 +1359,56 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(unread("a lambda written where it is bound"))
+    }
+
+    /// Whether a statement that binds a lambda starts here: `x = (..) =>` or `T x = (..) =>`.
+    fn bound_ahead(&self) -> bool {
+        let mut ahead = self.clone();
+        if ahead.declaration_ahead() && ahead.ty().is_err() {
+            return false;
+        }
+        matches!(ahead.tok, Tok::Ident(_))
+            && ahead.bump().is_ok()
+            && ahead.is("=")
+            && ahead.bump().is_ok()
+            && ahead.is("(")
+            && ahead.lambda_ahead()
+    }
+
+    /// `x = (T a, U b) => value;` or `x = () => { .. };`: the variable given the lambda, the names of its parameters and its value, a block standing under the statement.
+    fn bound_lambda(&mut self, line: u32, depth: u32) -> Result<Node, ReparseError> {
+        if self.declaration_ahead() {
+            self.ty()?;
+        }
+        let name = self.ident()?.to_owned();
+        self.expect("=")?;
+        self.statements += 1;
+        self.expect("(")?;
+        let mut params = Vec::new();
+        while !self.is(")") {
+            self.spend()?;
+            self.modifiers()?;
+            self.ty()?;
+            params.push(Sk::Name(self.ident()?.to_owned()));
+            if !self.eat(",")? {
+                break;
+            }
+        }
+        self.expect(")")?;
+        self.expect("=>")?;
+        let d = deeper(depth, self.line)?;
+        let (value, blocks) = match self.is("{") {
+            true => (Sk::Op(BLOCK, Vec::new()), vec![self.block(d)?]),
+            false => (self.expr(d)?, Vec::new()),
+        };
+        self.expect(";")?;
+        let lambda = Sk::Op(LAMBDA, vec![Sk::Op(PARAMS, params), value]);
+        Ok(Node {
+            word: "",
+            head: vec![assign(Sk::Name(name), lambda)],
+            blocks,
+            line,
+        })
     }
 
     /// `{ .. }`.
@@ -1532,6 +1644,7 @@ impl<'a> Parser<'a> {
                     line,
                 }
             }
+            _ if self.lambdas && self.bound_ahead() => self.bound_lambda(line, depth)?,
             _ => {
                 let stated = self.simple(depth)?;
                 self.expect(";")?;
@@ -1772,13 +1885,17 @@ impl<'a> Parser<'a> {
             left = match op {
                 // No deeper: the strength rises with each operand, so this ends by itself.
                 Some(op) => binary(op.symbol(), left, self.binary(strength + 1, depth)?),
-                // `x is T` and `x is T y`: a test of what an object is.
+                // `x is T`: whether `x as T` is not null, held apart from the reference `x as T` makes.
                 None if is => {
-                    self.ty()?;
-                    if matches!(self.tok, Tok::Ident(_)) {
-                        self.bump()?;
+                    let ty = self.ty_of(false)?;
+                    match matches!(self.tok, Tok::Ident(_)) {
+                        // `x is T y` declares the variable it gives what it tests: not held yet.
+                        true => {
+                            self.bump()?;
+                            unread("is")
+                        }
+                        false => Sk::Op("is", vec![left, Sk::Name(ty)]),
                     }
-                    unread("is")
                 }
                 None => Sk::Op("as", vec![left, Sk::Name(self.ty()?)]),
             };
@@ -1976,6 +2093,91 @@ fn underneath(e: &Expr) -> &Expr {
         e = &**inner;
     }
     e
+}
+
+/// The runtime's comparison of two objects, which compares two boxed values by value.
+const OBJECT_EQUALS: &str = "System.Object.Equals";
+
+/// The runtime's conversion of an object to an `int`.
+const CONVERT_TO_INT32: &str = "System.Convert.ToInt32";
+
+/// The form a boxed value compared or converted is counted under where no project says how it is written.
+const BOXED: &str = "a boxed value compared or converted";
+
+/// The type `e` boxes its one value as, and that value, where `e` is a `box<T>` of one value.
+fn boxed_one(e: &Expr) -> Option<(&str, &Expr)> {
+    let Expr::Call {
+        callee: Callee::Intrinsic { name, .. },
+        args,
+        ..
+    } = under_wide(e)
+    else {
+        return None;
+    };
+    let ty = name.strip_prefix("box<")?.strip_suffix('>')?;
+    match args.as_slice() {
+        [value] => Some((ty, value)),
+        _ => None,
+    }
+}
+
+/// The mark of a lambda written where it is bound: its parameters, then the value it is or [`BLOCK`].
+const LAMBDA: &str = "=>";
+
+/// The mark of the names of a lambda's parameters, in their order.
+const PARAMS: &str = "(params)";
+
+/// What a lambda whose body is a block is, its block standing under the statement that binds it.
+const BLOCK: &str = "{ block }";
+
+/// What a delegate is bound to and the offset of the function bound, where `parts` are a delegate made and bound to a function of `program` that is read as a lambda's body.
+// ⚠ The printer's own rule, which it writes a lambda in place by.
+fn bound_lambda(parts: &[Stmt], program: u32) -> Option<(&Expr, u32)> {
+    let [Stmt::Assign { target, value }, Stmt::Eval(call)] = parts else {
+        return None;
+    };
+    if !matches!(underneath(value), Expr::NewObject(_)) {
+        return None;
+    }
+    let Expr::Call { args, .. } = underneath(call) else {
+        return None;
+    };
+    let [object, held, Expr::Sugar {
+        kind: ExprSugar::Lambda,
+        e: function,
+    }] = args.as_slice()
+    else {
+        return None;
+    };
+    let Expr::FunctionRef { program: of, at } = &**function else {
+        return None;
+    };
+    let made = *underneath(object) == Expr::Var(*target);
+    (made && *of == program).then_some((held, *at))
+}
+
+/// The parameters a function's body names: assigned, read or taken the address of.
+fn named_params(body: &[tree::Stmt]) -> BTreeSet<u32> {
+    let mut named = BTreeSet::new();
+    tree::each_simple(body, &mut |s| {
+        for target in s.targets() {
+            if let Var::Param(n) = target {
+                named.insert(*n);
+            }
+        }
+    });
+    tree::each_expr(body, &mut |top| {
+        top.walk(&mut |e| {
+            if let Expr::Var(Var::Param(n))
+            | Expr::AddrOf {
+                var: Var::Param(n), ..
+            } = e
+            {
+                named.insert(*n);
+            }
+        });
+    });
+    named
 }
 
 /// The objects an initialiser holds inside one another at most, as the printer writes them.
@@ -2399,6 +2601,14 @@ struct Held<'a> {
     // ⚠ The printer's own placement, read from the same function: what is held against the
     // text is the loop a `foreach` is, never where its item is declared.
     sites: HashSet<*const Stmt>,
+    /// The project the printer had, where the text was written with one: without it what the project decides is a form not read.
+    project: Option<&'a Project>,
+    /// The bodies of the lambdas written where they are bound, by offset, where the text is written with them.
+    lambdas: Option<&'a BTreeMap<u32, &'a tree::Function>>,
+    /// The offsets of the lambdas of `lambdas` this function binds in place.
+    sited: BTreeSet<u32>,
+    /// The parameter a lambda's body is given its object in and the binder's variable written in its place, where the function is such a body.
+    bound: Option<(Var, String)>,
 }
 
 impl Held<'_> {
@@ -2693,8 +2903,7 @@ impl Held<'_> {
         Ok(Some((value, 1 + usize::from(passed.is_some()) + taken)))
     }
 
-    /// `F = new U { .. }` for an object made at `stores[at]`, filled by the parts after it and stored whole into a field of the object `object` holds; with how many parts that is.
-    // ⚠ An array made so is a form not read back: the parts it holds are then not counted.
+    /// `F = new U { .. }` for an object or an array made at `stores[at]`, filled by the parts after it and stored whole into a field of the object `object` holds; with how many parts that is.
     fn nested(
         &self,
         stores: &[Stmt],
@@ -2744,7 +2953,11 @@ impl Held<'_> {
                 Some((value, held)) if held == parts.len() => value,
                 _ => return Ok(None),
             },
-            _ => unread("an array written with its elements"),
+            // Every part is the array's making or an element's setting, or none is held.
+            _ => match self.collected(parts, d)? {
+                Some(value) => value,
+                None => return Ok(None),
+            },
         };
         Ok(Some((assign(num(*offset), value), end + 1 - at)))
     }
@@ -2805,24 +3018,53 @@ impl Held<'_> {
         Some(Node::held("goto case", vec![label], Vec::new()))
     }
 
-    /// Whether the source level may write this call as `l == r` of two boxed values or as a cast of one, which the project decides by the type boxed.
-    fn boxed_call(&self, callee: &Callee, args: &[Expr]) -> bool {
-        let boxed = |e: &Expr| {
-            matches!(
-                under_wide(e),
-                Expr::Call { callee: Callee::Intrinsic { name, .. }, args, .. }
-                    if args.len() == 1 && name.starts_with("box<") && name.ends_with('>')
-            )
-        };
+    /// `l == r` for two values of one type compared boxed, the value for one boxed and converted to an `int`, where the project the printer had says the source level writes them so; `None` where it writes the call, and a form not read where no project is given.
+    fn boxed(&self, callee: &Callee, args: &[Expr], d: u32) -> Result<Option<Sk>, ReparseError> {
         let Callee::Builtin { path, .. } = callee else {
-            return false;
+            return Ok(None);
         };
-        let read = match args {
-            [l, r] => path == "System.Object.Equals" && boxed(l) && boxed(r),
-            [one] => path == "System.Convert.ToInt32" && boxed(one),
-            _ => false,
-        };
-        read && self.on(Pass::Boxing)
+        if !self.on(Pass::Boxing) {
+            return Ok(None);
+        }
+        match args {
+            [l, r] if path == OBJECT_EQUALS => {
+                let (Some((a, l)), Some((b, r))) = (boxed_one(l), boxed_one(r)) else {
+                    return Ok(None);
+                };
+                let Some(project) = self.project else {
+                    return Ok(Some(unread(BOXED)));
+                };
+                if a != b || !self.equal_by_bits(a, project) {
+                    return Ok(None);
+                }
+                Ok(Some(binary("==", self.sk(l, d)?, self.sk(r, d)?)))
+            }
+            [one] if path == CONVERT_TO_INT32 => {
+                let Some((ty, value)) = boxed_one(one) else {
+                    return Ok(None);
+                };
+                let Some(project) = self.project else {
+                    return Ok(Some(unread(BOXED)));
+                };
+                match self.within_int(ty, project) {
+                    // A cast states no operand.
+                    true => Ok(Some(self.sk(value, d)?)),
+                    false => Ok(None),
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Whether two values of the type named `ty` are equal exactly where their bits are, by the printer's own decision.
+    // ⚠ The decision is the printer's, so the read-back cannot find it wrong: unit tests hold it.
+    fn equal_by_bits(&self, ty: &str, project: &Project) -> bool {
+        bits_equal(&self.type_name(ty), script_enum(ty, project))
+    }
+
+    /// Whether no value of the type named `ty` is past an `int`'s range, by the printer's own decision.
+    fn within_int(&self, ty: &str, project: &Project) -> bool {
+        fits_int(&self.type_name(ty), script_enum(ty, project))
     }
 
     /// Whether `e` is `l > 0` over unsigned cells, which the source level writes `l != null` where `l` refers to something.
@@ -2869,6 +3111,11 @@ impl Held<'_> {
     }
 
     fn var(&self, var: Var) -> String {
+        if let Some((given, name)) = &self.bound {
+            if *given == var {
+                return name.clone();
+            }
+        }
         if let Some(name) = self.head.vars.get(&var).and_then(|i| i.name.as_deref()) {
             return name.to_owned();
         }
@@ -3130,7 +3377,7 @@ impl Held<'_> {
             ExprSugar::Property => Some(Pass::Properties),
             ExprSugar::Operator => Some(Pass::Operators),
             ExprSugar::Lambda => Some(Pass::Lambdas),
-            ExprSugar::Coalesce | ExprSugar::NullConditional => Some(Pass::NullOps),
+            ExprSugar::Coalesce | ExprSugar::NullConditional | ExprSugar::Is => Some(Pass::NullOps),
             ExprSugar::Concat => Some(Pass::Concat),
             ExprSugar::Out | ExprSugar::Ref => Some(Pass::RefOut),
             ExprSugar::Tuple => Some(Pass::Tuples),
@@ -3155,6 +3402,20 @@ impl Held<'_> {
                 match (op, args.as_slice()) {
                     (Some(op), [l, r]) => binary(op.symbol(), self.sk(l, d)?, self.sk(r, d)?),
                     _ => self.sk(e, d)?,
+                }
+            }
+            // `x is T`, or `!(x is T)` where it asks for null: never the reference `x as T` makes.
+            (ExprSugar::Is, test) => {
+                match crate::gta6::script::passes::sugar_expressions::type_test(test) {
+                    Some((holds, ty, value)) => {
+                        let is =
+                            Sk::Op("is", vec![self.sk(value, d)?, Sk::Name(self.type_name(ty))]);
+                        match holds {
+                            true => is,
+                            false => not(is),
+                        }
+                    }
+                    None => self.sk(e, d)?,
                 }
             }
             // `x?.f_18`: a whole cell of a field asked of what may refer to nothing.
@@ -3280,8 +3541,8 @@ impl Held<'_> {
                 return Ok(spelled);
             }
         }
-        if self.boxed_call(callee, args) {
-            return Ok(unread("a boxed value compared or converted"));
+        if let Some(read) = self.boxed(callee, args, d)? {
+            return Ok(read);
         }
         let name = unquoted(self.callee_name(callee));
         let passed = self.list(args, d)?;
@@ -3949,6 +4210,10 @@ impl Held<'_> {
             return Ok(());
         }
         if let tree::Group::Delegate = kind {
+            if let Some(node) = self.lambda(parts, d)? {
+                out.push(node);
+                return Ok(());
+            }
             match self.delegate(parts, d)? {
                 Some(stated) => {
                     out.push(Node::held("", vec![stated], Vec::new()));
@@ -4045,6 +4310,15 @@ impl Held<'_> {
 
     /// `x = new T[] { a, b }`: an array made and every element of it set, in order; `None` where it is written as its parts.
     fn collection(&self, parts: &[Stmt], d: u32) -> Result<Option<Sk>, ReparseError> {
+        let Some(Stmt::Assign { target, .. }) = parts.first() else {
+            return Ok(None);
+        };
+        let value = self.collected(parts, d)?;
+        Ok(value.map(|value| assign(Sk::Name(self.var(*target)), value)))
+    }
+
+    /// `new T[] { a, b }` of the parts that make an array and set every element of it, in order; `None` where they are written as themselves.
+    fn collected(&self, parts: &[Stmt], d: u32) -> Result<Option<Sk>, ReparseError> {
         if !self.on(Pass::Initialisers) {
             return Ok(None);
         }
@@ -4077,12 +4351,13 @@ impl Held<'_> {
             }
             items.push(pair.remove(1));
         }
-        Ok(Some(assign(array, Sk::Op(ELEMENTS_OF, items))))
+        Ok(Some(Sk::Op(ELEMENTS_OF, items)))
     }
 
     /// `d = receiver.Name`, `d = Name` or `d = new D(bound, function)`: the one statement a delegate made and bound is; `None` where it is written as its parts.
-    // ⚠ A delegate bound to a body the printer writes in place is a lambda in the text, which
-    // the text's side leaves a form not read: what is stated here is never held against one.
+    // ⚠ A delegate bound to a body the printer writes in place is a lambda in the text: held as
+    // one by `lambda` where the text is read with the lambdas it is written with, and a form not
+    // read on the text's side where it is not.
     fn delegate(&self, parts: &[Stmt], d: u32) -> Result<Option<Sk>, ReparseError> {
         if !self.on(Pass::Delegates) {
             return Ok(None);
@@ -4131,6 +4406,79 @@ impl Held<'_> {
             ),
         };
         Ok(Some(assign(Sk::Name(self.var(*target)), group)))
+    }
+
+    /// `d = (a, b) => value` or `d = (a) => { .. }`, its block under it: a delegate made and bound to a body this function binds in place, as the printer writes it; `None` where the delegate is written otherwise.
+    // ⚠ The body is held by its own tree, its object as the binder's variable that holds it.
+    fn lambda(&self, parts: &[Stmt], d: u32) -> Result<Option<Node>, ReparseError> {
+        let Some(bodies) = self.lambdas else {
+            return Ok(None);
+        };
+        let Some((held, at)) = bound_lambda(parts, self.head.program) else {
+            return Ok(None);
+        };
+        let Some(body) = bodies
+            .get(&at)
+            .copied()
+            .filter(|_| self.sited.contains(&at))
+        else {
+            return Ok(None);
+        };
+        let (Some(Stmt::Assign { target, .. }), Some(form)) =
+            (parts.first(), closures::inline(body))
+        else {
+            return Ok(None);
+        };
+        let object = match underneath(held) {
+            Expr::Var(var) => self.var(*var),
+            _ => String::new(),
+        };
+        let stmts: &[tree::Stmt] = match form {
+            Inline::Block(stmts) => stmts,
+            Inline::Value(_) => &[],
+        };
+        let inner = Held {
+            head: &body.head,
+            names: Names::default(),
+            left: Cell::new(self.left.get()),
+            limit: self.limit,
+            sharp: self.sharp,
+            this: None,
+            sites: declared_at(stmts, &body.head),
+            project: self.project,
+            lambdas: None,
+            sited: BTreeSet::new(),
+            bound: Some((Var::Param(0), object)),
+        };
+        // The receiver is no parameter, nor is a cell of a value of several the body never names.
+        let sharp = self.sharp.is_some_and(|options| true_csharp(&options));
+        let named = named_params(&body.body);
+        let mut params = Vec::new();
+        let mut n = 0;
+        while n < body.head.params {
+            inner.spend()?;
+            let var = Var::Param(n);
+            if n != 0 {
+                params.push(Sk::Name(inner.var(var)));
+            }
+            n += 1;
+            let cells = cells_of(&Expr::Var(var), &body.head).filter(|cells| sharp && *cells >= 2);
+            let Some(cells) = cells else {
+                continue;
+            };
+            let end = (n - 1).saturating_add(cells).min(body.head.params);
+            while n < end && !body.head.vars.contains_key(&Var::Param(n)) && !named.contains(&n) {
+                n += 1;
+            }
+        }
+        let (value, blocks) = match form {
+            Inline::Value(value) => (inner.sk(value, d)?, Vec::new()),
+            Inline::Block(stmts) => (Sk::Op(BLOCK, Vec::new()), vec![inner.nodes(stmts, d)?]),
+        };
+        self.left.set(inner.left.get());
+        let lambda = Sk::Op(LAMBDA, vec![Sk::Op(PARAMS, params), value]);
+        let stated = assign(Sk::Name(self.var(*target)), lambda);
+        Ok(Some(Node::held("", vec![stated], blocks)))
     }
 
     /// `place op= value`, `place++`: the one statement a compound group is, where it has the shape the printer writes so; `None` where it is written as its part.

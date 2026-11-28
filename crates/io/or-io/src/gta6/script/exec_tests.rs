@@ -38,7 +38,7 @@ use super::listing::Listing;
 use super::passes;
 use super::project::reach::UNBOUNDED;
 use super::project::signatures::native_key;
-use super::project::Signature;
+use super::project::{Param, Signature};
 use super::tree;
 use super::{Context, Level, Names, Options, Pass, Project, Stats};
 
@@ -67,7 +67,7 @@ const MIDDLE: u64 = 1 << 39;
 const BASES: usize = 64;
 
 /// The kinds of project-wide proof a function's own code is held to, as the first word of the failure of each.
-pub(crate) const PROOFS: [&str; 8] = [
+pub(crate) const PROOFS: [&str; 9] = [
     "signature",
     "native truth",
     "slot result",
@@ -76,6 +76,7 @@ pub(crate) const PROOFS: [&str; 8] = [
     "typed field",
     "typed parameter",
     "typed result",
+    "member",
 ];
 
 /// What a run makes up otherwise than its input says, to hold a proof of the project to the code.
@@ -617,8 +618,13 @@ impl<'f> Machine<'f> {
 
     /// Holds the objects a call hands a script function to the types the project says its parameters are.
     fn typed_arguments(&mut self, signature: &Signature, cells: &[u64], to: &str) {
+        self.typed_cells(&signature.params, cells, to);
+    }
+
+    /// Holds the objects a call hands to the types `params` says the cells they land in are.
+    fn typed_cells(&mut self, params: &[Param], cells: &[u64], to: &str) {
         let mut at = 0usize;
-        for param in &signature.params {
+        for param in params {
             if let (Kind::Object(name), Some(cell)) = (&param.kind, cells.get(at)) {
                 let want = TypeKey::of_name(name);
                 if let (Some(made), Some(want)) = (self.object_type(*cell), want) {
@@ -631,6 +637,26 @@ impl<'f> Machine<'f> {
                 }
             }
             at = at.saturating_add(param.cells as usize);
+        }
+    }
+
+    /// Holds the receiver a call hands a function the project says is a member of a type to that type, where the receiver is an object the function made.
+    fn received_by(&mut self, to: FunctionKey, cells: &[u64]) {
+        let project = self.project;
+        let Some(member) = project.members.get(&to).filter(|member| !member.is_static) else {
+            return;
+        };
+        let Some(made) = cells.first().and_then(|cell| self.object_type(*cell)) else {
+            return;
+        };
+        if !self.fits(made, member.owner) {
+            let why = format!(
+                "an object of {made} is handed as the receiver of func_{:06X} of program {:08X}, which the project says is a member of {}",
+                to.at(),
+                to.program(),
+                member.owner
+            );
+            self.disproved("member", why);
         }
     }
 
@@ -951,6 +977,22 @@ impl<'f> Machine<'f> {
         {
             let to = format!("func_{:06X} of program {:08X}", to.at(), to.program());
             self.typed_arguments(signature, &cells, &to);
+        }
+        // And to what every function of the slot's line states of the cells it passes.
+        if let (Callee::Virtual { .. }, Some(to)) = (callee, held) {
+            if let Some(params) = project.slot_params.get(&to) {
+                let to = format!(
+                    "the line of the slot func_{:06X} of program {:08X} fills",
+                    to.at(),
+                    to.program()
+                );
+                self.typed_cells(params, &cells, &to);
+            }
+        }
+        // ⚠ A call by name only: a slot of an interface may hold the method of any type that
+        // implements it, whatever type the project says the one it names is a member of.
+        if let Some(to) = script {
+            self.received_by(to, &cells);
         }
         if let Callee::Intrinsic { name, .. } = callee {
             // An intrinsic sees of each cell what the runtime reads of it, whatever it then does.

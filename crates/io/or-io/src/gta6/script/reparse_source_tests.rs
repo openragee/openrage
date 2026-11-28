@@ -1,7 +1,9 @@
 //! What the source level writes of a construct, a place and a name, read back against what the function holds.
 
 use super::*;
-use crate::gta6::script::ir::{VarInfo, Width};
+use crate::gta6::script::class::Method;
+use crate::gta6::script::ir::{TypeKey, VarInfo, Width};
+use crate::gta6::script::project::TypeFacts;
 
 /// [`source_says`] of a function whose variables are declared as `vars` says: each with its width and kind.
 fn declared_says(
@@ -984,4 +986,309 @@ fn a_foreach_reads_as_its_item_and_what_is_gone_through_and_as_its_loop_where_th
     assert!(text.contains("foreach ("), "{text}");
     assert_eq!(read, Ok(()), "{text}");
     reads_back_alone(&stepped, "in p1)", "in p0)");
+}
+
+/// An enum of a script the tests box: four bytes, one of its constants below zero.
+const ENUM: &str = "type_00000000000000E1";
+
+/// What the source level writes of `f` with `project`.
+fn written_with(f: &tree::Function, project: &Project) -> String {
+    let names = Names::default();
+    let cx = crate::gta6::script::Context::new(&names, project, Options::default());
+    let mut text = String::new();
+    print::function_in(&mut text, f, &cx);
+    text
+}
+
+#[test]
+fn a_boxed_value_compared_or_converted_reads_as_the_project_the_printer_had_writes_it() {
+    let boxed = |ty: &str, e: Expr| intrinsic(&format!("box<{ty}>"), vec![e]);
+    let equal = |ty: &str| {
+        let compared = builtin(
+            "System.Object.Equals",
+            vec![boxed(ty, p(0)), boxed(ty, p(1))],
+        );
+        function(vec![used(compared)])
+    };
+    let converted = |ty: &str| {
+        let made = builtin("System.Convert.ToInt32", vec![boxed(ty, p(0))]);
+        function(vec![used(made)])
+    };
+    let mut project = Project::default();
+    let facts = TypeFacts {
+        byte_size: 4,
+        flags: 0x08,
+        constants: vec![-1, 2],
+        ..TypeFacts::default()
+    };
+    project
+        .types
+        .insert(TypeKey::of_name(ENUM).expect("a key"), facts);
+    let holds = |f: &tree::Function, shown: &str, other: &str| {
+        let text = written_with(f, &project);
+        assert!(text.contains(shown), "{text}");
+        let read = agrees_source_with(f, &text, Options::default(), false, &project);
+        assert_eq!(read, Ok(()), "{text}");
+        let changed = text.replace(shown, other);
+        let read = agrees_source_with(f, &changed, Options::default(), false, &project);
+        assert!(
+            matches!(read, Err(ReparseError::Differs { .. })),
+            "{read:?}\n{changed}"
+        );
+        // With no project the reader cannot say which of the two the printer wrote.
+        let unread = agrees_source(f, &text, Options::default(), false);
+        assert!(
+            matches!(&unread, Err(ReparseError::Unread { form, .. }) if form == BOXED),
+            "{unread:?}"
+        );
+    };
+    holds(&equal("System.Int32"), "p0 == p1", "p0 == p0");
+    holds(&equal(ENUM), "p0 == p1", "p1 == p1");
+    // ⚠ Two floats `Equals` holds equal may differ by `==`: the call is written.
+    holds(&equal("System.Single"), "box<float>(p1)", "box<float>(p0)");
+    holds(&converted("System.Int16"), "(int)p0", "(int)p1");
+    holds(&converted(ENUM), "(int)p0", "(int)p1");
+    // A value past an int's range throws where a cast would not: the call is written.
+    holds(&converted("System.Int64"), "box<long>(p0)", "box<long>(p1)");
+    // Of an enum none of whose constants is below zero, a value may be past an int's range.
+    let mut unsigned = project.clone();
+    if let Some(facts) = unsigned.types.values_mut().next() {
+        facts.constants = vec![1, 2];
+    }
+    let wide = converted(ENUM);
+    let text = written_with(&wide, &unsigned);
+    assert!(text.contains("ToInt32("), "{text}");
+    let read = agrees_source_with(&wide, &text, Options::default(), false, &unsigned);
+    assert_eq!(read, Ok(()), "{text}");
+    let cast = text_of("    DEMO.USE((int)p0);\n").replace("var", "Cell");
+    let read = agrees_source_with(&wide, &cast, Options::default(), false, &unsigned);
+    assert!(
+        matches!(read, Err(ReparseError::Differs { .. })),
+        "{read:?}\n{cast}"
+    );
+}
+
+#[test]
+fn an_array_written_with_its_elements_inside_an_initialiser_reads_as_the_field_given_it() {
+    let stored = |index: i32, value: Expr| {
+        Stmt::Eval(intrinsic(
+            "array_set_ref",
+            vec![local(2), int(index), value],
+        ))
+    };
+    let filled = |sets: Vec<Stmt>| {
+        let array = Expr::NewArray {
+            ty: a_type(),
+            len: boxed(int(2)),
+            wrapper: String::new(),
+        };
+        let mut parts = vec![
+            set(Var::Local(1), Expr::NewObject(a_type())),
+            set(Var::Local(2), array),
+        ];
+        parts.extend(sets);
+        parts.push(Stmt::Store {
+            kind: StoreKind::U64,
+            addr: local(1),
+            offset: 0x10,
+            value: local(2),
+        });
+        vec![construct(Sugar::Group {
+            kind: Group::Construct,
+            parts,
+        })]
+    };
+    let both = || filled(vec![stored(0, p(0)), stored(1, p(1))]);
+    let text = "    local_1 = new type_0123456789ABCDEF { f_10 = new type_0123456789ABCDEF[] { p0, p1 } };\n";
+    assert_eq!(source_says(both(), text), Ok(true));
+    let turned = "    local_1 = new type_0123456789ABCDEF { f_10 = new type_0123456789ABCDEF[] { p1, p0 } };\n";
+    assert_eq!(source_says(both(), turned), Ok(false));
+    let moved = "    local_1 = new type_0123456789ABCDEF { f_18 = new type_0123456789ABCDEF[] { p0, p1 } };\n";
+    assert_eq!(source_says(both(), moved), Ok(false));
+    // An element left out is zero, which the elements alone would not say: every part stands apart.
+    let short = filled(vec![stored(0, p(0))]);
+    let apart = "    local_1 = new type_0123456789ABCDEF();
+    local_2 = new type_0123456789ABCDEF[2];
+    local_2[0] = p0;
+    local_1.f_10 = local_2;
+";
+    assert_eq!(source_says(short, apart), Ok(true));
+}
+
+/// A function that makes a closure object in `local_0`, keeps `p0` in it, binds the function at 0x200 of its program to it in `local_1` and hands `local_1` on.
+fn binder() -> tree::Function {
+    let delegate = VmType {
+        name: "System.Delegate".to_owned(),
+        byte_size: 32,
+        id: 9,
+        flags: 0,
+    };
+    let reference = Expr::FunctionRef {
+        program: 0x1122_3344,
+        at: 0x200,
+    };
+    let parts = vec![
+        set(Var::Local(1), Expr::NewObject(delegate)),
+        Stmt::Eval(builtin(
+            "System.Delegate.Ctor",
+            vec![
+                local(1),
+                local(0),
+                Expr::sugar(ExprSugar::Lambda, reference),
+            ],
+        )),
+    ];
+    function(vec![
+        simple(set(Var::Local(0), Expr::NewObject(a_type()))),
+        simple(Stmt::Store {
+            kind: StoreKind::U64,
+            addr: local(0),
+            offset: 8,
+            value: p(0),
+        }),
+        construct(Sugar::Group {
+            kind: Group::Delegate,
+            parts,
+        }),
+        used(local(1)),
+    ])
+}
+
+/// The function at 0x200 that [`binder`] binds, of no result: its object first, then one parameter.
+fn lambda_body(body: Vec<tree::Stmt>) -> tree::Function {
+    let mut f = function(body);
+    f.head.at = 0x200;
+    f.head.name = "func_000200".to_owned();
+    f.head.returns = Returns::Void;
+    f
+}
+
+/// `binder` as the export writes it with `body` written where it is bound, and `text` read back against the two.
+fn bound_read(
+    binder: &tree::Function,
+    body: &tree::Function,
+    text: Option<&str>,
+) -> (String, Result<(), ReparseError>) {
+    let mut lambdas = BTreeMap::new();
+    lambdas.insert(0x200, body);
+    let names = Names::default();
+    let project = Project::empty();
+    let cx = crate::gta6::script::Context::new(&names, project, Options::default());
+    let sited = print::bound_in_place(binder, &lambdas, &cx);
+    assert_eq!(sited.iter().copied().collect::<Vec<u32>>(), [0x200]);
+    let mut written = String::new();
+    let method = Method::free(binder.clone());
+    print::method_in(&mut written, &method, None, 0, &cx, &lambdas);
+    let text = text.map_or_else(|| written.clone(), str::to_owned);
+    let read = agrees_source_binding(binder, &text, cx.options, project, &lambdas, &sited);
+    (written, read)
+}
+
+/// Asserts that `binder` with `body` in place reads back, holds `shown`, and that the text with each of `changes` made reads as another function.
+fn lambda_holds(body: &tree::Function, shown: &str, changes: &[(&str, &str)]) {
+    let (text, read) = bound_read(&binder(), body, None);
+    assert!(text.contains(shown), "{text}");
+    assert_eq!(read, Ok(()), "{text}");
+    for (from, to) in changes {
+        let changed = text.replace(from, to);
+        assert_ne!(changed, text, "{from}");
+        let (_, read) = bound_read(&binder(), body, Some(changed.as_str()));
+        assert!(
+            matches!(read, Err(ReparseError::Differs { .. })),
+            "{read:?}\n{changed}"
+        );
+    }
+}
+
+#[test]
+fn a_lambda_written_where_it_is_bound_reads_as_its_parameters_and_its_body() {
+    let field = || Expr::Load {
+        ty: Scalar::U64,
+        addr: boxed(p(0)),
+        offset: 8,
+    };
+    let call = simple(Stmt::Eval(native("USE", vec![field(), p(1)])));
+    let value = lambda_body(vec![call]);
+    lambda_holds(
+        &value,
+        "local_1 = (Cell p1) => DEMO.USE(local_0.f_8, p1);",
+        &[
+            ("(Cell p1) =>", "(Cell p2) =>"),
+            ("(Cell p1) =>", "(Cell p1, Cell p2) =>"),
+            ("DEMO.USE(local_0.f_8, p1)", "DEMO.USE(local_0.f_10, p1)"),
+            ("DEMO.USE(local_0.f_8, p1)", "DEMO.USE(local_2.f_8, p1)"),
+            (
+                "=> DEMO.USE(local_0.f_8, p1)",
+                "=> DEMO.USE(p1, local_0.f_8)",
+            ),
+        ],
+    );
+    // A body of a few statements is a block under the statement that binds it.
+    let kept = simple(Stmt::Store {
+        kind: StoreKind::U64,
+        addr: p(0),
+        offset: 8,
+        value: p(1),
+    });
+    let block = lambda_body(vec![used(p(1)), kept]);
+    lambda_holds(
+        &block,
+        "local_1 = (Cell p1) =>\n",
+        &[
+            ("local_0.f_8 = p1;", "local_0.f_10 = p1;"),
+            ("        local_0.f_8 = p1;\n", ""),
+            (
+                "        DEMO.USE(p1);\n",
+                "        DEMO.USE(p1);\n        DEMO.USE(p1);\n",
+            ),
+        ],
+    );
+    // The delegate written as the function it binds is not the lambda the export writes.
+    let (text, _) = bound_read(&binder(), &value, None);
+    let lambda = "(Cell p1) => DEMO.USE(local_0.f_8, p1)";
+    let group = text.replace(lambda, "local_0.func_000200");
+    let (_, read) = bound_read(&binder(), &value, Some(group.as_str()));
+    assert!(
+        matches!(read, Err(ReparseError::Differs { .. })),
+        "{read:?}\n{group}"
+    );
+    // Read without the lambdas it is written with, the lambda stays a form not read.
+    let unread = agrees_source(&binder(), &text, Options::default(), false);
+    let lambda = "a lambda written where it is bound";
+    assert!(
+        matches!(&unread, Err(ReparseError::Unread { form, .. }) if form == lambda),
+        "{unread:?}"
+    );
+}
+
+#[test]
+fn a_type_tested_reads_as_the_test_of_its_cast_against_null() {
+    let tested = |test: BinOp| {
+        let cast = intrinsic("try_cast<type_0123456789ABCDEF>", vec![p(0)]);
+        vec![used(Expr::sugar(ExprSugar::Is, op(test, cast, int(0))))]
+    };
+    let is = "    DEMO.USE(p0 is type_0123456789ABCDEF);\n";
+    assert_eq!(source_says(tested(BinOp::Ne), is), Ok(true));
+    let other = "    DEMO.USE(p1 is type_0123456789ABCDEF);\n";
+    assert_eq!(source_says(tested(BinOp::Ne), other), Ok(false));
+    let not = "    DEMO.USE(!(p0 is type_0123456789ABCDEF));\n";
+    assert_eq!(source_says(tested(BinOp::Eq), not), Ok(true));
+    assert_eq!(source_says(tested(BinOp::Eq), is), Ok(false));
+    // A test is never the reference the cast makes, whichever of the two the text writes.
+    let cast = vec![used(intrinsic(
+        "try_cast<type_0123456789ABCDEF>",
+        vec![p(0)],
+    ))];
+    assert_eq!(source_says(cast, is), Ok(false));
+    let made = "    DEMO.USE(p0 as type_0123456789ABCDEF);\n";
+    assert_eq!(source_says(tested(BinOp::Ne), made), Ok(false));
+    // A choice by the test: the `?` is the choice's, never a nullable type's.
+    let cast = intrinsic("try_cast<type_0123456789ABCDEF>", vec![p(0)]);
+    let choice = Expr::Select {
+        cond: Box::new(Expr::sugar(ExprSugar::Is, op(BinOp::Ne, cast, int(0)))),
+        then: Box::new(p(1)),
+        els: Box::new(int(2)),
+    };
+    let chosen = "    DEMO.USE(p0 is type_0123456789ABCDEF ? p1 : 2);\n";
+    assert_eq!(source_says(vec![used(choice)], chosen), Ok(true));
 }

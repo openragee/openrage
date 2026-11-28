@@ -25,8 +25,8 @@ pub(crate) fn load(snapshot: Option<&Path>, exe: Option<&Path>) -> Result<GtaViK
         .map_err(|e| e.to_string())?
         .ok_or_else(|| {
             format!(
-                "No GTA VI keys: pass --exe with the path to game_scarlett_master.exe, pass --keys \
-                 with a key snapshot, or set {GTA6_SNAPSHOT_ENV}."
+                "No GTA VI keys: pass --exe with the path to game_scarlett_master.exe or eboot.bin, \
+                 pass --keys with a key snapshot, or set {GTA6_SNAPSHOT_ENV}."
             )
         })
 }
@@ -45,7 +45,7 @@ fn open_with(path: &Path, exe: &Path) -> Result<GtaViKeys, String> {
 }
 
 const USAGE: &str =
-    "usage: openrage-cli keys gta6 --exe <game_scarlett_master.exe> [--out <file>] [--force]";
+    "usage: openrage-cli keys gta6 --exe <game_scarlett_master.exe | eboot.bin> [--out <file>] [--force]";
 
 pub(crate) fn run(args: &[String]) -> ExitCode {
     let Some((verb, rest)) = args.split_first() else {

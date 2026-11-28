@@ -1,6 +1,7 @@
 //! The GTA VI key snapshot (`ORGTAVIK`) read out of the user's own executable: the key registry's
 //! index, content and string keys, each cipher's shared tables and the two fixed IVs, at the
-//! addresses a known build states and checked by their markers.
+//! addresses a known build states and checked by their markers. A build is an Xbox Series PE or a
+//! PlayStation 5 SELF around an ELF, each with its own registry layout and bootstrap id.
 //!
 //! ⚠ Only an executable whose SHA-256 names a build listed here is read; any other is refused, never
 //! scanned. The addresses, markers and layout are committable; the bytes they point at are not.
@@ -41,16 +42,16 @@ pub fn snapshot_for_exe(
     config_dir: Option<&Path>,
     exe_path: &Path,
 ) -> Result<(Vec<u8>, SnapshotSource)> {
-    snapshot_for_exe_with(config_dir, exe_path, bundled_snapshot(), BUILDS)
+    snapshot_for_exe_with(config_dir, exe_path, &bundled_snapshots(), BUILDS)
 }
 
-/// [`snapshot_for_exe`] over a given bundled snapshot and build list: the cache when the
-/// executable keys it and it records the executable's SHA-256, else the bundled snapshot on the
+/// [`snapshot_for_exe`] over given bundled snapshots and a build list: the cache when the
+/// executable keys it and it records the executable's SHA-256, else a bundled snapshot on the
 /// same terms, else a fresh extraction of a known build.
 fn snapshot_for_exe_with(
     config_dir: Option<&Path>,
     exe_path: &Path,
-    bundled: Option<&[u8]>,
+    bundled: &[&[u8]],
     builds: &[Build],
 ) -> Result<(Vec<u8>, SnapshotSource)> {
     let exe = std::fs::read(exe_path).map_err(|source| IoError::FileReadFailed {
@@ -73,7 +74,7 @@ fn snapshot_for_exe_with(
     if let Some(plain) = unmasked(cached.as_deref()).filter(whole) {
         return Ok((plain, SnapshotSource::Cache));
     }
-    let (plain, source) = match unmasked(bundled) {
+    let (plain, source) = match bundled.iter().find_map(|b| unmasked(Some(b))) {
         Some(plain) => (plain, SnapshotSource::Bundled),
         None => {
             let hex = sha256_hex(&sha256);
@@ -124,13 +125,16 @@ fn write_cache(path: &Path, masked: &[u8]) -> Result<()> {
 }
 
 #[cfg(feature = "bundled-keys")]
-fn bundled_snapshot() -> Option<&'static [u8]> {
-    Some(super::gta6_keygate::BUNDLED_SNAPSHOT)
+fn bundled_snapshots() -> Vec<&'static [u8]> {
+    vec![
+        super::gta6_keygate::BUNDLED_SNAPSHOT,
+        super::gta6_keygate::BUNDLED_PS5_SNAPSHOT,
+    ]
 }
 
 #[cfg(not(feature = "bundled-keys"))]
-fn bundled_snapshot() -> Option<&'static [u8]> {
-    None
+fn bundled_snapshots() -> Vec<&'static [u8]> {
+    Vec::new()
 }
 
 fn sha256_hex(sha256: &[u8; 32]) -> String {
@@ -141,8 +145,14 @@ fn sha256_hex(sha256: &[u8; 32]) -> String {
 struct Build {
     name: &'static str,
     sha256: &'static str,
-    /// The key registry: `records` entries of `{u64 registry id, u64 blob address, u64 blob size}`.
+    /// The container the executable is: a PE on Xbox, a PS5 SELF around an ELF on PlayStation 5.
+    image: ImageKind,
+    /// The key registry. A PE holds one array of `records` entries of
+    /// `{u64 registry id, u64 blob address, u64 blob size}`; a PS5 SELF holds the ids and sizes in
+    /// one array of that stride and the blob addresses in a second, parallel one.
     registry: u64,
+    /// The PS5's parallel array of blob addresses, one u64 per record; unused on a PE.
+    registry_blobs: u64,
     records: usize,
     /// Each cipher's shared tables: 16 input byte tables, then 16 round word tables right after.
     index_tables: u64,
@@ -150,26 +160,58 @@ struct Build {
     string_tables: u64,
     bootstrap_iv: u64,
     string_iv: u64,
+    /// The registry id the metadata table's bootstrap pass runs under, which the builds wire
+    /// differently.
+    bootstrap_registry_id: u64,
 }
 
-const BUILDS: &[Build] = &[Build {
-    name: "Xbox Series 1.0.2.1",
-    sha256: "e95020b2fa4a721db3df59fdecf75621730ac559d8835252f6c3b658d5a08993",
-    registry: 0x1_466E_5900,
-    records: 24,
-    index_tables: 0x1_4603_6F30,
-    content_tables: 0x1_4604_0F30,
-    string_tables: 0x1_460C_ABE0,
-    bootstrap_iv: 0x1_462F_D470,
-    string_iv: 0x1_4659_E620,
-}];
+/// The container a GTA VI executable is.
+enum ImageKind {
+    /// A Windows PE image, mapped through its section table.
+    Pe,
+    /// A PS5 SELF container around an x86-64 ELF, mapped through its segment table.
+    Ps5Self,
+}
+
+const BUILDS: &[Build] = &[
+    Build {
+        name: "Xbox Series 1.0.2.1",
+        sha256: "e95020b2fa4a721db3df59fdecf75621730ac559d8835252f6c3b658d5a08993",
+        image: ImageKind::Pe,
+        registry: 0x1_466E_5900,
+        registry_blobs: 0,
+        records: 24,
+        index_tables: 0x1_4603_6F30,
+        content_tables: 0x1_4604_0F30,
+        string_tables: 0x1_460C_ABE0,
+        bootstrap_iv: 0x1_462F_D470,
+        string_iv: 0x1_4659_E620,
+        bootstrap_registry_id: 0x1000_0001_0200_0000,
+    },
+    Build {
+        name: "PlayStation 5 1.0.2.1",
+        sha256: "f32c890c6adfd788ef3ec01035498dc3a3f4c6d4a93098e321091de68c078772",
+        image: ImageKind::Ps5Self,
+        registry: 0x09ED_4620,
+        registry_blobs: 0x0E7E_2560,
+        records: 24,
+        index_tables: 0x09B3_3D80,
+        content_tables: 0x09B3_DD80,
+        string_tables: 0x09BC_7A10,
+        bootstrap_iv: 0x09AC_0A80,
+        string_iv: 0x09E6_33F0,
+        bootstrap_registry_id: 0x1000_0005_0200_0000,
+    },
+];
 
 const SNAPSHOT_MAGIC: &[u8; 8] = b"ORGTAVIK";
 const SNAPSHOT_VERSION: u32 = 1;
-/// The section tags `GtaViKeys::parse` reads: `'BC'` index (CBC), `'CR'` content (CTR), `'ST'` strings.
+/// The section tags `GtaViKeys::parse` reads: `'BC'` index (CBC), `'CR'` content (CTR), `'ST'`
+/// strings, and `'BI'` the registry id the bootstrap pass runs under.
 const MODE_INDEX: u32 = 0x4342;
 const MODE_CONTENT: u32 = 0x5243;
 const MODE_STRING: u32 = 0x5453;
+const MODE_BOOTSTRAP: u32 = 0x4942;
 /// The markers the three white-box key representations open with.
 const INDEX_MAGIC: [u8; 4] = [0x8e, 0x9b, 0x3b, 0x4e];
 const CONTENT_MAGIC: [u8; 4] = [0x5d, 0xce, 0x18, 0x27];
@@ -180,7 +222,6 @@ const INPUT_TABLES_LEN: usize = 0x1000;
 const ROUND_TABLES_LEN: usize = 0x4000;
 const RECORD_LEN: usize = 24;
 const IV_LEN: usize = 16;
-const BOOTSTRAP_REGISTRY_ID: u64 = 0x1000_0001_0200_0000;
 /// The decrypt-direction registry id of the string key; the encrypt one shares its key id.
 const STRING_REGISTRY_ID: u64 = ((STRING_KEY_ID as u64) << 32) | 0x0200_0000;
 
@@ -204,15 +245,29 @@ fn snapshot_from(exe: &[u8], build: &Build, sha256: &[u8; 32]) -> Result<Vec<u8>
     let mut content = Vec::new();
     let mut string = None;
     for i in 0..build.records {
-        let at = build.registry + (i * RECORD_LEN) as u64;
-        let record = read_va(exe, at, RECORD_LEN)?;
-        let id = LE::read_u64(record);
-        let va = LE::read_u64(&record[8..]);
-        let size = LE::read_u64(&record[16..]);
+        let at = (i * RECORD_LEN) as u64;
+        let (id, va, size) = match build.image {
+            ImageKind::Pe => {
+                let record = read_va(exe, build, build.registry + at, RECORD_LEN)?;
+                (
+                    LE::read_u64(record),
+                    LE::read_u64(&record[8..]),
+                    LE::read_u64(&record[16..]),
+                )
+            }
+            // The registry is split in two: `{u64 id, u64 zero, u64 size}` records here, and the
+            // blob addresses in a parallel array there, one record apart.
+            ImageKind::Ps5Self => {
+                let id = LE::read_u64(read_va(exe, build, build.registry + at, 8)?);
+                let size = LE::read_u64(read_va(exe, build, build.registry + at + 16, 8)?);
+                let va = LE::read_u64(read_va(exe, build, build.registry_blobs + at, 8)?);
+                (id, va, size)
+            }
+        };
         if size < 4 {
             continue;
         }
-        let magic = read_va(exe, va, 4)?;
+        let magic = read_va(exe, build, va, 4)?;
         let wanted = magic == INDEX_MAGIC
             || magic == CONTENT_MAGIC
             || (magic == STRING_MAGIC && id == STRING_REGISTRY_ID);
@@ -224,7 +279,7 @@ fn snapshot_from(exe: &[u8], build: &Build, sha256: &[u8; 32]) -> Result<Vec<u8>
                 "registry record {i} ({id:#018X}) states {size:#X} bytes, not {BLOB_LEN:#X}"
             )));
         }
-        let blob = read_va(exe, va, BLOB_LEN)?;
+        let blob = read_va(exe, build, va, BLOB_LEN)?;
         if magic == INDEX_MAGIC {
             index.push((id, blob));
         } else if magic == CONTENT_MAGIC {
@@ -233,7 +288,10 @@ fn snapshot_from(exe: &[u8], build: &Build, sha256: &[u8; 32]) -> Result<Vec<u8>
             string = Some(blob);
         }
     }
-    if !index.iter().any(|(id, _)| *id == BOOTSTRAP_REGISTRY_ID) {
+    if !index
+        .iter()
+        .any(|(id, _)| *id == build.bootstrap_registry_id)
+    {
         return Err(bad("the key registry holds no bootstrap key"));
     }
     if content.is_empty() {
@@ -246,26 +304,29 @@ fn snapshot_from(exe: &[u8], build: &Build, sha256: &[u8; 32]) -> Result<Vec<u8>
     out.extend_from_slice(&SNAPSHOT_VERSION.to_le_bytes());
     out.extend_from_slice(&MODE_INDEX.to_le_bytes());
     out.extend_from_slice(sha256);
-    out.extend_from_slice(read_va(exe, build.bootstrap_iv, IV_LEN)?);
-    put_tables(&mut out, exe, build.index_tables)?;
+    out.extend_from_slice(read_va(exe, build, build.bootstrap_iv, IV_LEN)?);
+    put_tables(&mut out, exe, build, build.index_tables)?;
     put_blobs(&mut out, &index);
     out.extend_from_slice(&MODE_CONTENT.to_le_bytes());
-    put_tables(&mut out, exe, build.content_tables)?;
+    put_tables(&mut out, exe, build, build.content_tables)?;
     put_blobs(&mut out, &content);
     out.extend_from_slice(&MODE_STRING.to_le_bytes());
-    put_tables(&mut out, exe, build.string_tables)?;
-    out.extend_from_slice(read_va(exe, build.string_iv, IV_LEN)?);
+    put_tables(&mut out, exe, build, build.string_tables)?;
+    out.extend_from_slice(read_va(exe, build, build.string_iv, IV_LEN)?);
     out.extend_from_slice(&(BLOB_LEN as u32).to_le_bytes());
     out.extend_from_slice(string);
+    out.extend_from_slice(&MODE_BOOTSTRAP.to_le_bytes());
+    out.extend_from_slice(&build.bootstrap_registry_id.to_le_bytes());
     Ok(out)
 }
 
-fn put_tables(out: &mut Vec<u8>, exe: &[u8], va: u64) -> Result<()> {
+fn put_tables(out: &mut Vec<u8>, exe: &[u8], build: &Build, va: u64) -> Result<()> {
     out.extend_from_slice(&(INPUT_TABLES_LEN as u32).to_le_bytes());
-    out.extend_from_slice(read_va(exe, va, INPUT_TABLES_LEN)?);
+    out.extend_from_slice(read_va(exe, build, va, INPUT_TABLES_LEN)?);
     out.extend_from_slice(&(ROUND_TABLES_LEN as u32).to_le_bytes());
     out.extend_from_slice(read_va(
         exe,
+        build,
         va + INPUT_TABLES_LEN as u64,
         ROUND_TABLES_LEN,
     )?);
@@ -281,9 +342,14 @@ fn put_blobs(out: &mut Vec<u8>, blobs: &[(u64, &[u8])]) {
     }
 }
 
-/// The `len` bytes at virtual address `va` of the PE image `exe`, mapped through its section table.
-fn read_va(exe: &[u8], va: u64, len: usize) -> Result<&[u8]> {
-    pe_map(exe, va, len).ok_or_else(|| bad(format!("no section holds {len:#X} bytes at {va:#X}")))
+/// The `len` bytes at virtual address `va` of the executable image `exe`, mapped the way `build`'s
+/// container lays it out.
+fn read_va<'a>(exe: &'a [u8], build: &Build, va: u64, len: usize) -> Result<&'a [u8]> {
+    let mapped = match build.image {
+        ImageKind::Pe => pe_map(exe, va, len),
+        ImageKind::Ps5Self => super::gta6_image::self_map(exe, va, len),
+    };
+    mapped.ok_or_else(|| bad(format!("no section holds {len:#X} bytes at {va:#X}")))
 }
 
 fn pe_map(exe: &[u8], va: u64, len: usize) -> Option<&[u8]> {
@@ -344,6 +410,8 @@ mod tests {
     const INDEX_ID: u64 = 0x1000_0015_0200_0000;
     const CONTENT_KEY_ID: u32 = 0x1000_0029;
     const CONTENT_ID: u64 = ((CONTENT_KEY_ID as u64) << 32) | 0x0200_0000;
+    /// The first Xbox build's bootstrap id, which the synthetic PE wires.
+    const BOOTSTRAP_ID: u64 = 0x1000_0001_0200_0000;
 
     /// A synthetic two-section PE64 and the build that describes it; `seed` varies every filled byte.
     /// The registry: two index keys, one record of a foreign representation, one content key and the
@@ -367,7 +435,7 @@ mod tests {
             *b = (i as u8).wrapping_mul(31).wrapping_add(seed);
         }
         let records: [(u64, [u8; 4], usize); 5] = [
-            (BOOTSTRAP_REGISTRY_ID, INDEX_MAGIC, BLOB_LEN),
+            (BOOTSTRAP_ID, INDEX_MAGIC, BLOB_LEN),
             (INDEX_ID, INDEX_MAGIC, BLOB_LEN),
             (0xFFFF_FFFE_0000_0000, [1, 2, 3, 4], 0x20),
             (CONTENT_ID, CONTENT_MAGIC, BLOB_LEN),
@@ -386,13 +454,16 @@ mod tests {
         let build = Build {
             name: "synthetic",
             sha256: "",
+            image: ImageKind::Pe,
             registry: b(REGISTRY),
+            registry_blobs: 0,
             records: records.len(),
             index_tables,
             content_tables: b(CONTENT_TABLES),
             string_tables: b(STRING_TABLES),
             bootstrap_iv: b(BOOT_IV),
             string_iv: b(STR_IV),
+            bootstrap_registry_id: BOOTSTRAP_ID,
         };
         (exe, build)
     }
@@ -401,11 +472,11 @@ mod tests {
     fn a_virtual_address_maps_through_its_section_to_the_file_bytes() {
         let (exe, build) = image(1);
         assert_eq!(
-            read_va(&exe, build.bootstrap_iv, IV_LEN).expect("mapped"),
+            read_va(&exe, &build, build.bootstrap_iv, IV_LEN).expect("mapped"),
             &exe[B_RAW + BOOT_IV..B_RAW + BOOT_IV + IV_LEN]
         );
         assert_eq!(
-            read_va(&exe, build.index_tables, A_LEN).expect("mapped"),
+            read_va(&exe, &build, build.index_tables, A_LEN).expect("mapped"),
             &exe[A_RAW..A_RAW + A_LEN]
         );
     }
@@ -413,16 +484,22 @@ mod tests {
     #[test]
     fn an_address_no_section_holds_is_refused() {
         let (exe, build) = image(1);
-        assert!(read_va(&exe, 0, 4).is_err(), "below the image base");
-        assert!(read_va(&exe, BASE + 0x8000, 4).is_err(), "between sections");
-        let last = BASE + B_RVA + B_LEN as u64 - 8;
-        assert!(read_va(&exe, last, 16).is_err(), "past the section end");
+        assert!(read_va(&exe, &build, 0, 4).is_err(), "below the image base");
         assert!(
-            read_va(&exe[..0x100], build.bootstrap_iv, 4).is_err(),
+            read_va(&exe, &build, BASE + 0x8000, 4).is_err(),
+            "between sections"
+        );
+        let last = BASE + B_RVA + B_LEN as u64 - 8;
+        assert!(
+            read_va(&exe, &build, last, 16).is_err(),
+            "past the section end"
+        );
+        assert!(
+            read_va(&exe[..0x100], &build, build.bootstrap_iv, 4).is_err(),
             "truncated"
         );
         assert!(
-            read_va(&[0u8; 8], build.bootstrap_iv, 4).is_err(),
+            read_va(&[0u8; 8], &build, build.bootstrap_iv, 4).is_err(),
             "not a PE"
         );
     }
@@ -440,7 +517,7 @@ mod tests {
         assert_eq!(LE::read_u32(&plain[count_at..]), 2);
         let first = count_at + 4;
         let second = first + 8 + 4 + BLOB_LEN;
-        assert_eq!(LE::read_u64(&plain[first..]), BOOTSTRAP_REGISTRY_ID);
+        assert_eq!(LE::read_u64(&plain[first..]), BOOTSTRAP_ID);
         assert_eq!(LE::read_u64(&plain[second..]), INDEX_ID);
         // The content key is filed under the id its key id selects.
         let mut data = [0u8; 32];
@@ -450,6 +527,98 @@ mod tests {
         assert!(keys
             .content_decrypt(CONTENT_KEY_ID + 1, &[0; 16], &mut data)
             .is_err());
+    }
+
+    /// A synthetic PS5 SELF: one loadable segment holding the registry split in two (ids and sizes
+    /// in one array, blob addresses in a parallel one), the blobs, the tables and the IVs, with the
+    /// build's bootstrap id wired the way the PlayStation 5 build wires it.
+    fn self_image(seed: u8) -> (Vec<u8>, Build) {
+        const OFFSET: usize = 0x400;
+        const SEG: u64 = 0x9000_0000;
+        const REGISTRY: usize = 0x0;
+        const BLOB_PTRS: usize = 0x100;
+        const BLOBS: usize = 0x200;
+        const SLOT: usize = 0x1100;
+        const INDEX_TABLES: usize = 0x8000;
+        const CONTENT_TABLES: usize = 0xD000;
+        const STRING_TABLES: usize = 0x12000;
+        const BOOT_IV: usize = 0x17000;
+        const STR_IV: usize = 0x17010;
+        const PAYLOAD: usize = 0x17100;
+        let mut exe = vec![0u8; OFFSET + PAYLOAD];
+        exe[..4].copy_from_slice(&super::super::gta6_image::SELF_MAGIC);
+        exe[0x18..0x1A].copy_from_slice(&1u16.to_le_bytes()); // one segment entry
+        exe[0x20..0x28].copy_from_slice(&0x2804u64.to_le_bytes()); // phdr 0, payload
+        exe[0x28..0x30].copy_from_slice(&(OFFSET as u64).to_le_bytes());
+        exe[0x30..0x38].copy_from_slice(&(PAYLOAD as u64).to_le_bytes());
+        exe[0x38..0x40].copy_from_slice(&(PAYLOAD as u64).to_le_bytes());
+        let elf = 0x40;
+        exe[elf..elf + 4].copy_from_slice(b"\x7fELF");
+        exe[elf + 4] = 2;
+        exe[elf + 5] = 1;
+        exe[elf + 32..elf + 40].copy_from_slice(&0x40u64.to_le_bytes()); // e_phoff
+        exe[elf + 54..elf + 56].copy_from_slice(&56u16.to_le_bytes()); // e_phentsize
+        exe[elf + 56..elf + 58].copy_from_slice(&1u16.to_le_bytes()); // e_phnum
+        let ph = elf + 0x40;
+        exe[ph..ph + 4].copy_from_slice(&1u32.to_le_bytes()); // PT_LOAD
+        exe[ph + 16..ph + 24].copy_from_slice(&SEG.to_le_bytes());
+        exe[ph + 32..ph + 40].copy_from_slice(&(PAYLOAD as u64).to_le_bytes());
+        for (i, b) in exe[OFFSET..].iter_mut().enumerate() {
+            *b = (i as u8).wrapping_mul(31).wrapping_add(seed);
+        }
+        let bootstrap_id = 0x1000_0005_0200_0000;
+        let records: [(u64, [u8; 4], usize); 5] = [
+            (bootstrap_id, INDEX_MAGIC, BLOB_LEN),
+            (INDEX_ID, INDEX_MAGIC, BLOB_LEN),
+            (0xFFFF_FFFE_0000_0000, [1, 2, 3, 4], 0x20),
+            (CONTENT_ID, CONTENT_MAGIC, BLOB_LEN),
+            (STRING_REGISTRY_ID, STRING_MAGIC, BLOB_LEN),
+        ];
+        for (k, (id, magic, size)) in records.into_iter().enumerate() {
+            let blob = OFFSET + BLOBS + k * SLOT;
+            exe[blob..blob + 4].copy_from_slice(&magic);
+            let t = OFFSET + REGISTRY + k * RECORD_LEN;
+            exe[t..t + 8].copy_from_slice(&id.to_le_bytes());
+            exe[t + 16..t + 24].copy_from_slice(&(size as u64).to_le_bytes());
+            let p = OFFSET + BLOB_PTRS + k * RECORD_LEN;
+            let va = SEG + (BLOBS + k * SLOT) as u64;
+            exe[p..p + 8].copy_from_slice(&va.to_le_bytes());
+        }
+        let at = |off: usize| SEG + off as u64;
+        let build = Build {
+            name: "synthetic PS5",
+            sha256: "",
+            image: ImageKind::Ps5Self,
+            registry: at(REGISTRY),
+            registry_blobs: at(BLOB_PTRS),
+            records: records.len(),
+            index_tables: at(INDEX_TABLES),
+            content_tables: at(CONTENT_TABLES),
+            string_tables: at(STRING_TABLES),
+            bootstrap_iv: at(BOOT_IV),
+            string_iv: at(STR_IV),
+            bootstrap_registry_id: bootstrap_id,
+        };
+        (exe, build)
+    }
+
+    #[test]
+    fn a_ps5_self_extracts_through_its_split_registry_and_carries_its_bootstrap_id() {
+        let (exe, build) = self_image(1);
+        let sha = [7u8; 32];
+        let plain = snapshot_from(&exe, &build, &sha).expect("the synthetic SELF extracts");
+        let keys = GtaViKeys::parse(&plain).expect("the extracted snapshot parses");
+        assert_eq!(keys.exe_sha256(), &sha);
+        assert!(keys.has_content_keys() && keys.has_string_keys());
+        // The snapshot closes with the bootstrap-id section naming this build's id, which the
+        // reader hands back; the key blob it selects is the first index key.
+        assert_eq!(keys.bootstrap_registry_id(), 0x1000_0005_0200_0000);
+        let count_at = 8 + 4 + 4 + 32 + IV_LEN + 4 + INPUT_TABLES_LEN + 4 + ROUND_TABLES_LEN;
+        assert_eq!(LE::read_u32(&plain[count_at..]), 2);
+        assert_eq!(LE::read_u64(&plain[count_at + 4..]), 0x1000_0005_0200_0000);
+        // The masked form opens only with this executable, which keys on the SELF's own region.
+        let masked = encode_masked(&plain, &exe);
+        assert_eq!(decode_masked(&masked, &exe).unwrap(), plain);
     }
 
     #[test]
@@ -557,13 +726,13 @@ mod tests {
         let (path, exe, build) = exe_file(install.path(), 1);
         let builds = [build];
         let (plain, source) =
-            snapshot_for_exe_with(Some(config.path()), &path, None, &builds).expect("extracts");
+            snapshot_for_exe_with(Some(config.path()), &path, &[], &builds).expect("extracts");
         assert_eq!(source, SnapshotSource::Extracted);
         assert_eq!(plain, plain_of(&exe, &builds[0]));
         masked_cache(config.path(), &exe, &plain);
 
         let (again, source) =
-            snapshot_for_exe_with(Some(config.path()), &path, None, &[]).expect("the cache opens");
+            snapshot_for_exe_with(Some(config.path()), &path, &[], &[]).expect("the cache opens");
         assert_eq!(
             source,
             SnapshotSource::Cache,
@@ -578,14 +747,14 @@ mod tests {
         let (path, exe, build) = exe_file(install.path(), 1);
         let plain = plain_of(&exe, &build);
         let bundled = encode_masked(&plain, &exe);
-        let (got, source) = snapshot_for_exe_with(None, &path, Some(bundled.as_slice()), &[])
+        let (got, source) = snapshot_for_exe_with(None, &path, &[bundled.as_slice()], &[])
             .expect("the bundled opens");
         assert_eq!((got, source), (plain.clone(), SnapshotSource::Bundled));
 
         let other_build = snapshot_from(&exe, &build, &[9; 32]).expect("extracts");
         let bundled = encode_masked(&other_build, &exe);
-        let (got, source) = snapshot_for_exe_with(None, &path, Some(bundled.as_slice()), &[build])
-            .expect("extracts");
+        let (got, source) =
+            snapshot_for_exe_with(None, &path, &[bundled.as_slice()], &[build]).expect("extracts");
         assert_eq!(
             (got, source),
             (plain, SnapshotSource::Extracted),
@@ -606,7 +775,7 @@ mod tests {
         )
         .expect("write a stale cache");
         let (_, source) =
-            snapshot_for_exe_with(Some(config.path()), &path, None, &[build]).expect("extracts");
+            snapshot_for_exe_with(Some(config.path()), &path, &[], &[build]).expect("extracts");
         assert_eq!(source, SnapshotSource::Extracted);
         masked_cache(config.path(), &exe, &plain);
     }
@@ -619,7 +788,7 @@ mod tests {
         let (_, exe, build) = exe_file(elsewhere.path(), 1);
         let bundled = encode_masked(&plain_of(&exe, &build), &exe);
         let (path, _, _) = exe_file(install.path(), 2);
-        let bundled = Some(bundled.as_slice());
+        let bundled = &[bundled.as_slice()];
         let err = snapshot_for_exe_with(Some(config.path()), &path, bundled, &[build])
             .expect_err("another executable keys nothing");
         let said = err.to_string();
@@ -718,7 +887,9 @@ mod tests {
         use crate::container::rpf::{Rpf9Toc, GTA6_EXE_ENV, GTA6_SNAPSHOT_ENV};
 
         const BUILD_ENV: &str = "OPENRAGE_GTA6_BUILD";
-        const EXE_NAME: &str = "game_scarlett_master.exe";
+        /// The executables a build root holds: an Xbox package the first, a PlayStation 5 dump
+        /// the second.
+        const EXE_NAMES: [&str; 2] = ["game_scarlett_master.exe", "eboot.bin"];
         let what = "GTA VI key extraction from the executable";
         let env = |var: &str| {
             std::env::var_os(var)
@@ -727,15 +898,19 @@ mod tests {
         };
         let build = env(BUILD_ENV);
         let exe = env(GTA6_EXE_ENV).or_else(|| {
-            build
-                .as_ref()
-                .map(|b| b.join(EXE_NAME))
-                .filter(|p| p.is_file())
+            build.as_ref().and_then(|b| {
+                EXE_NAMES
+                    .iter()
+                    .map(|name| b.join(name))
+                    .find(|p| p.is_file())
+            })
         });
         let (Some(exe), Some(build)) = (exe, build) else {
             or_test_support::skip_install(
                 what,
-                format_args!("set {BUILD_ENV} (and {GTA6_EXE_ENV} when {EXE_NAME} is elsewhere)"),
+                format_args!(
+                    "set {BUILD_ENV} (and {GTA6_EXE_ENV} when the executable is elsewhere)"
+                ),
             );
             return;
         };

@@ -45,6 +45,10 @@ const SNAPSHOT_MODE_CTR: u32 = 0x5243;
 /// opens the optional trailing string-key section (its own shared tables, the fixed IV and the one
 /// key), which a snapshot without string support omits.
 const SNAPSHOT_MODE_STR: u32 = 0x5453;
+/// The mode tag `'BI'`: the registry id the metadata table's bootstrap pass runs under, which the
+/// builds wire differently. It opens the optional trailing section that names it; a snapshot
+/// without one runs under the first Xbox build's id, which every earlier snapshot uses.
+const SNAPSHOT_MODE_BOOTSTRAP: u32 = 0x4942;
 /// The marker the string key blob opens with (the `504f865e` white-box representation, big-endian).
 const STRING_BLOB_MAGIC: [u8; 4] = [0x50, 0x4f, 0x86, 0x5e];
 /// The key id the PSO string cipher selects (categories 1 and 0x1e both resolve to it), named here for
@@ -99,6 +103,9 @@ pub struct GtaViKeys {
     /// The PSO string cipher's own tables, key and fixed IV (type `0x13`, CBC). `None` when the
     /// snapshot carries no string section, which leaves PSO string-section decryption unsupported.
     string: Option<StringCipher>,
+    /// The registry id the metadata table's bootstrap pass runs under, from the `'BI'` section;
+    /// the first Xbox build's id when the snapshot carries none.
+    bootstrap_registry_id: u64,
     snapshot_file: Option<PathBuf>,
 }
 
@@ -253,6 +260,10 @@ impl GtaViKeys {
         // without it still opens; it is then without string keys and PSO string decryption is refused.
         let string = parse_string_section(&mut c)?;
 
+        // The bootstrap registry id is a third optional trailing block: every snapshot before it
+        // runs under the first Xbox build's id, so its absence keeps that meaning.
+        let bootstrap_registry_id = parse_bootstrap_id_section(&mut c)?;
+
         Ok(Self {
             exe_sha256,
             bootstrap_iv,
@@ -263,6 +274,7 @@ impl GtaViKeys {
             content_round_tables,
             content_blobs,
             string,
+            bootstrap_registry_id,
             snapshot_file: None,
         })
     }
@@ -610,6 +622,23 @@ fn parse_string_section(c: &mut Cursor<'_>) -> Result<Option<StringCipher>> {
     }))
 }
 
+/// The registry id the bootstrap pass runs under, from the optional trailing section a cursor is
+/// positioned at the start of: a `'BI'` mode tag and one u64. A cursor at the end yields the
+/// first Xbox build's id, which every snapshot written before the section exists uses; a malformed
+/// section is refused, never panicking.
+fn parse_bootstrap_id_section(c: &mut Cursor<'_>) -> Result<u64> {
+    if c.at >= c.bytes.len() {
+        return Ok(BOOTSTRAP_REGISTRY_ID);
+    }
+    let mode = c.u32()?;
+    if mode != SNAPSHOT_MODE_BOOTSTRAP {
+        return Err(snapshot_bad(format!(
+            "bootstrap mode tag {mode:#06X}, not the bootstrap tag {SNAPSHOT_MODE_BOOTSTRAP:#06X}"
+        )));
+    }
+    c.u64()
+}
+
 fn read_byte_tables(bytes: &[u8]) -> Box<[[u8; MAP_LEN]; MAPS]> {
     let mut tables = Box::new([[0u8; MAP_LEN]; MAPS]);
     for (i, table) in tables.iter_mut().enumerate() {
@@ -693,7 +722,7 @@ impl Rpf9Toc {
 
         // 1. The metadata table, under the bootstrap key and IV.
         keys.cbc_decrypt(
-            BOOTSTRAP_REGISTRY_ID,
+            keys.bootstrap_registry_id(),
             &keys.bootstrap_iv,
             &mut bytes[0x40..bootstrap_end as usize],
         )?;
@@ -849,9 +878,10 @@ impl GtaViKeys {
         Ok((&blob.words, &blob.output))
     }
 
-    /// The registry id the metadata table is keyed under, the same for every archive.
+    /// The registry id the metadata table is keyed under: the one the snapshot names, which a
+    /// build wires for itself, else the first Xbox build's.
     pub(super) fn bootstrap_registry_id(&self) -> u64 {
-        BOOTSTRAP_REGISTRY_ID
+        self.bootstrap_registry_id
     }
 
     /// Decrypt `data` under `registry_id` from `iv`; the public mirror of the encrypt path, so a test

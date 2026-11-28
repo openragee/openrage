@@ -1,7 +1,10 @@
 //! The GTA VI content cipher (type 17, white-box representation `5dce1827`) decrypts every flagged
-//! top-level entry of a build: each CTR-decrypts to a zlib head, and the fully-enciphered class
-//! inflates to exactly the entry row's real (inflated) size. This is the task's required check for the
-//! content cipher, proving the representation, the ported transform and the CTR mode against the game.
+//! top-level entry of a build: each CTR-decrypts under the key its row names, and the sampled
+//! bodies read whole to exactly the entry row's real (inflated) size. This is the task's required
+//! check for the content cipher, proving the representation, the ported transform and the CTR mode
+//! against the game. An Xbox build's deciphered bodies open as zlib streams from their first byte; a
+//! PlayStation 5 build stores its first chunk in the clear or as raw DEFLATE, so the zlib head is
+//! counted for the report, never asserted.
 //!
 //! Install-gated and game-derived, so it needs the key snapshot (which must carry the content section,
 //! `OPENRAGE_GTA6_KEYS`) and the build, and skips cleanly without them, which is why a clean checkout
@@ -50,7 +53,7 @@ fn is_zlib_head(head: &[u8]) -> bool {
 }
 
 #[test]
-fn every_flagged_content_entry_decrypts_to_zlib() {
+fn every_flagged_content_entry_reads_whole_under_its_key() {
     let what = "GTA VI content cipher (type 17) over a build";
     let (Some(snapshot), Some(build)) = (env_path(GTA6_SNAPSHOT_ENV), env_path(BUILD_ENV)) else {
         skip_install(
@@ -94,52 +97,52 @@ fn every_flagged_content_entry_decrypts_to_zlib() {
             }
             tried += 1;
 
-            // Head check: CTR-decrypt the first block and confirm the zlib magic.
+            // Head check: the first block CTR-decrypts under the row's own key, which the snapshot
+            // must hold. A zlib head there is an Xbox build's shape; the report counts it.
             let mut head = vec![0u8; 16.min(stored as usize)];
             file.seek(SeekFrom::Start(start)).expect("seek to the body");
             file.read_exact(&mut head).expect("read the body head");
             keys.content_decrypt(cipher.key_id, &cipher.iv, &mut head)
                 .expect("the content key decrypts");
-            assert!(
-                is_zlib_head(&head),
-                "{}: entry {} (key {:#010x}) does not decrypt to a zlib head: {:02x?}",
-                path.display(),
-                entry.index,
-                cipher.key_id,
-                &head[..head.len().min(4)]
-            );
-            heads += 1;
+            if is_zlib_head(&head) {
+                heads += 1;
+            }
 
-            // Full-body check on the fully-enciphered class: the whole body inflates to exactly C.
+            // Whole-body check: the deciphered chunks inflate to exactly the row's real size.
             if stored <= SAMPLE_CAP {
                 sampled += 1;
-                if let (Ok(body), Some(real)) = (
-                    mount.read_entry_decrypted(&mut file, entry, &keys),
-                    entry.real,
-                ) {
-                    if body.len() as u64 == real {
-                        inflated_exact += 1;
-                    }
-                }
+                let body = mount
+                    .read_entry_decrypted(&mut file, entry, &keys)
+                    .unwrap_or_else(|e| {
+                        panic!(
+                            "{}: entry {} does not read whole: {e}",
+                            path.display(),
+                            entry.index
+                        )
+                    });
+                let real = entry.real.expect("a sampled row states its real size");
+                assert_eq!(
+                    body.len() as u64,
+                    real,
+                    "{}: entry {} deciphered to the wrong length",
+                    path.display(),
+                    entry.index
+                );
+                inflated_exact += 1;
             }
         }
     }
 
     println!(
         "content cipher: {tried} flagged entries, {heads} zlib heads, {inflated_exact}/{sampled} \
-         sampled bodies inflate to exactly their real size"
-    );
-    assert_eq!(
-        heads, tried,
-        "every flagged content entry must decrypt to a zlib head"
+         sampled bodies read whole to their real size"
     );
     assert!(
         tried >= 400,
         "the build is expected to hold about 455 top-level content entries, found {tried}"
     );
-    assert!(
-        inflated_exact >= 200,
-        "the fully-enciphered class should inflate to exact size; only {inflated_exact} of \
-         {sampled} sampled did"
+    assert_eq!(
+        inflated_exact, sampled,
+        "every sampled content entry must read whole to its real size"
     );
 }

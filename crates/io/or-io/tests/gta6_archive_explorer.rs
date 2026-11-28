@@ -22,16 +22,51 @@ use or_test_support::skip_install;
 const BUILD_ENV: &str = "OPENRAGE_GTA6_BUILD";
 const NAMES_ENV: &str = "OPENRAGE_GTA6_NAMES";
 
-/// The totals the decode reproduces over this build's archives: 6,534 top-level entries, 455 of them
-/// under a content-cipher record, 5,977 resolved through the names corpus.
-const TOTAL_ENTRIES: usize = 6_534;
-const TOTAL_CIPHER_RECORDS: usize = 455;
-const TOTAL_NAMES_RESOLVED: usize = 5_977;
-/// The 24-byte entry row's class byte split across the build: 0x00, 0x0B, 0xFF, 0x0E rows.
-const CLASS_00: usize = 4_351;
-const CLASS_0B: usize = 864;
-const CLASS_FF: usize = 1_317;
-const CLASS_0E: usize = 1;
+/// The totals the decode reproduces over one build's archives, measured per build: the entry rows,
+/// the content-cipher records, the 24-byte entry row's class byte split (0x00, 0x0B, 0xFF, 0x0E),
+/// and what `textures.rpf` holds, which the builds lay out differently.
+struct BuildShape {
+    total_entries: usize,
+    total_ciphers: usize,
+    class_00: usize,
+    class_0b: usize,
+    class_ff: usize,
+    class_0e: usize,
+    textures_entries: usize,
+    /// The name hashes `textures.rpf` must hold.
+    textures_hashes: &'static [u64],
+}
+
+const XBOX_SERIES: BuildShape = BuildShape {
+    total_entries: 6_534,
+    total_ciphers: 455,
+    class_00: 4_351,
+    class_0b: 864,
+    class_ff: 1_317,
+    class_0e: 1,
+    textures_entries: 22,
+    textures_hashes: &[0x01D3_E030_56A1_A5C7],
+};
+
+const PLAYSTATION_5: BuildShape = BuildShape {
+    total_entries: 7_890,
+    total_ciphers: 454,
+    class_00: 5_699,
+    class_0b: 864,
+    class_ff: 1_325,
+    class_0e: 1,
+    textures_entries: 2,
+    textures_hashes: &[0xF21B_0A3A_5961_26D5, 0x3236_3B06_4327_5D70],
+};
+
+/// The measured shape of the build under `root`: a PlayStation 5 build is named by its `eboot.bin`.
+fn shape_of(root: &Path) -> &'static BuildShape {
+    if root.join("eboot.bin").is_file() {
+        &PLAYSTATION_5
+    } else {
+        &XBOX_SERIES
+    }
+}
 
 fn env_path(var: &str) -> Option<PathBuf> {
     std::env::var_os(var)
@@ -90,6 +125,7 @@ fn every_build_archive_lists_every_entry_with_decoded_rows() {
     };
 
     let keys = GtaViKeys::from_file(&snapshot).expect("the key snapshot parses");
+    let shape = shape_of(&build);
     let archives = build_archives(&build);
     assert!(!archives.is_empty(), "no .rpf under {}", build.display());
 
@@ -152,20 +188,17 @@ fn every_build_archive_lists_every_entry_with_decoded_rows() {
 
     assert_eq!(
         total_entries,
-        TOTAL_ENTRIES,
+        shape.total_entries,
         "entries across {} archives",
         archives.len()
     );
-    assert_eq!(
-        total_ciphers, TOTAL_CIPHER_RECORDS,
-        "content-cipher records"
-    );
+    assert_eq!(total_ciphers, shape.total_ciphers, "content-cipher records");
     // The 24-byte class byte split; a mislabelled row shape, a dropped archive or a miscounted column
     // slot would move these.
-    assert_eq!(class[0x00], CLASS_00, "class 0x00 rows");
-    assert_eq!(class[0x0B], CLASS_0B, "class 0x0B rows");
-    assert_eq!(class[0xFF], CLASS_FF, "class 0xFF rows");
-    assert_eq!(class[0x0E], CLASS_0E, "class 0x0E rows");
+    assert_eq!(class[0x00], shape.class_00, "class 0x00 rows");
+    assert_eq!(class[0x0B], shape.class_0b, "class 0x0B rows");
+    assert_eq!(class[0xFF], shape.class_ff, "class 0xFF rows");
+    assert_eq!(class[0x0E], shape.class_0e, "class 0x0E rows");
     println!(
         "{} RPF9 archives: {total_entries} entries, {total_ciphers} content-cipher records",
         archives.len()
@@ -185,6 +218,7 @@ fn appdata0_and_textures_match_the_known_entry_names() {
     let keys = GtaViKeys::from_file(&snapshot).expect("the key snapshot parses");
 
     let has = |a: &Gta6Archive, hash: u64| a.entries.iter().any(|e| e.name64 == hash);
+    let shape = shape_of(&build);
     let appdata0 = build.join("appdata0.rpf");
     if appdata0.exists() {
         let a = Gta6Archive::open(&read_toc_prefix(&appdata0), &keys).expect("open appdata0");
@@ -195,12 +229,11 @@ fn appdata0_and_textures_match_the_known_entry_names() {
     let textures = build.join("textures.rpf");
     if textures.exists() {
         let t = Gta6Archive::open(&read_toc_prefix(&textures), &keys).expect("open textures");
-        assert_eq!(t.toc.entry_count, 22);
-        assert_eq!(t.entries.len(), 22);
-        assert!(
-            has(&t, 0x01D3_E030_56A1_A5C7),
-            "textures lacks the weathermaps entry"
-        );
+        assert_eq!(t.toc.entry_count as usize, shape.textures_entries);
+        assert_eq!(t.entries.len(), shape.textures_entries);
+        for hash in shape.textures_hashes {
+            assert!(has(&t, *hash), "textures lacks the {hash:#018X} entry");
+        }
     }
 
     if let Some(dir) = env_path(NAMES_ENV) {
@@ -279,10 +312,11 @@ fn the_name_resolver_resolves_the_corpus_and_cross_checks_name32() {
     }
 
     println!("names: {resolved} resolved, {name32_checked} cross-checked against name32");
-    // About 5,977 of the 6,534 top-level entries resolve through the corpus; the bar allows a tenth of
-    // slack for a slightly different corpus, since a decode that listed nothing for the four broken
-    // archives or resolved by the wrong hash falls far below. The hard correctness check is the name32
-    // cross-check above, which fails on any wrong name64 resolution.
+    // About 5,977 of the Xbox build's 6,534 top-level entries resolve through the corpus; the bar
+    // allows a tenth of slack for a slightly different corpus, since a decode that listed nothing for
+    // the four broken archives or resolved by the wrong hash falls far below. The hard correctness
+    // check is the name32 cross-check above, which fails on any wrong name64 resolution.
+    const TOTAL_NAMES_RESOLVED: usize = 5_977;
     assert!(
         resolved >= TOTAL_NAMES_RESOLVED - TOTAL_NAMES_RESOLVED / 10,
         "only {resolved} names resolved; about {TOTAL_NAMES_RESOLVED} are expected"

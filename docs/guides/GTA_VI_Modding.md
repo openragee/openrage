@@ -6,7 +6,7 @@ What you can do with a GTA VI install in OpenRage today, in the order you would 
 
 ## Give OpenRage your executable's keys
 
-An archive's table of contents is enciphered, and the keys that decipher it are in the game's executable. OpenRage ships no key: it reads them out of your own executable.
+An archive's table of contents is enciphered, and the keys that decipher it are in the game's executable. OpenRage ships no key: it reads them out of your own executable — `game_scarlett_master.exe` of an Xbox Series build, `eboot.bin` of a PlayStation 5 one.
 
 - `openrage-cli keys gta6 --exe <executable>` reads the keys from the executable of a build OpenRage knows, and refuses any other. It writes them as `gtavi_magic.dat` in OpenRage's configuration folder, masked so that the file opens only with that same executable, and it will not replace a file already there unless you pass `--force` or name another file with `--out`.
 - The app unmasks the snapshot with the executable in the GTA VI folder set in Settings ▸ Games, and the CLI with the one `--exe <executable>` names; the environment variable `OPENRAGE_GTA6_EXE` names it for both. A masked snapshot is refused when no executable is given or it is another one.

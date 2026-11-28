@@ -23,13 +23,16 @@ pub(crate) fn executable() -> Option<PathBuf> {
         .or_else(configured_executable)
 }
 
-/// The executable in the install folder the preferences hold for the Xbox build, the one build whose executable keys are read from.
+/// The executable in the install folder the preferences hold for either build: the Xbox package's
+/// `game_scarlett_master.exe`, the PlayStation 5 dump's `eboot.bin`.
 ///
 /// ⚠ Read from the file and not through `load_prefs`, which would reset the base a later save merges
 /// against, from a reader's thread.
 fn configured_executable() -> Option<PathBuf> {
     let prefs = read_prefs(&prefs_path()?).0;
-    Game::GtaVI.find_executable(prefs.game_paths.get(Game::GtaVI)?)
+    [Game::GtaVI, Game::GtaVIPs5]
+        .into_iter()
+        .find_map(|game| game.find_executable(prefs.game_paths.get(game)?))
 }
 
 fn said(found: or_io::Result<Option<GtaViKeys>>) -> Result<GtaViKeys, String> {
@@ -45,8 +48,9 @@ fn no_keys() -> String {
     let prefs = prefs_path().map(|file| read_prefs(&file).0);
     let install = prefs.as_ref().and_then(crate::state::gta_vi::install);
     match install {
-        Some((build, _)) if build.executable_candidates().is_empty() => tr!(
-            "No GTA VI keys: the {platform} build has no executable OpenRage reads them from, so they come only from a key snapshot of that build.",
+        Some((build, folder)) if build.find_executable(folder).is_none() => tr!(
+            "No GTA VI keys: the {platform} build's folder holds no executable OpenRage reads them \
+             from, so they come only from a key snapshot of that build.",
             platform = build.profile().platform().label()
         ),
         _ => tr!(

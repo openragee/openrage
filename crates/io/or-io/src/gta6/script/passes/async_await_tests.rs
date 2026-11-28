@@ -1260,9 +1260,13 @@ fn a_state_machine_whose_step_function_is_read_into_its_kick_off_is_not_written(
     assert_eq!(written.classes.len(), 1);
     assert!(written.classes[0].nested.is_empty());
 
-    // Kept: where a function of the program names the step function, here the start function.
+    // Kept: where a function of the program names the step function, here one that does more than start it.
     let mut free = kick();
-    free.push(functions[1].clone());
+    let mut calling = functions[1].clone();
+    calling
+        .body
+        .insert(0, tree::Stmt::Simple(Stmt::Eval(Expr::Var(Var::Param(0)))));
+    free.push(calling);
     let held = unit(
         vec![machine(ClassKind::StateMachine, handing.clone())],
         free,
@@ -1337,3 +1341,6 @@ fn without_the_await_name_no_statement_moves_into_an_await() {
     assert!(stated(&flat.body).contains("GET"), "{:#?}", flat.body);
     assert_eq!(takings(&flat.body), ["[]"]);
 }
+
+#[path = "async_await_hide_tests.rs"]
+mod hide;

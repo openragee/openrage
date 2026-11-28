@@ -6,20 +6,22 @@
 //! variable that holds the machine's address. The other calls its step function, itself or
 //! through a start function that only calls it: `joined` puts that function's body where the call
 //! stood. Either way the method reads as one body, with what makes the machine out of sight, and
-//! a machine whose step function is read so is left out of what is written (`hide_machines`).
+//! a machine whose step function is read so is left out of what is written (`hide_machines`), with
+//! a start function nothing else calls.
 //!
 //! ⚠ A statement that copies a parameter into the machine stays in sight: the body reads the
-//! machine's field, and nothing here proves the field never changes after it.
+//! machine's field, and nothing here proves the field never changes after it. The runtime is
+//! handed the builder's address at every await, and no table says what it writes through it.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::gta6::script::cfg::{self, Block, Terminator};
 use crate::gta6::script::class::{Class, ClassKind, Method, Unit};
 use crate::gta6::script::ir::{
-    Callee, Expr, Head, Returns, Stmt, StoreKind, TypeKey, Var, VarInfo,
+    Callee, Expr, ExprSugar, Head, Returns, Stmt, StoreKind, TypeKey, Var, VarInfo,
 };
 use crate::gta6::script::print;
-use crate::gta6::script::tree::{self, Sugar};
+use crate::gta6::script::tree::{self, Group, Sugar};
 use crate::gta6::script::{Context, Pass};
 
 use super::{
@@ -83,15 +85,27 @@ fn blank(value: &Expr, zeros: &BTreeSet<Var>) -> bool {
     blank
 }
 
-/// Whether `value` is one or more parameters as they were given, under whatever reading.
+/// Whether `value` is one or more parameters as they were given, or what they point at, under whatever reading: nothing called, made or worked out.
+// ⚠ A struct's receiver goes into the machine by value: a load through the parameter for each of
+// its fields, or a run of its bytes.
 fn given(value: &Expr) -> bool {
-    let (mut only, mut any) = (true, false);
-    value.walk(&mut |node| match node {
-        Expr::Var(Var::Param(_)) => any = true,
-        Expr::Cell { .. } | Expr::Cells(_) | Expr::Cast { .. } | Expr::Sugar { .. } => {}
-        _ => only = false,
-    });
-    only && any
+    let mut any = false;
+    // An explicit stack: an expression nests as deep as its listing does.
+    let mut open: Vec<&Expr> = vec![value];
+    while let Some(e) = open.pop() {
+        match e {
+            Expr::Var(Var::Param(_)) => any = true,
+            Expr::Cell { base: inner, .. }
+            | Expr::Cast { e: inner, .. }
+            | Expr::Sugar { e: inner, .. }
+            | Expr::Load { addr: inner, .. }
+            | Expr::LoadBytes { addr: inner, .. } => open.push(&**inner),
+            Expr::Cells(items) => open.extend(items.iter()),
+            Expr::ByteOffset { addr, offset } if constant(offset).is_some() => open.push(&**addr),
+            _ => return false,
+        }
+    }
+    any
 }
 
 /// Reads the statements that make a kick-off's machine; for each, whether the compiler alone wrote it. `None` where one does anything else.
@@ -455,6 +469,23 @@ fn held_after<'a>(stmts: impl Iterator<Item = &'a Stmt>, reach: Reach) -> Held {
     held
 }
 
+/// Whether `task` is what a function of the scripts hands back given the builder's address and nothing else: the builder's task, asked of it.
+// ⚠ A builder whose task is of a result has its task made by such a function, and not read out of
+// the builder: the call runs where the `return` stands, once on each way out.
+fn asked_of_builder(task: &Expr, held: &Held) -> bool {
+    match unwide(task) {
+        Expr::Call {
+            callee: Callee::Local { .. } | Callee::Import { .. },
+            args,
+            ..
+        } => matches!(
+            args.as_slice(),
+            [builder] if quiet(builder) && rooted(builder, held) == Some((Base::Machine, BUILDER))
+        ),
+        _ => false,
+    }
+}
+
 /// The kick-off a finished function is: statements that make a machine in a local, one call that is handed its address, and the builder's task returned.
 // The call is of the step function, given the address alone, or of a start function, given the
 // builder's address and then the machine's. The address is a variable given it once, or, where
@@ -519,15 +550,16 @@ fn stub(f: &tree::Function) -> Option<Stub> {
         state: None,
     };
     let none = Held::of(reach);
+    let held = held_after(before.iter().copied(), reach);
     match (&leave, f.head.returns) {
         (None, Returns::Void) => {}
         (Some(task), Returns::Cell) if field_read(task, &none) == Some(TASK) => {}
+        (Some(task), Returns::Cell) if asked_of_builder(task, &held) => {}
         _ => return None,
     }
     // ⚠ A start function is joined only where it is given the builder's address: whatever it
     // does with that, the call of it is then one of the machine's own.
     if let Some(builder) = builder {
-        let held = held_after(before.iter().copied(), reach);
         let given = quiet(builder) && rooted(builder, &held) == Some((Base::Machine, BUILDER));
         if !given {
             return None;
@@ -1029,16 +1061,10 @@ fn hidden_machine(
     class: &Class,
     steps: &BTreeSet<u32>,
     named: &BTreeMap<u32, u32>,
-    typed: &BTreeMap<TypeKey, BTreeSet<Option<TypeKey>>>,
     program: u32,
 ) -> bool {
     // ⚠ A class nested in the machine holds code of the method, a lambda's, that nothing else writes.
     if class.kind != ClassKind::StateMachine || !class.nested.is_empty() {
-        return false;
-    }
-    // ⚠ Nor may anything written outside it name its type, which would then be declared nowhere.
-    let namers = typed.get(&class.key).into_iter().flatten();
-    if namers.copied().any(|by| by != Some(class.key)) {
         return false;
     }
     let mut own: BTreeMap<u32, u32> = BTreeMap::new();
@@ -1089,23 +1115,79 @@ fn written(f: &tree::Function) -> tree::Function {
 // ⚠ Only what is written leaves the machine out: the step function's body is the method's, and
 // the runtime still calls the step function at every resumed await. A program that calls it by
 // import would name a function written nowhere.
+// A method that awaits may name the machine through the fields of it alone: those readings are
+// taken off it, and it reads the bytes of the local the machine is in, as its code does.
 pub fn hide_machines(unit: &mut Unit, steps: &BTreeSet<u32>) -> usize {
     if steps.is_empty() {
         return 0;
     }
-    let program = unit.program;
-    let mut named: BTreeMap<u32, u32> = BTreeMap::new();
-    // The types each class's text, or the free functions' (`None`), names.
-    let mut typed: BTreeMap<TypeKey, BTreeSet<Option<TypeKey>>> = BTreeMap::new();
-    let mut note = |found: BTreeSet<TypeKey>, by: Option<TypeKey>| {
-        for ty in found {
-            typed.entry(ty).or_default().insert(by);
+    let (hide, starts) = unwritten(unit, steps);
+    if hide.is_empty() {
+        return 0;
+    }
+    unit.functions
+        .retain(|method| !starts.contains(&method.function.head.at));
+    for method in &mut unit.functions {
+        unfielded(&mut method.function.body, &hide);
+    }
+    let mut hidden = 0usize;
+    // An explicit stack: classes nest as deep as their programs state.
+    let mut work: Vec<&mut Vec<Class>> = vec![&mut unit.classes];
+    while let Some(list) = work.pop() {
+        let before = list.len();
+        list.retain(|class| !goes(class, &hide));
+        hidden = hidden.saturating_add(before - list.len());
+        for class in list {
+            for method in &mut class.methods {
+                unfielded(&mut method.function.body, &hide);
+            }
+            work.push(&mut class.nested);
         }
-    };
+    }
+    hidden
+}
+
+/// Whether `class` is a machine [`hide_machines`] leaves out: one of the types `hide` holds, and a machine as [`hidden_machine`] takes one.
+// ⚠ By its key alone a class that only shares the key would go too.
+fn goes(class: &Class, hide: &BTreeSet<TypeKey>) -> bool {
+    class.kind == ClassKind::StateMachine && class.nested.is_empty() && hide.contains(&class.key)
+}
+
+/// What one method names of the program's types: the class it is written in, `None` for a function of the program, whether it has a receiver, and the types its text names.
+struct Naming<'a> {
+    method: &'a Method,
+    by: Option<TypeKey>,
+    receiver: bool,
+    found: BTreeSet<TypeKey>,
+    /// Where the method is a start function nothing written calls: the step function it calls.
+    start: Option<u32>,
+}
+
+/// What [`hide_machines`] leaves out of what `unit` writes: the state machines, and the start functions of their step functions, by offset.
+// ⚠ A start function goes only where nothing written calls it or refers to it, and then with the
+// machine of the step function it calls: its call is then no call of anything written.
+fn unwritten(unit: &Unit, steps: &BTreeSet<u32>) -> (BTreeSet<TypeKey>, BTreeSet<u32>) {
+    let program = unit.program;
+    // The functions of the program that only start a step function read into its kick-off, with that step function.
+    let starting: BTreeMap<u32, u32> = unit
+        .functions
+        .iter()
+        .filter_map(|method| {
+            let step = started(&method.function)?;
+            steps
+                .contains(&step)
+                .then_some((method.function.head.at, step))
+        })
+        .collect();
+    let mut named: BTreeMap<u32, u32> = BTreeMap::new();
+    // The types each class's own statement of itself names: its base, its interfaces, its fields.
+    let mut typed: BTreeMap<TypeKey, BTreeSet<TypeKey>> = BTreeMap::new();
+    let mut classes: Vec<&Class> = Vec::new();
     let mut open: Vec<&Class> = unit.classes.iter().collect();
     let mut methods: Vec<(&Method, Option<TypeKey>)> =
         unit.functions.iter().map(|method| (method, None)).collect();
     while let Some(class) = open.pop() {
+        classes.push(class);
         methods.extend(class.methods.iter().map(|method| (method, Some(class.key))));
         open.extend(&class.nested);
         let mut found: BTreeSet<TypeKey> = class.base.into_iter().collect();
@@ -1113,25 +1195,165 @@ pub fn hide_machines(unit: &mut Unit, steps: &BTreeSet<u32>) -> usize {
         for field in &class.fields {
             print::kind_types(&field.kind, &mut found);
         }
-        note(found, Some(class.key));
+        for ty in found {
+            typed.entry(ty).or_default().insert(class.key);
+        }
     }
+    let mut namings: Vec<Naming<'_>> = Vec::with_capacity(methods.len());
+    let mut starts: Vec<&Method> = Vec::new();
     for (method, by) in methods {
-        names_in(&method.function.body, program, &mut named);
+        let start = match by {
+            None => starting.get(&method.function.head.at).copied(),
+            Some(_) => None,
+        };
+        match start {
+            Some(_) => starts.push(method),
+            None => names_in(&method.function.body, program, &mut named),
+        }
         let mut found = BTreeSet::new();
         let receiver = by.is_some() && !method.is_static;
         print::types_of(&written(&method.function), receiver, &mut found);
-        note(found, by);
+        namings.push(Naming {
+            method,
+            by,
+            receiver,
+            found,
+            start,
+        });
     }
-    let mut hidden = 0usize;
-    // An explicit stack: classes nest as deep as their programs state.
-    let mut work: Vec<&mut Vec<Class>> = vec![&mut unit.classes];
-    while let Some(list) = work.pop() {
-        let before = list.len();
-        list.retain(|class| !hidden_machine(class, steps, &named, &typed, program));
-        hidden = hidden.saturating_add(before - list.len());
-        for class in list {
-            work.push(&mut class.nested);
+    // A start function calls a step function alone, and no step function is a start function: what
+    // each calls is counted once it is known to stay.
+    let mut uncalled: BTreeSet<u32> = BTreeSet::new();
+    for method in starts {
+        let at = method.function.head.at;
+        match named.get(&at).copied().unwrap_or_default() {
+            0 => {
+                uncalled.insert(at);
+            }
+            _ => names_in(&method.function.body, program, &mut named),
         }
     }
-    hidden
+    for naming in &mut namings {
+        let at = naming.method.function.head.at;
+        if !uncalled.contains(&at) {
+            naming.start = None;
+        }
+    }
+    let hide: BTreeSet<TypeKey> = classes
+        .iter()
+        .filter(|class| hidden_machine(class, steps, &named, program))
+        .filter(|class| unnamed_outside(class, &typed, &namings))
+        .map(|class| class.key)
+        .collect();
+    // The step functions of the machines that go, each of the class it is a method of.
+    let gone: BTreeSet<u32> = classes
+        .iter()
+        .filter(|class| goes(class, &hide))
+        .flat_map(|class| class.methods.iter().map(|method| method.function.head.at))
+        .collect();
+    let starts = uncalled
+        .into_iter()
+        .filter(|at| starting.get(at).is_some_and(|step| gone.contains(step)))
+        .collect();
+    (hide, starts)
+}
+
+/// Whether nothing written outside the machine `class` names its type, but a method that awaits and reads fields of it, or a start function of its own that goes with it.
+// ⚠ A type named anywhere else would be declared nowhere once the machine is not written.
+fn unnamed_outside(
+    class: &Class,
+    typed: &BTreeMap<TypeKey, BTreeSet<TypeKey>>,
+    namings: &[Naming<'_>],
+) -> bool {
+    let key = class.key;
+    let stated = typed.get(&key).into_iter().flatten();
+    if stated.copied().any(|by| by != key) {
+        return false;
+    }
+    let own = |step: u32| {
+        class
+            .methods
+            .iter()
+            .any(|method| method.function.head.at == step)
+    };
+    namings
+        .iter()
+        .filter(|naming| naming.by != Some(key) && naming.found.contains(&key))
+        .filter(|naming| naming.start.is_none_or(|step| !own(step)))
+        .all(|naming| through_fields(naming.method, naming.receiver, key))
+}
+
+/// Whether `method` awaits and names the type `key` by reading fields of it alone: with those readings taken off, its text names the type no more.
+fn through_fields(method: &Method, receiver: bool, key: TypeKey) -> bool {
+    if !awaits(&method.function.body) {
+        return false;
+    }
+    let mut bare = written(&method.function);
+    unfielded(&mut bare.body, &BTreeSet::from([key]));
+    let mut found = BTreeSet::new();
+    print::types_of(&bare, receiver, &mut found);
+    !found.contains(&key)
+}
+
+/// Whether a body holds an await.
+fn awaits(body: &[tree::Stmt]) -> bool {
+    let mut found = false;
+    tree::each_sugar(body, &mut |sugar| {
+        found |= matches!(sugar, Sugar::Await { .. });
+    });
+    found
+}
+
+/// Whether a statement is a store to a field of one of `owners`.
+fn field_group(stmt: &tree::Stmt, owners: &BTreeSet<TypeKey>) -> bool {
+    match stmt {
+        tree::Stmt::Sugar(sugar) => field_group_of(sugar, owners),
+        _ => false,
+    }
+}
+
+/// Takes off `body`, at every depth, each reading of a field of one of `owners`: what is left is what each reading stood for.
+// A reading changes no value and no effect: the body runs as it did.
+fn unfielded(body: &mut Vec<tree::Stmt>, owners: &BTreeSet<TypeKey>) {
+    // An explicit stack: a body nests as deep as its listing does.
+    let mut work: Vec<&mut Vec<tree::Stmt>> = vec![body];
+    while let Some(list) = work.pop() {
+        if list.iter().any(|stmt| field_group(stmt, owners)) {
+            let old = std::mem::take(&mut *list);
+            for stmt in old {
+                match stmt {
+                    tree::Stmt::Sugar(sugar) if field_group_of(&sugar, owners) => {
+                        list.extend(sugar.desugar());
+                    }
+                    other => list.push(other),
+                }
+            }
+        }
+        for stmt in list {
+            tree::own_exprs_mut(stmt, &mut |top| unread(top, owners));
+            work.extend(tree::nested_mut(stmt));
+        }
+    }
+}
+
+/// Whether a construct is a store to a field of one of `owners`.
+fn field_group_of(sugar: &Sugar, owners: &BTreeSet<TypeKey>) -> bool {
+    matches!(sugar, Sugar::Group { kind: Group::Field { owner }, .. } if owners.contains(owner))
+}
+
+/// Takes off `top`, and every expression in it, each reading as a field of one of `owners`.
+fn unread(top: &mut Expr, owners: &BTreeSet<TypeKey>) {
+    top.walk_mut(&mut |e| {
+        let owned = matches!(
+            &*e,
+            Expr::Sugar { kind: ExprSugar::Field { owner }, .. } if owners.contains(owner)
+        );
+        if !owned {
+            return;
+        }
+        if let Expr::Sugar { e: inner, .. } = e {
+            let inner = std::mem::replace(&mut **inner, Expr::GuidEmpty);
+            *e = inner;
+        }
+    });
 }

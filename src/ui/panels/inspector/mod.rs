@@ -216,8 +216,8 @@ fn draw_facts(ui: &mut egui::Ui, state: &AppState, doc_id: DocumentId) {
     ui.separator();
     grid(ui, "document_facts", |ui| {
         row(ui, "Name", &doc.name);
-        if let Some(path) = &doc.path {
-            row(ui, "Path", &path.display().to_string());
+        if doc.path.is_some() {
+            row(ui, "Path", &doc.location());
         }
     });
 }

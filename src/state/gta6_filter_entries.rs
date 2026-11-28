@@ -3,8 +3,9 @@
 //! before it writes their values.
 //!
 //! ⚠ A copy is placed as a copy of a stored entry of its kind, the one holding the values it holds
-//! where there is one, so it carries that entry's signature: what a signature follows from is not
-//! known.
+//! where there is one, so it carries that entry's signature. A filter's signature follows from its
+//! elements and is written again when they change; an animation record's word at 0x68 still
+//! follows from no known rule.
 
 use or_io::container::rpf::Rpf9Sections;
 use or_io::gta6::headerless::{

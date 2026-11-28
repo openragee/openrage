@@ -1584,6 +1584,10 @@ fn database(b: &mut Bytes) -> usize {
     b.u32(at + 0x80, want.hash);
     at
 }
+#[path = "anim/clip_signature_tests.rs"]
+mod clip_signature;
+#[path = "anim/clip_signature_build_tests.rs"]
+mod clip_signature_build;
 #[path = "anim/write_tests.rs"]
 mod write;
 #[path = "anim/write_derived_and_grown_tests.rs"]

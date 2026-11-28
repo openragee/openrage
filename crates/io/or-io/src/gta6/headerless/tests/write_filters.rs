@@ -109,7 +109,8 @@ fn a_filter_weight_and_a_record_value_are_written_in_place_and_read_back() {
     let changed = (bytes.iter().zip(&img.bytes))
         .filter(|(a, b)| a != b)
         .count();
-    assert!((1..=8).contains(&changed), "{changed} bytes changed");
+    // A weight, a value and the filter's signature.
+    assert!((1..=12).contains(&changed), "{changed} bytes changed");
 
     // A track or bone the entry does not hold, another count, or another kind of entry is refused.
     let mut renamed = edited_tracks.clone();

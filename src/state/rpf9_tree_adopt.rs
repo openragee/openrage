@@ -248,3 +248,7 @@ fn adopt(
 #[cfg(test)]
 #[path = "rpf9_tree_adopt_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "rpf9_archive_size_tests.rs"]
+mod archive_size_tests;

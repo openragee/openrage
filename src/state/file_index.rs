@@ -14,6 +14,8 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use or_io::container::rpf::crypto::RpfCryptoProvider;
+use or_io::container::rpf::RpfVersion;
+use or_io::gta6::hash::name_hash64;
 use or_io::hash::string_hash;
 use or_title::install::crawl::{self, ControlFlow, LOOSE};
 
@@ -51,6 +53,8 @@ pub struct Listing {
     stamps: HashMap<Box<str>, Stamp>,
     /// What the walk could not open or read.
     pub warnings: Vec<String>,
+    /// The GTA VI archives on disk, by their path below the root; `""` when the root is one.
+    rpf9: HashSet<Box<str>>,
 }
 
 impl Listing {
@@ -59,12 +63,15 @@ impl Listing {
         let paths: usize = self.files.iter().map(|path| path.len()).sum();
         let stamped: usize = self.stamps.keys().map(|path| path.len()).sum();
         let warnings: usize = self.warnings.iter().map(String::capacity).sum();
+        let rpf9: usize = self.rpf9.iter().map(|path| path.len()).sum();
         self.files.capacity() * std::mem::size_of::<Box<str>>()
             + paths
             + hash_table_bytes::<(Box<str>, Stamp)>(self.stamps.capacity())
             + stamped
             + self.warnings.capacity() * std::mem::size_of::<String>()
             + warnings
+            + hash_table_bytes::<Box<str>>(self.rpf9.capacity())
+            + rpf9
     }
 }
 
@@ -103,10 +110,11 @@ impl Drop for Walk {
 enum Message {
     /// Paths a first walk found, in its order.
     Found(Vec<Box<str>>),
-    /// A first walk's end: the archives it opened, and what it could not.
+    /// A first walk's end: the archives it opened, what it could not, and which are GTA VI's.
     Finished {
         stamps: HashMap<Box<str>, Stamp>,
         warnings: Vec<String>,
+        rpf9: HashSet<Box<str>>,
     },
     /// A walk again's whole listing.
     Replaced(Listing),
@@ -141,7 +149,7 @@ impl Root {
         let root = self.path.clone();
         self.start_with(move |tx, stop| match source {
             Source::Disk(provider) => walk_disk(&root, provider, previous, tx, stop),
-            Source::Archive(mounted) => walk_archive(&mounted, tx),
+            Source::Archive(mounted) => walk_archive(&root, &mounted, tx),
         });
     }
 
@@ -166,10 +174,15 @@ impl Root {
         let finished = loop {
             match walk.rx.try_recv() {
                 Ok(Message::Found(paths)) => Arc::make_mut(&mut self.listing).files.extend(paths),
-                Ok(Message::Finished { stamps, warnings }) => {
+                Ok(Message::Finished {
+                    stamps,
+                    warnings,
+                    rpf9,
+                }) => {
                     let listing = Arc::make_mut(&mut self.listing);
                     listing.stamps = stamps;
                     listing.warnings = warnings;
+                    listing.rpf9 = rpf9;
                     break true;
                 }
                 Ok(Message::Replaced(listing)) => {
@@ -331,6 +344,7 @@ impl FileIndex {
                 .collect();
         }
         let hashes = hashes_named(query);
+        let hash64 = hash64_named(query);
         let recency: HashMap<(&Path, &str), usize> = recent
             .iter()
             .enumerate()
@@ -348,6 +362,11 @@ impl FileIndex {
                     && [leaf, stem]
                         .iter()
                         .any(|name| hashes.contains(&string_hash(name.as_bytes())));
+                let named = named
+                    || hash64.is_some_and(|start| {
+                        (names64_of(&root.listing.rpf9, path).into_iter().flatten())
+                            .any(|hash| starts(start, hash))
+                    });
                 let Some(score) = fuzzy_score(&letters, leaf).or(named.then_some(0)) else {
                     continue;
                 };
@@ -456,6 +475,80 @@ fn hashes_named(query: &str) -> Vec<u32> {
     hashes
 }
 
+/// The start of a GTA VI name hash `query` spells: 6 to 16 hex digits, with or without `0x`, as
+/// their value and how many they are.
+fn hash64_named(query: &str) -> Option<(u64, u32)> {
+    let query = query.trim();
+    let hex = (query.strip_prefix("0x"))
+        .or_else(|| query.strip_prefix("0X"))
+        .unwrap_or(query);
+    if !(6..=16).contains(&hex.len()) || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some((u64::from_str_radix(hex, 16).ok()?, hex.len() as u32))
+}
+
+/// Whether `hash`, written in 16 hex digits, starts with the digits `start` holds.
+fn starts((value, digits): (u64, u32), hash: u64) -> bool {
+    hash >> (4 * (16 - digits)) == value
+}
+
+/// The name hashes a GTA VI row at `path` may have: the one its `hash_` name states, and its name's
+/// inside its innermost archive, with and without the `.rpf` a nested archive's name is given;
+/// none for a row of no GTA VI archive, so a GTA V row is found as before.
+// ponytail: hashed from the tree's name, so a row whose stated name the tree had to change (a
+// numbered duplicate, a `\` or a blank part) is not found; keep the table's hash in the index if that matters.
+fn names64_of(rpf9: &HashSet<Box<str>>, path: &str) -> [Option<u64>; 3] {
+    let gta6 = rpf9.contains("") || top_archive(path).is_some_and(|top| rpf9.contains(top));
+    if !gta6 {
+        return [None; 3];
+    }
+    let inner = inside_archive(path);
+    let stated = (leaf_of(inner).strip_prefix("hash_"))
+        .and_then(|hex| hex.get(..16))
+        .and_then(|hex| u64::from_str_radix(hex, 16).ok());
+    let bare = (inner.strip_suffix(".rpf")).map(|name| name_hash64(name.as_bytes()));
+    [stated, Some(name_hash64(inner.as_bytes())), bare]
+}
+
+fn ends_rpf(segment: &str) -> bool {
+    let end = segment.get(segment.len().saturating_sub(4)..);
+    end.is_some_and(|end| end.eq_ignore_ascii_case(".rpf"))
+}
+
+/// The archive on disk `path` is inside, as its path below the root; `None` for a loose file.
+fn top_archive(path: &str) -> Option<&str> {
+    let mut end = 0;
+    for segment in path.split('/') {
+        end += segment.len();
+        if end < path.len() && ends_rpf(segment) {
+            return Some(&path[..end]);
+        }
+        end += 1;
+    }
+    None
+}
+
+/// `path` inside the innermost archive that holds it; all of it when none does.
+fn inside_archive(path: &str) -> &str {
+    let (mut inside, mut rest) = (path, path);
+    while let Some((segment, after)) = rest.split_once('/') {
+        if ends_rpf(segment) {
+            inside = after;
+        }
+        rest = after;
+    }
+    inside
+}
+
+/// Whether the file at `path` starts as a GTA VI archive does.
+fn is_rpf9(path: &Path) -> bool {
+    use std::io::Read;
+    let mut head = [0u8; 4];
+    let read = std::fs::File::open(path).and_then(|mut file| file.read_exact(&mut head));
+    read.is_ok() && RpfVersion::detect(head) == Some(RpfVersion::Rpf9)
+}
+
 /// `query` as [`fuzzy_score`] reads it: lower case, without spaces.
 pub fn fuzzy_letters(query: &str) -> Vec<u8> {
     query
@@ -527,6 +620,7 @@ fn walk_disk(
     let mut warnings = Vec::new();
     let mut stamps: HashMap<Box<str>, Stamp> = HashMap::new();
     let mut kept: HashSet<Box<str>> = HashSet::new();
+    let mut rpf9: HashSet<Box<str>> = HashSet::new();
     let mut found: Vec<Box<str>> = Vec::new();
     let streams = previous.is_none();
     let outcome = crawl::crawl_where(
@@ -538,6 +632,13 @@ fn walk_disk(
             let stamp = stamp_of(path);
             let before = previous.as_ref().and_then(|p| p.stamps.get(&rel));
             let unchanged = stamp.is_some() && before == stamp.as_ref();
+            let gta6 = match previous.as_ref().filter(|_| unchanged) {
+                Some(previous) => previous.rpf9.contains(&rel),
+                None => is_rpf9(path),
+            };
+            if gta6 {
+                rpf9.insert(rel.clone());
+            }
             if let Some(stamp) = stamp {
                 stamps.insert(rel.clone(), stamp);
             }
@@ -562,7 +663,11 @@ fn walk_disk(
     }
     let Some(previous) = previous else {
         let _ = tx.send(Message::Found(found));
-        let _ = tx.send(Message::Finished { stamps, warnings });
+        let _ = tx.send(Message::Finished {
+            stamps,
+            warnings,
+            rpf9,
+        });
         return;
     };
     // An archive not reopened keeps what it held, and what could not be read in it.
@@ -578,6 +683,7 @@ fn walk_disk(
         files,
         stamps,
         warnings,
+        rpf9,
     }));
 }
 
@@ -617,7 +723,7 @@ fn with_kept_archives(
 }
 
 /// Walk an archive opened as a document, through the archive the document holds.
-fn walk_archive(mounted: &Mounted, tx: &Sender<Message>) {
+fn walk_archive(root: &Path, mounted: &Mounted, tx: &Sender<Message>) {
     let (result, undescended) = vfs_session::find(mounted, "**");
     let files = result
         .matches
@@ -630,10 +736,15 @@ fn walk_archive(mounted: &Mounted, tx: &Sender<Message>) {
         })
         .collect();
     let warnings = result.unwalkable.into_iter().chain(undescended).collect();
+    let rpf9 = match is_rpf9(root) {
+        true => HashSet::from([Box::from("")]),
+        false => HashSet::new(),
+    };
     let _ = tx.send(Message::Replaced(Listing {
         files,
         stamps: HashMap::new(),
         warnings,
+        rpf9,
     }));
 }
 
@@ -726,6 +837,182 @@ mod tests {
         assert!(hashes_named(&hash.to_string()).contains(&hash));
         assert!(hashes_named(&(hash as i32).to_string()).contains(&hash));
         assert!(hashes_named("adder").is_empty());
+    }
+
+    /// An index of one root on disk whose listing holds `files`, `rpf9` naming its GTA VI archives.
+    fn index_of(files: &[&str], rpf9: &[&str]) -> FileIndex {
+        let mut root = Root::new(PathBuf::from("install"), None, false, None);
+        root.listing = Arc::new(Listing {
+            files: files.iter().map(|&file| Box::from(file)).collect(),
+            rpf9: rpf9.iter().map(|&archive| Box::from(archive)).collect(),
+            ..Listing::default()
+        });
+        FileIndex {
+            roots: vec![root],
+            ..FileIndex::default()
+        }
+    }
+
+    fn found(index: &FileIndex, query: &str) -> Vec<String> {
+        let offers = index.find(query, Scope::All, None, &[], 50);
+        offers.into_iter().map(|offer| offer.path).collect()
+    }
+
+    #[test]
+    fn a_gta_vi_row_is_found_by_the_start_of_its_name_hash_in_any_spelling() {
+        let hash = name_hash64(b"data/named.bin");
+        let nested = name_hash64(b"inner/deep.bin");
+        let index = index_of(
+            &[
+                "six.rpf",
+                "six.rpf/data/named.bin",
+                "six.rpf/hash_0123456789abcdef",
+                "six.rpf/n.rpf/inner/deep.bin",
+            ],
+            &["six.rpf"],
+        );
+        let full = format!("{hash:016x}");
+        for query in [
+            full.clone(),
+            format!("0x{full}"),
+            full.to_ascii_uppercase(),
+            format!("0X{}", full[..6].to_ascii_uppercase()),
+            full[..8].to_string(),
+        ] {
+            assert!(
+                found(&index, &query).contains(&"six.rpf/data/named.bin".to_string()),
+                "{query}"
+            );
+        }
+        assert!(
+            !found(&index, &full[..5]).contains(&"six.rpf/data/named.bin".to_string()),
+            "five digits are no hash"
+        );
+        let inner = format!("0x{:010x}", nested >> 24);
+        assert_eq!(found(&index, &inner), ["six.rpf/n.rpf/inner/deep.bin"]);
+        assert_eq!(
+            found(&index, "0x0123456789AB"),
+            ["six.rpf/hash_0123456789abcdef"]
+        );
+    }
+
+    #[test]
+    fn a_gta_v_row_is_not_found_by_a_gta_vi_name_hash() {
+        let hash = name_hash64(b"data/named.bin");
+        let index = index_of(&["five.rpf", "five.rpf/data/named.bin"], &[]);
+        assert!(found(&index, &format!("0x{hash:016x}")).is_empty());
+        let named = string_hash(b"named");
+        assert_eq!(
+            found(&index, &format!("0x{named:08x}")),
+            ["five.rpf/data/named.bin"],
+            "the hash of its name finds it as before"
+        );
+    }
+
+    #[test]
+    fn a_nested_archives_hash_is_read_with_and_without_the_rpf_its_name_is_given() {
+        let set = HashSet::from([Box::from("x/six.rpf")]);
+        let [_, full, bare] = names64_of(&set, "x/six.rpf/a/n.rpf");
+        assert_eq!(full, Some(name_hash64(b"a/n.rpf")));
+        assert_eq!(bare, Some(name_hash64(b"a/n")));
+        assert_eq!(
+            names64_of(&set, "x/six.rpf"),
+            [None; 3],
+            "the archive itself is loose"
+        );
+        assert_eq!(names64_of(&set, "y/five.rpf/a"), [None; 3]);
+        let whole = HashSet::from([Box::from("")]);
+        assert_eq!(names64_of(&whole, "a/b")[1], Some(name_hash64(b"a/b")));
+    }
+
+    #[test]
+    fn a_walk_marks_the_gta_vi_archives_on_disk() {
+        use or_io::container::rpf::crypto::NoOpCryptoProvider;
+        use or_io::container::RpfBuilder;
+
+        let dir = tempfile::tempdir().expect("a scratch directory");
+        let magic = RpfVersion::Rpf9.magic().expect("RPF9 has a magic");
+        let mut head = magic.to_le_bytes().to_vec();
+        head.resize(64, 0);
+        std::fs::write(dir.path().join("six.rpf"), head).expect("written");
+        RpfBuilder::default()
+            .insert_with("a.txt", b"a".to_vec(), false)
+            .expect("a file")
+            .save(dir.path().join("five.rpf"))
+            .expect("saved");
+        let (tx, rx) = channel();
+        let provider: Arc<dyn RpfCryptoProvider> = Arc::new(NoOpCryptoProvider::new());
+        walk_disk(dir.path(), provider, None, &tx, &AtomicBool::new(false));
+        drop(tx);
+        let rpf9 = rx.iter().find_map(|message| match message {
+            Message::Finished { rpf9, .. } => Some(rpf9),
+            _ => None,
+        });
+        assert_eq!(rpf9, Some(HashSet::from([Box::from("six.rpf")])));
+    }
+
+    /// Every row of the build's smallest archives is found by the name hash its table states,
+    /// save a row the tree renamed.
+    #[test]
+    fn every_row_of_the_builds_smallest_archives_is_found_by_its_stated_name_hash() {
+        use or_io::container::rpf::Gta6Context;
+        use or_io::container::RpfArchive;
+
+        const WHAT: &str = "a GTA VI row is found by the name hash its table states";
+        const ARCHIVES: usize = 8;
+        let build_root = std::env::var_os("OPENRAGE_GTA6_BUILD").map(PathBuf::from);
+        let (Some(build_root), Ok(keys)) =
+            (build_root, crate::state::rpf9_scan::rpf9_table::keys())
+        else {
+            or_test_support::skip_install(WHAT, "set OPENRAGE_GTA6_BUILD and OPENRAGE_GTA6_KEYS");
+            return;
+        };
+        let names = crate::state::rpf9_scan::rpf9_table::resolver();
+        let provider: Arc<dyn RpfCryptoProvider> = Arc::new(Gta6Context {
+            keys,
+            names: Arc::clone(&names),
+        });
+        let mut disks: Vec<(u64, PathBuf)> = std::fs::read_dir(&build_root)
+            .expect("the build root lists")
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("rpf")))
+            .filter_map(|p| Some((std::fs::metadata(&p).ok()?.len(), p)))
+            .collect();
+        disks.sort();
+        let (mut rows, mut renamed, mut missed) = (0usize, 0usize, Vec::new());
+        for (_, disk) in disks.into_iter().take(ARCHIVES) {
+            assert!(is_rpf9(&disk), "{} is a GTA VI archive", disk.display());
+            let rel = crawl::display_rel(&build_root, &disk);
+            let rpf9 = HashSet::from([Box::<str>::from(rel.as_str())]);
+            let archive = RpfArchive::open_with(&disk, Arc::clone(&provider))
+                .unwrap_or_else(|e| panic!("{} opens: {e}", disk.display()));
+            for node in archive.nodes.iter().filter(|node| !node.is_dir()) {
+                let Some(row) = archive.rpf9_row(node.entry_index()) else {
+                    continue;
+                };
+                let path = format!("{rel}/{}", node.path());
+                // A row whose path in its archive is not the name its hash states is one the tree
+                // renamed (numbered, split at a `\`, trimmed), which the index does not find.
+                let inner = inside_archive(&path);
+                let stated = names.lookup(row.name64);
+                if stated.is_some_and(|n| n != inner && Some(n) != inner.strip_suffix(".rpf")) {
+                    renamed += 1;
+                    continue;
+                }
+                rows += 1;
+                if !names64_of(&rpf9, &path).contains(&Some(row.name64)) {
+                    missed.push(path);
+                }
+            }
+        }
+        assert!(rows > 0, "the smallest archives list rows");
+        assert!(
+            missed.is_empty(),
+            "{} of {rows} rows ({renamed} renamed rows left out) are not found by their hash, such as {:?}",
+            missed.len(),
+            &missed[..missed.len().min(5)]
+        );
     }
 
     #[test]

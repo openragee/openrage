@@ -150,6 +150,13 @@ fn the_json_row_carries_name_hash_extent_and_cipher() {
 }
 
 #[test]
+fn the_listing_prints_the_size_of_a_row_past_4_gib() {
+    assert_eq!(size_cell(Some(0x3_0000_0000)), "12884901888");
+    assert_eq!(size_cell(Some(0x30)), "        48");
+    assert_eq!(size_cell(None), "         -");
+}
+
+#[test]
 fn an_inner_path_splits_on_either_separator() {
     assert_eq!(split_inner("a.rpf/b.rpf"), vec!["a.rpf", "b.rpf"]);
     assert_eq!(split_inner("a.rpf\\b.rpf"), vec!["a.rpf", "b.rpf"]);

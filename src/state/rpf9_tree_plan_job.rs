@@ -1,5 +1,5 @@
-//! A GTA VI tree's save planned as a job the list shows: the bytes of its changed bodies planned,
-//! the row in hand, and a stop that ends the plan within a part of the optimal parse, writing nothing.
+//! A GTA VI tree's save planned and then written as a job the list shows: the bytes planned or
+//! written and the row or file in hand, and a stop that ends it soon after, leaving no file.
 
 use std::fs::File;
 use std::path::Path;
@@ -34,9 +34,11 @@ impl From<String> for Unplanned {
     }
 }
 
-/// A save being planned: its archive's name, its stop, and how far it has got.
+/// A save being planned, or written to the copy `writing` names: its archive's name, its stop, and
+/// how far it has got.
 struct Planning {
     file: String,
+    writing: Option<String>,
     cancel: Cancel,
     progress: Progress,
 }
@@ -59,43 +61,95 @@ pub(super) fn tracked<T>(
     source: &Path,
     plan: impl FnOnce(Tick<'_>) -> Result<T, String>,
 ) -> Result<T, Unplanned> {
+    run_listed(source, None, |job| {
+        plan(&mut |row: &str, done: u64, total: u64| {
+            job.progress.now_on(row);
+            job.progress.reached(done, total);
+            !job.cancel.is_set()
+        })
+    })
+}
+
+/// Run `write` of a planned save into the new file `out` as the same job, telling it the bytes
+/// written of all; a stop ends it as [`Unplanned::Stopped`] and leaves no file at `out`.
+pub(super) fn tracked_write<T>(
+    source: &Path,
+    out: &Path,
+    write: impl FnOnce(&mut dyn FnMut(u64, u64) -> bool) -> Result<T, String>,
+) -> Result<T, Unplanned> {
+    run_listed(source, Some(out), |job| {
+        let written = write(&mut |done: u64, total: u64| {
+            job.progress.reached(done, total);
+            !job.cancel.is_set()
+        });
+        // A stop the write saw too late to drop removes the file it finished; one it refused left none.
+        if written.is_ok() && job.cancel.is_set() {
+            let _ = std::fs::remove_file(out);
+        }
+        written
+    })
+}
+
+/// Run `run` as a job the list shows while it runs; a stop ends it as [`Unplanned::Stopped`].
+fn run_listed<T>(
+    source: &Path,
+    writing: Option<&Path>,
+    run: impl FnOnce(&Planning) -> Result<T, String>,
+) -> Result<T, Unplanned> {
     let job = Arc::new(Planning {
         file: file_name(source),
+        writing: writing.map(file_name),
         cancel: Cancel::new(),
         progress: Progress::new(),
     });
     lock(&PLANNING).push(Arc::clone(&job));
     let listed = Listed(job);
-    let job = &listed.0;
-    let planned = plan(&mut |row: &str, done: u64, total: u64| {
-        job.progress.now_on(row);
-        job.progress.reached(done, total);
-        !job.cancel.is_set()
-    });
-    if job.cancel.is_set() {
+    let ran = run(&listed.0);
+    if listed.0.cancel.is_set() {
         return Err(Unplanned::Stopped);
     }
-    planned.map_err(Unplanned::Refused)
+    ran.map_err(Unplanned::Refused)
 }
 
-/// Each save being planned, as the job list draws it.
+/// Each save being planned or written, as the job list draws it.
 pub(in crate::state) fn jobs() -> Vec<RunningJob> {
     (lock(&PLANNING).iter())
         .map(|job| {
             let at = job.progress.snapshot();
-            let detail = if at.item.is_empty() {
-                String::new()
-            } else {
-                tr!(
-                    "planning {row}, {done} of {total}",
-                    row = at.item,
-                    done = or_job::human_bytes(at.attempted),
-                    total = or_job::human_bytes(at.total)
-                )
+            let (done, total) = (
+                or_job::human_bytes(at.attempted),
+                or_job::human_bytes(at.total),
+            );
+            let (doing, detail) = match &job.writing {
+                // A rebuilt archive's write tells no progress.
+                Some(copy) => (
+                    tr!("Writing the save of {file}", file = job.file),
+                    match at.total {
+                        0 => String::new(),
+                        _ => tr!(
+                            "writing {file}, {done} of {total}",
+                            file = copy,
+                            done = done,
+                            total = total
+                        ),
+                    },
+                ),
+                None => (
+                    tr!("Planning the save of {file}", file = job.file),
+                    match at.item.is_empty() {
+                        true => String::new(),
+                        false => tr!(
+                            "planning {row}, {done} of {total}",
+                            row = at.item,
+                            done = done,
+                            total = total
+                        ),
+                    },
+                ),
             };
             RunningJob {
                 kind: JobKind::Save,
-                doing: tr!("Planning the save of {file}", file = job.file),
+                doing,
                 fraction: (at.total > 0).then(|| at.fraction()),
                 detail,
                 stopping: job.cancel.is_set(),
@@ -104,7 +158,7 @@ pub(in crate::state) fn jobs() -> Vec<RunningJob> {
         .collect()
 }
 
-/// Stop every save being planned: each ends within a part of the optimal parse and writes nothing.
+/// Stop every save being planned or written: each ends within a part of the optimal parse or of the copy, and leaves no file.
 pub(in crate::state) fn stop() {
     lock(&PLANNING).iter().for_each(|job| job.cancel.set());
 }
@@ -234,11 +288,13 @@ mod tests {
     use super::super::tests::{
         archive_of, listed, reading_with, row_holding, showing, synthetic_keys, toasts, tree, DOC,
     };
-    use super::super::{plan_tree_with, tree_edits, Edit, Writes, ENDED, PLANNED};
+    use super::super::{
+        plan_tree_with, tree_edits, write_planned_with, Edit, Saved, Writes, ENDED, PLANNED,
+    };
     use super::*;
     use crate::state::jobs::{Outcome, Then};
     use crate::state::rpf_session::RpfDocument;
-    use crate::state::ToastType;
+    use crate::state::{DocPayload, ToastType};
 
     const BIG: &str = "data/big.bin";
 
@@ -386,6 +442,107 @@ mod tests {
             "{:?}",
             stopped.err()
         );
+        assert_eq!(listed(dir.path()), ["source.rpf"]);
+    }
+
+    #[test]
+    fn a_copy_is_written_as_a_listed_job_to_its_end_and_the_log_then_holds_its_path() {
+        let _serial = crate::ui::theme::serial();
+        let keys = synthetic_keys().expect("the synthetic snapshot parses");
+        let _reading = reading_with(Arc::clone(&keys));
+        let dir = tempfile::tempdir().expect("a scratch directory");
+        let (path, tree, _, edits) = big_edited(dir.path());
+        let planned =
+            plan_tree_with(&path, &edits, &keys, &mut |_, _, _| true).expect("the save plans");
+        assert_eq!(planned.writes(), Writes::Patched, "{:?}", planned.kept);
+        let out = dir.path().join("copy.rpf");
+
+        let mut seen = Vec::new();
+        let saved = tracked_write(&path, &out, |tick| {
+            write_planned_with(&path, &out, &keys, &planned, &mut |done, total| {
+                let go = tick(done, total);
+                seen.push((done, total, jobs()));
+                go
+            })
+        })
+        .expect("the copy is written");
+        assert_eq!(saved, Saved::Patched);
+        assert!(jobs().is_empty(), "a written copy leaves the job list");
+        let len = std::fs::metadata(&path).expect("the source").len();
+        assert_eq!(
+            seen.last().map(|s| (s.0, s.1)),
+            Some((len, len)),
+            "the tick reaches the total"
+        );
+        let (_, _, shown) = &seen[0];
+        let [job] = shown.as_slice() else {
+            panic!("one job is listed: {shown:?}");
+        };
+        assert_eq!(job.kind, JobKind::Save);
+        assert!(job.doing.contains("source.rpf"), "{}", job.doing);
+        assert!(
+            job.detail.starts_with("writing copy.rpf, "),
+            "{}",
+            job.detail
+        );
+        assert_eq!(listed(dir.path()), ["copy.rpf", "source.rpf"]);
+
+        // A stopped plan, then a written copy: the log says the copy was saved, and where.
+        let mut state = showing(path.clone(), tree);
+        lock(&PLANNED).push((DOC, Err(Unplanned::Stopped)));
+        state.poll_archive_saves();
+        let first = state.jobs.ended().first().map(|e| e.outcome.clone());
+        assert_eq!(first, Some(Outcome::Stopped(Then::Nothing)));
+        lock(&ENDED).push((DOC, 0, out.clone(), Ok((Saved::Patched, None))));
+        state.poll_archive_saves();
+        let ended = state
+            .jobs
+            .ended()
+            .first()
+            .expect("the save's end is in the list");
+        assert_eq!(ended.kind, JobKind::Save);
+        let folder = Then::OpenFolder(dir.path().to_path_buf());
+        assert_eq!(ended.outcome, Outcome::Done(folder));
+        let copy = out.display().to_string();
+        assert!(ended.said.contains(&copy), "{}", ended.said);
+    }
+
+    #[test]
+    fn a_stopped_write_leaves_no_file_and_the_tree_as_it_was() {
+        let _serial = crate::ui::theme::serial();
+        let keys = synthetic_keys().expect("the synthetic snapshot parses");
+        let _reading = reading_with(Arc::clone(&keys));
+        let dir = tempfile::tempdir().expect("a scratch directory");
+        let (path, tree, _, edits) = big_edited(dir.path());
+        let planned =
+            plan_tree_with(&path, &edits, &keys, &mut |_, _, _| true).expect("the save plans");
+        let out = dir.path().join("copy.rpf");
+
+        let stopped = tracked_write(&path, &out, |tick| {
+            write_planned_with(&path, &out, &keys, &planned, &mut |done, total| {
+                // Stopped as Cancel on the job's row stops it.
+                stop();
+                tick(done, total)
+            })
+        });
+        assert!(
+            matches!(stopped, Err(Unplanned::Stopped)),
+            "{:?}",
+            stopped.err()
+        );
+        assert!(jobs().is_empty(), "a stopped write leaves the job list");
+        assert_eq!(listed(dir.path()), ["source.rpf"], "and no file");
+
+        let mut state = showing(path.clone(), tree);
+        lock(&ENDED).push((DOC, 0, out.clone(), Err(Unplanned::Stopped)));
+        state.poll_archive_saves();
+        let ended = state.jobs.ended().first().map(|e| e.outcome.clone());
+        assert_eq!(ended, Some(Outcome::Stopped(Then::Nothing)));
+        let Some(DocPayload::Rpf(rpf)) = state.document(DOC).map(|d| &d.payload) else {
+            panic!("the tree is still shown");
+        };
+        let kept = tree_edits(&rpf.session).expect("the tree's edits");
+        assert_eq!(kept.len(), 1, "the tree keeps its edit");
         assert_eq!(listed(dir.path()), ["source.rpf"]);
     }
 }

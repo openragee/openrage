@@ -425,7 +425,7 @@ pub fn draw_selection(ui: &mut egui::Ui, state: &mut AppState) {
             Some(e) => {
                 let found = scanned.archetypes.get(index).and_then(Option::as_ref);
                 ui.label(egui::RichText::new(tr!("Entity {index} of {file}", index = index, file = file(scanned))).strong());
-                note(ui, crate::i18n::tr(crate::state::rpf9_scan::READ_ONLY_BODY));
+                note(ui, state.scanned_map_save_note());
                 if e.interior {
                     interior_rows(ui, state, scanned, index);
                 }

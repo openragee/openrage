@@ -44,9 +44,11 @@ pub(super) fn draw_text(ui: &mut egui::Ui, state: &AppState, doc_id: crate::stat
 
     grid(ui, "text_doc_basic", |ui| {
         row(ui, "Name", &doc.name);
-        if let Some(path) = &doc.path {
-            row(ui, "Path", &path.display().to_string());
-            if let Some(ext) = path
+        if doc.path.is_some() {
+            // A GTA VI tree row's document is named by its row, not by its body's key.
+            let shown = doc.location();
+            row(ui, "Path", &shown);
+            if let Some(ext) = std::path::Path::new(&shown)
                 .extension()
                 .and_then(|e| e.to_str())
                 .map(str::to_ascii_uppercase)
@@ -79,8 +81,8 @@ pub(super) fn draw_name_table(
 
     grid(ui, "name_table_basic", |ui| {
         row(ui, "Name", &doc.name);
-        if let Some(path) = &doc.path {
-            row(ui, "Path", &path.display().to_string());
+        if doc.path.is_some() {
+            row(ui, "Path", &doc.location());
         }
         let names = text
             .text
@@ -125,8 +127,8 @@ pub(super) fn draw_meta(
 
     grid(ui, "meta_doc_basic", |ui| {
         row(ui, "Name", &doc.name);
-        if let Some(path) = &doc.path {
-            row(ui, "Path", &path.display().to_string());
+        if doc.path.is_some() {
+            row(ui, "Path", &doc.location());
         }
         row(ui, "Schema type", type_name);
         if let Some(r) = &resolved {

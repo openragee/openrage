@@ -27,6 +27,10 @@ impl RpfEditSession {
                 ..
             } => {
                 let parent = self.archives.get(parent_archive_id)?;
+                // ⚠ An entry's size is 32-bit, so a GTA VI archive's is its row's.
+                if let Some(row) = parent.archive.rpf9_row(*parent_entry_index) {
+                    return Some(row.stored);
+                }
                 Some(
                     match parent.archive.entries.get(*parent_entry_index as usize)? {
                         RpfEntry::Binary(b) => b.uncompressed_size as u64,

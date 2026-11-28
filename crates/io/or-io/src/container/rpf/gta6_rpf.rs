@@ -223,8 +223,8 @@ const EXTENSIONS: &[(&str, &str)] = &[
     // GTA VI's clip/animation bodies open as a clip dictionary; RAGE's `.#cd` is the family's file.
     ("clip dictionary", "#cd"),
     ("animation", "#cd"),
-    // An animation dictionary in modern RAGE is `.#ad`; a clip dictionary stays `.#cd`.
-    ("animation dictionary", "#ad"),
+    // A frame filter dictionary is GTA V's `.yfd`: `.#fd`.
+    ("frame filter dictionary", "#fd"),
     ("particles", "#pt"),
     ("map data", "#map"),
     ("map types", "#typ"),

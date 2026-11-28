@@ -245,13 +245,45 @@ pub fn write_planned_copy(
     keys: &GtaViKeys,
     plans: Vec<PatchPlan>,
 ) -> Result<PatchReport, IoError> {
+    write_planned_copy_with(source, out, keys, plans, &mut |_, _| true).map_err(|refusal| {
+        match refusal {
+            CopyRefusal::Io(e) => e,
+            stopped => bad(stopped.to_string()),
+        }
+    })
+}
+
+/// Why a planned copy was not written; whatever the reason, no file is left under its name or beside it.
+#[derive(Debug, thiserror::Error)]
+pub enum CopyRefusal {
+    #[error(transparent)]
+    Io(#[from] IoError),
+    #[error(
+        "writing {} was stopped before it ended, and the partly written file is removed",
+        .out.display()
+    )]
+    Stopped { out: std::path::PathBuf },
+}
+
+/// The bytes of the source copied at a time, between which a stop is asked.
+const COPY_PART: usize = 4 << 20;
+
+/// [`write_planned_copy`], telling `tick` the bytes copied of the source's length; `false` from it stops the write.
+pub fn write_planned_copy_with(
+    source: &Path,
+    out: &Path,
+    keys: &GtaViKeys,
+    plans: Vec<PatchPlan>,
+    tick: &mut dyn FnMut(u64, u64) -> bool,
+) -> Result<PatchReport, CopyRefusal> {
     if out.exists() {
         return Err(bad(format!(
             "{} exists, and a patched copy is written only to a new file",
             out.display()
-        )));
+        ))
+        .into());
     }
-    let mut src = File::open(source)?;
+    let mut src = File::open(source).map_err(IoError::from)?;
     let mut spans: Vec<(u64, u64)> = Vec::new();
     for (i, plan) in plans.iter().enumerate() {
         if plans[..i]
@@ -261,7 +293,8 @@ pub fn write_planned_copy(
             return Err(bad(format!(
                 "entry {} of the archive at {:#x} is patched twice",
                 plan.entry, plan.base
-            )));
+            ))
+            .into());
         }
         for span in protected_spans(&mut src, keys, plan.base)? {
             if !spans.contains(&span) {
@@ -279,14 +312,15 @@ pub fn write_planned_copy(
         .windows(2)
         .any(|w| w[0].0 + w[0].1.len() as u64 > w[1].0)
     {
-        return Err(bad("two patches write the same bytes".into()));
+        return Err(bad("two patches write the same bytes".into()).into());
     }
     for &(at, bytes) in &writes {
         let end = at + bytes.len() as u64;
         if let Some(&(a, b)) = spans.iter().find(|&&(a, b)| at < b && a < end) {
             return Err(bad(format!(
                 "a chunk at {at:#x}..{end:#x} lies in the table span {a:#x}..{b:#x}"
-            )));
+            ))
+            .into());
         }
     }
 
@@ -294,6 +328,8 @@ pub fn write_planned_copy(
     let mut partial = out.as_os_str().to_owned();
     partial.push(".partial");
     let partial = std::path::PathBuf::from(partial);
+    let mut stopped = false;
+    // `copy` is dropped as the closure returns, so the file is closed before it is removed.
     let written = OpenOptions::new()
         .read(true)
         .write(true)
@@ -301,17 +337,24 @@ pub fn write_planned_copy(
         .open(&partial)
         .map_err(IoError::from)
         .and_then(|mut copy| {
-            src.seek(SeekFrom::Start(0))?;
-            std::io::copy(&mut src, &mut copy)?;
+            stopped = !copy_ticking(&mut src, &mut copy, tick)?;
+            if stopped {
+                return Ok(());
+            }
             patch_and_prove(&mut src, &mut copy, &writes, &spans)?;
             copy.sync_all()?;
             drop(copy);
             std::fs::rename(&partial, out)?;
             Ok(())
         });
-    if let Err(e) = written {
+    if written.is_err() || stopped {
         let _ = std::fs::remove_file(&partial);
-        return Err(e);
+    }
+    written?;
+    if stopped {
+        return Err(CopyRefusal::Stopped {
+            out: out.to_path_buf(),
+        });
     }
     Ok(PatchReport {
         chunks_changed: plans
@@ -358,6 +401,34 @@ fn patch_and_prove(
         }
     }
     Ok(())
+}
+
+/// Copy `src` from its start into `copy`, telling `tick` the bytes copied of its length; `false` once it says stop.
+pub fn copy_ticking(
+    src: &mut File,
+    copy: &mut File,
+    tick: &mut dyn FnMut(u64, u64) -> bool,
+) -> Result<bool, IoError> {
+    let total = src.seek(SeekFrom::End(0))?;
+    src.seek(SeekFrom::Start(0))?;
+    if !tick(0, total) {
+        return Ok(false);
+    }
+    let mut buf = vec![0u8; COPY_PART];
+    let mut done = 0u64;
+    loop {
+        let n = match src.read(&mut buf) {
+            Ok(0) => return Ok(true),
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e.into()),
+        };
+        copy.write_all(&buf[..n])?;
+        done += n as u64;
+        if !tick(done, total) {
+            return Ok(false);
+        }
+    }
 }
 
 /// The spans no patch may write, of every archive from the file's root down to the one whose header
@@ -838,23 +909,13 @@ pub fn harder_deflate(
     let began = Instant::now();
     let splits = zopfli::Options::default().maximum_block_splits;
     let even = even_cuts(content.len(), OPTIMAL_PART);
-    let tries: [Try; 8] = [
+    let tries: [Try; 6] = [
         (
             "15 rounds with no early stop",
             OPTIMAL_ROUNDS,
             Some((splits, even.clone())),
         ),
-        (
-            "no limit on block splits",
-            OPTIMAL_ROUNDS,
-            Some((0, even.clone())),
-        ),
         ("one block a part", OPTIMAL_ROUNDS, Some((1, even.clone()))),
-        (
-            "at most 5 blocks a part",
-            OPTIMAL_ROUNDS,
-            Some((5, even.clone())),
-        ),
         (
             "parts of 256 KiB",
             OPTIMAL_ROUNDS,
@@ -976,7 +1037,8 @@ fn optimal_options() -> Option<zopfli::Options> {
 }
 
 /// The optimal parse's settings: its rounds, the rounds in a row with no gain that end it, and the
-/// blocks a part is split into at most (0 for no limit).
+/// blocks a part is split into at most.
+// ⚠ Under zopfli 0.8.4 a limit of 0 splits no block, as 1 does, though its doc says 0 is no limit.
 fn parse_options(rounds: u64, stall: u64, splits: u16) -> Option<zopfli::Options> {
     Some(zopfli::Options {
         iteration_count: NonZeroU64::new(rounds)?,

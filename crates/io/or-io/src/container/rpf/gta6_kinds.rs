@@ -57,7 +57,7 @@ pub const TYPES: [(u32, &str); 36] = [
     (0x4D, "resource 0x4d"),
     (0x4E, "animation"),
     (0x4F, "navigation mesh"),
-    (0x56, "animation dictionary"),
+    (0x56, "frame filter dictionary"),
     (0x57, "headerless metadata"),
     (0x58, "cloth"),
     (0x59, "script program"),

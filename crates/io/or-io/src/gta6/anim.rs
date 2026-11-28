@@ -41,7 +41,7 @@ pub use motion::{
     ArrayHead, Database, Grid, Motion, MotionGroup, Parameter, ParameterItem, ParameterObject,
     PhaseCurve, TimeWarp, Typed, Weight,
 };
-pub use signature::dof_signature;
+pub use signature::{clip_signatures, dof_signature};
 pub use write::{edit, edit_in_extent, reencode, rename_clip, AnimEdit};
 
 use crate::codec::anim::channel::{

@@ -1,6 +1,6 @@
-//! A GTA VI tree that became its copy shows each document opened from its rows under the copy, and
-//! such a document's next save lands in the copy's tree: hermetic, on an archive built here under a
-//! synthetic white-box key.
+//! A GTA VI tree that became its copy shows each document opened from its rows under the copy, in
+//! Details too, and such a document's next save lands in the copy's tree, and a save into a copy
+//! copies the copy: hermetic, on an archive built here under a synthetic white-box key.
 
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
@@ -8,12 +8,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use or_io::container::rpf::gta6_container_write::{build, Rpf9IndexKey, Rpf9NewBody};
-use or_io::container::rpf::{Gta6Context, NameResolver};
+use or_io::container::rpf::{Gta6Context, Gta6Mount, NameResolver};
 use or_io::container::RpfArchive;
 use or_io::gta6::hash::name_hash64;
 
 use super::{become_copy, listed, reopened};
 use crate::state::document::{DocumentId, RpfNodeId};
+use crate::state::nothing_draws_over_what_it_belongs_to::{painted, Panel};
 use crate::state::rpf9_scan::{body_path, View};
 use crate::state::rpf_archive_open::tree_open::{leave, name, row_of};
 use crate::state::rpf_archive_open::tree_verbs::tests::synthetic_keys;
@@ -212,4 +213,112 @@ fn a_row_s_document_follows_its_tree_into_the_copy_and_its_next_save_lands_in_th
         Some(out.as_path()),
         "the row is the copy's"
     );
+}
+
+/// The texts the Details panel paints for the active document.
+fn details(state: &mut AppState) -> Vec<String> {
+    let mut panel = Panel::new(egui::Rect::from_min_size(
+        egui::Pos2::ZERO,
+        egui::vec2(900.0, 900.0),
+    ));
+    let mut output = None;
+    for _ in 0..3 {
+        output = Some(panel.frame(Vec::new(), |ui| {
+            crate::ui::panels::inspector::draw(ui, state)
+        }));
+    }
+    (painted(&output.expect("drawn")).into_iter())
+        .map(|p| p.text)
+        .collect()
+}
+
+#[test]
+fn after_save_as_details_and_a_save_into_a_copy_take_the_copy_the_tree_became() {
+    let _serial = crate::ui::theme::serial();
+    let _reading = reading();
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let disk = source(dir.path());
+    let mut state = showing(&disk);
+    let node = row(&state, NOTES);
+    let doc = opened(&mut state, node);
+    let key = (state.document(doc))
+        .and_then(|d| d.path.clone())
+        .expect("a path");
+    assert_eq!(
+        state.tree_row_origin(doc),
+        Some((disk.clone(), NOTES.to_owned()))
+    );
+
+    let out = dir.path().join("copy.rpf");
+    std::fs::copy(&disk, &out).expect("the copy is written");
+    let chains = listed(session(&state));
+    let written = reopened(&out, gta6_session::crypto(), &chains).expect("the copy reopens");
+    let tree = state.document_mut(DOC).expect("the tree");
+    assert!(
+        become_copy(tree, written, &out),
+        "the tree becomes the copy"
+    );
+    assert_eq!(
+        state.tree_row_origin(doc),
+        Some((out.clone(), NOTES.to_owned())),
+        "the block names the copy and the row's path in it"
+    );
+
+    state.active_document = Some(doc);
+    let shown = details(&mut state);
+    let location = state.document(doc).expect("open").location();
+    let has = |text: &str| shown.iter().any(|t| t == text);
+    assert!(has(&location), "Path is the row's place: {shown:?}");
+    assert!(
+        has(&out.display().to_string()),
+        "Archive is the copy: {shown:?}"
+    );
+    assert!(has(NOTES), "and Path the row's path in it: {shown:?}");
+    assert!(
+        !has(&key.display().to_string()),
+        "no body key is shown: {shown:?}"
+    );
+    assert_eq!(
+        state.archive_copy_name().as_deref(),
+        Some("copy_edited.rpf")
+    );
+
+    // With the source gone, only a save that copies the copy writes.
+    std::fs::remove_file(&disk).expect("the source is removed");
+    let d = state.document_mut(doc).expect("open");
+    let DocPayload::Text(text) = &mut d.payload else {
+        panic!("a text document");
+    };
+    text.text.remove(0..1);
+    text.text.insert_char(0, 'l');
+    d.mark_edited();
+    state.toasts.clear();
+    let again = dir.path().join("again.rpf");
+    assert!(
+        state.save_into_archive_copy_with(again.clone(), synthetic_keys),
+        "{:?}",
+        toasts(&state)
+    );
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !ended(&state) {
+        state.poll_archive_saves();
+        assert!(Instant::now() < deadline, "the save never ended");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let said = toasts(&state);
+    assert!(
+        !(state.toasts.iter()).any(|t| matches!(t.toast_type, ToastType::Error)),
+        "{said:?}"
+    );
+    assert!(said.iter().any(|t| t.contains("again.rpf")), "{said:?}");
+    let bytes = std::fs::read(&again).expect("the copy of the copy");
+    let keys = synthetic_keys().expect("the synthetic snapshot parses");
+    let mount = Gta6Mount::open_root(&mut Cursor::new(&bytes), &keys).expect("it opens");
+    let entry = (mount.archive.entries.iter())
+        .find(|e| e.name64 == name_hash64(NOTES.as_bytes()))
+        .expect("the row");
+    let mut edited = notes();
+    edited[0] = b'l';
+    let body = (mount.read_entry(Cursor::new(&bytes), entry)).expect("the body reads");
+    assert_eq!(body, edited);
 }

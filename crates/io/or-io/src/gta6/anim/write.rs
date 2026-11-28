@@ -4,8 +4,10 @@
 //! clip, or a DOF added or removed.
 //!
 //! ⚠ A block's hash at 0x00 follows from no rule anyone found, so an edited block carries the hash
-//! it was read with; whether the game checks it is not known. An edit of a DOF list writes the
-//! signature at 0x2C that [`super::dof_signature`] computes from the list; any other keeps it.
+//! it was read with; no step of the game read so far that places or decodes a block reads it. An
+//! edit of a DOF list writes the signature at 0x2C that [`super::dof_signature`] computes from the
+//! list; any other keeps it. A clip whose window, rate, warp list or animation signature an edit
+//! changes takes the signature at 0x38 that [`super::clip_signatures`] computes from its fields.
 
 mod channels;
 mod clips;
@@ -284,6 +286,7 @@ pub fn edit(resource: &AnimResource, edit: &AnimEdit) -> Result<AnimResource, An
             }
         }
     }
+    super::signature::resign_clips(section, &mut out)?;
     edited.sections = Some(Arc::new(Rpf9Sections {
         form: sections.form,
         virtual_section: out,

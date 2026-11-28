@@ -97,7 +97,7 @@ pub(super) fn draw(ui: &mut egui::Ui, state: &mut AppState, doc_id: DocumentId) 
                     .color(theme::TEXT_SECONDARY),
             );
             ui.label(
-                egui::RichText::new(tr!("Copy places a copy after the track or bone it copies and Add a new one after the last; either, or a removal, moves what follows it at save. A changed filter keeps its signature as read unless another of the dictionary holds the same tracks, since what it is computed from is not known."))
+                egui::RichText::new(tr!("Copy places a copy after the track or bone it copies and Add a new one after the last; either, or a removal, moves what follows it at save. A changed filter is signed with the signature its tracks give."))
                     .small()
                     .color(theme::TEXT_SECONDARY),
             );

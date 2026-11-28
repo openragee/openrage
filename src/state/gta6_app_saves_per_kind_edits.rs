@@ -20,6 +20,8 @@ use crate::state::{AppState, Change, DocPayload, MetaEdit, ToastType};
 
 /// What the map edit says of a row with no entity, which is no row of the kind to judge it by.
 pub(super) const NO_ENTITY: &str = "the map shows no entity";
+/// What the metadata edit says of a form with no scalar, which is no row of its kind to judge it by.
+pub(super) const NO_SCALAR: &str = "its form holds no number or flag";
 
 pub(super) fn last_error(state: &AppState) -> Option<String> {
     (state.toasts.iter())
@@ -150,7 +152,7 @@ fn edit_meta_by(state: &mut AppState, doc: DocumentId, passes: [u8; 3]) -> Resul
     let parsed = meta.parsed.as_mut().ok_or("its form did not parse")?;
     let found = (passes.into_iter())
         .find_map(|pass| scalar_in(&parsed.instance, &mut Vec::new(), pass, &mut 0));
-    let (path, value) = found.ok_or("its form holds no number or flag")?;
+    let (path, value) = found.ok_or(NO_SCALAR)?;
     let held = value_at(&mut parsed.instance, &path).ok_or("the value is gone")?;
     let before = std::mem::replace(held, value);
     meta.after_visual_edit_in_place();

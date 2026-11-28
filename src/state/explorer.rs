@@ -217,7 +217,7 @@ pub fn sorted_children_at(
         .sorted
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some((at, by, of, sorted)) = cache.get(&parent) {
+    if let Some((at, by, of, sorted, _)) = cache.get(&parent) {
         if *at == epoch && *by == order && of.as_slice() == children {
             return std::sync::Arc::clone(sorted);
         }
@@ -228,9 +228,38 @@ pub fn sorted_children_at(
         order,
         children.to_vec(),
         std::sync::Arc::clone(&sorted),
+        None,
     );
     cache.insert(parent, entry);
     sorted
+}
+
+/// The bytes each of `sorted`, the children [`sorted_children_at`] gave for `parent`, groups by:
+/// measured once per sort, since a GTA VI row's size reads its row.
+fn sorted_sizes(
+    session: &RpfEditSession,
+    parent: RpfNodeId,
+    sorted: &std::sync::Arc<[RpfNodeId]>,
+) -> std::sync::Arc<[Option<u64>]> {
+    let lock = || (session.sorted.lock()).unwrap_or_else(std::sync::PoisonError::into_inner);
+    let held = lock().get(&parent).and_then(|entry| {
+        (std::sync::Arc::ptr_eq(&entry.3, sorted))
+            .then(|| entry.4.clone())
+            .flatten()
+    });
+    if let Some(sizes) = held {
+        return sizes;
+    }
+    // Measured with the cache unlocked: a row's size may read the session.
+    let sizes: std::sync::Arc<[Option<u64>]> = (sorted.iter())
+        .map(|&id| super::files_view::sorted_bytes(session, id))
+        .collect();
+    if let Some(entry) = lock().get_mut(&parent) {
+        if std::sync::Arc::ptr_eq(&entry.3, sorted) {
+            entry.4 = Some(std::sync::Arc::clone(&sizes));
+        }
+    }
+    sizes
 }
 
 /// A folder's children in the order `order` puts them.
@@ -248,7 +277,7 @@ pub fn sorted_children(
         .filter_map(|id| {
             let node = session.node(id)?;
             let size = match order.key {
-                SortKey::Size if !node.is_dir() => session.size_for(id),
+                SortKey::Size if !node.is_dir() => super::files_view::sorted_bytes(session, id),
                 _ => None,
             };
             let column = order
@@ -376,13 +405,14 @@ pub fn grouped_children(
     order: SortOrder,
     group: GroupKey,
 ) -> Vec<Group> {
-    let sorted = sorted_children_at(session, epoch, parent, order).to_vec();
+    let shared = sorted_children_at(session, epoch, parent, order);
     if group == GroupKey::None {
         return vec![Group {
             label: String::new(),
-            rows: sorted,
+            rows: shared.to_vec(),
         }];
     }
+    let sizes = (group == GroupKey::Size).then(|| sorted_sizes(session, parent, &shared));
     #[derive(PartialEq, Eq, PartialOrd, Ord)]
     enum Heading {
         Folders,
@@ -390,7 +420,7 @@ pub fn grouped_children(
         Size(SizeBucket),
     }
     let mut groups: Vec<(Heading, Vec<RpfNodeId>)> = Vec::new();
-    for id in sorted {
+    for (at, &id) in shared.iter().enumerate() {
         let Some(node) = session.node(id) else {
             continue;
         };
@@ -399,7 +429,7 @@ pub fn grouped_children(
         } else if group == GroupKey::Type {
             Heading::Type(extension(&node.name))
         } else {
-            Heading::Size(SizeBucket::of(session.size_for(id)))
+            Heading::Size(SizeBucket::of(sizes.as_ref().and_then(|s| s[at])))
         };
         match groups.iter_mut().find(|(h, _)| *h == heading) {
             Some((_, rows)) => rows.push(id),

@@ -15496,8 +15496,8 @@ msgstr "애니메이션 레코드에는 본이 하나 이상 남습니다."
 msgid "A track's mode is 0, 1 or 2."
 msgstr "트랙의 모드는 0, 1 또는 2입니다."
 
-msgid "Copy places a copy after the track or bone it copies and Add a new one after the last; either, or a removal, moves what follows it at save. A changed filter keeps its signature as read unless another of the dictionary holds the same tracks, since what it is computed from is not known."
-msgstr "복사는 복사한 트랙이나 본 뒤에 사본을 두고, 추가는 마지막 것 뒤에 새것을 둡니다. 둘 다, 또는 제거도 저장할 때 뒤따르는 것을 옮깁니다. 변경된 필터는 사전의 다른 필터가 같은 트랙을 갖지 않는 한 읽은 서명을 유지합니다. 서명이 무엇으로 계산되는지 알 수 없기 때문입니다."
+msgid "Copy places a copy after the track or bone it copies and Add a new one after the last; either, or a removal, moves what follows it at save. A changed filter is signed with the signature its tracks give."
+msgstr "복사는 복사한 트랙이나 본 뒤에 사본을 두고, 추가는 마지막 것 뒤에 새것을 둡니다. 둘 다, 또는 제거도 저장할 때 뒤따르는 것을 옮깁니다. 변경된 필터에는 그 트랙에서 나오는 서명이 붙습니다."
 
 msgid "Cannot save: open the audio container this animation came from, which it is written back into."
 msgstr "저장할 수 없습니다. 이 애니메이션이 나온 오디오 컨테이너를 여십시오. 애니메이션은 그곳에 다시 기록됩니다."
@@ -17667,3 +17667,18 @@ msgid "{count} texture: {why}"
 msgid_plural "{count} textures: {why}"
 msgstr[0] "텍스처 {count}개: {why}"
 msgstr[1] "텍스처 {count}개: {why}"
+
+msgid "Writing the save of {file}"
+msgstr "{file} 저장 쓰는 중"
+
+msgid "writing {file}, {done} of {total}"
+msgstr "{file} 쓰는 중, {total} 중 {done}"
+
+msgid "the copy was stopped, and the partly written file is removed"
+msgstr "복사가 중지되었으며, 일부만 쓰인 파일은 제거됩니다"
+
+msgid "The box or stream distance of entity {index}'s archetype is not known, so the map's extents were grown to hold its position only."
+msgstr "엔티티 {index}의 아키타입 상자 또는 스트림 거리를 알 수 없으므로, 맵의 범위는 그 위치만 담도록 넓혀졌습니다."
+
+msgid "This body was opened from its row of a GTA VI archive's tree: Save writes its edits into that row, and the archive's Save as… writes a new file, a patched copy where the body fits its entry's chunks, whose table is unchanged and which no run of the game has loaded, else a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "이 본문은 GTA VI 아카이브 트리의 행에서 열렸습니다. 저장은 편집 내용을 그 행에 쓰고, 아카이브의 다른 이름으로 저장…은 새 파일을 씁니다. 본문이 항목의 청크에 들어가면 테이블이 바뀌지 않고 게임의 어떤 실행도 아직 불러오지 않은 패치된 사본이 되고, 그렇지 않으면 재구성된 아카이브가 되며, 테이블에는 만든 사람만 서명할 수 있으므로 게임은 그것을 거부합니다."

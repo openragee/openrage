@@ -15496,8 +15496,8 @@ msgstr "动画记录至少保留一根骨骼。"
 msgid "A track's mode is 0, 1 or 2."
 msgstr "轨道的模式为 0、1 或 2。"
 
-msgid "Copy places a copy after the track or bone it copies and Add a new one after the last; either, or a removal, moves what follows it at save. A changed filter keeps its signature as read unless another of the dictionary holds the same tracks, since what it is computed from is not known."
-msgstr "复制会在所复制的轨道或骨骼之后放一个副本，添加会在最后一个之后放一个新的；两者或移除都会在保存时移动其后的内容。更改的过滤器保留读取时的签名，除非字典中另一个过滤器持有相同的轨道，因为不知道签名由什么计算得出。"
+msgid "Copy places a copy after the track or bone it copies and Add a new one after the last; either, or a removal, moves what follows it at save. A changed filter is signed with the signature its tracks give."
+msgstr "复制会在所复制的轨道或骨骼之后放一个副本，添加会在最后一个之后放一个新的；两者或移除都会在保存时移动其后的内容。更改的过滤器会以其轨道得出的签名签名。"
 
 msgid "Cannot save: open the audio container this animation came from, which it is written back into."
 msgstr "无法保存：请打开此动画所来自的音频容器，动画会写回其中。"
@@ -17667,3 +17667,18 @@ msgid "{count} texture: {why}"
 msgid_plural "{count} textures: {why}"
 msgstr[0] "{count} 张纹理：{why}"
 msgstr[1] "{count} 张纹理：{why}"
+
+msgid "Writing the save of {file}"
+msgstr "正在写入 {file} 的保存"
+
+msgid "writing {file}, {done} of {total}"
+msgstr "正在写入 {file}，{total} 中的 {done}"
+
+msgid "the copy was stopped, and the partly written file is removed"
+msgstr "复制已停止，部分写入的文件已被删除"
+
+msgid "The box or stream distance of entity {index}'s archetype is not known, so the map's extents were grown to hold its position only."
+msgstr "实体 {index} 的原型的包围盒或流送距离未知，因此地图的范围仅扩大到能容纳其位置。"
+
+msgid "This body was opened from its row of a GTA VI archive's tree: Save writes its edits into that row, and the archive's Save as… writes a new file, a patched copy where the body fits its entry's chunks, whose table is unchanged and which no run of the game has loaded, else a rebuilt archive, which the game refuses because only its maker can sign the table."
+msgstr "此主体是从 GTA VI 归档树中的行打开的：“保存”会把编辑写入该行，归档的“另存为…”会写入新文件：若主体能放入其条目的块，则为修补副本，其表未改变，且游戏从未运行加载过它，否则为重建的归档，游戏会拒绝它，因为只有其制作者能签名该表。"

@@ -1833,3 +1833,197 @@ fn a_parameter_proved_widened_is_not_sealed_where_an_address_of_a_lower_paramete
     let stmts = &filled.cfg.blocks[0].stmts;
     assert_eq!(stmts[1], set(1, as_i32(param(2))), "{stmts:?}");
 }
+
+/// The global cell at byte `offset` of the tests' program.
+fn global_at(offset: u32) -> Var {
+    Var::Global {
+        program: 0x1122_3344,
+        offset,
+        statics: false,
+    }
+}
+
+#[test]
+fn a_reference_stored_to_a_global_is_of_the_type_it_was_made_as() {
+    let stored = || {
+        vec![
+            set(0, made(THING)),
+            Stmt::Assign {
+                target: global_at(0x40),
+                value: cast(Scalar::U64, local(0)),
+            },
+        ]
+    };
+    let f = typed_in(stored(), Project::empty());
+    assert_eq!(kind_of(&f, Var::Local(0)), object(THING));
+    let kept = Stmt::Assign {
+        target: global_at(0x40),
+        value: local(0),
+    };
+    assert_eq!(f.cfg.blocks[0].stmts[1], kept);
+
+    // Ordered at 64 bits it is a number of 64 bits, wherever else it goes.
+    let ordered = vec![
+        set(0, call(vec![])),
+        Stmt::Assign {
+            target: global_at(0x40),
+            value: cast(Scalar::U64, local(0)),
+        },
+        set(
+            1,
+            at(Kind::U64, BinOp::Lt, cast(Scalar::U64, local(0)), int(9)),
+        ),
+    ];
+    let f = typed_in(ordered, Project::empty());
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::U64);
+
+    // With `kinds` off the width the store is written at stands against the object.
+    let f = typed_function(stored(), &Names::default());
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Unknown);
+}
+
+#[test]
+fn a_global_loaded_whole_says_what_the_project_proves_of_it_and_not_the_width_it_is_loaded_at() {
+    let loaded = || {
+        vec![
+            set(0, cast(Scalar::U64, Expr::Var(global_at(0x48)))),
+            used(vec![local(0)]),
+        ]
+    };
+    let mut project = Project::default();
+    let info = project.programs.entry(0x1122_3344).or_default();
+    info.globals.insert(0x48, object(THING));
+    let f = typed_in(loaded(), &project);
+    assert_eq!(kind_of(&f, Var::Local(0)), object(THING));
+    assert_eq!(f.cfg.blocks[0].stmts[0], set(0, Expr::Var(global_at(0x48))));
+
+    // Of a global the project says nothing of, nothing says what the cell holds.
+    let f = typed_in(loaded(), Project::empty());
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Unknown);
+
+    // With `kinds` off the width of the load stands.
+    let f = typed_function(loaded(), &Names::default());
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::U64);
+}
+
+#[test]
+fn an_address_used_only_for_its_own_cell_leaves_the_locals_above_it_written_by_name_alone() {
+    let stmts = |handed: bool| {
+        let first = match handed {
+            false => store(StoreKind::U8, address(1), 2, int(5)),
+            true => used(vec![address(1)]),
+        };
+        vec![
+            first,
+            set(2, as_i32(param(0))),
+            used(vec![as_i32(local(2)), local(1)]),
+        ]
+    };
+    let f = typed_in(stmts(false), Project::empty());
+    assert_eq!(f.cfg.blocks[0].stmts[2], used(vec![local(2), local(1)]));
+    assert_eq!(kind_of(&f, Var::Local(2)), Kind::I32);
+    // A store of the byte stays one: the rest of the cell is as it was.
+    assert_eq!(
+        f.cfg.blocks[0].stmts[0],
+        store(StoreKind::U8, address(1), 2, int(5))
+    );
+
+    // An address handed on may be written through past its own cell: the cast is what makes an `int` of the cell.
+    let f = typed_in(stmts(true), Project::empty());
+    assert_eq!(
+        f.cfg.blocks[0].stmts[2],
+        used(vec![as_i32(local(2)), local(1)])
+    );
+
+    // With `kinds` off any address taken below the local leaves it open.
+    let f = typed_function(stmts(false), &Names::default());
+    assert_eq!(
+        f.cfg.blocks[0].stmts[2],
+        used(vec![as_i32(local(2)), local(1)])
+    );
+}
+
+/// A call of slot 3 of `OTHER`, a type the tests' projects do not hold.
+fn slot_call(args: Vec<Expr>) -> Expr {
+    let callee = Callee::Virtual {
+        class: "Demo".to_owned(),
+        method: "Method_3".to_owned(),
+        ty: OTHER.to_owned(),
+        slot: 3,
+    };
+    Expr::Call {
+        callee,
+        args,
+        returns: None,
+    }
+}
+
+#[test]
+fn a_variable_a_virtual_call_is_made_on_is_a_reference_where_nothing_says_more() {
+    let stmts = || {
+        vec![
+            set(0, call(vec![])),
+            Stmt::Eval(slot_call(vec![local(0)])),
+            set(1, local(0)),
+            // Read as an `int` too, and handed on whole: the reads disagree, and it keeps no kind.
+            set(2, call(vec![])),
+            Stmt::Eval(slot_call(vec![local(2)])),
+            set(3, listed(BinOp::Lt, as_i32(local(2)), int(4))),
+        ]
+    };
+    let f = typed_in(stmts(), Project::empty());
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Pointer);
+    assert_eq!(kind_of(&f, Var::Local(1)), Kind::Pointer);
+    assert_eq!(kind_of(&f, Var::Local(2)), Kind::Unknown);
+
+    // With `kinds` off a call says nothing of what it is made on.
+    let f = typed_function(stmts(), &Names::default());
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Unknown);
+}
+
+#[test]
+fn what_a_runtime_member_every_overload_of_which_answers_a_bool_yields_is_a_truth() {
+    let asked = |path: &str, args: usize| {
+        let callee = Callee::Builtin {
+            path: path.to_owned(),
+            ty: 3,
+            method: 0,
+        };
+        let args = (0..args).map(|n| param(n as u32)).collect();
+        vec![set(
+            0,
+            Expr::Call {
+                callee,
+                args,
+                returns: Some(1),
+            },
+        )]
+    };
+    let contains = "System.Collections.Generic.List_1.Contains";
+    let names = Names::default();
+    let project = Project::default();
+    let typed_with_runtime = |stmts: Vec<Stmt>, runtime: bool| {
+        let mut f = function(stmts);
+        let mut options = Options::baseline().with(Pass::Kinds).with(Pass::Signs);
+        if runtime {
+            options = options.with(Pass::Runtime);
+        }
+        run_in(
+            &mut f,
+            &Context::new(&names, &project, options),
+            &mut Stats::default(),
+        );
+        f
+    };
+    let f = typed_with_runtime(asked(contains, 2), true);
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Bool);
+    // No overload takes as many arguments, a member that answers a number, or `runtime` off.
+    for (stmts, runtime) in [
+        (asked(contains, 3), true),
+        (asked("System.Random.NextDouble", 1), true),
+        (asked(contains, 2), false),
+    ] {
+        let f = typed_with_runtime(stmts, runtime);
+        assert_eq!(kind_of(&f, Var::Local(0)), Kind::Unknown);
+    }
+}

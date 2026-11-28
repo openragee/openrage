@@ -245,11 +245,12 @@ fn what_a_virtual_call_is_made_on_is_an_object_of_the_slots_type() {
     assert_eq!(kind_of(&f, Var::Local(0)), object(THING));
     assert_eq!(kind_of(&f, Var::Param(1)), object(THING));
 
-    // A type the project does not hold, or a value type, says nothing of the receiver.
+    // A type the project does not hold, or a value type, gives the receiver no type: it is a
+    // reference and no more, which a virtual call made on it says where nothing says more.
     for project in [Project::default(), with_member(0x04, None)] {
         let f = typed(stmts(), &project);
-        assert_eq!(kind_of(&f, Var::Local(0)), Kind::Unknown);
-        assert_eq!(kind_of(&f, Var::Param(1)), Kind::Unknown);
+        assert_eq!(kind_of(&f, Var::Local(0)), Kind::Pointer);
+        assert_eq!(kind_of(&f, Var::Param(1)), Kind::Pointer);
     }
 
     // What the variable is assigned says more than the call made on it.
@@ -258,7 +259,8 @@ fn what_a_virtual_call_is_made_on_is_an_object_of_the_slots_type() {
     let f = typed(assigned, &with_member(0, None));
     assert_eq!(kind_of(&f, Var::Local(0)), object(OTHER));
 
-    // A local assigned twice, or a parameter assigned at all, may hold another value where no call is made on it.
+    // A local assigned twice, or a parameter assigned at all, may hold another value where no call
+    // is made on it: of no type, a reference and no more.
     let mut twice = stmts();
     twice.insert(0, set(0, unknown()));
     twice.push(Stmt::Assign {
@@ -266,16 +268,16 @@ fn what_a_virtual_call_is_made_on_is_an_object_of_the_slots_type() {
         value: unknown(),
     });
     let f = typed(twice, &with_member(0, None));
-    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Unknown);
-    assert_eq!(kind_of(&f, Var::Param(1)), Kind::Unknown);
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Pointer);
+    assert_eq!(kind_of(&f, Var::Param(1)), Kind::Pointer);
 
-    // Calls made on it as two types leave it of neither.
+    // Calls made on it as two types leave it of neither: a reference and no more.
     let mut two = stmts();
     two.push(Stmt::Eval(virtual_call(OTHER, 3, vec![local(0)], 0)));
     let mut project = with_member(0, None);
     project.types.insert(TypeKey(0xBB), TypeFacts::default());
     let f = typed(two, &project);
-    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Unknown);
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Pointer);
 }
 
 #[test]
@@ -420,10 +422,11 @@ fn calls_made_on_a_value_as_a_type_and_as_its_base_make_it_an_object_of_the_deri
     let f = typed(stmts(), &project);
     assert_eq!(kind_of(&f, Var::Local(0)), object(OTHER));
 
-    // Of two types neither of which derives from the other, the value is of neither.
+    // Of two types neither of which derives from the other, the value is of neither: a reference
+    // and no more, as the virtual call made on it says.
     project.types.insert(TypeKey(0xBB), TypeFacts::default());
     let f = typed(stmts(), &project);
-    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Unknown);
+    assert_eq!(kind_of(&f, Var::Local(0)), Kind::Pointer);
 }
 
 #[test]

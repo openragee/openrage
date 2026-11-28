@@ -404,9 +404,18 @@ pub(super) fn intrinsic_yields(name: &str) -> (Lat, Option<Kind>) {
 
 /// The cells a native's parameter or result of this type takes, by the lists' spelling of the type.
 pub(super) fn native_cells(ty: &str) -> usize {
+    match listed_wide(ty) {
+        Some(_) => 2,
+        None => 1,
+    }
+}
+
+/// The kind of a value of a type a natives list spells as two cells; every other type it spells takes one.
+pub(crate) fn listed_wide(ty: &str) -> Option<Kind> {
     match ty {
-        "Entity" | "Ped" | "Vehicle" | "Object" | "Pickup" | "Vector3" => 2,
-        _ => 1,
+        "Vector3" => Some(Kind::Vector),
+        "Entity" | "Ped" | "Vehicle" | "Object" | "Pickup" => Some(Kind::Handle),
+        _ => None,
     }
 }
 
@@ -425,11 +434,7 @@ pub(super) fn native_lat(ty: &str) -> Lat {
 
 /// What a two-cell type of a natives list is.
 pub(super) fn native_wide(ty: &str) -> Kind {
-    match ty {
-        "Vector3" => Kind::Vector,
-        "Entity" | "Ped" | "Vehicle" | "Object" | "Pickup" => Kind::Handle,
-        _ => Kind::Unknown,
-    }
+    listed_wide(ty).unwrap_or(Kind::Unknown)
 }
 
 /// What a list says each argument cell of a native is, where its parameters take the cells the call passes.

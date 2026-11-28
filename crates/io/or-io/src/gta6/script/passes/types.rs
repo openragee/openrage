@@ -20,6 +20,7 @@ mod kinds;
 #[path = "types_objects.rs"]
 mod objects;
 
+pub(crate) use kinds::listed_wide;
 use kinds::Lat;
 
 /// Expressions nested deeper than this leave their function as the pass found it.
@@ -86,6 +87,8 @@ struct Around<'a> {
     signs: bool,
     /// `interproc` is on: a call's cell is widened as the integer its callee's signature names.
     interproc: bool,
+    /// `runtime` is on: a call of a runtime member every public overload of which answers `bool` is a truth.
+    runtime: bool,
     /// What the function's own signature says the one cell it returns is.
     returned: Lat,
     /// The parameter cells every call of the function passes an `int` widened by its sign, where `interproc` is on.
@@ -101,6 +104,7 @@ impl<'a> Around<'a> {
             kinds: cx.options.on(Pass::Kinds),
             signs: cx.options.on(Pass::Signs),
             interproc: cx.options.on(Pass::Interproc),
+            runtime: cx.options.on(Pass::Runtime),
             returned: Lat::None,
             widened: None,
         };
@@ -146,6 +150,19 @@ impl<'a> Around<'a> {
             }
             None => yields(self.names, callee, returns),
         }
+    }
+
+    /// A truth for a call of the runtime's member every public overload of which answers `bool`, where `kinds` and `runtime` are on.
+    // ⚠ The argument count picks the overloads, so this is asked at the call and not of `yields`.
+    fn runtime_truth(&self, callee: &Callee, args: &[Expr], returns: Option<u32>) -> Option<Lat> {
+        let Callee::Builtin { path, .. } = callee else {
+            return None;
+        };
+        let truth = self.kinds
+            && self.runtime
+            && returns == Some(1)
+            && super::sugar_runtime::truth(path, args.len());
+        truth.then_some(Lat::Is(Kind::Bool))
     }
 
     /// How a call takes each of its arguments.
@@ -269,6 +286,8 @@ struct Facts {
     wanted: HashMap<Var, Lat>,
     /// The one script type each variable a virtual call is made on is called as, a conflict where calls name two.
     received: HashMap<Var, Lat>,
+    /// The variables a virtual call is made on, whatever the type of its slot: each holds a reference there.
+    dereferenced: HashSet<Var>,
     /// An expression was nested too deep to read.
     deep: bool,
 }
@@ -625,6 +644,21 @@ fn under_cast(to: Scalar, read: &Read) -> Read {
         // value over, and no word on its sign.
         Read::Cell | Read::Hint(_) if to == Scalar::U32 => Read::As(to, true),
         _ => Read::As(to, false),
+    }
+}
+
+/// How a cast to 64 bits, read as `read` by what names no number, takes what it casts: as the whole cell, or as the reference the hint names.
+// ⚠ A cast to 64 bits leaves a cell as it is, so the width an instruction is written at says
+// nothing of what the cell holds: a reference stored to a global goes through one.
+fn whole(to: Scalar, read: &Read) -> Option<Read> {
+    if !matches!(to, Scalar::I64 | Scalar::U64) {
+        return None;
+    }
+    match read {
+        Read::Cell | Read::Truth => Some(Read::Cell),
+        Read::Hint(Lat::Is(kind)) if kinds::reference(kind) => Some(read.clone()),
+        Read::Hint(_) => Some(Read::Cell),
+        _ => None,
     }
 }
 
@@ -1071,7 +1105,10 @@ impl Scan<'_> {
                     (Read::Truth, Scalar::I32 | Scalar::U32) if self.around.signs => {
                         Read::As(*to, true)
                     }
-                    _ => under_cast(*to, read),
+                    _ => match whole(*to, read).filter(|_| self.around.kinds) {
+                        Some(taken) => taken,
+                        None => under_cast(*to, read),
+                    },
                 };
                 self.expr(inner, &under, d);
             }
@@ -1105,6 +1142,14 @@ impl Scan<'_> {
             Expr::Call { callee, args, .. } => {
                 if let Some((var, kind)) = self.around.receiver_of(callee, args, self.wide) {
                     self.receive(var, kind);
+                }
+                // The slot is read from the receiver's own object.
+                if let (true, Callee::Virtual { .. }, Some(Expr::Var(var))) =
+                    (self.around.kinds, callee, args.first())
+                {
+                    if !self.untyped(*var) {
+                        self.facts.dereferenced.insert(*var);
+                    }
                 }
                 let reads = self.around.arg_reads(callee, args, self.wide);
                 for (arg, read) in args.iter().zip(&reads) {
@@ -1378,7 +1423,7 @@ impl Typing<'_> {
                 }
                 let given = match steps(target, value) {
                     true => Lat::Int32,
-                    false => self.evidence(value, 0),
+                    false => self.given(value),
                 };
                 let known = self.lat(target);
                 let joined = self.around.join(&known, &given);
@@ -1392,6 +1437,22 @@ impl Typing<'_> {
             }
         }
         false
+    }
+
+    /// What an assignment of `value` says of its target; where `kinds` is on, a global's whole cell loaded says what the project proves the global is.
+    // ⚠ A global is loaded under a cast to the width its instruction is written at, which says
+    // nothing of what the cell holds.
+    fn given(&self, value: &Expr) -> Lat {
+        match value {
+            Expr::Cast {
+                to: Scalar::I64 | Scalar::U64,
+                e,
+            } if self.around.kinds => match &**e {
+                Expr::Var(global @ Var::Global { .. }) => self.lat(*global),
+                _ => self.evidence(value, 0),
+            },
+            _ => self.evidence(value, 0),
+        }
     }
 
     /// Gives a variable nothing types the kind of what it is copied into, where that is one kind; `false` when the joins that follow run out of rounds.
@@ -1434,11 +1495,27 @@ impl Typing<'_> {
             }
             self.defaults(cfg);
             self.flags(cfg);
+            if self.dereferenced() && !self.flow(cfg) {
+                return false;
+            }
         }
         if around.signs && self.signs(cfg) {
             return self.flow(cfg);
         }
         true
+    }
+
+    /// Makes "a reference" of each variable a virtual call is made on where nothing else says what it is; `true` when any took it.
+    // ⚠ After every other rule: a reference and no more says less than any of them would.
+    fn dereferenced(&mut self) -> bool {
+        let mut changed = false;
+        for var in std::mem::take(&mut self.facts.dereferenced) {
+            if self.typed(var) && self.lat(var) == Lat::None {
+                self.known.insert(var, Lat::Is(Kind::Pointer));
+                changed = true;
+            }
+        }
+        changed
     }
 
     /// Gives a variable that is some reference and no more the one type every signature takes it as; `true` when any took one.
@@ -1739,6 +1816,12 @@ impl Typing<'_> {
     /// Whether only an assignment that names the variable writes it.
     fn sealed(&self, var: Var) -> bool {
         match var {
+            // Where `kinds` is on, an address only ever used to read or write its own cell reaches
+            // no other local: only one handed on or offset does.
+            Var::Local(n) if self.around.kinds => {
+                let reached = self.facts.locals_escape.is_some_and(|low| n >= low);
+                !reached && !self.facts.addressed.contains(&var)
+            }
             Var::Local(n) => self.facts.lowest_local.is_none_or(|lowest| n < lowest),
             Var::Value { .. } | Var::Stack { .. } => !self.facts.addressed.contains(&var),
             // A caller sets a parameter: only where the project proves every caller widens it, and
@@ -1820,6 +1903,7 @@ impl Typing<'_> {
             } => match self
                 .element(callee, args)
                 .or_else(|| self.around.cast_yields(callee))
+                .or_else(|| self.around.runtime_truth(callee, args, *returns))
             {
                 Some(lat) => lat,
                 None => self.around.yields(callee, *returns).0,

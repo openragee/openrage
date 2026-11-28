@@ -591,3 +591,20 @@ public static class Program_51525354
     let whole = of_listing(&listing(0x5152_5354)).expect("the listing reads");
     assert_eq!(whole.unseen, BTreeSet::from([main]));
 }
+
+#[test]
+fn a_body_that_opens_as_a_program_and_does_not_read_is_noted() {
+    let zeros = [0_u8; 8];
+    assert!(tables([&zeros[..]]).unread);
+    assert!(!tables([&b"no program at all"[..]]).unread);
+    assert!(!tables(Vec::<&[u8]>::new()).unread);
+}
+
+#[test]
+fn a_listing_proves_nothing_unreached_of_its_program_or_unnamed_of_what_it_imports() {
+    let part = of_listing(&listing(0x1122_3344)).expect("the listing reads");
+    let merged = merge(vec![part]);
+    assert!(merged.reached_from_outside(FunctionKey::new(0x1122_3344, 0x400)));
+    assert!(merged.reached_from_outside(FunctionKey::new(0x0A0B_0C0D, 0x10)));
+    assert!(merged.outside.closed.is_empty());
+}

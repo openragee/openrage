@@ -12,7 +12,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    layouts, reach, signatures, types, FieldFacts, ImportInfo, ProgramInfo, Project, ProjectError,
+    layouts, outside, reach, signatures, types, FieldFacts, ImportInfo, ProgramInfo, Project,
+    ProjectError,
 };
 use crate::gta6::script::ir::{
     Callee, Expr, FunctionKey, Kind, Scalar, Stmt, StoreKind, TypeKey, Var,
@@ -79,6 +80,7 @@ pub fn of_listing(text: &str) -> Result<Project, ProjectError> {
         .iter()
         .map(|import| import.program)
         .collect();
+    outside::listed(&mut project, &imported);
     for read in listing.functions() {
         let read = read?;
         // The engine runs these by the header's word, with what it will.
@@ -90,11 +92,13 @@ pub fn of_listing(text: &str) -> Result<Project, ProjectError> {
         // ⚠ Its code still runs and calls what it calls: nothing says which.
         if read.head.incomplete.is_some() {
             signatures::unseen(&mut project, listing.program, &imported, None);
+            outside::unread(&mut project, listing.program, &imported);
             continue;
         }
         let function = read.head.name.clone();
         let lowered = cfg::lower(read);
         let mut f = lowered.map_err(|source| ProjectError::Lower { function, source })?;
+        outside::of_listed(&mut project, &f);
         accessed(&mut project, &f);
         // ⚠ What a parameter's address reaches is read off the code as it is: a pass may leave out
         // a read no later code takes, which the code still makes.
@@ -117,6 +121,8 @@ pub struct Tables {
     project: Project,
     /// The offsets of each program's functions that another program calls or refers to.
     called: BTreeMap<u32, BTreeSet<u32>>,
+    /// Whether a body that opens as a program does, with zero bytes, did not read as one.
+    unread: bool,
 }
 
 impl Tables {
@@ -135,9 +141,15 @@ pub fn tables<'a>(bodies: impl IntoIterator<Item = &'a [u8]> + Clone) -> Tables 
     let bodies: Vec<&[u8]> = bodies.into_iter().collect();
     let read = |bytes: &[u8]| Program::read(bytes).ok();
     let called = par::map(bodies.clone(), |bytes| {
-        read(bytes).map(|p| p.called_elsewhere())
+        let shaped = bytes.starts_with(&[0; 8]);
+        (shaped, read(bytes).map(|p| p.called_elsewhere()))
     });
-    for (to, at) in called.into_iter().flatten().flatten() {
+    // ⚠ What such a body's code names is not known, of any program.
+    tables.unread = called
+        .iter()
+        .any(|(shaped, read)| *shaped && read.is_none());
+    let called = called.into_iter().filter_map(|(_, read)| read);
+    for (to, at) in called.flatten() {
         tables.called.entry(to).or_default().insert(at);
     }
     // Each program is read again, so that the code of a thread's one is held at a time.
@@ -197,6 +209,8 @@ pub fn typed_part(
 /// Settles the fields of `project` again with what the parts [`typed_part`] read show.
 pub fn refine(project: &mut Project, parts: Vec<Project>) {
     layouts::refine(project, parts);
+    // A field settled again may hold a type another program now reads it as.
+    outside::close(project);
 }
 
 /// The part of a project one compiled program gives, read alone: a function that names another program's type or function gives nothing.
@@ -214,6 +228,7 @@ pub fn of_program_in(bytes: &[u8], tables: &Tables) -> Result<Project, ProjectEr
     layouts::of_program(&mut project, &program);
     signatures::of_program(&mut project, &program);
     passes::classes::of_program(&mut project, &program);
+    outside::of_program(&mut project, &program, &tables.project, tables.unread);
 
     let names = Names::default();
     let cx = Context::baseline(&names);
@@ -281,8 +296,10 @@ fn told(
         };
         signatures::unseen(project, program.program, &imported, functions);
         signatures::unseen_calls(project, calls);
+        outside::of_function(project, program, &tables.project, row, false);
         return;
     };
+    outside::of_function(project, program, &tables.project, row, true);
     accessed(project, &before);
     // ⚠ What a parameter's address reaches is read off the code as it is: a pass may leave out
     // a read no later code takes, which the code still makes.
@@ -299,7 +316,13 @@ pub fn unread_part(bytes: &[u8]) -> Option<Project> {
         .map(|import| import.program)
         .collect();
     signatures::unseen(&mut project, program.program, &imported, None);
+    outside::unread(&mut project, program.program, &imported);
     Some(project)
+}
+
+/// Notes in a settled project that some program of its install was not read at all, not even its tables: nothing is then proved unreached from outside or unnamed there.
+pub fn left_unread(project: &mut Project) {
+    project.outside = outside::Outside::default();
 }
 
 /// What the instructions of one function name: functions called or referred to, slots called through or taken, and natives called.
@@ -380,6 +403,7 @@ pub fn merge(parts: Vec<Project>) -> Project {
         reach::absorb(&mut project, &mut part);
         passes::classes::absorb(&mut project, &mut part);
         absorb_cells(&mut project, &mut part);
+        outside::absorb(&mut project, &mut part);
         // What a topic left in the part's rows is kept where the project's rows say nothing yet.
         for (program, info) in part.programs {
             let row = project.programs.entry(program).or_default();
@@ -397,6 +421,8 @@ pub fn merge(parts: Vec<Project>) -> Project {
     types::settle_implemented(&mut project);
     passes::classes::settle(&mut project);
     settle_cells(&mut project);
+    // ⚠ Last: what reaches a type outside its home is read off every table as it is settled.
+    outside::settle(&mut project);
     project
 }
 
@@ -551,6 +577,8 @@ pub fn view(project: &Project, program: u32) -> Project {
         unseen: BTreeSet::new(),
         unseen_slots: BTreeSet::new(),
         blind_natives: false,
+        outside: project.outside.cut(|of| programs.contains(&of)),
+        naming: outside::Naming::default(),
     }
 }
 
@@ -992,7 +1020,11 @@ pub fn load(bytes: &[u8]) -> Result<Project, ProjectError> {
         ProjectError::Sidecar(why)
     };
     match serde_json::from_slice::<Read>(bytes) {
-        Ok(read) if read.version == VERSION => Ok(read.project),
+        Ok(read) if read.version == VERSION => {
+            let mut project = read.project;
+            project.outside.tidy();
+            Ok(project)
+        }
         Ok(read) => Err(other(read.version)),
         // A file of another version is refused for its version, not for the shape of its tables.
         Err(unread) => Err(match serde_json::from_slice::<Stated>(bytes) {

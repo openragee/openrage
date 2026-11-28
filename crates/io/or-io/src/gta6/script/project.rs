@@ -10,6 +10,7 @@
 
 pub mod index;
 pub mod layouts;
+pub mod outside;
 pub mod reach;
 pub mod signatures;
 pub mod types;
@@ -213,6 +214,12 @@ pub struct Project {
     /// Whether code no part read may call a native that no table says; false in a settled project.
     #[serde(skip)]
     pub blind_natives: bool,
+    /// Which functions and types of a program something outside it names; empty, and proving nothing, in a project no merge settled.
+    #[serde(default, skip_serializing_if = "outside::Outside::is_empty")]
+    pub outside: outside::Outside,
+    /// What the parts show of what is named across programs until every program is in; empty in a settled project.
+    #[serde(skip)]
+    pub naming: outside::Naming,
 }
 
 static EMPTY: LazyLock<Project> = LazyLock::new(Project::default);
@@ -315,6 +322,18 @@ impl Project {
             }
         }
         false
+    }
+
+    /// Whether code of another program, the engine or code no part read may call `key`, refer to it or reach it through a slot; true where nothing proves otherwise.
+    // ⚠ The runtime's own calls, a builder's of the step of the state machine it runs among them,
+    // name no function and are no way in; nor is a reference the function's own program hands on.
+    pub fn reached_from_outside(&self, key: FunctionKey) -> bool {
+        self.outside.function_reached(key)
+    }
+
+    /// Whether anything outside the one program that defines `ty` may name it, in code, in a table or in a kind the project states; true where nothing proves otherwise.
+    pub fn type_named_outside(&self, ty: TypeKey) -> bool {
+        self.outside.type_named(ty)
     }
 
     /// The global of `program` at byte `offset`, or its static there, as every access of it in the project agrees it is.

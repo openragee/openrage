@@ -575,10 +575,22 @@ fn a_closure_class_stays_where_a_field_may_hold_other_than_its_variable() {
     let unit = unit_of(vec![maker(Vec::new(), Vec::new()), typed], lambda());
     assert!(!hides(&unit));
 
-    // ⚠ A program that imports this one may name it, and so may one the project does not hold;
-    // and `lambdas` off writes the class.
+    // ⚠ A program the project does not hold may name it; and `lambdas` off writes the class.
+    // In a program another imports, it goes only where the project proves nothing outside names
+    // the class or reaches its lambda.
     let unit = unit_of(vec![maker(Vec::new(), Vec::new())], lambda());
-    assert!(!hidden_in(&unit, &installed(&[ELSEWHERE]), on).hides(CLOSURE));
+    let imported = installed(&[ELSEWHERE]);
+    assert!(!hidden_in(&unit, &imported, on).hides(CLOSURE));
+    let mut proved = imported.clone();
+    proved.outside.closed = vec![PROGRAM];
+    proved.outside.unnamed = vec![(CLOSURE, PROGRAM)];
+    assert!(hidden_in(&unit, &proved, on).hides(CLOSURE));
+    let mut named = proved.clone();
+    named.outside.unnamed.clear();
+    assert!(!hidden_in(&unit, &named, on).hides(CLOSURE));
+    let mut reached = proved.clone();
+    reached.outside.reached.insert(PROGRAM, vec![0x200]);
+    assert!(!hidden_in(&unit, &reached, on).hides(CLOSURE));
     assert!(!hidden_in(&unit, Project::empty(), on).hides(CLOSURE));
     let off = on.without(Pass::Lambdas);
     assert!(!hidden_in(&unit, &project, off).hides(CLOSURE));
@@ -812,7 +824,11 @@ fn a_closure_class_stays_where_its_object_or_a_field_reaches_further_than_its_va
     let mut unit = Unit::flat(PROGRAM, Vec::new(), vec![computed()]);
     unit.classes.push(closure_with(lambda_body(), vec![four]));
     assert!(!hides(&unit));
-    // ⚠ A variable of the binder's own already goes by the field's name.
+}
+
+#[test]
+fn a_field_whose_name_a_variable_of_the_binder_has_reads_as_a_variable_written_by_its_slot() {
+    let project = installed(&[]);
     let mut taken = computed();
     let info = VarInfo {
         name: Some("f_8".to_owned()),
@@ -820,7 +836,14 @@ fn a_closure_class_stays_where_its_object_or_a_field_reaches_further_than_its_va
     };
     taken.head.vars.insert(Var::Local(3), info);
     taken.body.push(eval(local_call(0x93, vec![local(3)])));
-    assert!(!hides(&unit_with_field(vec![taken], lambda_body())));
+    let unit = unit_with_field(vec![taken], lambda_body());
+    assert!(hidden_in(&unit, &project, Options::default()).hides(CLOSURE));
+    let text = written(&unit, &project, 0x40, None, true);
+    // The first slot no variable of the binder takes.
+    assert!(text.contains("local_4 = func_000092();"), "{text}");
+    assert!(text.contains("=> func_000080(local_4, p1);"), "{text}");
+    assert!(text.contains("func_000093(f_8);"), "{text}");
+    assert!(!text.contains("type_00000000000000CD"), "{text}");
 }
 
 #[test]
@@ -937,4 +960,87 @@ fn a_local_given_to_a_closure_object_is_read_for_its_field_only_where_assigned_b
     let text = written(&unit, &project, 0x40, None, true);
     assert!(text.contains("f_8 = local_3;"), "{text}");
     assert!(text.contains("=> func_000080(f_8, p1);"), "{text}");
+}
+
+/// `local_2 = &local_0.f_8;`, the address of the closure object's field at byte 8.
+fn pointed() -> tree::Stmt {
+    simple(Stmt::Assign {
+        target: Var::Local(2),
+        value: Expr::ByteOffset {
+            addr: Box::new(local(0)),
+            offset: Box::new(Expr::Const(Const::i32(8))),
+        },
+    })
+}
+
+/// The whole cell `local_2` points at.
+fn through_pointer() -> Expr {
+    field(local(2), 0)
+}
+
+#[test]
+fn a_field_read_and_written_only_through_a_variable_of_its_address_is_a_variable_of_its_own() {
+    let project = installed(&[]);
+    let store = simple(Stmt::Store {
+        kind: StoreKind::U64,
+        addr: local(2),
+        offset: 0,
+        value: param(1),
+    });
+    let read = eval(local_call(0x93, vec![through_pointer()]));
+    let binder = maker(Vec::new(), vec![pointed(), read, store]);
+    let unit = unit_with_field(vec![binder], lambda_body());
+    assert!(hidden_in(&unit, &project, Options::default()).hides(CLOSURE));
+    let text = written(&unit, &project, 0x40, None, true);
+    let given = text.find("f_8 = p2;");
+    let bound = text.find("=> func_000080(f_8, p1);");
+    let through = text.find("func_000093(f_8);");
+    let stored = text.find("f_8 = p1;");
+    assert!(
+        given.is_some() && bound.is_some() && through.is_some() && stored.is_some(),
+        "{text}"
+    );
+    assert!(
+        given < bound && bound < through && through < stored,
+        "{text}"
+    );
+    assert!(!text.contains("local_2"), "{text}");
+    assert!(!text.contains("type_00000000000000CD"), "{text}");
+
+    // The way back: with nothing hidden the address is taken and read through.
+    let before = written(&unit, &project, 0x40, None, false);
+    assert!(before.contains("local_2"), "{before}");
+    assert!(before.contains("type_00000000000000CD"), "{before}");
+}
+
+#[test]
+fn a_field_whose_address_reaches_further_than_its_cell_keeps_its_class() {
+    let project = installed(&[]);
+    let hides = |after: Vec<tree::Stmt>| {
+        let unit = unit_with_field(vec![maker(Vec::new(), after)], lambda_body());
+        hidden_in(&unit, &project, Options::default()).hides(CLOSURE)
+    };
+    let read = eval(local_call(0x93, vec![through_pointer()]));
+    assert!(hides(vec![pointed(), read.clone()]));
+    // ⚠ The address handed on, which the callee may read past the cell or keep.
+    assert!(!hides(vec![
+        pointed(),
+        eval(local_call(0x93, vec![local(2)]))
+    ]));
+    // ⚠ The cell after it read through the address.
+    let past = eval(local_call(0x93, vec![field(local(2), 8)]));
+    assert!(!hides(vec![pointed(), past]));
+    // ⚠ The variable read before it is given the address.
+    assert!(!hides(vec![read.clone(), pointed()]));
+    // ⚠ Given the address twice.
+    assert!(!hides(vec![pointed(), read.clone(), pointed()]));
+    // ⚠ The address of a parameter, which reaches every cell of the frame from it on.
+    let below = eval(local_call(
+        0x71,
+        vec![Expr::AddrOf {
+            var: Var::Param(1),
+            cell: 0,
+        }],
+    ));
+    assert!(!hides(vec![pointed(), read, below]));
 }

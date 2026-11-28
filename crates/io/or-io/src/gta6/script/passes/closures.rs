@@ -12,7 +12,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::gta6::script::class::{Class, ClassKind, Method, Role, Unit};
 use crate::gta6::script::ir::{self, BinOp, Callee, Expr, ExprSugar, Returns, Scalar, UnOp, Var};
+use crate::gta6::script::print;
 use crate::gta6::script::tree::{self, Group, Stmt, Sugar};
 use crate::gta6::script::{Context, Pass, Stats};
 
@@ -155,7 +157,7 @@ pub fn sole(functions: &[tree::Function]) -> BTreeSet<u32> {
         tree::each_expr(&f.body, &mut |top| {
             top.walk(&mut |e| match e {
                 Expr::FunctionRef { program: of, at } if *of == program => {
-                    *named.entry(*at).or_default() += 1;
+                    *named.entry(*at & ir::FUNCTION_OFFSET).or_default() += 1;
                 }
                 Expr::Call {
                     callee: Callee::Local { at, .. },
@@ -1214,6 +1216,197 @@ fn kept_whole(cache: Var, made_in: &[Stmt], kept_in: &[Stmt], at: usize, uses: &
     let private = join == Some(delegate)
         || uses.mentions.get(&delegate) == Uses::of(made_in).mentions.get(&delegate);
     frame && private
+}
+
+/// Gives the variable of a lambda's own that goes by the name of the object its binder binds it to the name followed by the lambda's offset, where that name alone keeps the body from being written where it is bound.
+// ⚠ Written in place a body reads its object by the binder's variable, and one of its own of that
+// name would hide it. Only a variable nothing named is renamed, and only where the body is then
+// written in place: every writer of the unit, the read-back's among them, reads it renamed.
+pub(crate) fn renamed_in_place(unit: &mut Unit, cx: &Context<'_>) {
+    if !(cx.options.on(Pass::Lambdas) && cx.options.on(Pass::Delegates)) {
+        return;
+    }
+    let renames = renames(unit, cx);
+    if renames.is_empty() {
+        return;
+    }
+    // An explicit stack: classes nest as deep as the closures they were made for.
+    let mut open: Vec<&mut Class> = unit.classes.iter_mut().collect();
+    while let Some(class) = open.pop() {
+        if class.kind == ClassKind::Closure {
+            for method in class.methods.iter_mut() {
+                let head = &mut method.function.head;
+                let Some((var, name)) = renames.get(&head.at) else {
+                    continue;
+                };
+                if let Some(info) = head.vars.get_mut(var) {
+                    info.name = Some(name.clone());
+                }
+            }
+        }
+        open.extend(class.nested.iter_mut());
+    }
+}
+
+/// The lambdas of `unit` [`renamed_in_place`] renames a variable of, by offset, with the variable and its name.
+fn renames(unit: &Unit, cx: &Context<'_>) -> BTreeMap<u32, (Var, String)> {
+    let program = unit.program;
+    let mut all: Vec<&Method> = unit.functions.iter().collect();
+    let mut made: Vec<&Method> = Vec::new();
+    let mut open: Vec<&Class> = unit.classes.iter().collect();
+    while let Some(class) = open.pop() {
+        all.extend(&class.methods);
+        if class.kind == ClassKind::Closure {
+            let lambdas = class.methods.iter();
+            made.extend(lambdas.filter(|m| m.role == Role::Lambda && !m.is_async));
+        }
+        open.extend(&class.nested);
+    }
+    let mut found = BTreeMap::new();
+    if made.is_empty() {
+        return found;
+    }
+    // How often the unit names each of its functions, and where a function that is no lambda
+    // binds one to an object.
+    let mut named: BTreeMap<u32, u32> = BTreeMap::new();
+    let mut sites: BTreeMap<u32, Vec<(&tree::Function, Var)>> = BTreeMap::new();
+    for method in all.iter().copied() {
+        let f = &method.function;
+        tree::each_expr(&f.body, &mut |top| {
+            top.walk(&mut |e| match e {
+                Expr::FunctionRef { program: of, at } if *of == program => {
+                    *named.entry(*at & ir::FUNCTION_OFFSET).or_default() += 1;
+                }
+                Expr::Call {
+                    callee: Callee::Local { at, .. },
+                    ..
+                } => *named.entry(*at).or_default() += 1,
+                _ => {}
+            });
+        });
+        if method.role == Role::Lambda {
+            continue;
+        }
+        tree::each_sugar(&f.body, &mut |sugar| {
+            if let Sugar::Group {
+                kind: Group::Delegate,
+                parts,
+            } = sugar
+            {
+                if let Some((object, at)) = bound_to_object(parts, program) {
+                    sites.entry(at).or_default().push((f, object));
+                }
+            }
+        });
+    }
+    for method in made {
+        let body = &method.function;
+        let at = body.head.at;
+        let site = match sites.get(&at).map(Vec::as_slice) {
+            Some([site]) => *site,
+            _ => continue,
+        };
+        if named.get(&at) != Some(&1) || inline(body).is_none() {
+            continue;
+        }
+        if let Some(renamed) = rename(site, body, cx) {
+            found.insert(at, renamed);
+        }
+    }
+    found
+}
+
+/// The variable a delegate `parts` make is bound to, where it is one of the frame, and the offset of the function of `program` bound as a lambda's body.
+fn bound_to_object(parts: &[ir::Stmt], program: u32) -> Option<(Var, u32)> {
+    let [ir::Stmt::Assign { target, value }, ir::Stmt::Eval(call)] = parts else {
+        return None;
+    };
+    if !matches!(bare(value), Expr::NewObject(_)) {
+        return None;
+    }
+    let Expr::Call { args, .. } = bare(call) else {
+        return None;
+    };
+    let [made, held, Expr::Sugar {
+        kind: ExprSugar::Lambda,
+        e: function,
+    }] = args.as_slice()
+    else {
+        return None;
+    };
+    let Expr::FunctionRef { program: of, at } = &**function else {
+        return None;
+    };
+    let (Expr::Var(made), Expr::Var(object)) = (bare(made), bare(held)) else {
+        return None;
+    };
+    let frame = matches!(
+        object,
+        Var::Local(_) | Var::Value { .. } | Var::Stack { .. }
+    );
+    (made == target && *of == program && frame).then_some((*object, *at))
+}
+
+/// The variable of `body`'s own that goes by the name of the object `site` binds it to, with the name it is given, where the body is then written in place there.
+fn rename(
+    site: (&tree::Function, Var),
+    body: &tree::Function,
+    cx: &Context<'_>,
+) -> Option<(Var, String)> {
+    let (binder, object) = site;
+    let text = spoken(&binder.head, object);
+    let own = own_vars(body);
+    let mut clashing = own.iter().filter(|var| spoken(&body.head, **var) == text);
+    let var = *clashing.next()?;
+    if clashing.next().is_some() {
+        return None;
+    }
+    // ⚠ A name a list or a pass gave is the variable's: such a body stays where it is.
+    let info = body.head.vars.get(&var)?;
+    if info.name.is_some() {
+        return None;
+    }
+    let name = format!("{text}_{:06X}", body.head.at);
+    let mut taken: BTreeSet<String> = own.iter().map(|v| spoken(&body.head, *v)).collect();
+    let mut theirs: BTreeSet<Var> = (0..binder.head.params).map(Var::Param).collect();
+    theirs.extend(binder.head.vars.keys().copied());
+    theirs.extend(own_vars(binder));
+    taken.extend(theirs.iter().map(|v| spoken(&binder.head, *v)));
+    taken.insert("this".to_owned());
+    if taken.contains(&name) {
+        return None;
+    }
+    let mut renamed = body.clone();
+    if let Some(info) = renamed.head.vars.get_mut(&var) {
+        info.name = Some(name.clone());
+    }
+    let mut one = print::Lambdas::new();
+    one.insert(body.head.at, &renamed);
+    let sited = print::bound_in_place(binder, &one, cx);
+    sited.contains(&body.head.at).then_some((var, name))
+}
+
+/// The name a variable of a function is written under: the one its head gives it, else its slot's.
+fn spoken(head: &ir::Head, var: Var) -> String {
+    match head.vars.get(&var).and_then(|info| info.name.as_deref()) {
+        Some(name) => name.to_owned(),
+        None => var.to_string(),
+    }
+}
+
+/// The variables a body names of its own: its parameters but the receiver, and every other one it mentions but a global.
+fn own_vars(f: &tree::Function) -> BTreeSet<Var> {
+    let mut own: BTreeSet<Var> = (1..f.head.params).map(Var::Param).collect();
+    tree::each_simple(&f.body, &mut |s| own.extend(s.targets().iter().copied()));
+    tree::each_expr(&f.body, &mut |top| {
+        top.walk(&mut |e| {
+            if let Expr::Var(var) | Expr::AddrOf { var, .. } = e {
+                own.insert(*var);
+            }
+        });
+    });
+    own.retain(|var| *var != Var::Param(0) && !is_global(*var));
+    own
 }
 
 #[cfg(test)]

@@ -2,6 +2,9 @@
 //! of one function that writes them there; the closure classes written nowhere once every lambda
 //! of theirs is; and the method group a delegate of no lambda reads as.
 
+#[path = "print_lambda_through.rs"]
+mod through;
+
 use super::*;
 use crate::gta6::script::class::{Class, ClassKind, Unit};
 use crate::gta6::script::ir::VarInfo;
@@ -96,9 +99,13 @@ impl Hidden {
             && true_csharp(&cx.options)
             && cx.options.on(Pass::Delegates)
             && cx.options.on(Pass::Lambdas);
-        if !on || !unimported(unit.program, cx.project) {
+        if !on || !cx.project.programs.contains_key(&unit.program) {
             return Hidden::default();
         }
+        // ⚠ What another program names of this one it names through an import: in a program one
+        // imports, a class stays where the project's references across programs name it or reach
+        // a member of it.
+        let imported = !unimported(unit.program, cx.project);
         // Every method of the unit, and whether it is written as a member of a class.
         let mut methods: Vec<(&Method, bool)> = unit.functions.iter().map(|m| (m, false)).collect();
         let mut classes: Vec<&Class> = Vec::new();
@@ -116,6 +123,7 @@ impl Hidden {
         every.extend(extra.iter().map(|(at, body)| (*at, *body)));
         let mut keep: BTreeSet<TypeKey> = (classes.iter())
             .filter(|class| candidate(class, &every, cx.project))
+            .filter(|class| !imported || unseen(class, unit.program, cx.project))
             .map(|class| class.key)
             .collect();
         if keep.is_empty() {
@@ -170,6 +178,13 @@ pub(crate) fn unimported(program: u32, project: &Project) -> bool {
     project.programs.contains_key(&program) && !named
 }
 
+/// Whether no other program names `class` or reaches a member of it, as the project's references across programs say.
+fn unseen(class: &Class, program: u32, project: &Project) -> bool {
+    let reached =
+        |m: &Method| project.reached_from_outside(FunctionKey::new(program, m.function.head.at));
+    !project.type_named_outside(class.key) && !class.methods.iter().any(reached)
+}
+
 /// Whether `class` is a closure class whose every member, of none or more, is a lambda `lambdas` writes in place.
 // A class of no member is one whose object holds variables alone: hidden only where the object
 // is read away whole, and bound to no delegate.
@@ -200,7 +215,9 @@ fn renamed<'u>(
         tree::each_expr(&method.function.body, &mut |top| {
             top.walk(&mut |e| match e {
                 Expr::FunctionRef { program: of, at } if *of == program => {
-                    *named.entry(*at).or_default() += 1;
+                    *named
+                        .entry(*at & crate::gta6::script::ir::FUNCTION_OFFSET)
+                        .or_default() += 1;
                 }
                 Expr::Call {
                     callee: Callee::Local { at, .. },
@@ -312,11 +329,16 @@ struct Given {
 struct Facts {
     assigned: BTreeMap<Var, u32>,
     addressed: BTreeSet<Var>,
+    /// How often each variable is assigned, read or has its address taken.
+    mentions: BTreeMap<Var, usize>,
 }
 
 impl Facts {
     fn of(body: &[tree::Stmt]) -> Facts {
-        let mut facts = Facts::default();
+        let mut facts = Facts {
+            mentions: through::mentions(body),
+            ..Facts::default()
+        };
         tree::each_simple(body, &mut |s| {
             for target in s.targets() {
                 *facts.assigned.entry(*target).or_default() += 1;
@@ -501,6 +523,8 @@ struct Captured {
     declared: Vec<(Var, VarInfo)>,
     /// The lambdas bound to the object.
     bound: BTreeSet<u32>,
+    /// The variables that held the address of a field of `hoisted`, written nowhere now.
+    pointers: Vec<Var>,
 }
 
 /// One closure object a binder makes: the variable that holds it, its class, the lambdas bound to it that may be written in place, and what its fields are.
@@ -826,6 +850,7 @@ fn dissolve(
     binder: &Binder<'_>,
     fresh: &mut Fresh,
 ) -> Option<Captured> {
+    let now = through::mentions(&f.body);
     let found = {
         let mut found = None;
         // An explicit stack: a body nests as deep as its listing does.
@@ -836,7 +861,7 @@ fn dissolve(
                 .position(|stmt| allocation(stmt, object.var, object.key).is_some());
             match at {
                 Some(i) => {
-                    found = dissolve_in(list, i, object, binder, fresh);
+                    found = dissolve_in(list, i, object, binder, fresh, &now);
                     break;
                 }
                 None => {
@@ -849,7 +874,8 @@ fn dissolve(
         found
     };
     let captured = found?;
-    if mentioned(&f.body, object.var) {
+    let pointed = captured.pointers.iter().any(|p| mentioned(&f.body, *p));
+    if mentioned(&f.body, object.var) || pointed {
         return None;
     }
     for (var, info) in &captured.declared {
@@ -872,6 +898,7 @@ fn dissolve_in(
     object: &Object<'_>,
     binder: &Binder<'_>,
     fresh: &mut Fresh,
+    now: &BTreeMap<Var, usize>,
 ) -> Option<Captured> {
     let (var, plan) = (object.var, object.plan);
     let init: Vec<(u32, Expr)> = allocation(list.get(i)?, var, object.key)?
@@ -919,10 +946,17 @@ fn dissolve_in(
             givers.push((offset, given, j));
         }
     }
+    // ⚠ A variable given to a field may be read as that field: it must stay as it is.
+    let mut pointing = through::pointers(list, after, var, plan, binder, now);
+    pointing.retain(|pointer, _| givers.iter().all(|(_, given, _)| given != pointer));
     let mut held: BTreeMap<u32, Var> = BTreeMap::new();
     // The statements of the run that give a field its variable, which go.
     let mut gone: Vec<usize> = Vec::new();
     for (offset, given, at) in givers {
+        // A field written through its address is a variable of its own.
+        if pointing.values().any(|field| *field == offset) {
+            continue;
+        }
         let once = stores.get(&offset) == Some(&1);
         let free = !plan.stored.contains(&offset) && !plan.reserved.contains(&binder.spoken(given));
         if once && free && binder.steady(given, list.get(..at).unwrap_or_default()) {
@@ -934,25 +968,35 @@ fn dissolve_in(
     }
     let mut hoisted: BTreeMap<u32, Var> = BTreeMap::new();
     let mut declared: Vec<(Var, VarInfo)> = Vec::new();
-    for offset in stores.keys().chain(&loaded) {
+    for offset in stores.keys().chain(&loaded).chain(pointing.values()) {
         if held.contains_key(offset) || hoisted.contains_key(offset) {
             continue;
         }
-        let (kind, name) = plan.cells.get(offset)?;
-        if plan.reserved.contains(name) || !fresh.taken.insert(name.clone()) {
+        let (kind, listed) = plan.cells.get(offset)?;
+        let local = fresh.local()?;
+        // A name a variable already goes by, such as the same field of another object the binder
+        // makes: the variable is written by its slot.
+        let name = match plan.reserved.contains(listed) || fresh.taken.contains(listed) {
+            true => None,
+            false => Some(listed.clone()),
+        };
+        let spoken = name.clone().unwrap_or_else(|| local.to_string());
+        if plan.reserved.contains(&spoken) || !fresh.taken.insert(spoken) {
             return None;
         }
-        let local = fresh.local()?;
         hoisted.insert(*offset, local);
         let info = VarInfo {
             kind: kind.clone(),
-            name: Some(name.clone()),
+            name,
             single: true,
             ..VarInfo::new(Width::Cell)
         };
         declared.push((local, info));
     }
     held.extend(hoisted.iter().map(|(offset, local)| (*offset, *local)));
+    let deref: BTreeMap<Var, Var> = (pointing.iter())
+        .filter_map(|(pointer, field)| hoisted.get(field).map(|local| (*pointer, *local)))
+        .collect();
     let program = binder.method.function.head.program;
     let values: BTreeSet<Var> = held.values().copied().collect();
     let mut bound = BTreeSet::new();
@@ -963,13 +1007,17 @@ fn dissolve_in(
         let mut work: Vec<&mut tree::Stmt> = vec![top];
         while let Some(stmt) = work.pop() {
             assign_fields(stmt, var, &hoisted);
+            through::assign_through(stmt, &deref);
             if let Some(at) = unbound(stmt, var, &object.allowed, program) {
                 bound.insert(at);
                 if first_bind.is_none() {
                     first_bind = Some(j);
                 }
             }
-            tree::own_exprs_mut(stmt, &mut |e| read_fields(e, var, &held, &values));
+            tree::own_exprs_mut(stmt, &mut |e| {
+                through::read_through(e, &deref);
+                read_fields(e, var, &held, &values);
+            });
             for nested in tree::nested_mut(stmt) {
                 work.extend(nested);
             }
@@ -1009,7 +1057,8 @@ fn dissolve_in(
             }));
         }
     }
-    let tail = list.split_off(after);
+    let mut tail = list.split_off(after);
+    through::unpointed(&mut tail, var, &pointing);
     list.truncate(i);
     list.extend(made);
     list.extend(tail);
@@ -1018,6 +1067,7 @@ fn dissolve_in(
         hoisted: hoisted.keys().copied().collect(),
         declared,
         bound,
+        pointers: pointing.keys().copied().collect(),
     })
 }
 
@@ -1078,44 +1128,9 @@ fn assign_fields(stmt: &mut tree::Stmt, object: Var, hoisted: &BTreeMap<u32, Var
     if hoisted.is_empty() {
         return;
     }
-    let assign = |s: &mut Stmt| {
-        let target = field_store(s, object).and_then(|(offset, _)| hoisted.get(&offset).copied());
-        let Some(target) = target else {
-            return;
-        };
-        let old = std::mem::replace(s, Stmt::Eval(Expr::GuidEmpty));
-        *s = match old {
-            Stmt::Store { value, .. } => Stmt::Assign { target, value },
-            other => other,
-        };
-    };
-    match stmt {
-        tree::Stmt::Simple(s) => assign(s),
-        tree::Stmt::For { init, step, .. } => {
-            for s in [init, step].into_iter().flatten() {
-                assign(s);
-            }
-        }
-        tree::Stmt::Sugar(sugar) => {
-            for s in sugar.parts_mut().simples {
-                assign(s);
-            }
-        }
-        _ => {}
-    }
-    let lone = match stmt {
-        tree::Stmt::Sugar(sugar) => match &mut **sugar {
-            tree::Sugar::Group {
-                kind: tree::Group::Field { .. },
-                parts,
-            } if matches!(parts.as_slice(), [Stmt::Assign { .. }]) => parts.pop(),
-            _ => None,
-        },
-        _ => None,
-    };
-    if let Some(s) = lone {
-        *stmt = tree::Stmt::Simple(s);
-    }
+    let target_of =
+        |s: &Stmt| field_store(s, object).and_then(|(offset, _)| hoisted.get(&offset).copied());
+    through::assign_where(stmt, &target_of);
 }
 
 /// Binds the delegate `stmt` makes to nothing where it is bound to `object` and to a lambda of `allowed`, and says which lambda.

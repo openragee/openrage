@@ -1,5 +1,6 @@
 use super::*;
 use crate::gta6::script::ir::{Const, Head, Returns, StoreKind, VmType};
+use crate::gta6::script::ir::{TypeKey, VarInfo, Width};
 use crate::gta6::script::{Names, Options, Project};
 
 const PROGRAM: u32 = 0x1122_3344;
@@ -1302,4 +1303,133 @@ fn a_kept_delegate_is_written_as_the_cache_given_it_where_it_holds_none() {
     let lowered = written(kept_form(CACHE, 0x400), &[Pass::Lambdas]);
     assert!(lowered.contains("if ("), "{lowered}");
     assert!(!lowered.contains("??="), "{lowered}");
+}
+
+/// `function` at `at` of two parameters with `body`.
+fn function_at(at: u32, body: Vec<Stmt>) -> tree::Function {
+    tree::Function {
+        head: Head {
+            at,
+            name: format!("func_{at:06X}"),
+            ..head()
+        },
+        body,
+    }
+}
+
+/// A unit of one function, at 0x40, that makes a closure object in `local_0` and binds the lambda at 0x300 to it `times` times, and of the closure class of that lambda, which keeps a field of its object in a `local_0` of its own, `named` where given.
+fn renaming_unit(times: usize, named: Option<&str>) -> Unit {
+    let object = Var::Local(0);
+    let mut body = vec![assign(object, Expr::NewObject(class(GENERATED)))];
+    for _ in 0..times {
+        let lambda = Expr::sugar(ExprSugar::Lambda, function(0x300));
+        body.push(Stmt::Sugar(Box::new(Sugar::Group {
+            kind: Group::Delegate,
+            parts: vec![
+                made_delegate(Var::Local(1)),
+                bind(DELEGATE, Var::Local(1), var(object), lambda),
+            ],
+        })));
+        body.push(eval(call(0x90, vec![var(Var::Local(1))])));
+    }
+    let field = Expr::Load {
+        ty: Scalar::U64,
+        addr: Box::new(var(Var::Param(0))),
+        offset: 8,
+    };
+    let mut lambda = function_at(
+        0x300,
+        vec![
+            assign(Var::Local(0), field),
+            eval(call(0x80, vec![var(Var::Local(0)), var(Var::Param(1))])),
+        ],
+    );
+    let info = VarInfo {
+        name: named.map(str::to_owned),
+        ..VarInfo::new(Width::Cell)
+    };
+    lambda.head.vars.insert(Var::Local(0), info);
+    let mut unit = Unit::flat(PROGRAM, Vec::new(), vec![function_at(0x40, body)]);
+    unit.classes.push(Class {
+        key: TypeKey(0xC1),
+        kind: ClassKind::Closure,
+        base: None,
+        interfaces: Vec::new(),
+        fields: Vec::new(),
+        methods: vec![Method {
+            role: Role::Lambda,
+            is_static: false,
+            ..Method::free(lambda)
+        }],
+        nested: Vec::new(),
+    });
+    unit
+}
+
+/// The name the lambda of a [`renaming_unit`] gives its `local_0`, and whether its binder writes it in place.
+fn renamed_and_sited(unit: &Unit, options: Options) -> (Option<String>, bool) {
+    let names = Names::default();
+    let cx = Context::new(&names, Project::empty(), options);
+    let mut unit = unit.clone();
+    renamed_in_place(&mut unit, &cx);
+    let lambda = &unit.classes[0].methods[0].function;
+    let name = lambda
+        .head
+        .vars
+        .get(&Var::Local(0))
+        .and_then(|info| info.name.clone());
+    let mut bodies = print::Lambdas::new();
+    bodies.insert(0x300, lambda);
+    let sited = print::bound_in_place(&unit.functions[0].function, &bodies, &cx);
+    (name, sited.contains(&0x300))
+}
+
+#[test]
+fn a_lambdas_own_variable_named_as_its_binders_object_is_renamed_where_that_writes_it_in_place() {
+    let on = Options::default();
+    let unit = renaming_unit(1, None);
+    // As read, the lambda's own `local_0` would hide the binder's object: it is not written in place.
+    let names = Names::default();
+    let cx = Context::new(&names, Project::empty(), on);
+    let mut bodies = print::Lambdas::new();
+    bodies.insert(0x300, &unit.classes[0].methods[0].function);
+    let read = print::bound_in_place(&unit.functions[0].function, &bodies, &cx);
+    assert!(read.is_empty());
+    assert_eq!(
+        renamed_and_sited(&unit, on),
+        (Some("local_0_000300".to_owned()), true)
+    );
+
+    // ⚠ A name a list gave is kept, and the body stays where it is; so it does where the lambda
+    // is bound twice, and with `lambdas` or `delegates` off.
+    let listed = renaming_unit(1, Some("zq_Kept"));
+    assert_eq!(
+        renamed_and_sited(&listed, on),
+        (Some("zq_Kept".to_owned()), true)
+    );
+    let clash = renaming_unit(1, Some("local_0"));
+    assert_eq!(
+        renamed_and_sited(&clash, on),
+        (Some("local_0".to_owned()), false)
+    );
+    assert_eq!(
+        renamed_and_sited(&renaming_unit(2, None), on),
+        (None, false)
+    );
+    for off in [Pass::Lambdas, Pass::Delegates] {
+        assert_eq!(renamed_and_sited(&unit, on.without(off)), (None, false));
+    }
+}
+
+#[test]
+fn a_lambdas_variable_is_not_renamed_to_a_name_its_binder_already_has() {
+    let mut unit = renaming_unit(1, None);
+    let taken = VarInfo {
+        name: Some("local_0_000300".to_owned()),
+        ..VarInfo::new(Width::Cell)
+    };
+    let binder = &mut unit.functions[0].function;
+    binder.head.vars.insert(Var::Local(3), taken);
+    binder.body.push(eval(call(0x91, vec![var(Var::Local(3))])));
+    assert_eq!(renamed_and_sited(&unit, Options::default()), (None, false));
 }

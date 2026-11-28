@@ -137,7 +137,9 @@ fn walk(file: &mut File, mount: &Gta6Mount, keys: &GtaViKeys, depth: usize, t: &
         let index = entry.index as usize;
         let script = (mount.archive.entry_extra(index))
             .and_then(|x| x.nested)
-            .is_some_and(|row| row.resource_type == SCRIPT_TYPE);
+            .is_some_and(|row| {
+                or_io::container::rpf::gta6_kinds::kind_code(row.resource_type) == SCRIPT_TYPE
+            });
         let flagged = entry.cipher.map(|c| c.cipher_type) == Some(CONTENT_CIPHER_TYPE);
         if script && flagged {
             let fail =

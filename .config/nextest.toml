@@ -285,6 +285,7 @@ not (
   | binary_id(=or-io::gta6_archive_explorer)
   | binary_id(=or-io::gta6_pairs_rule)
   | binary_id(=or-io::gta6_two_build_census)
+  | binary_id(=or-io::gta6_shader_packs)
   | binary_id(=or-io::gta6_chunk_table)
   | binary_id(=or-io::gta6_compiled_scripts)
   | binary_id(=or-io::gta6_compiled_listing)

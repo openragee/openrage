@@ -61,6 +61,9 @@ pub fn resolve_crypto(game_root: &Path, keys_override: Option<&Path>) -> Resolve
     if game == Game::Rdr2 {
         return resolve_rdr2(exe.as_deref());
     }
+    if game.is_gta_vi() {
+        return resolve_gta6(exe.as_deref());
+    }
     let cache_path = shared_keys_cache_path_for(game);
 
     if let Some(cache_path) = cache_path.as_ref() {
@@ -119,6 +122,21 @@ pub fn resolve_crypto(game_root: &Path, keys_override: Option<&Path>) -> Resolve
     };
 
     extract_and_cache(&exe, cache_path.as_deref())
+}
+
+/// A GTA VI build's keys, which its own executable unlocks, with the names its hashes stand for: the provider its archives open with.
+fn resolve_gta6(exe: Option<&Path>) -> ResolvedCrypto {
+    match crate::gta6_keys::load(None, exe) {
+        Ok(keys) => ResolvedCrypto {
+            provider: Arc::new(or_io::container::rpf::Gta6Context {
+                keys: Arc::new(keys),
+                names: Arc::new(crate::rpf9::load_resolver(None)),
+            }),
+            awc_key: AwcKey::default(),
+            notes: Vec::new(),
+        },
+        Err(e) => ResolvedCrypto::noop(e),
+    }
 }
 
 /// RDR2's cipher: the AES key from its executable unlocks a snapshot of the tables.

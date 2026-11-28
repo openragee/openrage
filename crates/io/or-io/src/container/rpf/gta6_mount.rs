@@ -191,43 +191,33 @@ impl Gta6Mount {
         entry: &Gta6Entry,
         at: u64,
     ) -> Result<Option<Vec<u8>>> {
-        let row = (self.archive.entry_extra(entry.index as usize)).and_then(|extra| extra.nested);
-        let deflated = |row: &super::gta6_archive::Gta6NestedRow| {
-            entry.stored.is_none() && row.resource_type & super::gta6_kinds::TYPE_DEFLATED_BIT != 0
-        };
-        let Some(row) = row.filter(deflated) else {
+        let Some((sections, stored)) = self.deflated_row(entry) else {
             return Ok(None);
         };
-        let sections = u64::from(row.virtual_size & !0xF) + u64::from(row.flags & !0xF);
-        let stored = (row.stored_size()).saturating_sub(super::rpf9_scan::RPF9_SLOT);
         let refused = |why: String| IoError::Invalid {
             what: "an RPF9 entry body".into(),
-            why: format!(
-                "entry {} states raw DEFLATE sections and {why}",
-                entry.index
-            ),
+            why: format!("entry {} {why}", entry.index),
         };
         let end = src.seek(SeekFrom::End(0)).map_err(mount_io)?;
         if at.checked_add(stored).is_none_or(|body_end| body_end > end) {
-            return Err(refused("its stored extent runs past the source".into()));
+            return Err(refused(
+                "has a stored extent that runs past the source".into(),
+            ));
         }
         let body = read_at(src, at, stored as usize)?;
-        let (mut out, mut pos) = (Vec::new(), 0usize);
-        while (out.len() as u64) < sections {
-            let left = sections - out.len() as u64;
-            let stream = body
-                .get(pos..)
-                .and_then(|rest| inflate_one(rest, true, left));
-            let Some((used, bytes)) = stream.filter(|(_, bytes)| !bytes.is_empty()) else {
-                return Err(refused(format!(
-                    "no stream inflates at {pos:#x} of its {stored:#x} stored bytes, {} of {sections} bytes read",
-                    out.len()
-                )));
-            };
-            out.extend_from_slice(&bytes);
-            pos = round16(pos + used);
-        }
-        Ok(Some(out))
+        let (sections, _, _) = walk_deflated(&body, sections).map_err(refused)?;
+        Ok(Some(sections))
+    }
+
+    /// The size of the two sections a 20-byte row states and of its stored bytes after the slot, where its type code states raw DEFLATE; `None` for any other row.
+    fn deflated_row(&self, entry: &Gta6Entry) -> Option<(u64, u64)> {
+        let row =
+            (self.archive.entry_extra(entry.index as usize)).and_then(|extra| extra.nested)?;
+        let deflated =
+            entry.stored.is_none() && row.resource_type & super::gta6_kinds::TYPE_DEFLATED_BIT != 0;
+        let sections = u64::from(row.virtual_size & !0xF) + u64::from(row.flags & !0xF);
+        let stored = (row.stored_size()).saturating_sub(super::rpf9_scan::RPF9_SLOT);
+        deflated.then_some((sections, stored))
     }
 
     /// The body of a 20-byte row whose two sections are stored as they are, read by the length its
@@ -497,6 +487,9 @@ impl Gta6Mount {
         entry: &Gta6Entry,
         real: Option<u64>,
     ) -> std::result::Result<(Vec<u8>, usize, u64), String> {
+        if let Some((sections, _)) = self.deflated_row(entry) {
+            return walk_deflated(body, sections);
+        }
         match super::gta6_chunk_table::entry_chunks(&self.archive, entry.index as usize) {
             Ok(Some(table)) => walk_table(body, &table),
             Ok(None) => walk_chunks(body, real),
@@ -547,6 +540,29 @@ pub struct Gta6DecryptedBody {
     pub data: Vec<u8>,
     pub chunk_count: usize,
     pub stored_consumed: u64,
+}
+
+/// The raw DEFLATE streams of `body`, each from a 16-byte boundary, inflated until they give the
+/// `sections` bytes a row states: the bytes, the streams and the stored bytes consumed.
+fn walk_deflated(body: &[u8], sections: u64) -> std::result::Result<(Vec<u8>, usize, u64), String> {
+    let (mut out, mut pos, mut streams) = (Vec::new(), 0usize, 0usize);
+    while (out.len() as u64) < sections {
+        let left = sections - out.len() as u64;
+        let stream = body
+            .get(pos..)
+            .and_then(|rest| inflate_one(rest, true, left));
+        let Some((used, bytes)) = stream.filter(|(_, bytes)| !bytes.is_empty()) else {
+            return Err(format!(
+                "states raw DEFLATE sections, and no stream inflates at {pos:#x} of its {:#x} stored bytes, {} of {sections} bytes read",
+                body.len(),
+                out.len()
+            ));
+        };
+        out.extend_from_slice(&bytes);
+        streams += 1;
+        pos = round16(pos + used);
+    }
+    Ok((out, streams, pos.min(body.len()) as u64))
 }
 
 /// A per-chunk inflate is capped here to bound a malformed or hostile stream; real chunks inflate to

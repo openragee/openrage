@@ -1,6 +1,7 @@
 //! The shader packs of GTA VI's builds, side by side: each build's `shaders.rpf` holds `SGD5`
-//! effect containers, the one reader opens both builds', and the container a program's stream
-//! inflates to is named for each build.
+//! effect containers. The Xbox Series build's open, and a program's stream inflates to a `DXBC`
+//! container; the PlayStation 5 build's are refused by name at their first binding layout, whose
+//! head states a count that is not its record count, so their programs are not reached.
 //!
 //! Install-gated: it skips cleanly without the builds.
 //!   `OPENRAGE_GTA6_BUILDS`  the roots of an Xbox Series build and a PlayStation 5 build, `;` between
@@ -88,7 +89,7 @@ fn packs_of(root: &Path) -> Packs {
 }
 
 #[test]
-fn a_playstation_5_shader_pack_opens_as_the_xbox_series_s_does() {
+fn a_playstation_5_shader_pack_is_the_xbox_series_s_container_with_another_binding_layout() {
     let roots: Vec<PathBuf> = std::env::var_os(BUILDS_ENV)
         .map(|v| std::env::split_paths(&v).filter(|p| p.is_dir()).collect())
         .unwrap_or_default();
@@ -117,11 +118,18 @@ fn a_playstation_5_shader_pack_opens_as_the_xbox_series_s_does() {
         "each build holds a container"
     );
     assert_eq!(
-        ps5.opened, ps5.containers,
-        "every PlayStation 5 container opens"
-    );
-    assert_eq!(
         xbox.opened, xbox.containers,
         "every Xbox Series container opens"
     );
+    assert_eq!(xbox.heads.keys().collect::<Vec<_>>(), ["DXBC"]);
+    // Measured: a PlayStation 5 layout states, where the Xbox Series states its record count, a
+    // larger number (88 for 28 records), so the reader refuses the container and names where.
+    assert_eq!((ps5.opened, ps5.refused.len()), (0, ps5.containers));
+    for refused in &ps5.refused {
+        assert!(
+            refused.contains("does not hold to the measured layout")
+                && refused.contains("a layout of"),
+            "{refused}"
+        );
+    }
 }

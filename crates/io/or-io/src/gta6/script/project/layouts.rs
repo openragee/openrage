@@ -4,7 +4,8 @@
 //! A base is of known type where it only ever holds an object the function itself makes of one
 //! type, or is the receiver of a function one type's virtual slots are the first to hold; once
 //! every program is in, also a variable the kinds pass types and a member's receiver, which for a
-//! value type points at the value's first byte. A
+//! value type points at the value's first byte, and the address of an element of an array the
+//! kinds pass types as one of values of a script value type, for a part of the element. A
 //! type's rows are evidence, one for each width and kind seen at an offset, until [`settle`]
 //! makes one field of the rows that agree, under the base type that holds it. A field's kind is
 //! the one every access of it in every program agrees on, and none where two disagree. One byte
@@ -458,6 +459,48 @@ fn handed_on(
     handed
 }
 
+/// The intrinsic that gives the address of an array's element from the array and the index.
+const ELEMENT: &str = "array_element_address";
+
+/// The script value type whose values an array of kind `kind` holds in place, where the project holds that type.
+pub(crate) fn element_of(project: &Project, kind: &Kind) -> Option<TypeKey> {
+    let Kind::Array(of) = kind else {
+        return None;
+    };
+    let Kind::Value { ty, .. } = &**of else {
+        return None;
+    };
+    let key = TypeKey::of_name(ty).filter(|key| key.builtin().is_none() && !waits(*key))?;
+    let facts = project.types.get(&key)?;
+    facts.is_value().then_some(key)
+}
+
+/// The variable `addr` is the address of an element of, where `addr` is `array_element_address(array, index)` of a variable.
+pub(crate) fn element_array(addr: &Expr) -> Option<Var> {
+    let Expr::Call {
+        callee: Callee::Intrinsic { name, .. },
+        args,
+        ..
+    } = addr
+    else {
+        return None;
+    };
+    match args.as_slice() {
+        [Expr::Var(array), _] if name == ELEMENT => Some(*array),
+        _ => None,
+    }
+}
+
+/// Whether `bytes` bytes at `offset` of a value of the type `ty` lie in it and are fewer than all of it.
+// ⚠ All of an element is the element itself, never a field of it: the value of an enum is one.
+pub(crate) fn within_element(project: &Project, ty: TypeKey, offset: u32, bytes: u32) -> bool {
+    let Some(facts) = project.types.get(&ty) else {
+        return false;
+    };
+    let end = u64::from(offset) + u64::from(bytes);
+    bytes > 0 && bytes < facts.byte_size && end <= u64::from(facts.byte_size)
+}
+
 /// The script type `kind` refers to an object of, where the project holds that type and it is no value type.
 pub(crate) fn object_of(project: &Project, kind: &Kind) -> Option<TypeKey> {
     let Kind::Object(name) = kind else {
@@ -564,6 +607,8 @@ fn uncast(e: &Expr) -> &Expr {
 /// One reading of a function for the fields its accesses show.
 struct Seen<'a> {
     bases: &'a BTreeMap<Var, TypeKey>,
+    /// The variables that hold an array of values of a script value type, in a second reading, with that type; its type is among `values`.
+    elements: &'a BTreeMap<Var, TypeKey>,
     /// The settled project of a second reading, whose fields of object types a base's loads go through; `None` in the first.
     project: Option<&'a Project>,
     /// The types among the bases' that are held in place: a base of one points at the value's first byte, where its first field lies.
@@ -581,8 +626,13 @@ struct Seen<'a> {
 }
 
 impl Seen<'_> {
-    /// The type and the offset in it that an access at `offset` from `addr` reaches, and the fields loaded on the way, where `addr` is a base of known type moved by constants, or a reference loaded through fields the settled project types.
-    fn place(&self, addr: &Expr, offset: u32) -> Option<(TypeKey, u32, Vec<Link>)> {
+    /// The type and the offset in it that an access of `bytes` bytes at `offset` from `addr` reaches, the fields loaded on the way, and whether it is a part of an array's element, where `addr` is a base of known type moved by constants, a reference loaded through fields the settled project types, or the address of such an element.
+    fn place(
+        &self,
+        addr: &Expr,
+        offset: u32,
+        bytes: u32,
+    ) -> Option<(TypeKey, u32, Vec<Link>, bool)> {
         let (mut addr, mut offset) = (addr, offset);
         for _ in 0..NESTED {
             let Expr::ByteOffset {
@@ -598,6 +648,11 @@ impl Seen<'_> {
             let by = u32::try_from(c.bits).ok()?;
             offset = offset.checked_add(by)?;
             addr = &**inner;
+        }
+        if let Some(array) = element_array(addr) {
+            let key = *self.elements.get(&array)?;
+            let part = within_element(self.project?, key, offset, bytes);
+            return part.then_some((key, offset, Vec::new(), true));
         }
         // The offsets `addr` is loaded through, the last load first.
         let mut through: Vec<u32> = Vec::new();
@@ -626,7 +681,7 @@ impl Seen<'_> {
             });
             key = to;
         }
-        Some((key, offset, links))
+        Some((key, offset, links, false))
     }
 
     /// Keeps what one access showed: with the rows where it went through no field, apart where it did.
@@ -652,7 +707,7 @@ impl Seen<'_> {
 
     /// Notes whether an access of the one byte at `offset` from `addr` is of a truth, where that is a field of a base of known type.
     fn truth(&mut self, addr: &Expr, offset: u32, truth: bool) {
-        if let Some((key, offset, links)) = self.place(addr, offset) {
+        if let Some((key, offset, links, _)) = self.place(addr, offset, 1) {
             if offset >= self.start(key) {
                 self.keep(links, Fact::Truth((key, offset), truth));
             }
@@ -713,9 +768,12 @@ impl Seen<'_> {
     }
 
     /// Notes `bytes` bytes of kind `kind` at `offset` from `addr`, where that is a field of a base of known type.
+    // ⚠ Eight bytes and more of an element may be a copy of its cells, made across several of its
+    // fields: only a reference, or a double its instruction reads, says it is one field of eight.
     fn row(&mut self, addr: &Expr, offset: u32, bytes: u32, kind: Kind) {
-        if let Some((key, offset, links)) = self.place(addr, offset) {
-            if offset >= self.start(key) && bytes > 0 {
+        if let Some((key, offset, links, element)) = self.place(addr, offset, bytes) {
+            let one = bytes < 8 || matches!(kind, Kind::Pointer | Kind::Object(_) | Kind::F64);
+            if offset >= self.start(key) && bytes > 0 && (one || !element) {
                 let facts = FieldFacts {
                     offset,
                     bytes,
@@ -812,7 +870,7 @@ impl Seen<'_> {
 
     /// Notes that a reference field at `offset` from `addr` is stored an object of the script type `ty`, where that is a field of a base of known type.
     fn made_as(&mut self, addr: &Expr, offset: u32, ty: TypeKey) {
-        if let Some((key, offset, links)) = self.place(addr, offset) {
+        if let Some((key, offset, links, _)) = self.place(addr, offset, 8) {
             if offset >= self.start(key) {
                 self.keep(links, Fact::Made((key, offset), ty));
             }
@@ -955,7 +1013,7 @@ pub fn of_function(project: &mut Project, f: &cfg::Function) {
     };
     let sets = Sets::of(f, None);
     let bases = sets.bases(receiver);
-    seen_through(project, f, &bases, &BTreeSet::new(), None);
+    seen_through(project, f, &bases, &BTreeMap::new(), &BTreeSet::new(), None);
 }
 
 /// Adds the fields one function's loads and stores show through what a settled project proves of it: the variables the kinds pass types as an object of a script type, and the receiver of a member, an object or a value.
@@ -969,7 +1027,7 @@ pub fn of_typed_function(part: &mut Project, f: &cfg::Function, project: &Projec
         .filter(|owner| project.types.contains_key(owner));
     // ⚠ A value type's method is handed a pointer to the value: its fields lie from the pointer's
     // first byte, at the offsets the value type's member table states them at.
-    let values: BTreeSet<TypeKey> = receiver
+    let mut values: BTreeSet<TypeKey> = receiver
         .filter(|owner| !object(*owner))
         .into_iter()
         .collect();
@@ -984,22 +1042,33 @@ pub fn of_typed_function(part: &mut Project, f: &cfg::Function, project: &Projec
             bases.entry(*var).or_insert(key);
         }
     }
-    seen_through(part, f, &bases, &values, Some(project));
+    // An array the kinds pass types as one of values of a script value type: each element's
+    // fields lie from its first byte.
+    let mut elements = BTreeMap::new();
+    for (var, info) in &f.head.vars {
+        if let (Some(key), false) = (element_of(project, &info.kind), sets.frame.reaches(*var)) {
+            elements.insert(*var, key);
+            values.insert(key);
+        }
+    }
+    seen_through(part, f, &bases, &elements, &values, Some(project));
 }
 
-/// Adds the rows, the truths and the objects stored the accesses of `f` through `bases` show; a base of a type in `values` points at a value held in place, and `settled`, where given, types the fields loaded below a base.
+/// Adds the rows, the truths and the objects stored the accesses of `f` through `bases` and the elements of the arrays `elements` holds show; a base of a type in `values` points at a value held in place, and `settled`, where given, types the fields loaded below a base.
 fn seen_through(
     project: &mut Project,
     f: &cfg::Function,
     bases: &BTreeMap<Var, TypeKey>,
+    elements: &BTreeMap<Var, TypeKey>,
     values: &BTreeSet<TypeKey>,
     settled: Option<&Project>,
 ) {
-    if bases.is_empty() {
+    if bases.is_empty() && elements.is_empty() {
         return;
     }
     let mut seen = Seen {
         bases,
+        elements,
         project: settled,
         values,
         head: &f.head,

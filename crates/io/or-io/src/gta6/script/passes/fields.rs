@@ -7,7 +7,9 @@
 //! kinds pass proves holds one, a parameter the project's signature types and the function
 //! leaves as it was passed, or a field the layouts give a type, loaded through such a reference.
 //! A member's receiver is one too, and of a value type it points at the value, whose first field
-//! lies at its first byte.
+//! lies at its first byte. So does the address of an element of an array of values of a script
+//! value type, in a variable the kinds pass types so: an access of a part of the element, and
+//! not all of it, is a field of that type.
 
 use std::collections::BTreeMap;
 
@@ -46,13 +48,21 @@ fn own_simples<'a>(stmt: &'a tree::Stmt, f: &mut impl FnMut(&'a ir::Stmt)) {
     }
 }
 
-/// The variables that hold an object of one known type wherever the function reads them, with that type.
+/// The variables an access through which may be read as a field.
+struct Bases {
+    /// Each variable that holds an object of one known type wherever the function reads it.
+    objects: BTreeMap<Var, TypeKey>,
+    /// Each variable that holds an array of values of one script value type wherever the function reads it.
+    elements: BTreeMap<Var, TypeKey>,
+}
+
+/// The variables that hold an object of one known type, or an array of values of one, wherever the function reads them, with that type.
 // A variable only ever assigned objects the function makes of one type, the receiver of a
-// function the project proves a member of a type, and a parameter the project's signature types.
+// function the project proves a member of a type, and a variable the kinds pass types.
 // ⚠ A variable an address the function takes may reach may be written through that address: an
 // address the function only loads or stores its own cell through reaches no other, and one
 // handed whole to a function reaches what the project's reach table says that function touches.
-fn objects(f: &mut tree::Function, project: &Project) -> BTreeMap<Var, TypeKey> {
+fn objects(f: &mut tree::Function, project: &Project) -> Bases {
     let tree::Function { head, body } = f;
     let head = &*head;
     let mut made: BTreeMap<Var, Option<TypeKey>> = BTreeMap::new();
@@ -124,7 +134,21 @@ fn objects(f: &mut tree::Function, project: &Project) -> BTreeMap<Var, TypeKey> 
             bases.entry(*var).or_insert(ty);
         }
     }
-    bases
+
+    // ⚠ Only the kinds pass says what an array holds: no assignment the function makes does.
+    let mut elements = BTreeMap::new();
+    for (var, info) in &head.vars {
+        let Some(ty) = layouts::element_of(project, &info.kind) else {
+            continue;
+        };
+        if !frame.reaches(*var) {
+            elements.insert(*var, ty);
+        }
+    }
+    Bases {
+        objects: bases,
+        elements,
+    }
 }
 
 /// The type that declares the field of `bytes` bytes at `offset` of an object of type `ty`, and the field.
@@ -230,15 +254,21 @@ fn unrowed(project: &Project, ty: TypeKey, offset: u32, bytes: u32) -> Option<Ty
     layouts::declarer(&project.types, ty, &row)
 }
 
-/// The type that declares the field an access of `bytes` bytes at `offset` through `addr` is of, where `addr` points at an object of known type.
+/// The type that declares the field an access of `bytes` bytes at `offset` through `addr` is of, where `addr` points at an object of known type or at an element of an array of values of one.
 fn declared(
     project: &Project,
-    bases: &BTreeMap<Var, TypeKey>,
+    bases: &Bases,
     addr: &Expr,
     offset: u32,
     bytes: u32,
 ) -> Option<TypeKey> {
-    let ty = pointee(project, bases, addr)?;
+    let element = layouts::element_array(addr).and_then(|array| bases.elements.get(&array));
+    let ty = match element {
+        // ⚠ All of an element is the element, which is no field of it: an enum's value is one.
+        Some(ty) if layouts::within_element(project, *ty, offset, bytes) => *ty,
+        Some(_) => return None,
+        None => pointee(project, &bases.objects, addr)?,
+    };
     match field_of(project, ty, offset, bytes) {
         Some((owner, _)) => Some(owner),
         None => unrowed(project, ty, offset, bytes),
@@ -246,7 +276,7 @@ fn declared(
 }
 
 /// The type that declares the field a store writes, where it writes one whole.
-fn stored(project: &Project, bases: &BTreeMap<Var, TypeKey>, s: &ir::Stmt) -> Option<TypeKey> {
+fn stored(project: &Project, bases: &Bases, s: &ir::Stmt) -> Option<TypeKey> {
     match s {
         ir::Stmt::Store {
             kind, addr, offset, ..
@@ -310,7 +340,7 @@ fn null_constant(project: &Project, owner: TypeKey, s: &mut ir::Stmt) {
 }
 
 /// Reads each load in `top` of a field the layouts have as the field; returns how many.
-fn loads(top: &mut Expr, project: &Project, bases: &BTreeMap<Var, TypeKey>) -> usize {
+fn loads(top: &mut Expr, project: &Project, bases: &Bases) -> usize {
     let mut read = 0;
     top.walk_mut(&mut |e| {
         let owner = match &*e {
@@ -360,7 +390,7 @@ pub(crate) fn apply(f: &mut tree::Function, project: &Project) -> Found {
         return done;
     }
     let bases = objects(f, project);
-    if bases.is_empty() {
+    if bases.objects.is_empty() && bases.elements.is_empty() {
         return done;
     }
     let mut work: Vec<&mut Vec<tree::Stmt>> = vec![&mut f.body];

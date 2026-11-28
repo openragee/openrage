@@ -1085,3 +1085,105 @@ fn an_access_through_a_field_the_project_types_is_of_that_type_while_the_field_s
     assert_eq!(refers, Some(Kind::Pointer));
     assert_eq!(other(&read, 0x18), None);
 }
+
+/// A value type of sixteen bytes, held in place in the elements of an array.
+const ENTRY: TypeKey = TypeKey(0x0A0A_0000_0000_0007);
+
+/// `array_element_address(array, index)`.
+fn element(array: Expr, index: Expr) -> Expr {
+    Expr::Call {
+        callee: Callee::Intrinsic {
+            name: "array_element_address".to_owned(),
+            ty: None,
+            wrapper: None,
+        },
+        args: vec![array, index],
+        returns: Some(1),
+    }
+}
+
+#[test]
+fn a_part_of_an_element_of_an_array_the_kinds_pass_types_as_one_of_values_is_a_field_of_the_values_type(
+) {
+    use crate::gta6::script::ir::VarInfo;
+    let at = || element(local(1), local(0));
+    let body = vec![
+        set(Var::Local(2), load(Scalar::F32, at(), 0)),
+        // A byte stored a truth and tested for zero.
+        store(StoreKind::U8, at(), 4, int(1)),
+        set(
+            Var::Local(3),
+            Expr::binary(BinOp::Ne, load(Scalar::U8, at(), 4), int(0)),
+        ),
+        // A reference gone through.
+        set(
+            Var::Local(2),
+            load(Scalar::I32, load(Scalar::U64, at(), 8), 0x10),
+        ),
+        // Cells copied eight bytes at a time across fields, and all of the element at once: were
+        // they rows, the offset 0 would be seen at two widths and have no field.
+        set(Var::Local(3), load(Scalar::U64, at(), 0)),
+        set(
+            Var::Local(3),
+            Expr::LoadBytes {
+                addr: Box::new(at()),
+                offset: 0,
+                bytes: 16,
+            },
+        ),
+        // Past the bytes the value holds.
+        set(Var::Local(2), load(Scalar::I32, at(), 0x10)),
+    ];
+    let typed_as = |kind: Kind| {
+        let mut f = function(0x30, body.clone());
+        let mut info = VarInfo::new(Width::Cell);
+        info.kind = kind;
+        f.head.vars.insert(Var::Local(1), info);
+        f
+    };
+    let values = || {
+        let ty = ENTRY.to_string();
+        Kind::Array(Box::new(Kind::Value { ty, cells: 2 }))
+    };
+    let typed = |flags: u32| {
+        let mut project = Project::default();
+        let value = TypeFacts {
+            byte_size: 16,
+            flags,
+            ..TypeFacts::default()
+        };
+        project.types.insert(ENTRY, value);
+        project
+    };
+    let refined = |mut project: Project, f: &Function| {
+        let mut part = Project::default();
+        of_typed_function(&mut part, f, &project);
+        refine(&mut project, vec![part]);
+        project.fields
+    };
+
+    let fields = vec![
+        field(0, 4, Kind::F32),
+        field(4, 1, Kind::Bool),
+        field(8, 8, Kind::Pointer),
+    ];
+    assert_eq!(
+        refined(typed(0x04), &typed_as(values())),
+        BTreeMap::from([(ENTRY, fields)])
+    );
+    // The first reading has no kinds and reads no element.
+    let mut first = typed(0x04);
+    of_function(&mut first, &typed_as(values()));
+    assert!(first.fields.is_empty());
+    // A type held as an object's, a variable of no array, and an array an address of the frame
+    // may reach say nothing.
+    assert!(refined(typed(0), &typed_as(values())).is_empty());
+    assert!(refined(typed(0x04), &typed_as(Kind::Pointer)).is_empty());
+    let mut reached = typed_as(values());
+    let lower = Expr::AddrOf {
+        var: Var::Local(0),
+        cell: 0,
+    };
+    reached.cfg.blocks[0].stmts.push(set(Var::Local(3), lower));
+    assert!(refined(typed(0x04), &reached).is_empty());
+}

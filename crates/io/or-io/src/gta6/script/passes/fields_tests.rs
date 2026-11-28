@@ -606,3 +606,106 @@ fn a_zero_stored_whole_to_a_field_the_layouts_prove_a_reference_is_null() {
     let off = Options::default().without(Pass::Fields);
     assert_eq!(read(function(body()), &project, off).body, body());
 }
+
+/// A value type of twelve bytes, held in place in the elements of an array.
+const ELEMENT: TypeKey = TypeKey(0x0A0A_0000_0000_0007);
+
+/// `array_element_address(array, index)`.
+fn element(array: Expr, index: Expr) -> Expr {
+    Expr::Call {
+        callee: ir::Callee::Intrinsic {
+            name: "array_element_address".to_owned(),
+            ty: None,
+            wrapper: None,
+        },
+        args: vec![array, index],
+        returns: Some(1),
+    }
+}
+
+#[test]
+fn a_part_of_an_element_of_an_array_of_values_is_a_field_of_the_values_type() {
+    let at = || element(local(1), local(0));
+    let whole = || Expr::LoadBytes {
+        addr: Box::new(at()),
+        offset: 0,
+        bytes: 12,
+    };
+    let body = || {
+        vec![
+            set(Var::Local(2), load(Scalar::I32, at(), 0)),
+            set(Var::Local(2), load(Scalar::I32, at(), 8)),
+            tree::Stmt::Simple(store(at(), 4)),
+            // All of the element, and bytes past it.
+            set(Var::Local(3), whole()),
+            set(Var::Local(2), load(Scalar::I32, at(), 0xC)),
+        ]
+    };
+    let typed_as = |kind: Kind| {
+        let mut f = function(body());
+        let mut info = VarInfo::new(ir::Width::Cell);
+        info.kind = kind;
+        f.head.vars.insert(Var::Local(1), info);
+        f
+    };
+    let values = |of: TypeKey| {
+        let ty = of.to_string();
+        Kind::Array(Box::new(Kind::Value { ty, cells: 2 }))
+    };
+    let mut project = project();
+    let value = TypeFacts {
+        byte_size: 12,
+        flags: 0x04,
+        ..TypeFacts::default()
+    };
+    project.types.insert(ELEMENT, value);
+    project.fields.insert(ELEMENT, vec![typed(0, 4, Kind::I32)]);
+
+    let done = read(typed_as(values(ELEMENT)), &project, Options::default());
+    let wanted = vec![
+        set(Var::Local(2), of(ELEMENT, load(Scalar::I32, at(), 0))),
+        // No row overlaps the bytes, which the value holds: its field of no proved kind.
+        set(Var::Local(2), of(ELEMENT, load(Scalar::I32, at(), 8))),
+        group(ELEMENT, store(at(), 4)),
+        set(Var::Local(3), whole()),
+        set(Var::Local(2), load(Scalar::I32, at(), 0xC)),
+    ];
+    assert_eq!(done.body, wanted);
+    // The way back is the body as it was.
+    assert_eq!(tree::desugar(done.body), body());
+    // Switched off, the pass reads nothing.
+    let off = Options::default().without(Pass::Fields);
+    assert_eq!(read(typed_as(values(ELEMENT)), &project, off).body, body());
+
+    // An array of objects, of values of a type the project does not hold or holds as an object's,
+    // of elements of no kind, and a variable of no array say nothing.
+    for kind in [
+        Kind::Array(Box::new(Kind::Object(MADE.to_string()))),
+        values(HELD),
+        values(MADE),
+        Kind::Array(Box::new(Kind::Unknown)),
+        Kind::Pointer,
+    ] {
+        let f = typed_as(kind.clone());
+        let done = read(f, &project, Options::default());
+        assert_eq!(done.body, body(), "{kind:?}");
+    }
+    // An array an address of the frame may reach may be written otherwise than by its name.
+    let mut reached = typed_as(values(ELEMENT));
+    let lower = Expr::AddrOf {
+        var: Var::Local(0),
+        cell: 0,
+    };
+    reached.body.push(set(Var::Local(3), lower));
+    assert_eq!(
+        read(reached.clone(), &project, Options::default()).body,
+        reached.body
+    );
+    // An element of four bytes is all of itself at once: the value of an enum is one.
+    if let Some(ty) = project.types.get_mut(&ELEMENT) {
+        ty.byte_size = 4;
+    }
+    let f = typed_as(values(ELEMENT));
+    let done = read(f, &project, Options::default());
+    assert_eq!(done.body[0], body()[0]);
+}

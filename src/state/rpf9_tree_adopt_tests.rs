@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use or_io::container::rpf::gta6_container_write::{build, Rpf9IndexKey, Rpf9NewBody};
 use or_io::container::rpf::{Gta6Context, NameResolver};
-use or_io::container::{NoOpCryptoProvider, RpfArchive};
+use or_io::container::RpfArchive;
 use or_io::gta6::hash::name_hash64;
 
 use super::{become_copy, listed, reopened};
@@ -31,23 +31,16 @@ fn notes() -> Vec<u8> {
     text
 }
 
-/// Archives opened while this is held are read with the synthetic keys and the row's name.
-struct Reading(Option<Arc<Gta6Context>>);
+use crate::state::rpf_archive_open::gta6_session::{self, Reading};
 
-impl Drop for Reading {
-    fn drop(&mut self) {
-        Gta6Context::swap_given(self.0.take());
-    }
-}
-
+/// Archives opened through [`showing`] while this is held are read with the synthetic keys and the row's name.
 fn reading() -> Reading {
     let mut names = NameResolver::new();
     names.insert(name_hash64(NOTES.as_bytes()), NOTES);
-    let context = Gta6Context {
+    gta6_session::hold(Gta6Context {
         keys: synthetic_keys().expect("the synthetic snapshot parses"),
         names: Arc::new(names),
-    };
-    Reading(Gta6Context::swap_given(Some(Arc::new(context))))
+    })
 }
 
 /// An archive of the text body as `dir/source.rpf`.
@@ -69,7 +62,7 @@ fn source(dir: &Path) -> PathBuf {
 }
 
 fn showing(path: &Path) -> AppState {
-    let crypto = Arc::new(NoOpCryptoProvider::new());
+    let crypto = gta6_session::crypto();
     let archive = RpfArchive::open_with(path, crypto).expect("the archive opens as a tree");
     let tree = RpfDocument::new(archive).expect("the tree lists");
     let mut state = AppState::new();
@@ -156,8 +149,7 @@ fn a_row_s_document_follows_its_tree_into_the_copy_and_its_next_save_lands_in_th
     let out = dir.path().join("copy.rpf");
     std::fs::copy(&disk, &out).expect("the copy is written");
     let chains = listed(session(&state));
-    let written =
-        reopened(&out, Arc::new(NoOpCryptoProvider::new()), &chains).expect("the copy reopens");
+    let written = reopened(&out, gta6_session::crypto(), &chains).expect("the copy reopens");
     let tree = state.document_mut(DOC).expect("the tree");
     assert!(
         become_copy(tree, written, &out),

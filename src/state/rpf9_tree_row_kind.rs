@@ -24,9 +24,10 @@ mod tests {
     use or_io::container::rpf::{
         write_rpf9_resource, Gta6Context, NameResolver, Rpf9Form, Rpf9Sections,
     };
-    use or_io::container::{NoOpCryptoProvider, RpfArchive};
+    use or_io::container::RpfArchive;
     use or_io::gta6::hash::name_hash64;
 
+    use crate::state::rpf_archive_open::gta6_session;
     use crate::state::rpf_archive_open::tree_open::name;
     use crate::state::rpf_archive_open::tree_verbs::tests::{rbm_section, synthetic_keys};
     use crate::state::rpf_session::RpfDocument;
@@ -36,26 +37,16 @@ mod tests {
     const BODY: DocumentId = 9_701;
     const MODEL: &str = "data/model.ydr";
 
-    /// Archives opened while this is held are read with the synthetic keys.
-    struct Reading(Option<Arc<Gta6Context>>);
-
-    impl Drop for Reading {
-        fn drop(&mut self) {
-            Gta6Context::swap_given(self.0.take());
-        }
-    }
-
     #[test]
     fn a_body_opened_from_a_tree_row_is_named_by_the_kind_its_row_states() {
         let _serial = crate::ui::theme::serial();
         let keys = synthetic_keys().expect("the synthetic snapshot parses");
         let mut names = NameResolver::new();
         names.insert(name_hash64(MODEL.as_bytes()), MODEL);
-        let context = Gta6Context {
+        let _reading = gta6_session::hold(Gta6Context {
             keys: Arc::clone(&keys),
             names: Arc::new(names),
-        };
-        let _reading = Reading(Gta6Context::swap_given(Some(Arc::new(context))));
+        });
         let loose = write_rpf9_resource(&Rpf9Sections {
             form: Rpf9Form::BlockMapped,
             virtual_section: rbm_section(),
@@ -81,8 +72,8 @@ mod tests {
         let dir = tempfile::tempdir().expect("a scratch directory");
         let path = dir.path().join("source.rpf");
         std::fs::write(&path, bytes).expect("the archive is written");
-        let archive = RpfArchive::open_with(&path, Arc::new(NoOpCryptoProvider::new()))
-            .expect("the archive opens");
+        let archive =
+            RpfArchive::open_with(&path, gta6_session::crypto()).expect("the archive opens");
         let tree = RpfDocument::new(archive).expect("the tree lists");
         let mut state = AppState::new();
         (state.documents).push(Document::new(TREE, Some(path), DocPayload::Rpf(tree)));

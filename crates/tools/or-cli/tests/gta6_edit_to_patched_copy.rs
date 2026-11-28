@@ -629,8 +629,14 @@ fn vertex_edit(original: &[u8], s: &Rpf9Sections, role: Option<Rpf9Role>) -> Res
 }
 
 /// The body of entry `entry` of the archive at `base`, read through `RpfArchive` from `copy`.
-fn read_back(copy: &Path, chain: &[u64], base: u64, entry: u32) -> Vec<u8> {
-    let mut archive = Arc::new(RpfArchive::open(copy).expect("the patched copy opens"));
+fn read_back(copy: &Path, chain: &[u64], base: u64, entry: u32, keys: &Arc<GtaViKeys>) -> Vec<u8> {
+    // The keys ride in the provider the open is handed; names are not needed to read by place.
+    let crypto: Arc<dyn or_io::container::RpfCryptoProvider> = Arc::new(Gta6Context {
+        keys: Arc::clone(keys),
+        names: Arc::new(NameResolver::new()),
+    });
+    let mut archive =
+        Arc::new(RpfArchive::open_with(copy, crypto).expect("the patched copy opens"));
     for &start in chain {
         let nested = (0..archive.entries.len() as u32)
             .find(|&i| {
@@ -661,7 +667,7 @@ fn read_back(copy: &Path, chain: &[u64], base: u64, entry: u32) -> Vec<u8> {
 fn land(
     prefix: &Path,
     copy: &Path,
-    keys: &GtaViKeys,
+    keys: &Arc<GtaViKeys>,
     c: &Candidate,
     body: &[u8],
     cap: usize,
@@ -689,7 +695,7 @@ fn land(
     let optimal = plan.chunks.iter().filter(|k| k.optimal).count();
     let report =
         write_planned_copy(prefix, copy, keys, vec![plan]).expect("a planned patch writes");
-    let back = read_back(copy, &c.chain, c.base, c.entry);
+    let back = read_back(copy, &c.chain, c.base, c.entry, keys);
     assert!(
         back == body,
         "the patched copy reads back otherwise than the edit"
@@ -707,7 +713,7 @@ fn land(
 fn attempt(
     kind: &str,
     c: &Candidate,
-    keys: &GtaViKeys,
+    keys: &Arc<GtaViKeys>,
     library: &SchemaLibrary,
     scratch: &Path,
 ) -> Result<(Vec<String>, usize), String> {
@@ -819,11 +825,6 @@ fn an_edit_made_by_openrages_editors_lands_in_a_patched_copy_or_is_refused_by_na
         return;
     };
     let keys = Arc::new(GtaViKeys::from_file(&snapshot).expect("the key snapshot parses"));
-    // `RpfArchive` reads a GTA VI archive with the keys the process was given.
-    Gta6Context::give(Gta6Context {
-        keys: Arc::clone(&keys),
-        names: Arc::new(NameResolver::new()),
-    });
     let _names = title_names();
     let library = SchemaLibrary::default();
     let archives = build_archives(&build);

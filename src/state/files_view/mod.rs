@@ -678,31 +678,23 @@ mod tests {
         use or_io::container::rpf::{
             write_rpf9_resource, Gta6Context, NameResolver, Rpf9Form, Rpf9Sections,
         };
-        use or_io::container::{NoOpCryptoProvider, RpfArchive};
+        use or_io::container::RpfArchive;
         use or_io::gta6::hash::name_hash64;
 
         use super::super::*;
+        use crate::state::rpf_archive_open::gta6_session::{self, Reading};
         use crate::state::rpf_archive_open::tree_verbs::tests::{rbm_section, synthetic_keys};
 
-        /// Archives opened while this is held are read with the synthetic keys and `names`.
-        struct Reading(Option<Arc<Gta6Context>>);
-
-        impl Drop for Reading {
-            fn drop(&mut self) {
-                Gta6Context::swap_given(self.0.take());
-            }
-        }
-
+        /// Archives opened through [`tree`] while this is held are read with the synthetic keys and `names`.
         fn reading(names: &[&str]) -> Reading {
             let mut resolver = NameResolver::new();
             for &name in names {
                 resolver.insert(name_hash64(name.as_bytes()), name);
             }
-            let context = Gta6Context {
+            gta6_session::hold(Gta6Context {
                 keys: synthetic_keys().expect("the synthetic snapshot parses"),
                 names: Arc::new(resolver),
-            };
-            Reading(Gta6Context::swap_given(Some(Arc::new(context))))
+            })
         }
 
         fn built(entries: &[(String, Rpf9NewBody)]) -> Vec<u8> {
@@ -737,8 +729,8 @@ mod tests {
         fn tree(dir: &Path, bytes: Vec<u8>) -> RpfEditSession {
             let path = dir.join("source.rpf");
             std::fs::write(&path, bytes).expect("the archive is written");
-            let archive = RpfArchive::open_with(&path, Arc::new(NoOpCryptoProvider::new()))
-                .expect("the archive opens");
+            let archive =
+                RpfArchive::open_with(&path, gta6_session::crypto()).expect("the archive opens");
             RpfEditSession::from_archive(archive).expect("the tree lists")
         }
 
@@ -862,7 +854,8 @@ mod tests {
             const ARCHIVES: usize = 16;
             let _serial = crate::ui::theme::serial();
             let build_root = std::env::var_os("OPENRAGE_GTA6_BUILD").map(PathBuf::from);
-            let (Some(build_root), Some(_)) = (build_root, std::env::var_os("OPENRAGE_GTA6_KEYS"))
+            let (Some(build_root), Ok(keys)) =
+                (build_root, crate::state::rpf9_scan::rpf9_table::keys())
             else {
                 or_test_support::skip_install(
                     WHAT,
@@ -870,6 +863,10 @@ mod tests {
                 );
                 return;
             };
+            let _reading = gta6_session::hold(Gta6Context {
+                keys,
+                names: crate::state::rpf9_scan::rpf9_table::resolver(),
+            });
             let mut disks: Vec<(u64, PathBuf)> = std::fs::read_dir(&build_root)
                 .expect("the build root lists")
                 .flatten()
@@ -881,7 +878,7 @@ mod tests {
             let archive_kind = kind_label(Some(ARCHIVE_CLASS), None);
             let (mut rows, mut ciphered) = (0usize, 0usize);
             for (_, disk) in disks.into_iter().take(ARCHIVES) {
-                let archive = RpfArchive::open_with(&disk, Arc::new(NoOpCryptoProvider::new()))
+                let archive = RpfArchive::open_with(&disk, gta6_session::crypto())
                     .unwrap_or_else(|e| panic!("{} opens: {e}", disk.display()));
                 let session = RpfEditSession::from_archive(archive).expect("the tree lists");
                 for id in session.all_nodes() {
@@ -932,7 +929,8 @@ mod tests {
             const WHAT: &str = "a GTA VI root's total counts a nested archive past 4 GiB whole";
             let _serial = crate::ui::theme::serial();
             let build_root = std::env::var_os("OPENRAGE_GTA6_BUILD").map(PathBuf::from);
-            let (Some(build_root), Some(_)) = (build_root, std::env::var_os("OPENRAGE_GTA6_KEYS"))
+            let (Some(build_root), Ok(keys)) =
+                (build_root, crate::state::rpf9_scan::rpf9_table::keys())
             else {
                 or_test_support::skip_install(
                     WHAT,
@@ -940,6 +938,10 @@ mod tests {
                 );
                 return;
             };
+            let _reading = gta6_session::hold(Gta6Context {
+                keys,
+                names: crate::state::rpf9_scan::rpf9_table::resolver(),
+            });
             let largest = std::fs::read_dir(&build_root)
                 .expect("the build root lists")
                 .flatten()
@@ -950,8 +952,8 @@ mod tests {
                 .max()
                 .map(|(_, p)| p)
                 .expect("a top-level archive");
-            let archive = RpfArchive::open_with(&largest, Arc::new(NoOpCryptoProvider::new()))
-                .expect("the archive opens");
+            let archive =
+                RpfArchive::open_with(&largest, gta6_session::crypto()).expect("the archive opens");
             let session = RpfEditSession::from_archive(archive).expect("the tree lists");
             let rows = session.children_of(session.root_id());
             let sizes: Vec<u64> = rows.iter().filter_map(|&id| size(&session, id)).collect();

@@ -65,7 +65,7 @@ impl RpfArchive {
     }
 
     fn rpf9_at(&self, entry_index: u32) -> Option<(&Rpf9State, usize)> {
-        let state = self.rpf9.as_deref()?;
+        let state = self.rpf9_state()?;
         let at =
             (state.entry_of.get(entry_index as usize).copied()).filter(|at| *at != u32::MAX)?;
         Some((state, at as usize))

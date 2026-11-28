@@ -78,6 +78,16 @@ pub(super) enum RpfSource {
     Nested(Arc<RpfArchive>),
 }
 
+/// How an opened archive reads its bodies: every generation but RPF9 has a flat entry table a layout
+/// reads; RPF9 keeps its decrypted table and the key-and-name session its bodies and nested archives
+/// read through. The open dispatches on this, so no reader asks the version which backend it is.
+#[derive(Clone)]
+pub(super) enum RpfBackend {
+    Flat,
+    #[cfg(feature = "gta6")]
+    Rpf9(Arc<super::gta6_rpf::Rpf9State>),
+}
+
 /// An opened archive of any [`RpfVersion`]: its table, read at once, and its bodies, read when asked for.
 ///
 /// It holds the keys it was opened with, so reading never asks for them again.
@@ -100,9 +110,8 @@ pub struct RpfArchive {
     /// The platform letter the stored names spell, worked out once on first ask; `Some(None)` once
     /// the names were scanned and none carried a platform extension (a hash-named table).
     pub(super) names_platform: OnceLock<Option<u8>>,
-    /// An RPF9's decrypted table and keys, which its bodies and nested archives are read through.
-    #[cfg(feature = "gta6")]
-    pub(super) rpf9: Option<Arc<super::gta6_rpf::Rpf9State>>,
+    /// Which backend reads this archive's bodies and nested archives: a flat table, or RPF9's state.
+    pub(super) backend: RpfBackend,
 }
 
 impl fmt::Debug for RpfArchive {
@@ -219,7 +228,8 @@ impl RpfArchive {
     /// Nothing is read until the builder writes: each file is carried from here as it is stored,
     /// or for RPF7 decoded and recompressed as it was.
     pub fn edit(&self) -> Result<RpfBuilder> {
-        if self.version == RpfVersion::Rpf9 {
+        #[cfg(feature = "gta6")]
+        if matches!(self.backend, RpfBackend::Rpf9(_)) {
             return Err(IoError::Invalid {
                 what: "editing an RPF9 archive".into(),
                 why: "it is read-only here; the GTA VI archive writer writes a changed copy".into(),

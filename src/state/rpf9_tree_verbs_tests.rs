@@ -6,7 +6,6 @@ use std::time::{Duration, Instant};
 
 use or_io::container::rpf::gta6_container_write::{build, Rpf9IndexKey};
 use or_io::container::rpf::{Gta6Context, Gta6Entry, NameResolver, Rpf9Form};
-use or_io::container::NoOpCryptoProvider;
 use or_io::gta6::hash::name_hash64;
 use or_job::{Cancel, Progress};
 
@@ -197,25 +196,18 @@ fn three(dir: &Path) -> PathBuf {
     archive_of(dir, vec![pso, other, resource_entry()])
 }
 
-/// Archives opened while this is held are read with the keys it was made with; the context held
-/// before comes back once it is dropped.
-pub(crate) struct Reading(Option<Arc<Gta6Context>>);
+pub(crate) use crate::state::rpf_archive_open::gta6_session::Reading;
 
-impl Drop for Reading {
-    fn drop(&mut self) {
-        Gta6Context::swap_given(self.0.take());
-    }
-}
-
+/// Archives opened through [`tree`] on this thread while the guard is held are read with `keys` and
+/// no names; the session held before comes back once it drops.
 pub(crate) fn reading_with(keys: Arc<GtaViKeys>) -> Reading {
     let names = Arc::new(NameResolver::new());
-    let context = Gta6Context { keys, names };
-    Reading(Gta6Context::swap_given(Some(Arc::new(context))))
+    crate::state::rpf_archive_open::gta6_session::hold(Gta6Context { keys, names })
 }
 
 /// The archive at `path` as the tree every archive opens as.
 pub(crate) fn tree(path: &Path) -> RpfDocument {
-    let crypto = Arc::new(NoOpCryptoProvider::new());
+    let crypto = crate::state::rpf_archive_open::gta6_session::crypto();
     let archive = RpfArchive::open_with(path, crypto).expect("the archive opens as a tree");
     RpfDocument::new(archive).expect("the tree lists")
 }
@@ -788,7 +780,7 @@ fn a_save_of_a_gta_vi_tree_in_place_is_refused_by_name_and_writes_nothing() {
     assert_eq!(std::fs::read(&path).expect("the source"), before);
 
     // A folder's tree writes none of its GTA VI archives in place either.
-    let crypto = Arc::new(NoOpCryptoProvider::new());
+    let crypto = crate::state::rpf_archive_open::gta6_session::crypto();
     let archive = RpfArchive::open_with(&path, crypto).expect("the archive opens");
     let why = refuse_in_place(&archive).expect_err("refused");
     assert!(refused.iter().all(|w| why.contains(w)), "{why}");
@@ -822,7 +814,7 @@ fn a_small_clear_row_of_a_real_archive_replaced_into_a_copy_reads_back() {
     archives.sort();
     let replaced = b"OpenRage replaced this body, which deflates. ".repeat(40);
     for (_, path) in archives.iter().take(8) {
-        let crypto = Arc::new(NoOpCryptoProvider::new());
+        let crypto = crate::state::rpf_archive_open::gta6_session::crypto();
         let opened = (RpfArchive::open_with(path, crypto).map_err(|e| e.to_string()))
             .and_then(RpfDocument::new);
         let Ok(mut tree) = opened else {
@@ -877,7 +869,7 @@ fn a_small_clear_row_of_a_real_archive_changed_at_its_size_saves_as_a_patched_co
     archives.sort();
     let mut rebuilt = Vec::new();
     for (_, path) in archives.iter().take(8) {
-        let crypto = Arc::new(NoOpCryptoProvider::new());
+        let crypto = crate::state::rpf_archive_open::gta6_session::crypto();
         let opened = (RpfArchive::open_with(path, crypto).map_err(|e| e.to_string()))
             .and_then(RpfDocument::new);
         let Ok(mut tree) = opened else {

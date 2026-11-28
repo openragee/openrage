@@ -81,13 +81,14 @@ mod tests {
     use or_io::container::rpf::{
         Gta6Context, Gta6Mount, GtaViKeys, NameResolver, Rpf9ArchiveWriter,
     };
-    use or_io::container::{NoOpCryptoProvider, RpfArchive};
+    use or_io::container::RpfArchive;
     use or_io::gta6::hash::name_hash64;
 
     use super::{as_read, laid};
     use crate::state::document::{DocumentId, RpfNodeId};
     use crate::state::opening_a_gta_vi_awc::gta_vi;
     use crate::state::rpf9_scan::{body_path, scanned_body, View};
+    use crate::state::rpf_archive_open::gta6_session::{self, Reading};
     use crate::state::rpf_archive_open::tree_open::{leave, name, row_of};
     use crate::state::rpf_archive_open::tree_verbs::headerless_tests::saves_per_kind::overlaid;
     use crate::state::rpf_archive_open::tree_verbs::tests::synthetic_keys;
@@ -102,25 +103,16 @@ mod tests {
     const AUDIO: &str = "data/voice.awc";
     const DATA: AwcChunkKind = AwcChunkKind::Data;
 
-    /// Archives opened while this is held are read with the keys and names it was made with.
-    struct Reading(Option<Arc<Gta6Context>>);
-
-    impl Drop for Reading {
-        fn drop(&mut self) {
-            Gta6Context::swap_given(self.0.take());
-        }
-    }
-
+    /// Archives opened through [`showing`] while this is held are read with `keys` and the given names.
     fn reading(keys: Arc<GtaViKeys>, named: &[&str]) -> Reading {
         let mut names = NameResolver::new();
         for name in named {
             names.insert(name_hash64(name.as_bytes()), *name);
         }
-        let context = Gta6Context {
+        gta6_session::hold(Gta6Context {
             keys,
             names: Arc::new(names),
-        };
-        Reading(Gta6Context::swap_given(Some(Arc::new(context))))
+        })
     }
 
     fn pattern(len: usize) -> Vec<u8> {
@@ -207,7 +199,7 @@ mod tests {
 
     /// An app showing the archive at `path` as the tree every archive opens as.
     fn showing(path: &Path) -> Option<AppState> {
-        let crypto = Arc::new(NoOpCryptoProvider::new());
+        let crypto = gta6_session::crypto();
         let archive = RpfArchive::open_with(path, crypto).ok()?;
         let tree = RpfDocument::new(archive).ok()?;
         let mut state = AppState::new();

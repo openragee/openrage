@@ -15,7 +15,7 @@ use or_io::container::rpf::{
     read_rpf9_body, ChunkPatch, Gta6Mount, GtaViKeys, PatchPlan, Rpf9BodyKind, Rpf9Role,
     Rpf9Sections,
 };
-use or_io::container::{NoOpCryptoProvider, RpfArchive};
+use or_io::container::RpfArchive;
 use or_io::gta6::headerless::{read_dictionary, Entry, Resource};
 use or_io::gta6::map::MapBody;
 use or_io::gta6::mission_tables::Body;
@@ -792,7 +792,7 @@ fn every_kind_the_app_edits_saved_through_its_tree_row_of_the_build_plans_patche
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let crypto = Arc::new(NoOpCryptoProvider::new());
+        let crypto = crate::state::rpf_archive_open::gta6_session::crypto();
         let Ok(tree) = (RpfArchive::open_with(&disk, crypto).map_err(|e| e.to_string()))
             .and_then(RpfDocument::new)
         else {

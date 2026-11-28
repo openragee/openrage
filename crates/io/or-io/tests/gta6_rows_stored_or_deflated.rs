@@ -8,8 +8,12 @@
 #![cfg(feature = "gta6")]
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use or_io::container::rpf::{BodyForm, GtaViKeys, RpfArchive, GTA6_EXE_ENV, GTA6_SNAPSHOT_ENV};
+use or_io::container::rpf::{
+    BodyForm, Gta6Context, GtaViKeys, NameResolver, RpfArchive, GTA6_EXE_ENV, GTA6_SNAPSHOT_ENV,
+};
+use or_io::container::RpfCryptoProvider;
 use or_test_support::skip_install;
 
 const BUILD_ENV: &str = "OPENRAGE_GTA6_BUILD";
@@ -101,7 +105,7 @@ fn a_row_called_stored_holds_its_body_and_a_row_called_deflated_does_not() {
     let build = std::env::var_os(BUILD_ENV)
         .map(PathBuf::from)
         .filter(|p| p.is_dir());
-    let (Some(build), Ok(Some(_))) = (build, GtaViKeys::for_install(None)) else {
+    let (Some(build), Ok(Some(keys))) = (build, GtaViKeys::for_install(None)) else {
         skip_install(
             what,
             format_args!("set {BUILD_ENV} and {GTA6_SNAPSHOT_ENV} (or {GTA6_EXE_ENV})"),
@@ -111,9 +115,14 @@ fn a_row_called_stored_holds_its_body_and_a_row_called_deflated_does_not() {
     let archives = build_archives(&build);
     assert!(!archives.is_empty(), "no .rpf under {}", build.display());
 
+    // The keys travel into every open through the provider; this suite reads bodies, not names.
+    let crypto: Arc<dyn RpfCryptoProvider> = Arc::new(Gta6Context {
+        keys: Arc::new(keys),
+        names: Arc::new(NameResolver::new()),
+    });
     let mut t = Tally::default();
     for path in &archives {
-        match RpfArchive::open(path) {
+        match RpfArchive::open_with(path, Arc::clone(&crypto)) {
             Ok(archive) => check(&archive, &path.display().to_string(), &mut t),
             Err(e) => t.failures.push(format!("{}: {e}", path.display())),
         }

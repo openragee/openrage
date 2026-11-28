@@ -8,7 +8,7 @@ use crate::container::resource::dat_decompress_bounded;
 use crate::container::resource::{ResourceEnvelope, Rsc7};
 use crate::error::{IoError, Result};
 
-use super::archive::{RpfArchive, RpfNode, RpfSource};
+use super::archive::{RpfArchive, RpfBackend, RpfNode, RpfSource};
 use super::crypto::{CryptoTarget, RpfCryptoProvider};
 use super::entry::{
     read_big_resource_size as entry_size_from_slot, Compressor, RpfEntry, RpfEntryKind,
@@ -139,8 +139,16 @@ impl RpfArchive {
             keys,
             paths: OnceLock::new(),
             names_platform: OnceLock::new(),
-            #[cfg(feature = "gta6")]
-            rpf9,
+            backend: {
+                #[cfg(feature = "gta6")]
+                {
+                    rpf9.map_or(RpfBackend::Flat, RpfBackend::Rpf9)
+                }
+                #[cfg(not(feature = "gta6"))]
+                {
+                    RpfBackend::Flat
+                }
+            },
         })
     }
 }
@@ -609,7 +617,7 @@ impl RpfArchive {
     /// included, can open.
     pub fn read_form(&self, entry_index: u32, form: BodyForm) -> Result<Vec<u8>> {
         #[cfg(feature = "gta6")]
-        if self.version == RpfVersion::Rpf9 {
+        if let RpfBackend::Rpf9(_) = self.backend {
             return self.rpf9_form(entry_index, form);
         }
         match self.entries.get(entry_index as usize) {
@@ -836,7 +844,7 @@ impl RpfArchive {
     /// The archive stored, uncompressed, as file `entry_index` of this one, which reads through it and holds its keys.
     pub fn open_nested(self: &Arc<RpfArchive>, entry_index: u32) -> Result<RpfArchive> {
         #[cfg(feature = "gta6")]
-        if self.version == RpfVersion::Rpf9 {
+        if let RpfBackend::Rpf9(_) = self.backend {
             return self.rpf9_nested(entry_index);
         }
         let bin = self

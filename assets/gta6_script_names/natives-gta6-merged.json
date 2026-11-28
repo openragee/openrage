@@ -1,5 +1,5 @@
 {
- "build": "GTA VI Xbox 1.0.2.1, merged 2026-11-27",
+ "build": "GTA VI Xbox 1.0.2.1, merged 2026-11-28",
  "UNKNOWN": {
   "0x002A59EEA87021CF": {
    "name": "_0x002A59EEA87021CF",
@@ -906,8 +906,9 @@
    "arg_cells": 2,
    "return_cells": 1,
    "calls": 2,
-   "estimate": "MISC::INT64_MUL",
-   "estimate_confidence": "low"
+   "estimate": "ANIMSCRIPT::_CREATE_BLACKBOARD_VECTOR2_LISTENER",
+   "estimate_confidence": "low",
+   "estimate_evidence": "Same folded code as 9278. Registered with Method_26 (getter Method_10 +16); the owning class reads the value as two floats from one 8-byte cell (extract_bytes 0..4, 4..8 -> packed_vector_from_xyz(x,y,0))"
   },
   "0x06453B8AE7AE3E39": {
    "name": "_0x06453B8AE7AE3E39",
@@ -1055,16 +1056,6 @@
    "return_cells": 0,
    "calls": 5
   },
-  "0x06F98A13115019C0": {
-   "name": "_0x06F98A13115019C0",
-   "confidence": "unnamed",
-   "rva": "0x04D01F90",
-   "arg_cells": 4,
-   "return_cells": 2,
-   "calls": 76,
-   "estimate": "MISC::ROTATE_VECTOR",
-   "estimate_confidence": "low"
-  },
   "0x06FB542BB1BCCDC7": {
    "name": "_0x06FB542BB1BCCDC7",
    "confidence": "unnamed",
@@ -1153,16 +1144,6 @@
    "return_cells": 0,
    "calls": 23,
    "estimate": "WEAPON::SET_MELEE_ACTION_ENABLED",
-   "estimate_confidence": "low"
-  },
-  "0x07951F625AC95F4E": {
-   "name": "_0x07951F625AC95F4E",
-   "confidence": "unnamed",
-   "rva": "0x02BB2A60",
-   "arg_cells": 2,
-   "return_cells": 1,
-   "calls": 70,
-   "estimate": "MISC::INT64_AND",
    "estimate_confidence": "low"
   },
   "0x079672557DDCDDD8": {
@@ -2636,8 +2617,9 @@
    "arg_cells": 3,
    "return_cells": 0,
    "calls": 1,
-   "estimate": "AUDIO::LERP_STATIC_EMITTER_VOLUME",
-   "estimate_confidence": "low"
+   "estimate": "ANIMSCRIPT::_SET_ENTITY_COMPONENT_LEVEL_2",
+   "estimate_confidence": "low",
+   "estimate_evidence": "Same shape as C20A, tail-jump 0x143182b80 -> component 0x11 slot at +0xa0; script track 0xC5AF176E"
   },
   "0x0FD5071A3B9FCF98": {
    "name": "_0x0FD5071A3B9FCF98",
@@ -3947,16 +3929,6 @@
    "estimate": "ZONE::SET_ZONE_ENABLED",
    "estimate_confidence": "low"
   },
-  "0x16DA34BADFD445EB": {
-   "name": "_0x16DA34BADFD445EB",
-   "confidence": "unnamed",
-   "rva": "0x04D028C0",
-   "arg_cells": 6,
-   "return_cells": 2,
-   "calls": 9,
-   "estimate": "MISC::VECTOR_TO_SCREEN_DIRECTION",
-   "estimate_confidence": "low"
-  },
   "0x16DB948F087643BE": {
    "name": "_0x16DB948F087643BE",
    "confidence": "unnamed",
@@ -5045,16 +5017,6 @@
    "estimate": "PED::SET_PED_GROUND_VEHICLE",
    "estimate_confidence": "low"
   },
-  "0x1D0555307B605F8A": {
-   "name": "_0x1D0555307B605F8A",
-   "confidence": "unnamed",
-   "rva": "0x04D02170",
-   "arg_cells": 5,
-   "return_cells": 1,
-   "calls": 10,
-   "estimate": "MISC::VECTOR_ROUGHLY_EQUALS",
-   "estimate_confidence": "low"
-  },
   "0x1D08D64CD52A2376": {
    "name": "_0x1D08D64CD52A2376",
    "confidence": "unnamed",
@@ -5328,8 +5290,9 @@
    "arg_cells": 3,
    "return_cells": 0,
    "calls": 1,
-   "estimate": "AUDIO::FADE_STATIC_EMITTER_TO_VOLUME",
-   "estimate_confidence": "low"
+   "estimate": "ANIMSCRIPT::_SET_ENTITY_COMPONENT_LEVEL_0",
+   "estimate_confidence": "low",
+   "estimate_evidence": "Same shape as C20A, tail-jump 0x143182be0 -> component 0x11 slot at +0x88 (the slot engine code clamps to 0..1, increments, and native 0xDB504285E131FEF9 also sets); script track 0x2037DCFC"
   },
   "0x1E2C169EA3892D5A": {
    "name": "_0x1E2C169EA3892D5A",
@@ -6584,8 +6547,9 @@
    "arg_cells": 3,
    "return_cells": 0,
    "calls": 10,
-   "estimate": "AUDIO::UNLINK_STATIC_EMITTER_FROM_ENTITY",
-   "estimate_confidence": "low"
+   "estimate": "ANIMSCRIPT::_SET_ENTITY_PARAM_BANK_VECTORS",
+   "estimate_confidence": "low",
+   "estimate_evidence": "(ref, entries[] {vec4, u8 index, u8 bank}): for each entry 0x144daae90 writes the vector into bank/index of component 0x12's table at +0x1e0 and, unless override bit is set, also writes max(x,y,z) as the scalar (same table C42E writes); marks dirty +0x22c. Script fills 4+ indices from anim floats each frame"
   },
   "0x25AB50A437E9F166": {
    "name": "_0x25AB50A437E9F166",
@@ -6635,16 +6599,6 @@
    "return_cells": 0,
    "calls": 5,
    "estimate": "MISC::STREAMING_SET_PRIORITY",
-   "estimate_confidence": "low"
-  },
-  "0x25FF7C675A285834": {
-   "name": "_0x25FF7C675A285834",
-   "confidence": "unnamed",
-   "rva": "0x04D023C0",
-   "arg_cells": 2,
-   "return_cells": 2,
-   "calls": 91,
-   "estimate": "MISC::VECTOR_ZERO_Z",
    "estimate_confidence": "low"
   },
   "0x26235DCA888C4321": {
@@ -8025,8 +7979,9 @@
    "arg_cells": 3,
    "return_cells": 1,
    "calls": 1,
-   "estimate": "MISC::FIND_PED_IN_GROUP",
-   "estimate_confidence": "low"
+   "estimate": "TASK::_CREATE_SUBNETWORK_FROM_CLIP",
+   "estimate_confidence": "low",
+   "estimate_evidence": "FUN_145b17990 looks up a dict hash and then a clip hash in the two-level sorted table of FUN_141db6650 (0 when not present), takes the clip object's vtable+0x10 and wraps it with the fixed definition hash 0xA8A7099A and the bool (FUN_14172c920); script passes the dict and clip that 0xA811ABDA63DACBFC returned and gives the handle to Method_18(0xF8730DE0, ...)"
   },
   "0x2D6C7D8A73506B74": {
    "name": "_0x2D6C7D8A73506B74",
@@ -8209,16 +8164,6 @@
    "return_cells": 1,
    "calls": 4,
    "estimate": "MISC::REQUEST_DISPATCH_RESPONSE_AT_COORDS",
-   "estimate_confidence": "low"
-  },
-  "0x2EBDAACF261592AA": {
-   "name": "_0x2EBDAACF261592AA",
-   "confidence": "unnamed",
-   "rva": "0x04952DB0",
-   "arg_cells": 3,
-   "return_cells": 1,
-   "calls": 4,
-   "estimate": "MISC::FIND_CLOSEST_NAV_POINT",
    "estimate_confidence": "low"
   },
   "0x2EC787B5B6839B3A": {
@@ -10637,16 +10582,6 @@
    "estimate": "PLAYER::UPDATE_PLAYER_OUTFIT_COMPONENT",
    "estimate_confidence": "low"
   },
-  "0x3CF3A8C6822394F8": {
-   "name": "_0x3CF3A8C6822394F8",
-   "confidence": "unnamed",
-   "rva": "0x04952B90",
-   "arg_cells": 21,
-   "return_cells": 1,
-   "calls": 3,
-   "estimate": "MISC::FIND_BEST_PED_MATCHING_CRITERIA",
-   "estimate_confidence": "low"
-  },
   "0x3CF6F9E680CEF858": {
    "name": "_0x3CF6F9E680CEF858",
    "confidence": "unnamed",
@@ -11501,16 +11436,6 @@
    "estimate": "PLAYER::SET_CAN_AUTO_AIM_AT_TARGET",
    "estimate_confidence": "low"
   },
-  "0x41BD4E31917C5AEF": {
-   "name": "_0x41BD4E31917C5AEF",
-   "confidence": "unnamed",
-   "rva": "0x04D021D0",
-   "arg_cells": 5,
-   "return_cells": 2,
-   "calls": 165,
-   "estimate": "MISC::VECTOR_SLERP",
-   "estimate_confidence": "low"
-  },
   "0x42048AA32DF5BD8A": {
    "name": "_0x42048AA32DF5BD8A",
    "confidence": "unnamed",
@@ -11779,16 +11704,6 @@
    "estimate": "MAP::BLIP_OVERRIDE_FLASHING",
    "estimate_confidence": "low"
   },
-  "0x433592D1FAC6828F": {
-   "name": "_0x433592D1FAC6828F",
-   "confidence": "unnamed",
-   "rva": "0x03182750",
-   "arg_cells": 7,
-   "return_cells": 1,
-   "calls": 1,
-   "estimate": "VEHICLE::FIND_VEHICLE_SPAWN_POSITION",
-   "estimate_confidence": "low"
-  },
   "0x4370DDF79A0D1F61": {
    "name": "_0x4370DDF79A0D1F61",
    "confidence": "unnamed",
@@ -11876,8 +11791,9 @@
    "arg_cells": 2,
    "return_cells": 1,
    "calls": 1,
-   "estimate": "MISC::INT64_DIV",
-   "estimate_confidence": "low"
+   "estimate": "ANIMSCRIPT::_CREATE_BLACKBOARD_QUATERNION_LISTENER",
+   "estimate_confidence": "low",
+   "estimate_evidence": "Same folded code as 9278. Single site registers it with Method_32 (getter Method_16 +16) on keys whose descriptor type byte is 0; type 0 is the type the frame builder 62B7 gives orientation tracks (0x98E1750C<<32), and SetOrientation (0x79EE6EB6) normalises 4 floats; callback takes key, 16-byte value, reason"
   },
   "0x43C713462465671F": {
    "name": "_0x43C713462465671F",
@@ -11968,16 +11884,6 @@
    "calls": 9,
    "estimate": "PLAYER::GET_SCREEN_MARKER_VISIBLE",
    "estimate_confidence": "low"
-  },
-  "0x4449261FC4102397": {
-   "name": "_0x4449261FC4102397",
-   "confidence": "unnamed",
-   "rva": "0x04D01FF0",
-   "arg_cells": 4,
-   "return_cells": 1,
-   "calls": 87,
-   "estimate": "MISC::VDIST",
-   "estimate_confidence": "medium"
   },
   "0x444D4E68C11F28C9": {
    "name": "_0x444D4E68C11F28C9",
@@ -12930,8 +12836,9 @@
    "arg_cells": 7,
    "return_cells": 1,
    "calls": 1,
-   "estimate": "MISC::FIND_WATER_SURFACE_ALONG_LINE",
-   "estimate_confidence": "low"
+   "estimate": "TASK::_CREATE_SUBNETWORK_FROM_POSITION",
+   "estimate_confidence": "low",
+   "estimate_evidence": "FUN_142130d70 builds a 0xA0-byte object (vtable 0x14669EDA8) holding arg 1 split into a 32 m grid cell and an offset, a normalised xyz vector derived from arg 2, two ints and a bool, and returns a pooled handle (FUN_14172c990); the one call site passes a stored position, vector and two ints and gives the handle to Method_18(0xD5FA479C, ...)"
   },
   "0x484BDE13288DF543": {
    "name": "_0x484BDE13288DF543",
@@ -14649,16 +14556,6 @@
    "estimate": "STATS::STORY_UPDATE_COLLECTABLE_STAT",
    "estimate_confidence": "low"
   },
-  "0x527163D2EBCE5901": {
-   "name": "_0x527163D2EBCE5901",
-   "confidence": "unnamed",
-   "rva": "0x04D02420",
-   "arg_cells": 2,
-   "return_cells": 1,
-   "calls": 9,
-   "estimate": "MISC::VMAG",
-   "estimate_confidence": "low"
-  },
   "0x527947B6825C609A": {
    "name": "_0x527947B6825C609A",
    "confidence": "unnamed",
@@ -14806,8 +14703,9 @@
    "arg_cells": 3,
    "return_cells": 0,
    "calls": 1,
-   "estimate": "AUDIO::FADE_OUT_STATIC_EMITTER",
-   "estimate_confidence": "low"
+   "estimate": "ANIMSCRIPT::_SET_ENTITY_COMPONENT_LEVEL_1",
+   "estimate_confidence": "low",
+   "estimate_evidence": "Same shape as C20A, tail-jump 0x143182c40 -> component 0x11 slot at +0x94 (stores +0x98/+0x9c); script track 0x93336674"
   },
   "0x53342055DCF38688": {
    "name": "_0x53342055DCF38688",
@@ -14927,16 +14825,6 @@
    "return_cells": 1,
    "calls": 10,
    "estimate": "PLAYER::GET_LOCKON_TARGET_TYPE",
-   "estimate_confidence": "low"
-  },
-  "0x53DA6DDBC0DADAA4": {
-   "name": "_0x53DA6DDBC0DADAA4",
-   "confidence": "unnamed",
-   "rva": "0x04D024D0",
-   "arg_cells": 4,
-   "return_cells": 2,
-   "calls": 9,
-   "estimate": "MISC::VECTOR_ADD",
    "estimate_confidence": "low"
   },
   "0x53DA7F430ADB8710": {
@@ -16996,16 +16884,6 @@
    "estimate": "ITEMDATABASE::SET_SHOP_ITEM_PRICE",
    "estimate_confidence": "low"
   },
-  "0x5E0BCBEB228DF00B": {
-   "name": "_0x5E0BCBEB228DF00B",
-   "confidence": "unnamed",
-   "rva": "0x04D02110",
-   "arg_cells": 2,
-   "return_cells": 2,
-   "calls": 194,
-   "estimate": "MISC::VECTOR_NORMALISE",
-   "estimate_confidence": "low"
-  },
   "0x5E0E983A5EDC26DE": {
    "name": "_0x5E0E983A5EDC26DE",
    "confidence": "unnamed",
@@ -17520,16 +17398,6 @@
    "estimate": "SCRIPT::TAG_GET_COUNT_WITH_TAGS",
    "estimate_confidence": "low"
   },
-  "0x61E0D6465AD78AFB": {
-   "name": "_0x61E0D6465AD78AFB",
-   "confidence": "unnamed",
-   "rva": "0x04D02240",
-   "arg_cells": 8,
-   "return_cells": 2,
-   "calls": 65,
-   "estimate": "MISC::VECTOR_TRANSFORM_BETWEEN_ENTITIES",
-   "estimate_confidence": "low"
-  },
   "0x61E8027667A9FFC6": {
    "name": "_0x61E8027667A9FFC6",
    "confidence": "unnamed",
@@ -17676,16 +17544,6 @@
    "return_cells": 1,
    "calls": 9,
    "estimate": "WEAPON::IS_WEAPON_MOLOTOV",
-   "estimate_confidence": "low"
-  },
-  "0x62B782D3EC007F84": {
-   "name": "_0x62B782D3EC007F84",
-   "confidence": "unnamed",
-   "rva": "0x03ED6F10",
-   "arg_cells": 2,
-   "return_cells": 1,
-   "calls": 23,
-   "estimate": "ITEMSET::GET_ITEMSET_ITEM_AT_INDEX",
    "estimate_confidence": "low"
   },
   "0x62B93B18D3732493": {
@@ -19616,8 +19474,9 @@
    "arg_cells": 0,
    "return_cells": 1,
    "calls": 1,
-   "estimate": "MISC::FIND_GET_LAST_RESULT",
-   "estimate_confidence": "low"
+   "estimate": "TASK::_CREATE_SUBNETWORK_PARAMS",
+   "estimate_confidence": "low",
+   "estimate_evidence": "allocates a 0xF0-byte object (vtable 0x1466988C0, copied by FUN_144952890 in the same unit) from the pool registered with name hash 0xD68A8B5A and returns its handle; script wraps it and calls SetFaceDirection and about 13 float setters on it, then passes it as arg 2 of 0xE977B07BE268D581/0xE977B07DE268D581, which copy it whole; what the parameters drive is not settled"
   },
   "0x6E0B2C1768B0DA7B": {
    "name": "_0x6E0B2C1768B0DA7B",
@@ -19828,8 +19687,9 @@
    "arg_cells": 4,
    "return_cells": 0,
    "calls": 1,
-   "estimate": "ITEMSET::SET_ITEMSET_ITEM_FLOAT",
-   "estimate_confidence": "low"
+   "estimate": "ANIMSCRIPT::_APPLY_FRAME_DOF_RULES",
+   "estimate_confidence": "low",
+   "estimate_evidence": "0x143ed6ff0(rules, rules2, frame, weight): for each rule (type byte < 5) reads DOF values of the frame by id (0x1403d5b30), computes deltas and writes results back through five type-specific paths scaled by weight. One site: rules = 12 entries {id, sourceId, weight 0.95/0.4/0.9/0.5/0.25, type 3}, rules2 empty, weight 1.0"
   },
   "0x6F6F1BF6D2B4DF2C": {
    "name": "_0x6F6F1BF6D2B4DF2C",
@@ -20619,14 +20479,6 @@
    "estimate": "PERSCHAR::RELEASE_PERSCHAR_MODEL",
    "estimate_confidence": "low"
   },
-  "0x73E518F7444ED924": {
-   "name": "_0x73E518F7444ED924",
-   "confidence": "unnamed",
-   "rva": "0x03182920",
-   "arg_cells": 1,
-   "return_cells": 1,
-   "calls": 19
-  },
   "0x73E57080F44AEB90": {
    "name": "_0x73E57080F44AEB90",
    "confidence": "unnamed",
@@ -20723,16 +20575,6 @@
    "return_cells": 0,
    "calls": 135,
    "estimate": "OBJECT::SET_DOOR_STATE",
-   "estimate_confidence": "low"
-  },
-  "0x74B68D0A64C21EB3": {
-   "name": "_0x74B68D0A64C21EB3",
-   "confidence": "unnamed",
-   "rva": "0x04D029D0",
-   "arg_cells": 6,
-   "return_cells": 2,
-   "calls": 22,
-   "estimate": "MISC::VECTOR_TRANSFORM_POINT",
    "estimate_confidence": "low"
   },
   "0x74C4241B2912BA19": {
@@ -21013,16 +20855,6 @@
    "return_cells": 0,
    "calls": 108,
    "estimate": "VEHICLE::SET_VEHICLE_RESISTANT_TO_IMPACTS",
-   "estimate_confidence": "low"
-  },
-  "0x7640533B8ABF1655": {
-   "name": "_0x7640533B8ABF1655",
-   "confidence": "unnamed",
-   "rva": "0x04D022C0",
-   "arg_cells": 9,
-   "return_cells": 2,
-   "calls": 180,
-   "estimate": "MISC::VECTOR_TRANSFORM_BETWEEN_SPACES",
    "estimate_confidence": "low"
   },
   "0x76517B4F83CD27C4": {
@@ -21977,14 +21809,6 @@
    "estimate": "STREAMING::REQUEST_NAMED_PTFX_ASSET_HASH",
    "estimate_confidence": "low"
   },
-  "0x7C8AC0F560017D7F": {
-   "name": "_0x7C8AC0F560017D7F",
-   "confidence": "unnamed",
-   "rva": "0x04D01EE0",
-   "arg_cells": 4,
-   "return_cells": 1,
-   "calls": 8
-  },
   "0x7C8D371B53AD0347": {
    "name": "_0x7C8D371B53AD0347",
    "confidence": "unnamed",
@@ -22183,16 +22007,6 @@
    "return_cells": 0,
    "calls": 9,
    "estimate": "GRAPHICS::SET_TIMED_EVENT_COOLDOWN",
-   "estimate_confidence": "low"
-  },
-  "0x7E150FA21ADC5E1F": {
-   "name": "_0x7E150FA21ADC5E1F",
-   "confidence": "unnamed",
-   "rva": "0x04D027B0",
-   "arg_cells": 4,
-   "return_cells": 4,
-   "calls": 1,
-   "estimate": "MISC::VECTOR_TO_ENTITY_OFFSET",
    "estimate_confidence": "low"
   },
   "0x7E4128590A47CC92": {
@@ -22463,16 +22277,6 @@
    "return_cells": 0,
    "calls": 7,
    "estimate": "AUDIO::SET_ARREST_BLIPS_ENABLED",
-   "estimate_confidence": "low"
-  },
-  "0x80376182069907CD": {
-   "name": "_0x80376182069907CD",
-   "confidence": "unnamed",
-   "rva": "0x04952D20",
-   "arg_cells": 3,
-   "return_cells": 1,
-   "calls": 1,
-   "estimate": "MISC::FIND_CARRIABLE_PICKUP_POSITION",
    "estimate_confidence": "low"
   },
   "0x805257DB900F3DE4": {
@@ -23161,16 +22965,6 @@
    "return_cells": 0,
    "calls": 878,
    "estimate": "SCRIPT::STATE_SET_CURRENT",
-   "estimate_confidence": "low"
-  },
-  "0x83BA93D87006F38E": {
-   "name": "_0x83BA93D87006F38E",
-   "confidence": "unnamed",
-   "rva": "0x04D02470",
-   "arg_cells": 3,
-   "return_cells": 2,
-   "calls": 17,
-   "estimate": "MISC::VROTATE_Z",
    "estimate_confidence": "low"
   },
   "0x83CD1CF74C1DBDBA": {
@@ -23920,8 +23714,9 @@
    "arg_cells": 0,
    "return_cells": 1,
    "calls": 1,
-   "estimate": "MISC::IS_FIND_SYSTEM_BUSY",
-   "estimate_confidence": "low"
+   "estimate": "TASK::_GET_COMPILED_CONSTANT_FLAG_16",
+   "estimate_confidence": "low",
+   "estimate_evidence": "handler body only stores the constant 0 (the bytes are not a Ghidra function); one of three overloads 0x883D8E16/17/18 (one hash byte steps); gates f_1F4 = flag && (query.f_30 & 48), which enables the 0x2D63BC57552DFC2E clip path; looks like a tunable or debug toggle folded to a constant, what it was is not in the code"
   },
   "0x883D8E175F579543": {
    "name": "_0x883D8E175F579543",
@@ -23930,8 +23725,9 @@
    "arg_cells": 0,
    "return_cells": 1,
    "calls": 1,
-   "estimate": "MISC::DOES_FIND_SYSTEM_EXIST",
-   "estimate_confidence": "low"
+   "estimate": "TASK::_GET_COMPILED_CONSTANT_FLAG_17",
+   "estimate_confidence": "low",
+   "estimate_evidence": "handler stores the constant 0; ORed with state==5/state==8 into the 'take the clip' decision of the fall behaviour (func_05B8C0); same family as 0x883D8E16/18; original meaning not in the code"
   },
   "0x883D8E185F579543": {
    "name": "_0x883D8E185F579543",
@@ -23940,8 +23736,9 @@
    "arg_cells": 0,
    "return_cells": 1,
    "calls": 1,
-   "estimate": "MISC::IS_FIND_SYSTEM_ENABLED",
-   "estimate_confidence": "low"
+   "estimate": "TASK::_GET_COMPILED_CONSTANT_FLAG_18",
+   "estimate_confidence": "low",
+   "estimate_evidence": "handler stores the constant 1; ANDed with f_1F4 before 0x2D63BC57552DFC2E picks a clip (func_05B8C0); same family as 0x883D8E16/17; original meaning not in the code"
   },
   "0x884A4CF4F8B77332": {
    "name": "_0x884A4CF4F8B77332",
@@ -25474,16 +25271,6 @@
    "estimate": "PLAYER::GET_TIME_SINCE_LAST_WAKE_UP",
    "estimate_confidence": "low"
   },
-  "0x90F8BA5B0E2D4FCE": {
-   "name": "_0x90F8BA5B0E2D4FCE",
-   "confidence": "unnamed",
-   "rva": "0x04D01F40",
-   "arg_cells": 1,
-   "return_cells": 1,
-   "calls": 6,
-   "estimate": "MISC::NORMALISE_ANGLE",
-   "estimate_confidence": "low"
-  },
   "0x91076E7ED67819C1": {
    "name": "_0x91076E7ED67819C1",
    "confidence": "unnamed",
@@ -25782,16 +25569,6 @@
    "return_cells": 2,
    "calls": 2,
    "estimate": "AUDIO::GET_PED_AUDIO_TARGET_ENTITY",
-   "estimate_confidence": "low"
-  },
-  "0x9278B505EEAE400F": {
-   "name": "_0x9278B505EEAE400F",
-   "confidence": "unnamed",
-   "rva": "0x02BB29C0",
-   "arg_cells": 2,
-   "return_cells": 1,
-   "calls": 7,
-   "estimate": "MISC::INT64_ADD",
    "estimate_confidence": "low"
   },
   "0x9280FD4026166EFA": {
@@ -26192,16 +25969,6 @@
    "return_cells": 0,
    "calls": 1,
    "estimate": "VEHICLE::SET_VEHICLE_ALLOW_PASSENGER_EXIT",
-   "estimate_confidence": "low"
-  },
-  "0x94B7B94C14707DBF": {
-   "name": "_0x94B7B94C14707DBF",
-   "confidence": "unnamed",
-   "rva": "0x04D02B50",
-   "arg_cells": 5,
-   "return_cells": 2,
-   "calls": 9,
-   "estimate": "MISC::VECTOR_WEIGHTED_AVERAGE",
    "estimate_confidence": "low"
   },
   "0x94DEE5E8B9DAF941": {
@@ -26637,8 +26404,9 @@
    "arg_cells": 2,
    "return_cells": 1,
    "calls": 11,
-   "estimate": "ITEMSET::GET_ITEMSET_ITEM_INDEX",
-   "estimate_confidence": "low"
+   "estimate": "ANIMSCRIPT::_ADD_EVENT_LISTENER",
+   "estimate_confidence": "low",
+   "estimate_evidence": "0x140976e40(source, out, method): calls source vtable+0x10 with the method to make a subscription, registers it in the script heap (0x14067b160), wraps it in a pooled handle object (vtable 0x146501850) and returns it. Sources are what the context's Method_7/Method_3 return; callbacks take the new entity ref (one tests ref type 2 and reads wheel radii)"
   },
   "0x973D9118C2C1C3D6": {
    "name": "_0x973D9118C2C1C3D6",
@@ -29081,8 +28849,9 @@
    "arg_cells": 2,
    "return_cells": 1,
    "calls": 3,
-   "estimate": "MISC::INT64_OR",
-   "estimate_confidence": "low"
+   "estimate": "ANIMSCRIPT::_CREATE_BLACKBOARD_VECTOR_LISTENER",
+   "estimate_confidence": "low",
+   "estimate_evidence": "Same folded code as 9278. Registered with Method_28 (getter Method_12 +16) on keys with descriptor type 2 (the type 62B7 gives position/scale tracks); value is a 16-byte vector used with packed_vector_multiply"
   },
   "0xA6519DD076800888": {
    "name": "_0xA6519DD076800888",
@@ -29352,16 +29121,6 @@
    "return_cells": 0,
    "calls": 30,
    "estimate": "VEHICLE::SET_LAW_IGNORE_VEHICLE",
-   "estimate_confidence": "low"
-  },
-  "0xA811ABDA63DACBFC": {
-   "name": "_0xA811ABDA63DACBFC",
-   "confidence": "unnamed",
-   "rva": "0x04952CC0",
-   "arg_cells": 7,
-   "return_cells": 1,
-   "calls": 3,
-   "estimate": "MISC::FIND_CARRIABLE_DROP_POSITION",
    "estimate_confidence": "low"
   },
   "0xA82B4234B92EEF97": {
@@ -29947,16 +29706,6 @@
    "estimate": "INTERIOR::GET_INTERIOR_BY_NAME",
    "estimate_confidence": "low"
   },
-  "0xABF30063C8C9F685": {
-   "name": "_0xABF30063C8C9F685",
-   "confidence": "unnamed",
-   "rva": "0x04D02050",
-   "arg_cells": 4,
-   "return_cells": 1,
-   "calls": 61,
-   "estimate": "MISC::VDIST2",
-   "estimate_confidence": "low"
-  },
   "0xABF64623D443A26C": {
    "name": "_0xABF64623D443A26C",
    "confidence": "unnamed",
@@ -30345,16 +30094,6 @@
    "return_cells": 0,
    "calls": 2,
    "estimate": "PLAYER::INHIBIT_PLAYER_CRIMES",
-   "estimate_confidence": "low"
-  },
-  "0xAE4D2A87E110B846": {
-   "name": "_0xAE4D2A87E110B846",
-   "confidence": "unnamed",
-   "rva": "0x04D02350",
-   "arg_cells": 5,
-   "return_cells": 2,
-   "calls": 14,
-   "estimate": "MISC::VECTOR_TURN_TOWARDS",
    "estimate_confidence": "low"
   },
   "0xAE5032B6D67DF055": {
@@ -30930,14 +30669,6 @@
    "calls": 14,
    "estimate": "PERSCHAR::PERSCHAR_SET_STATE",
    "estimate_confidence": "low"
-  },
-  "0xB228F1A9A107367F": {
-   "name": "_0xB228F1A9A107367F",
-   "confidence": "unnamed",
-   "rva": "0x04D02650",
-   "arg_cells": 2,
-   "return_cells": 2,
-   "calls": 19
   },
   "0xB2320252A44A6C95": {
    "name": "_0xB2320252A44A6C95",
@@ -31915,16 +31646,6 @@
    "estimate": "GRAPHICS::RESET_SHADOW_SETTINGS",
    "estimate_confidence": "low"
   },
-  "0xB6FFECAB2549FE11": {
-   "name": "_0xB6FFECAB2549FE11",
-   "confidence": "unnamed",
-   "rva": "0x04D02770",
-   "arg_cells": 0,
-   "return_cells": 1,
-   "calls": 17,
-   "estimate": "MISC::VECTOR_TINY_FLOAT",
-   "estimate_confidence": "low"
-  },
   "0xB701846E24BBE5E4": {
    "name": "_0xB701846E24BBE5E4",
    "confidence": "unnamed",
@@ -32216,8 +31937,9 @@
    "arg_cells": 1,
    "return_cells": 1,
    "calls": 1,
-   "estimate": "VEHICLE::GET_VEHICLE_WHEEL_RADIUS",
-   "estimate_confidence": "low"
+   "estimate": "ANIMSCRIPT::_GET_PED_SPEED",
+   "estimate_confidence": "low",
+   "estimate_evidence": "Ped component slot 0x32 (0x144e63d10) field +0x5a8 returned as float (0 if none). Engine code compares the same field with 1.8 and 0.5, and divides it by the ped's max speed (0x1405288e0, default 1e8); script compares it with 1.0. Speed or move-blend ratio; code does not settle which"
   },
   "0xB89B3E498232E254": {
    "name": "_0xB89B3E498232E254",
@@ -33239,16 +32961,6 @@
    "estimate": "MISC::STOP_MISSION_INVENTORY",
    "estimate_confidence": "low"
   },
-  "0xBD108B2F2E5D5F55": {
-   "name": "_0xBD108B2F2E5D5F55",
-   "confidence": "unnamed",
-   "rva": "0x031828E0",
-   "arg_cells": 1,
-   "return_cells": 1,
-   "calls": 2,
-   "estimate": "VEHICLE::IS_VEHICLE_IN_AIR",
-   "estimate_confidence": "low"
-  },
   "0xBD161DCEA2827A85": {
    "name": "_0xBD161DCEA2827A85",
    "confidence": "unnamed",
@@ -33542,8 +33254,9 @@
    "arg_cells": 6,
    "return_cells": 1,
    "calls": 3,
-   "estimate": "MISC::FIND_PED_BY_MODEL",
-   "estimate_confidence": "low"
+   "estimate": "TASK::_CREATE_SUBNETWORK",
+   "estimate_confidence": "low",
+   "estimate_evidence": "FUN_14172c8a0 builds a 0x50-byte object (vtable 0x14669B950) holding args 2-5 (a float, then ints), FUN_14172c920 wraps it with arg 1 (a definition hash) and arg 6 (bool) and FUN_14172c990 returns a handle from the pool registered with name hash 0x8F052221; every result goes to the network helper's Method_18(slot, handle), including in InitNetworks (slots 0xF8730DE0, 0x175856DD); 'subnetwork' is inferred from that consumer, not from a string"
   },
   "0xBEF170AE2373F20A": {
    "name": "_0xBEF170AE2373F20A",
@@ -34216,8 +33929,9 @@
    "arg_cells": 3,
    "return_cells": 0,
    "calls": 1,
-   "estimate": "AUDIO::FADE_IN_STATIC_EMITTER",
-   "estimate_confidence": "low"
+   "estimate": "ANIMSCRIPT::_SET_ENTITY_COMPONENT_LEVEL_3",
+   "estimate_confidence": "low",
+   "estimate_evidence": "Undefined in Ghidra: bytes at 0x143182960 load cell1, cell2 floats and tail-jump 0x143182ca0 -> component 0x11 of (*ref)+0x28 -> stores (a,b) at +0xb0/+0xb4 (the 4th of four 12-byte {cur,target,rate}-like slots at +0x88/+0x94/+0xa0/+0xac). Script passes an anim float (track 0xB2B1A310) and 0. What the slot means is not settled"
   },
   "0xC2141194B0CD85A4": {
    "name": "_0xC2141194B0CD85A4",
@@ -34294,8 +34008,9 @@
    "arg_cells": 1,
    "return_cells": 1,
    "calls": 2,
-   "estimate": "MISC::FIND_CARRIABLE_SLOT_COUNT",
-   "estimate_confidence": "low"
+   "estimate": "TASK::_GET_ANIM_ITEM_NEXT_ITEM",
+   "estimate_confidence": "low",
+   "estimate_evidence": "FUN_145e86940 finds the item by hash and returns vtable+0x30 = the u32 at item+0x10 (0 when not found); script chains it twice (picked -> f_28 -> f_2C) and gives the three ids to three slots, the middle one looped (0xF4D1B81FBD5CBDE4 arg 4 = 1), falling back to the picked item when 0: reads as an intro/loop/outro link, the slot names are not known"
   },
   "0xC2A9EC39C422A806": {
    "name": "_0xC2A9EC39C422A806",
@@ -34598,8 +34313,9 @@
    "arg_cells": 3,
    "return_cells": 0,
    "calls": 9,
-   "estimate": "AUDIO::LINK_STATIC_EMITTER_TO_ENTITY",
-   "estimate_confidence": "low"
+   "estimate": "ANIMSCRIPT::_SET_ENTITY_PARAM_BANK_SCALARS",
+   "estimate_confidence": "low",
+   "estimate_evidence": "(ref, entries[] {vec4, u8 index, u8 bank}): for each entry on component 0x12 of (*ref)+0x28 calls 0x144dab1a0, writing the per-index scalar table at +0x1e0 and setting override bit 7 of +0x22b so 25AB no longer derives it. Banks are pooled 32-entry blocks (limits 64/64/96/32) packed for upload"
   },
   "0xC42EE9A73E81C1EC": {
    "name": "_0xC42EE9A73E81C1EC",
@@ -34729,16 +34445,6 @@
    "return_cells": 1,
    "calls": 50,
    "estimate": "MISC::IS_PED_PERSCHAR_OF_TYPE",
-   "estimate_confidence": "low"
-  },
-  "0xC4B8BF0E06733F78": {
-   "name": "_0xC4B8BF0E06733F78",
-   "confidence": "unnamed",
-   "rva": "0x02BB2D30",
-   "arg_cells": 2,
-   "return_cells": 1,
-   "calls": 83,
-   "estimate": "STATS::STAT_GET_INT64",
    "estimate_confidence": "low"
   },
   "0xC4D52EF90A2440C4": {
@@ -35131,16 +34837,6 @@
    "estimate": "ENTITY::GET_LIST_OF_SORTED_ENTITIES",
    "estimate_confidence": "low"
   },
-  "0xC6DF776D9053B4A3": {
-   "name": "_0xC6DF776D9053B4A3",
-   "confidence": "unnamed",
-   "rva": "0x04D02930",
-   "arg_cells": 8,
-   "return_cells": 4,
-   "calls": 17,
-   "estimate": "MISC::VECTOR_TRANSFORM_AXES",
-   "estimate_confidence": "low"
-  },
   "0xC6F3CEE762B06AB9": {
    "name": "_0xC6F3CEE762B06AB9",
    "confidence": "unnamed",
@@ -35451,16 +35147,6 @@
    "return_cells": 0,
    "calls": 51,
    "estimate": "SCRIPT::CLEANUP_SCRIPT_STAGE",
-   "estimate_confidence": "low"
-  },
-  "0xC8A929793818F6BF": {
-   "name": "_0xC8A929793818F6BF",
-   "confidence": "unnamed",
-   "rva": "0x04D02710",
-   "arg_cells": 4,
-   "return_cells": 2,
-   "calls": 12,
-   "estimate": "MISC::VECTOR_SUBTRACT",
    "estimate_confidence": "low"
   },
   "0xC8BFEBB65D78B4E6": {
@@ -36567,8 +36253,9 @@
    "arg_cells": 6,
    "return_cells": 0,
    "calls": 9,
-   "estimate": "MISC::SET_INT64_BITS_IN_RANGE",
-   "estimate_confidence": "low"
+   "estimate": "ANIMSCRIPT::_REGISTER_ANIM_PARAM",
+   "estimate_confidence": "low",
+   "estimate_evidence": "Calls 0x145b58a30(u8 a0, u32 keyId, u8 valueType, u32 ownerHash, u8 a4, bool a5): appends a 16-byte record {keyId, a0, type, a4, 2-a5} to a global table and counts it under ownerHash in a hash map; two readers (0x142bb3740, 0x142bc1610) list an owner's records filtered by flag bit 0/1. Called from static init with keys that become 0xE6770DEA<<32|id blackboard keys (type 0 key read with the bool getter, type 5 with the int setter, type 8 with the vector setter)"
   },
   "0xCE9DC6B2D62696E0": {
    "name": "_0xCE9DC6B2D62696E0",
@@ -36662,16 +36349,6 @@
    "return_cells": 1,
    "calls": 203,
    "estimate": "TASK::TASK_EQUIP_ITEM",
-   "estimate_confidence": "low"
-  },
-  "0xCF03D2E7BBA90DD6": {
-   "name": "_0xCF03D2E7BBA90DD6",
-   "confidence": "unnamed",
-   "rva": "0x04952B20",
-   "arg_cells": 1,
-   "return_cells": 1,
-   "calls": 1,
-   "estimate": "MISC::CONVERT_FIND_RESULT_TO_ENTITY",
    "estimate_confidence": "low"
   },
   "0xCF10B9349B27F688": {
@@ -37696,16 +37373,6 @@
    "estimate": "PED::SET_PED_MISSION_ROLE",
    "estimate_confidence": "low"
   },
-  "0xD428C97CC219B340": {
-   "name": "_0xD428C97CC219B340",
-   "confidence": "unnamed",
-   "rva": "0x04D02530",
-   "arg_cells": 2,
-   "return_cells": 2,
-   "calls": 13,
-   "estimate": "MISC::VECTOR_FLATTEN",
-   "estimate_confidence": "low"
-  },
   "0xD439F72934628532": {
    "name": "_0xD439F72934628532",
    "confidence": "unnamed",
@@ -37764,16 +37431,6 @@
    "return_cells": 1,
    "calls": 7,
    "estimate": "VEHICLE::GET_HELI_MAIN_ROTOR_HEALTH",
-   "estimate_confidence": "low"
-  },
-  "0xD48FDE10275D4C71": {
-   "name": "_0xD48FDE10275D4C71",
-   "confidence": "unnamed",
-   "rva": "0x04D02820",
-   "arg_cells": 8,
-   "return_cells": 4,
-   "calls": 8,
-   "estimate": "MISC::VECTOR_TO_HERMITE_SPLINE",
    "estimate_confidence": "low"
   },
   "0xD4A05A2A942363DA": {
@@ -40602,16 +40259,6 @@
    "estimate": "ENTITY::GET_ALL_ENTITIES_ATTACHED_TO_ENTITY",
    "estimate_confidence": "low"
   },
-  "0xE3C343F66DED7D96": {
-   "name": "_0xE3C343F66DED7D96",
-   "confidence": "unnamed",
-   "rva": "0x04D02590",
-   "arg_cells": 4,
-   "return_cells": 2,
-   "calls": 101,
-   "estimate": "MISC::VECTOR_MULTIPLY",
-   "estimate_confidence": "low"
-  },
   "0xE3CE3A8A20411C7B": {
    "name": "_0xE3CE3A8A20411C7B",
    "confidence": "unnamed",
@@ -41691,8 +41338,9 @@
    "arg_cells": 20,
    "return_cells": 1,
    "calls": 1,
-   "estimate": "MISC::FIND_SPAWN_LOCATION",
-   "estimate_confidence": "low"
+   "estimate": "TASK::_CREATE_SUBNETWORK_WITH_PARAMS_20",
+   "estimate_confidence": "low",
+   "estimate_evidence": "FUN_145e864b0: the 20-cell overload of 0xE977B07DE268D581: same copy of the 0x6E04B883D77C49A1 object and 6 ints plus two quaternions, three more ints, a 5-bit flag word (script ORs five bools into bits 0-4) and three more vectors, a 400-byte payload (vtable 0x14669D560), wrapped with definition hash arg 1 (0xC6B252DF at the call site) and the bool"
   },
   "0xE977B07DE268D581": {
    "name": "_0xE977B07DE268D581",
@@ -41701,8 +41349,9 @@
    "arg_cells": 13,
    "return_cells": 1,
    "calls": 1,
-   "estimate": "MISC::FIND_SPAWN_COORDS",
-   "estimate_confidence": "low"
+   "estimate": "TASK::_CREATE_SUBNETWORK_WITH_PARAMS_13",
+   "estimate_confidence": "low",
+   "estimate_evidence": "FUN_145e86770: returns 0 when arg 2 (the 0x6E04B883D77C49A1 object) is null, else builds a 0x140-byte payload (vtable 0x14669D580) from a copy of that object, 6 ints and two normalised quaternions (args 9-10), and wraps it with definition hash arg 1 and the bool (FUN_14172c920); the 13-cell overload of 0xE977B07BE268D581 (one hash byte differs); used with hash 0xA1D92518 in the fall behaviour"
   },
   "0xE97A422A2EF46064": {
    "name": "_0xE97A422A2EF46064",
@@ -42916,16 +42565,6 @@
    "estimate": "PED::IS_PED_IN_LAW_INCIDENT",
    "estimate_confidence": "low"
   },
-  "0xEF69383F9A5F5FEC": {
-   "name": "_0xEF69383F9A5F5FEC",
-   "confidence": "unnamed",
-   "rva": "0x04D026B0",
-   "arg_cells": 4,
-   "return_cells": 2,
-   "calls": 80,
-   "estimate": "MISC::VECTOR_ROTATE",
-   "estimate_confidence": "low"
-  },
   "0xEF70C8D858ADD389": {
    "name": "_0xEF70C8D858ADD389",
    "confidence": "unnamed",
@@ -43737,8 +43376,9 @@
    "arg_cells": 6,
    "return_cells": 1,
    "calls": 6,
-   "estimate": "MISC::FIND_VEHICLE_NODE",
-   "estimate_confidence": "low"
+   "estimate": "TASK::_CREATE_SUBNETWORK_FROM_ANIM_ITEM",
+   "estimate_confidence": "low",
+   "estimate_evidence": "FUN_141d005a0 builds a 0x80-byte object (vtable 0x14669C498) whose weighted list holds arg 1 (an item hash from 0x3CF3A8C6822394F8 or 0xC2A6ED8C4CBB1F64) at weight 1.0, stores arg 2 (0.125 at call sites, a blend time by its use), arg 3, bools arg 4/arg 5 (arg 4 = 1 on the middle 'next' slot) and int arg 6, and returns a pooled handle (FUN_14172c990); script passes it to Method_18 on slots 0x8E21DD66, 0x80783712, 0x0987E7C5, 0x61E34840"
   },
   "0xF4E59044312A85F6": {
    "name": "_0xF4E59044312A85F6",
@@ -43984,16 +43624,6 @@
    "return_cells": 0,
    "calls": 5,
    "estimate": "PLAYER::SET_PLAYER_BUSY_FOR_DURATION",
-   "estimate_confidence": "low"
-  },
-  "0xF6391E3C4090072A": {
-   "name": "_0xF6391E3C4090072A",
-   "confidence": "unnamed",
-   "rva": "0x03182890",
-   "arg_cells": 3,
-   "return_cells": 1,
-   "calls": 12,
-   "estimate": "VEHICLE::GET_VEHICLE_WHEEL_SUSPENSION_COMPRESSION",
    "estimate_confidence": "low"
   },
   "0xF646A4510EBC893F": {
@@ -45163,16 +44793,6 @@
    "estimate": "DATABINDING::DATABINDING_UNSUBSCRIBE",
    "estimate_confidence": "low"
   },
-  "0xFC796020E2D4594F": {
-   "name": "_0xFC796020E2D4594F",
-   "confidence": "unnamed",
-   "rva": "0x031827A0",
-   "arg_cells": 1,
-   "return_cells": 1,
-   "calls": 1,
-   "estimate": "VEHICLE::GET_VEHICLE_SUSPENSION_HEIGHT",
-   "estimate_confidence": "low"
-  },
   "0xFC813BA1F986431C": {
    "name": "_0xFC813BA1F986431C",
    "confidence": "unnamed",
@@ -45624,8 +45244,9 @@
    "arg_cells": 3,
    "return_cells": 1,
    "calls": 8,
-   "estimate": "VEHICLE::GET_VEHICLE_WHEEL_GRIP",
-   "estimate_confidence": "low"
+   "estimate": "ANIMSCRIPT::_GET_VEHICLE_WHEEL_ROTATION_SPEED",
+   "estimate_confidence": "low",
+   "estimate_evidence": "(vehicleRef, boneHash, &out) -> bool: vehicle component (type bits 0x40000, slot 0x32), wheel found by bone hash, writes *(wheel+0x1188 or a default)+0x14. Value is not settled by the code; the only use multiplies it by dt*0.33 and accumulates a track phase for wheel_lr/wheel_rr, which fits angular speed"
   },
   "0xFED1D54B28B0B6C3": {
    "name": "_0xFED1D54B28B0B6C3",
@@ -47958,6 +47579,42 @@
    "arg_cells": 2,
    "return_cells": 0,
    "calls": 182
+  },
+  "0x3CF3A8C6822394F8": {
+   "name": "_SELECT_ANIM_ITEM",
+   "confidence": "exe-behaviour-medium",
+   "rva": "0x04952B90",
+   "arg_cells": 21,
+   "return_cells": 1,
+   "calls": 3,
+   "evidence": "FUN_145b55270 packs the arguments (set hash, owner Guid of 2 cells, ints, material id from 0xCF03D2E7BBA90DD6, a list) into a query, FUN_141d6ee30 on the item store FUN_141a93990 runs a weighted random pick (weights start at 1.0) and returns the chosen item hash or 0; script takes the set hash from tuning.GetHash and feeds the result to 0xA811ABDA63DACBFC, 0x80376182069907CD, 0xF4D1B81FBD5CBDE4 and 0x2EBDAACF261592AA"
+  },
+  "0xA811ABDA63DACBFC": {
+   "name": "_GET_ANIM_ITEM_CLIP_DATA",
+   "confidence": "exe-behaviour-medium",
+   "rva": "0x04952CC0",
+   "arg_cells": 7,
+   "return_cells": 1,
+   "calls": 3,
+   "evidence": "FUN_14584c1b0 finds the item by hash in the store (FUN_1400ff260 binary search), requires type DAT_146da6f90, outputs dict hash (+0x14), clip hash (+0x18), byte+0x35*0.005 (phase), byte+0x36*0.05 (41 -> -1.0), byte+0x37*0.05 (rate), flags (vtable+0x1F0 = byte +0x2C) and returns true; script calls SetClip('clip' 0xE71BD32A, dict, clip), SetFloat('phase' 0xA27F482B, ...), SetFloat('ClipRate' 0x2770B939, ...)"
+  },
+  "0x80376182069907CD": {
+   "name": "_GET_ANIM_ITEM_MOTION_CLIP",
+   "confidence": "exe-behaviour-medium",
+   "rva": "0x04952D20",
+   "arg_cells": 3,
+   "return_cells": 1,
+   "calls": 1,
+   "evidence": "FUN_145947240 finds the item by hash, requires the second item type DAT_146da7588, outputs dict hash (+0x14) and clip hash (+0x18), returns true; the one call site passes them to SetMotion(0xCF5665AC, dict, clip) right after 0x3CF3A8C6822394F8 picked the item"
+  },
+  "0x2EBDAACF261592AA": {
+   "name": "_MARK_ANIM_ITEM_USED",
+   "confidence": "exe-behaviour-medium",
+   "rva": "0x04952DB0",
+   "arg_cells": 3,
+   "return_cells": 1,
+   "calls": 4,
+   "evidence": "FUN_1415c49f0 on the item store: when the item exists and vtable+0x20 holds, stores expiry = now + cooldown * random(0.8..1.2), cooldown chosen by the item's byte +0x30 (vtable+0x270) from the table 7200/1500/300/0 s, together with the 16-byte owner Guid; clip and motion items are also tracked by dict hash (+0x14); always returns 1; script calls it with the same owner Guid right after a successful pick"
   }
  },
  "PED": {
@@ -57080,6 +56737,249 @@
    "arg_cells": 8,
    "return_cells": 1,
    "calls": 1
+  },
+  "0x06F98A13115019C0": {
+   "name": "_VECTOR_CROSS",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D01F90",
+   "arg_cells": 4,
+   "return_cells": 2,
+   "calls": 76,
+   "evidence": "144d03ba0: a.yzx*b.zxy - a.zxy*b.yzx (shufps 0xc9/0xd2), a=cells0-1, b=cells2-3: a x b; script normalizes the result (_VECTOR_NORMALIZE(_VECTOR_CROSS(...)))"
+  },
+  "0x16DA34BADFD445EB": {
+   "name": "_TRANSFORM_POINT",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D028C0",
+   "arg_cells": 6,
+   "return_cells": 2,
+   "calls": 9,
+   "evidence": "144d031d0: out = rotate(v by q) + p with q=cells0-1, p=cells2-3, v=cells4-5 (t=2(q.xyz x v); v + w*t + q.xyz x t); call sites pass a Cells4 bone transform (quat,pos) and a local position"
+  },
+  "0x1D0555307B605F8A": {
+   "name": "_VECTOR_ALMOST_EQUAL",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D02170",
+   "arg_cells": 5,
+   "return_cells": 1,
+   "calls": 10,
+   "evidence": "1455db5f0: (a-tol <= b) & (b <= a+tol) per lane, movmskps & 7 == 7 so x,y,z only, per-component not Euclidean; a=cells0-1, b=cells2-3, tol=cell4 (script passes 1e-5, 1e-3); returns bool"
+  },
+  "0x25FF7C675A285834": {
+   "name": "_VECTOR_NORMALIZE",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D023C0",
+   "arg_cells": 2,
+   "return_cells": 2,
+   "calls": 91,
+   "evidence": "1455db580: length from x,y,z only (blendps mask 8 zeroes w, hadd x2), rsqrt + one Newton step, all four lanes scaled; no zero-length guard"
+  },
+  "0x41BD4E31917C5AEF": {
+   "name": "_VECTOR_LERP",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D021D0",
+   "arg_cells": 5,
+   "return_cells": 2,
+   "calls": 165,
+   "evidence": "1455db5d0: a + t*(b-a) on all four lanes, t=cell0, a=cells1-2, b=cells3-4"
+  },
+  "0x4449261FC4102397": {
+   "name": "_VECTOR_DISTANCE",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D01FF0",
+   "arg_cells": 4,
+   "return_cells": 1,
+   "calls": 87,
+   "evidence": "1455db640: sqrt(sum of (a-b)^2 over x,y,z) (blend mask 8 drops w, rsqrtss + Newton, 0 below FLT_MIN): GTA V VDIST with the two points packed as vectors (cells0-1, cells2-3)"
+  },
+  "0x527163D2EBCE5901": {
+   "name": "_GET_PERLIN_NOISE_3D",
+   "confidence": "exe-behaviour-medium",
+   "rva": "0x04D02420",
+   "arg_cells": 2,
+   "return_cells": 1,
+   "calls": 9,
+   "evidence": "1421556e0 -> 140f56460: improved Perlin gradient noise of v.xyz (floor, fade 6t^5-15t^4+10t^3, permutation table 1461edf60, gradient table 1461ee760, trilinear blend); native returns clamp(noise+0.5, 0, 1); lattice wrap mask = min(TLS[0x7a0]-1, 255), so the period comes from thread state (unexplained); script uses it for wobble amplitudes"
+  },
+  "0x53DA6DDBC0DADAA4": {
+   "name": "_QUATERNION_BETWEEN_VECTORS",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D024D0",
+   "arg_cells": 4,
+   "return_cells": 2,
+   "calls": 9,
+   "evidence": "1455db3b0: shortest-arc rotation from a (cells0-1) to b (cells2-3): normalize both, d=dot; |d-1|<1e-6 -> identity (0,0,0,1); d near -1 -> axis swapped for a perpendicular unit axis; else normalize(a x b, d+1)"
+  },
+  "0x5E0BCBEB228DF00B": {
+   "name": "_QUATERNION_FROM_EULER",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D02110",
+   "arg_cells": 2,
+   "return_cells": 2,
+   "calls": 194,
+   "evidence": "144d03840: per-lane sin/cos of v*0.5 (range reduction by 1/pi=0.31830987, minimax polys), q.x=sx*cy*cz-cx*sy*sz, q.y=cx*sy*cz+sx*cy*sz, q.z=cx*cy*sz-sx*sy*cz, q.w=cx*cy*cz+sx*sy*sz = qz*qy*qx; angles in radians (no degree factor); inverse of _QUATERNION_TO_EULER"
+  },
+  "0x61E0D6465AD78AFB": {
+   "name": "_QUATERNION_LOOK_AT",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D02240",
+   "arg_cells": 8,
+   "return_cells": 2,
+   "calls": 65,
+   "evidence": "142155720 -> 14540e410: q1 = shortest arc taking axis[cell4] to normalize(target cells0-1 - eye cells2-3), then twist q2 about that direction so axis[cell5] (rotated by q1) meets normalize(upPoint cells6-7 - eye) projected on the plane, result q2*q1; axis table 146727b70 = +X,+Y,+Z,-X,-Y,-Z; script: SetObjectRot(bone, f(GetObjectPos(target), GetObjectPos(bone), 0, 2, GetObjectPos(pole)))"
+  },
+  "0x74B68D0A64C21EB3": {
+   "name": "_TRANSFORM_POINT_INVERSE",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D029D0",
+   "arg_cells": 6,
+   "return_cells": 2,
+   "calls": 22,
+   "evidence": "144d03080: out = rotate(w - p by conjugate(q)) with q=cells0-1 (xyz negated, blend mask 8), p=cells2-3, w=cells4-5: world point into the local space of (q,p); inverse of _TRANSFORM_POINT"
+  },
+  "0x7640533B8ABF1655": {
+   "name": "_QUATERNION_LOOK_AT_UP_FROM_QUATERNION",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D022C0",
+   "arg_cells": 9,
+   "return_cells": 2,
+   "calls": 180,
+   "evidence": "14540e340: up = rotate(axis[cell7] by q cells2-3), then the same look-at as _QUATERNION_LOOK_AT (14540e410) with target cells0-1, eye cells4-5, forward axis cell6, up axis cell8; script: SetObjectRot(bone, f(GetObjectPos(target), identity quat, GetObjectPos(bone), 3, 1, 1))"
+  },
+  "0x7C8AC0F560017D7F": {
+   "name": "_VECTOR_ANGLE",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D01EE0",
+   "arg_cells": 4,
+   "return_cells": 1,
+   "calls": 8,
+   "evidence": "144d03c40: acos(clamp(dot(a,b) * rsqrt(|a|^2*|b|^2), -1, 1)) over x,y,z (acos minimax poly, 1.5707963, 3.1415927 for negative), radians; script: acosf(x) - f(a,b)"
+  },
+  "0x7E150FA21ADC5E1F": {
+   "name": "_TRANSFORM_INVERT",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D027B0",
+   "arg_cells": 4,
+   "return_cells": 4,
+   "calls": 1,
+   "evidence": "144d03300: input (q cells0-1, p cells2-3), output (conjugate(q), -rotate(p by conjugate(q))): inverse of a quaternion+position transform"
+  },
+  "0x83BA93D87006F38E": {
+   "name": "_QUATERNION_FROM_AXIS_ANGLE",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D02470",
+   "arg_cells": 3,
+   "return_cells": 2,
+   "calls": 17,
+   "evidence": "144d03660: sin/cos of angle*0.5 (angle=cell2, radians), q.xyz = axis(cells0-1).xyz*sin, q.w = cos (blendps mask 8); axis not normalized"
+  },
+  "0x90F8BA5B0E2D4FCE": {
+   "name": "_WRAP_ANGLE_RADIANS",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D01F40",
+   "arg_cells": 1,
+   "return_cells": 1,
+   "calls": 6,
+   "evidence": "144d03bd0: s = x>=0 ? pi : -pi; r = fmodf(x+s, 2pi) - s; r<=-pi -> pi: angle wrapped into (-pi, pi]; script wraps accumulated angles with it"
+  },
+  "0x94B7B94C14707DBF": {
+   "name": "_QUATERNION_SLERP_NEAR",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D02B50",
+   "arg_cells": 5,
+   "return_cells": 2,
+   "calls": 9,
+   "evidence": "144d02bc0: d = 4-lane dot(q1 cells1-2, q2 cells3-4), theta from |d| via atan2-style poly, weights sin((1-t)theta)/sin(theta) and sin(t*theta)/sin(theta), second weight negated when d<0 (shortest path), result normalized, q1 returned when sin(theta)=0; t=cell0; same as GTA V SLERP_NEAR_QUATERNION"
+  },
+  "0xABF30063C8C9F685": {
+   "name": "_VECTOR_DOT",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D02050",
+   "arg_cells": 4,
+   "return_cells": 1,
+   "calls": 61,
+   "evidence": "1455db620: a*b, blendps mask 8 zeroes w, two hadds: x,y,z dot product; script: dot of two _VECTOR_NORMALIZE results"
+  },
+  "0xAE4D2A87E110B846": {
+   "name": "_QUATERNION_NLERP_NEAR",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D02350",
+   "arg_cells": 5,
+   "return_cells": 2,
+   "calls": 14,
+   "evidence": "144d037c0: q2 negated when 4-lane dot(q1,q2)<0, lerp q1 + t*(q2-q1), then 4-lane normalize; t=cell0, q1=cells1-2, q2=cells3-4"
+  },
+  "0xB228F1A9A107367F": {
+   "name": "_QUATERNION_TO_EULER",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D02650",
+   "arg_cells": 2,
+   "return_cells": 2,
+   "calls": 19,
+   "evidence": "1455db0d0: q scaled by sqrt2 (1.4142135); x=atan2(2(wx+yz), 1-2(x^2+y^2)), y=atan2(2(wy-xz), sqrt(1-sinp^2)), z=atan2(2(wz+xy), 1-2(y^2+z^2)); gimbal |sinp|>0.999999 -> x=2*atan2(x,w), z=0 (multiplier 14615be60 = 2,1,0); radians, inverse of _QUATERNION_FROM_EULER"
+  },
+  "0xB6FFECAB2549FE11": {
+   "name": "_GET_RANDOM_FLOAT_0_TO_1",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D02770",
+   "arg_cells": 0,
+   "return_cells": 1,
+   "calls": 17,
+   "evidence": "144d03380: multiply-with-carry state (global 14abc3ca8) = lo*0x5cdcfaa7 + hi, returns (lo & 0x7fffff) * 1.1920929e-07 in [0,1); script scales it (x*10, (1-2x)*15 degrees)"
+  },
+  "0xC6DF776D9053B4A3": {
+   "name": "_TRANSFORM_MULTIPLY_INVERSE",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D02930",
+   "arg_cells": 8,
+   "return_cells": 4,
+   "calls": 17,
+   "evidence": "144d030f0: T1=(q1 cells0-1, p1 cells2-3), T2=(q2 cells4-5, p2 cells6-7); out q = conjugate(q1)*q2, out p = rotate(p2-p1 by conjugate(q1)): inverse(T1)*T2, T2 expressed relative to T1"
+  },
+  "0xC8A929793818F6BF": {
+   "name": "_QUATERNION_INVERSE_ROTATE_VECTOR",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D02710",
+   "arg_cells": 4,
+   "return_cells": 2,
+   "calls": 12,
+   "evidence": "1455db000: v rotated by conjugate(q) (xyz negated, blend mask 8), t=2(q' x v), v + w*t + q' x t; q=cells0-1, v=cells2-3"
+  },
+  "0xD428C97CC219B340": {
+   "name": "_QUATERNION_CONJUGATE",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D02530",
+   "arg_cells": 2,
+   "return_cells": 2,
+   "calls": 13,
+   "evidence": "144d03640: xor sign of all lanes then blendps mask 8 restores w: (-x,-y,-z,w); script: _QUATERNION_MULTIPLY(_QUATERNION_CONJUGATE(a), b)"
+  },
+  "0xD48FDE10275D4C71": {
+   "name": "_TRANSFORM_MULTIPLY",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D02820",
+   "arg_cells": 8,
+   "return_cells": 4,
+   "calls": 8,
+   "evidence": "144d03230: T1=(q1 cells0-1, p1 cells2-3), T2=(q2 cells4-5, p2 cells6-7); out q = q1*q2, out p = p1 + rotate(p2 by q1): T1*T2 (child transform into parent space)"
+  },
+  "0xE3C343F66DED7D96": {
+   "name": "_QUATERNION_MULTIPLY",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D02590",
+   "arg_cells": 4,
+   "return_cells": 2,
+   "calls": 101,
+   "evidence": "1455db340: Hamilton product a*b, a=cells0-1, b=cells2-3: x=aw*bx+ax*bw+ay*bz-az*by, y=aw*by-ax*bz+ay*bw+az*bx, z=aw*bz+ax*by-ay*bx+az*bw, w=aw*bw-ax*bx-ay*by-az*bz; script: q = f(q, _QUATERNION_FROM_EULER(v))"
+  },
+  "0xEF69383F9A5F5FEC": {
+   "name": "_QUATERNION_ROTATE_VECTOR",
+   "confidence": "exe-behaviour",
+   "rva": "0x04D026B0",
+   "arg_cells": 4,
+   "return_cells": 2,
+   "calls": 80,
+   "evidence": "1455db070: t=2(q.xyz x v), out = v + q.w*t + q.xyz x t; q=cells0-1, v=cells2-3; script rotates (1,0,0) by a quaternion to get an axis"
   }
  },
  "INVENTORY": {
@@ -60481,6 +60381,15 @@
    "arg_cells": 3,
    "return_cells": 0,
    "calls": 73
+  },
+  "0xCF03D2E7BBA90DD6": {
+   "name": "_GET_MATERIAL_ID_FROM_BOUND_HANDLE",
+   "confidence": "exe-behaviour-medium",
+   "rva": "0x04952B20",
+   "arg_cells": 1,
+   "return_cells": 1,
+   "calls": 1,
+   "evidence": "FUN_144953240 decodes the 64-bit handle (index/generation checked against the physics-level table DAT_14abbf348+0x28, 3030 xrefs; bits 32-47 child bound, -2 = none, taken when the bound's type byte is 6; bits 48-63 part, -1 -> 0) and returns bound vtable+0x48(part); script passes p.f_8.BoundHandle(...) into the f_28 slot of the query 0x3CF3A8C6822394F8 takes; that +0x48 is GetMaterialId is inferred from the (part) argument, not proved"
   }
  },
  "UNLOCK": {
@@ -63729,6 +63638,89 @@
    "arg_cells": 0,
    "return_cells": 1,
    "calls": 183
+  }
+ },
+ "ANIMSCRIPT": {
+  "0x9278B505EEAE400F": {
+   "name": "_CREATE_BLACKBOARD_BOOL_LISTENER",
+   "confidence": "exe-behaviour-medium",
+   "rva": "0x02BB29C0",
+   "arg_cells": 2,
+   "return_cells": 1,
+   "calls": 7,
+   "evidence": "Handler = thunk 0x14081b9b0(arg0=blackboard, arg1=bound method): allocates a 0x50 GC object (vtable 0x14633d530) binding the method to blackboard+0x10->+0xa8 and returns it; machine code is identical to 0795/43B7/0644/A64E (linker-folded template). Type from call sites only: result passed to blackboard Method_17 (bool getter Method_1 +16); every callback casts the value cell to byte"
+  },
+  "0x07951F625AC95F4E": {
+   "name": "_CREATE_BLACKBOARD_FLOAT_LISTENER",
+   "confidence": "exe-behaviour-medium",
+   "rva": "0x02BB2A60",
+   "arg_cells": 2,
+   "return_cells": 1,
+   "calls": 70,
+   "evidence": "Same folded code as 9278 (delegate over blackboard + method). 70 sites register it with Method_23 (float getter Method_7 +16, keys 0x2DEEFADD<<32|id, descriptor type 4 = float); callbacks compare as_f32(value), (key,value,reason) with removal flag in the high half"
+  },
+  "0xC4B8BF0E06733F78": {
+   "name": "_GET_ANIM_SCRIPT_DATA",
+   "confidence": "exe-behaviour",
+   "rva": "0x02BB2D30",
+   "arg_cells": 2,
+   "return_cells": 1,
+   "calls": 83,
+   "evidence": "Reads only cell 0 (u32 hash) and returns the pointer stored for it in the hash map 0x147bdd6a8/6b0, filled by 0x140fcf6b0 from the entries of the resource 0xB713FCE6 loaded through the store named \"AnimScriptDataStore\"; the function that then loads program 0xB407AF85 calls that loader. 83 sites: X(0x9A9D7DE0, 0) as SomeDataType; cell 1 always 0 and ignored"
+  },
+  "0x433592D1FAC6828F": {
+   "name": "_SET_ENTITY_ANIM_PARAM",
+   "confidence": "exe-behaviour-medium",
+   "rva": "0x03182750",
+   "arg_cells": 7,
+   "return_cells": 1,
+   "calls": 1,
+   "evidence": "0x144f950e0(cmd, ids[], values[], entityRef): accepts 3 entity class ids, takes the entity's anim-parameter component, dispatches on cmd joaat: SetScalar 0xE6002910 (key 0x2DEEFADD<<32|id, float), SetPosition 0x6192D52E, SetScale 0xF0CD47EC, SetDirection 0xB0776B7D (normalised xyz), SetOrientation 0x79EE6EB6 (normalised quaternion); returns 1 when applied. Command names recovered by joaat. Script wrapper func_0A4B28(entity, id, value) uses SetScalar"
+  },
+  "0xFC796020E2D4594F": {
+   "name": "_GET_PED_BREATH_PHASE",
+   "confidence": "exe-behaviour-medium",
+   "rva": "0x031827A0",
+   "arg_cells": 1,
+   "return_cells": 1,
+   "calls": 1,
+   "evidence": "Ped component slot 0xd of the entity id at +0x9c -> 0x14529bba0: reads the value tagged 0xF730C9C2 = joaat(\"BreathPhase\") from the attached anim data, else time*rate/30 (inverted on a flag); clamped 0..1, returned as float. Same function feeds the smoothed breathing parameter in 0x14529b8f0"
+  },
+  "0xF6391E3C4090072A": {
+   "name": "_GET_VEHICLE_WHEEL_RADIUS",
+   "confidence": "exe-behaviour-medium",
+   "rva": "0x03182890",
+   "arg_cells": 3,
+   "return_cells": 1,
+   "calls": 12,
+   "evidence": "(vehicleRef, boneHash, &out) -> bool: wheel by bone hash, out = 0x14518e0c0(wheel) = +0x1290 minus burst deflection (1-health)*(+0x1290-(+0x12c8+0x1294)), or rim value +0x1294 when flag 0x40 is set. Script calls it with wheel_lf/wheel_lr when ref type is 2 (vehicle); default fallback 0.35"
+  },
+  "0xBD108B2F2E5D5F55": {
+   "name": "_ANIMSCRIPT_IS_PED_IN_ANY_VEHICLE",
+   "confidence": "exe-behaviour",
+   "rva": "0x031828E0",
+   "arg_cells": 1,
+   "return_cells": 1,
+   "calls": 2,
+   "evidence": "Ped slot 0x47 component: (+0x898 != 0) && (+0x10 bit 5); exactly the test 0x144dd7510 that the engine's IS_PED_IN_ANY_VEHICLE path (0x140b43640) uses for the ped's vehicle; script suppresses an outdoor/rain effect when true"
+  },
+  "0x73E518F7444ED924": {
+   "name": "_ANIMSCRIPT_IS_PED_MALE",
+   "confidence": "exe-behaviour",
+   "rva": "0x03182920",
+   "arg_cells": 1,
+   "return_cells": 1,
+   "calls": 19,
+   "evidence": "Ped slot 0x12 component (0x144e59150) byte +0x2b bit 3, the same read as IS_PED_MALE (0x8B7745B99260A055, impl 0x142144bf0) with a null check; script picks between two AnimScript data sets with it. Name IS_PED_MALE itself is taken in GTA VI's table"
+  },
+  "0x62B782D3EC007F84": {
+   "name": "_CREATE_ANIM_FRAME",
+   "confidence": "exe-behaviour-medium",
+   "rva": "0x03ED6F10",
+   "arg_cells": 2,
+   "return_cells": 1,
+   "calls": 23,
+   "evidence": "0x140d6a0d0(descriptors, count): for each 16-byte descriptor {track<<32|id, type byte} builds a DOF list (0x145121fa0), creates a frame over it (0x14521d420) and returns it. Script descriptors: position 0xF791A95F/type 2, 0x98E1750C/type 0, scale 0x7AAA9F60/type 2; the result is later blended with frame.Add(f, 1.0)"
   }
  }
 }

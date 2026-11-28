@@ -294,6 +294,7 @@ not (
   | binary_id(=or-io::gta6_mission_other_reads)
   | binary_id(=or-io::gta6_content_cipher)
   | binary_id(=or-io::gta6_content_extent)
+  | binary_id(=or-io::gta6_reader_census)
   | binary_id(=or-io::gta6_mount_every_nested_table)
   | binary_id(=or-io::gta6_rpf_archive)
   | binary_id(=or-io::gta6_rows_with_no_kind)

@@ -37,15 +37,42 @@ pub(crate) enum Worn {
     Joined(Option<PedTextures>),
 }
 
+/// What the index makes of a body its scan found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Taken {
+    /// A metadata body, which may be an asset list.
+    Metadata,
+    /// A resource the scan states no signature of, which may be a catalogue.
+    Resource,
+    /// A resource the scan states a signature of, which no catalogue has: left unread.
+    Signed,
+    /// Anything else.
+    Not,
+}
+
+/// Which bodies the index reads, by what the scan states of one.
+// Measured over a whole build: every catalogue is a resource whose virtual section the scan
+// states no signature of; the navigation meshes, octrees, acceleration structures, dictionaries,
+// cloth and drawables that make up most of an archive's bodies all have one.
+fn taken(content: Rpf9Content, signed: bool, resource: bool) -> Taken {
+    match content {
+        Rpf9Content::Pso => Taken::Metadata,
+        Rpf9Content::ResourceShaped if resource && signed => Taken::Signed,
+        Rpf9Content::ResourceShaped if resource => Taken::Resource,
+        _ => Taken::Not,
+    }
+}
+
 /// What the archive at `path` holds of the index, added to `out`, from its scan; nothing where
 /// the scan does not read the archive whole.
-// ponytail: every resource-shaped and metadata body is read each session to find the few that
-// are the index's; keep their offsets as the layered materials' index does when the first ask
-// of a session is seen to take long.
+// ponytail: every unsigned resource and metadata body is read each session to find the few that
+// are the index's; keep the index per archive when the first ask of a session is still seen to
+// take long.
 fn read_archive(path: &Path, out: &mut Index) {
     let Ok(Some(scan)) = Rpf9ScanDocument::open(path) else {
         return;
     };
+    let mut signed = 0usize;
     let bodies: Vec<(u64, bool)> = loop {
         let found = scan.found();
         match &found.ended {
@@ -56,17 +83,20 @@ fn read_archive(path: &Path, out: &mut Index) {
                         ScanRow::Missing { .. } => None,
                     })
                     .filter(|find| find.inflated_len.is_none_or(|len| len <= BODY_LIMIT))
-                    .filter_map(|find| match find.kind {
-                        Rpf9BodyKind::Zlib(run) if run.content == Rpf9Content::Pso => {
-                            Some((find.offset, true))
+                    .filter_map(|find| {
+                        let Rpf9BodyKind::Zlib(run) = find.kind else {
+                            return None;
+                        };
+                        let signature = run.signature.is_some();
+                        match taken(run.content, signature, run.resource.is_some()) {
+                            Taken::Metadata => Some((find.offset, true)),
+                            Taken::Resource => Some((find.offset, false)),
+                            Taken::Signed => {
+                                signed += 1;
+                                None
+                            }
+                            Taken::Not => None,
                         }
-                        Rpf9BodyKind::Zlib(run)
-                            if run.content == Rpf9Content::ResourceShaped
-                                && run.resource.is_some() =>
-                        {
-                            Some((find.offset, false))
-                        }
-                        _ => None,
                     })
                     .collect()
             }
@@ -76,6 +106,12 @@ fn read_archive(path: &Path, out: &mut Index) {
         drop(found);
         std::thread::sleep(LOOK);
     };
+    tracing::info!(
+        archive = %path.display(),
+        read = bodies.len(),
+        signed,
+        "the ped index reads these bodies of an archive and leaves the resources the scan states a signature of"
+    );
     let Some(mut reader) = File::open(path)
         .ok()
         .and_then(|f| Rpf9BodyReader::new(f).ok())
@@ -186,6 +222,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_index_reads_metadata_and_unsigned_resources_and_leaves_signed_ones() {
+        use Rpf9Content::{Pso, ResourceShaped};
+        // A catalogue: a resource the scan states no signature of.
+        assert_eq!(taken(ResourceShaped, false, true), Taken::Resource);
+        // A navigation mesh, an acceleration structure, a dictionary: each has a signature.
+        assert_eq!(taken(ResourceShaped, true, true), Taken::Signed);
+        assert_eq!(taken(Pso, false, false), Taken::Metadata);
+        assert_eq!(taken(ResourceShaped, false, false), Taken::Not);
+    }
+
+    #[test]
     fn a_drawable_joins_by_its_name_to_the_state_that_wears_it() {
         let drawable = or_io::gta6::hash::name_hash64(b"zq_hat_000");
         let state = AssetState {
@@ -227,3 +274,7 @@ mod tests {
         assert_eq!(super::joined(&index, "zq_hat_001.#dr"), None);
     }
 }
+
+/// The skin tones of an install, read apart from this index.
+#[path = "gta6_skin_tones.rs"]
+pub(crate) mod skin_tones;

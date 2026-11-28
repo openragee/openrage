@@ -22,7 +22,8 @@ code. A string constant prints in the code that uses it, and `--strings` lists t
 code pushes. A file that
 is not a program and one whose code does not decode are refused with an error, and a function the
 lifter cannot settle is written as a comment that says why, with the rest of the program around
-it.
+it. The container has no exception table, so a program states no exception region and no
+`try`, `catch` or `finally` is ever written.
 
 `openrage-cli script compiled` prints a plain instruction listing of the same bytes with none of
 the program's tables (`compiled.rs` and `disasm.rs`, which read the one instruction table of
@@ -39,9 +40,9 @@ and a hash no list names stays a hash.
 
 | Level | What is written |
 |---|---|
-| `lifted` | the front end's own form in a listing's syntax; no pass runs |
+| `lifted` | the front end's own form in a listing's syntax, one class of the program's functions; no pass runs |
 | `structured` | functions of `if`, loops and `switch`, with a labelled `goto` only where none fits; no source construct is rebuilt |
-| `source` | classes with their members, and every source construct a pass proves |
+| `source` | the globals and statics the code names, the free functions, then the types with their members, and every source construct a pass proves |
 
 `script decompile` and `script export` default to `source`. `script lifted` defaults to the four
 first passes (`values`, `types`, `structure`, `names`) at `structured`, which is what it printed
@@ -62,7 +63,9 @@ was.
   copies and carry signatures across calls. A call through a virtual slot yields the kind every
   function the slot holds down its line of types proves, and none where one of them proves
   nothing. `wide-joins` makes a value of several cells carried to a join in a row of one-cell
-  temporaries one variable, and `repeats` sends a test that repeats the one its block was
+  temporaries one variable, where a clear of the row or a read of it as one group shows its
+  width. A temporary given a value in each arm of an `if` is one choice `c ? a : b`, whose arms
+  may call or choose again, and only the arm taken runs. `repeats` sends a test that repeats the one its block was
   entered by the way that one went.
 - **Kinds**: `types`, `kinds`, `signs` give a variable a declared type where every read and write
   agrees; a variable of no proved kind is declared `Cell`, and a 32-bit reading of it is written
@@ -73,7 +76,8 @@ was.
   assignment of which makes an array is an array of that element type. A value of two cells that
   the code only takes from natives, compares and hands back to them is declared `Handle`, a word
   the header explains, and so is one copied whole from or into a `Handle`, or compared with one, or
-  compared as the runtime compares a `System.Guid`. A value of several cells that an instruction storing, making or unboxing
+  compared as the runtime compares a `System.Guid`, and a value handed whole to a parameter the
+  callee's signature, or a natives list, states a `Handle` or a `Vector3` is of that kind. A value of several cells that an instruction storing, making or unboxing
   the whole value names, a `box<T>` of it, or a method of the value
   type `T` called on its address, or a builtin's constructor handed its address, names is of type
   `T`, and bytes taken out of a whole variable
@@ -89,7 +93,10 @@ was.
   such a cell holds hashes, so the labels of a switch on it are written as texts too.
   `role-names` names a variable by what a list names: the native or method whose result it
   holds, the native parameter it is passed as, the field it is read from or the one field it is
-  only ever stored to, the type of the object it holds.
+  only ever stored to, the type of the object it holds, or the script type it is proved to hold
+  where a call or a load gives it its one value. A native whose listed name starts with `_` is a
+  guess and names nothing. An integer that only the heads of `for` loops write is `i`, `j` or `k`
+  by depth, and loops side by side that each declare it in their head share the letter.
 - **Classes**: `fields`, `classes`, `receivers`, `constructors`, `operators`. An access through a
   variable the kinds pass proves holds an object of a script type is a field of that type, where
   the bytes lie in the type and no field the layouts state overlaps them; such a field is
@@ -116,12 +123,18 @@ was.
   kick-off hands back its builder's task and `async void` otherwise, and writes what is awaited in place, `await f(a)`, where the variable it was kept in
   is used nowhere else; a state machine whose step function is read into its kick-off is left
   out where the project holds the program, no program of it imports this one and nothing else
-  written names the machine; `lambdas`, `delegates`, `events`, `foreach`, `using`, `lock`,
-  `compound`, `initialisers`, `null-ops`, `concat`, `ref-out`. A lambda bound once and outside
+  written names the machine, and a start function nothing written calls goes with it; `lambdas`, `delegates`, `events`, `foreach`, `using`, `lock`,
+  `compound`, `initialisers`, `null-ops`, `concat`, `ref-out`. A `using` is written only of a
+  variable disposed, where it is not null, on every way out of the statements after it, and a
+  `lock` only of a monitor left on every way out. C# also disposes and leaves where a fault ends
+  the block; a program states no exception region, so no fault is caught there and the two read
+  alike. A lambda bound once and outside
   every loop, whose body jumps nowhere back, is written as `=>` where it is bound, whatever its
   length; any other is written by its function's name. A closure class every lambda of which is
-  written in place, and whose captured fields are each given a variable that keeps its value, is
-  left out, its fields read as those variables; `--no lambdas` writes it. `events`, `concat`, `using` and `lock`
+  written in place, or that has none, and whose object reaches nothing but those lambdas, is left
+  out. A field given once a variable that keeps its value reads as that variable; any other field
+  of one cell the class states is a local of its own, named as the field, that the function and
+  its lambdas read and write; `--no lambdas` writes it. `events`, `concat`, `using` and `lock`
   read a call only by the name a user's list gives it, so without such a list they rebuild
   nothing. An
   address handed to a call is written `ref x` where the callee is proved to reach `x` alone and
@@ -130,11 +143,14 @@ was.
   otherwise. A head keeps such a parameter a pointer: no caller is seen where a head is written.
   `boxing` writes `object.Equals(box<T>(a), box<T>(b))` as `a == b` for a type whose values are
   equal exactly where their bits are (never a float), and
-  `Convert.ToInt32(box<T>(x))` as `(int)x` where no value of `T` lies past an `int`'s range. A
+  `Convert.ToInt32(box<T>(x))` as `(int)x` where no value of `T` lies past an `int`'s range; a box
+  of a builtin integer or `bool` is written as the value it boxes only where a user's list names the
+  runtime's type. A
   clear of every byte of a variable is written `x = default;`.
 
 These names are accepted and rebuild nothing yet: `iterators`, `wait`,
-`local-functions`, `nullable`, `tuples`, `try`. Their constructs print in the lower form.
+`local-functions`, `nullable`, `tuples`, `try`. Their constructs print in the lower form; `try`
+waits for a front end that states regions, and a compiled program states none.
 
 ## The project
 
@@ -144,8 +160,16 @@ programs, and with `-o <folder>` writes:
 
 - `project.json`: what the programs state of each other (types, layouts, signatures, calls),
   never a name;
-- one `.cs` per program, decompiled with that project;
-- `scripts.json`: what was read, where each program is, and with which lists, level and passes.
+- one `.cs` per program, decompiled with that project, under the program's name where a list
+  gives one, else its hash;
+- `scripts.json`: what was read, where each program is, and with which lists, level and passes,
+  with each program's classes and the functions it writes with no body;
+- `index.md`: a table to read the folder by, a row a program: its source, its hash, its name
+  where a list gives one, its functions and classes, and how many functions were not lifted with
+  the names their comments give them, or why the program failed; under it the export's last line.
+
+The export prints a line of counts a program and a total; `--summary` prints in their place the
+programs that failed and the total's counts as a table, a count a row.
 
 `script decompile <src> --project <file>` decompiles one program with a project an export wrote,
 and a `project.json` beside a program file is read without being named unless `--alone` is given.
@@ -226,7 +250,7 @@ which is off at every start.
 - A construct whose expansion a pass does not prove. A state machine whose entry does more than
   load its fields, or whose frame variable is written on the way to an `await` and read after it,
   stays a state machine.
-- Exception regions have no tree form: a function that holds one is written flat.
+- Nothing of an exception region: the container states none.
 
 ## How it is checked
 
@@ -251,8 +275,18 @@ which is off at every start.
   method made of a kick-off and its step function is read back into the two, and each is held to
   the function it was made of.
 - `reparse.rs` reads printed source back to the tree it was printed from, over hand-written
-  functions, with a bound on the statements and operands of one function; ⚠ its run over a folder
-  of listings (slow tier) has not been run to its end.
+  functions, with a bound on the statements and operands of one function.
+  `every_function_written_reads_back_as_the_function` in `exec_corpus_tests.rs` (slow tier) reads
+  back every function of the folder `OPENRAGE_LIFTED_LISTINGS` names four ways: the readable form
+  after the four first passes; the readable form after every pass, each construct written as the
+  statements it holds; the source level's own text, read with the project the printer had; and a
+  function with the lambdas it binds written in place. It fails on a function whose text reads
+  back as another. ⚠ A form the reader does not read yet is counted by its name and compared no
+  further, a function past the bound is counted and compared by nothing, and the source level's
+  own text is printed a function at a time, so neither a function whose closure class the export
+  leaves out nor an `async` method is read as the export writes it. ⚠ The reader takes the
+  printer's own decision of which boxes compare and convert as `==` and `(int)`, so it does not
+  test that decision: its unit tests do.
 - `crates/io/or-io/tests/gta6_script_refuses_hostile_input.rs` holds the readers to an error,
   in bounded time and memory, on truncated and corrupted programs and on valid containers whose
   code is hostile.
@@ -270,7 +304,7 @@ with the key snapshot `rpf9` takes).
 | `script decompile <src> [--function <f>] [--level <l>] [--no <pass>] [--project <file>\|auto\|--alone] [--labels <file>] [--with-classes]` | source; with `--function`, the types that hold no code of it are left out unless `--with-classes` |
 | `script check <file-or-folder>` | decodes each program and fails on one that does not |
 | `script list <archive.rpf>` | the programs an archive holds |
-| `script export <build\|archive\|folder> [-o <folder>] [--threads <n>] [--labels <file>]` | every program, with its project |
+| `script export <build\|archive\|folder> [-o <folder>] [--threads <n>] [--labels <file>] [--summary]` | every program, with its project and an index |
 | `script passes` | the passes and their levels |
 | `script names-search <program\|folder>... [--words <file>]... [-o <file>]` | a names list of the type, field and program names a word search proves, each by two hashes of the name |
 | `script natives --unnamed <program\|folder>... [--project <file>]` | each native no list names, with its calls and the kinds of their arguments, so that a list can be written where it names most |
@@ -283,22 +317,32 @@ time through the `cli` tool.
 ## In the app
 
 A compiled script opens read-only as a **GTA VI Script** document, from an archive entry of the
-Files tree, decompiled on the load worker, or from a deciphered file. It is decompiled with the
-`project.json` beside the file, else the one in the names folder, else alone, and the inspector
-says which. A program with more than a mebibyte of code opens with its `main` alone decompiled:
-picking another function in the outline decompiles it, and the inspector offers every function.
-A decompile asked again, at another level or with more functions, runs on a thread of its own:
-the inspector counts the functions written, and **Stop decompiling** stops it after the one it is
-writing, the script keeping the source it had. A decompile another one replaces, or whose script
-is closed, is stopped too. A script read from an archive and decompiled alone offers **Build
-project from this archive**: on a thread of its own it reads every program of that archive and
+Files tree, decompiled on the load worker, or from a deciphered file, at the source level until
+another level is chosen in the inspector, which the next script then opens at. It is decompiled
+with the `project.json` beside the file, else the one in the names folder, else alone, and the
+inspector says which. A program with more than a mebibyte of code opens with its `main` alone
+decompiled: picking another function in the outline decompiles it, and the inspector offers every
+function. A decompile asked again, at another level or with more functions, runs on a thread of
+its own: the inspector counts the functions written, and **Stop decompiling** stops it after the
+one it is writing, the script keeping the source it had. A decompile another one replaces, or
+whose script is closed, is stopped too.
+
+A script read from an archive and decompiled alone has the project of that archive built as its
+job as soon as it is open: on a thread of its own the job reads every program of that archive and
 of the archives nested in it, builds their project as `script export` does, writes it as the
-names folder's `project.json` in place of the one there, and decompiles the script again with
-it; the inspector counts the programs found and read, and **Stop building the project** stops it
-before anything is written. A function picked in the outline while the project is being built is
-not decompiled: pick it again once the build is done. The text editor shows the
-source with highlighting, **Go to definition** and **Find references** follow the name under the
-caret within the script, the outline lists its classes and functions, and the inspector states
-the program's facts, the lists that named things, the level, and the instructions of the function
-picked. **Open names folder** opens the folder the lists are read from. A body the
-container reader refuses opens as the plain instruction listing where that reader takes it.
+names folder's `project.json` in place of the one there, and decompiles the script again with it.
+The inspector counts the programs found and read, and **Stop building the project** stops it
+before anything is written. One build runs at a time, a script of another archive waiting for it,
+and an archive is built once a session: a script of it opened once the build is done is
+decompiled with the project written, and **Build project from this archive** builds it again,
+after a build that was stopped or failed or for a script opened while it ran. A function picked
+in the outline while the project is being built is not decompiled: pick it again once the build
+is done.
+
+The text editor shows the source with highlighting, and **Go to definition** and **Find
+references** follow the name under the caret within the script. The outline lists the source's
+types, each with its members under it, before its free functions and the functions written with
+no body; a click on a row puts the caret on its head and scrolls the source to it. The inspector states the program's facts, the lists that named things, the level, and
+the instructions of the function picked. **Open names folder** opens the folder the lists are
+read from. A body the container reader refuses opens as the plain instruction listing where that
+reader takes it.

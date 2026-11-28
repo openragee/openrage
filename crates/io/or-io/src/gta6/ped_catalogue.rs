@@ -49,14 +49,14 @@ fn broken<T>(what: impl Into<String>, why: &'static str) -> Result<T> {
 }
 
 /// A ped catalogue: its lists of asset kits and of set kits, as the body orders them.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct PedCatalogue {
     pub asset_lists: Vec<Vec<AssetKit>>,
     pub set_lists: Vec<Vec<SetKit>>,
 }
 
 /// A kit that states the assets of one part, a state at a time.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AssetKit {
     /// The kit's own name hash (`hash_65121749`).
     pub id: u32,
@@ -66,7 +66,7 @@ pub struct AssetKit {
 }
 
 /// One state of an asset kit: the 64-bit name words of its drawable and its three maps.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AssetState {
     /// The state's name hash (`hash_3EADDCD7`).
     pub name: u32,
@@ -87,7 +87,7 @@ impl AssetState {
 }
 
 /// A kit that names asset kits and a state of each.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SetKit {
     pub id: u32,
     pub template_name: u32,
@@ -96,7 +96,7 @@ pub struct SetKit {
 }
 
 /// A member of a set kit: a kit's name hash and a state's.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SetMember {
     pub kit: u32,
     pub state: u32,

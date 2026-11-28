@@ -47,14 +47,14 @@ pub enum PedAssetsError {
 }
 
 /// A texture entry of an asset list: its own word, and its names' texture keys in the body's order.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct TextureEntry {
     pub word: u64,
     pub names: Vec<(u32, u64)>,
 }
 
 /// An asset list's texture maps, each entry by its key.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct PedAssetList {
     pub albedos: BTreeMap<u64, TextureEntry>,
     pub normals: BTreeMap<u64, TextureEntry>,

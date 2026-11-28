@@ -38,7 +38,7 @@ OpenRage opens, edits and saves the files Rockstar's RAGE games ship: a desktop 
 
 **R** reads, **W** writes, **–** not yet.
 
-| | GTA V Legacy | GTA V Enhanced | Red Dead Redemption 2 | GTA VI |
+| | GTA V Legacy | GTA V Enhanced | Red Dead Redemption 2 | GTA VI (Xbox Series X\|S / PS5) |
 |---|:-:|:-:|:-:|:-:|
 | Install found and browsed | yes | yes | yes | yes, as a folder |
 | Archives | RPF7 · R W | RPF7 · R W | RPF8 · R | RPF9 · R, W as a patched copy |
@@ -52,12 +52,14 @@ OpenRage opens, edits and saves the files Rockstar's RAGE games ship: a desktop 
 | Audio | R W | R W | – | R, W in part |
 | Video | R | R | – | R |
 | Scripts | R | R | – | R, a value W |
-| Viewport lit by the game's own shaders | yes | – | – | in part |
-| The world streamed and flown through | – | – | – | yes |
+| Saves | – | – | – | R, a story save's values W |
+| Viewport lit by the game's own shaders | yes | – | – | in part, Xbox Series only |
+| The world streamed and flown through | yes, in a plain pass | yes, in a plain pass | – | yes |
 
 - **GTA V.** Both editions are first class. A file's layout comes from its own RSC7 version, never from the install it came from, because an Enhanced install ships Legacy resources too.
 - **Red Dead Redemption 2.** Its archives open; its resources are not decoded yet.
-- **GTA VI.** An archive's table is enciphered, and its keys are read from the user's own executable. With them an install is browsed as a GTA V one is, a compiled script reads as decompiled source ([how](docs/features/GTA_VI_Script_Decompiler.md)), and the World workspace flies through the world as the game streams it ([how](docs/features/GTA_VI_World_Viewer.md)); without them an archive is listed by a scan of the bodies it stores in the clear. An edit saves as a file of its own or into a patched copy of its archive, which keeps the signed table byte for byte. The game refuses an archive whose table was rebuilt, and no file OpenRage saved has been tried in the game ([guide](docs/guides/GTA_VI_Modding.md), [what is read and refused](docs/features/GTA_VI_Builds.md)).
+- **GTA VI.** Both console builds are read, the Xbox Series X|S package and the PlayStation 5 one, through the same readers: a file states its own platform, and every kind of body that reads on one reads on the other. An archive's table is enciphered, and its keys are read from the user's own executable, `game_scarlett_master.exe` or `eboot.bin`, each build with its own. With them an install is browsed as a GTA V one is, a compiled script reads as decompiled source ([how](docs/features/GTA_VI_Script_Decompiler.md)), and the World workspace flies through the world as the game streams it ([how](docs/features/GTA_VI_World_Viewer.md)); without them an archive is listed by a scan of the bodies it stores in the clear. An edit saves as a file of its own or into a patched copy of its archive, which keeps the signed table byte for byte. The game refuses an archive whose table was rebuilt, and no file OpenRage saved has been tried in the game ([guide](docs/guides/GTA_VI_Modding.md), [what is read and refused](docs/features/GTA_VI_Builds.md)).
+- **What differs on PlayStation 5.** Most archives come as a pair, `X.rpf` and `X_concat.rpf`, and bodies are stored with no coder. A texture pack reads, and a 2D texture of one is replaced in place; its shader packs are refused by name, so Shaded draws with the game's programs on the Xbox Series build alone ([the differences](docs/features/GTA_VI_Builds.md#a-playstation-5-build)).
 - **Earlier titles.** `or-io` also reads and writes the archives of the RAGE games before GTA V and the IMG files of GTA III to GTA IV (RPF0 to RPF6, IMG1 to IMG3), and nothing inside them.
 
 [File_Support.md](docs/features/File_Support.md) says what each cell covers and where it stops.
@@ -93,10 +95,10 @@ Any other file opens as text when it is text, and read-only as its bytes otherwi
 
 ### `openrage`, the editor
 
-A desktop app on egui, winit and wgpu, with workspaces for browsing an install, models, textures, animation, particles and data, for a project's clothing, weapons and maps, and for flying through GTA VI's world.
+A desktop app on egui, winit and wgpu, with workspaces for browsing an install, models, textures, animation, particles and data, for a project's clothing, weapons and maps, and for flying through a game's world.
 
 - **Viewport.** Wireframe, Solid, Material and Shaded modes; Shaded draws with GTA V Legacy's own shaders, baked from the user's install, and a GTA VI model's passes with the game's own programs where they translate ([shading modes](docs/features/Viewport_Shading_Modes.md)).
-- **World.** A free camera through GTA VI's world as the game streams it, at the hour and in the weather the World panel sets ([how](docs/features/GTA_VI_World_Viewer.md)).
+- **World.** A free camera through the world of the active install as its maps stream in: GTA VI's at the hour and in the weather the World panel sets ([how](docs/features/GTA_VI_World_Viewer.md)), and GTA V's, Legacy or Enhanced, in a plain pass with none of the game's shaders yet ([how](docs/features/GTA_V_World_Viewer.md)).
 - **Previews.** A particle simulator ([how](docs/features/Particle_Preview.md)), an animation timeline ([how](docs/features/Animation_Preview.md)), and audio and video decoded in OpenRage's own Rust, so nothing else needs installing.
 - **Mods.** A shipped archive can be copied into the install's `mods` overlay, which the app then reads in place of the original, and a Mods panel lists what an install holds and in which order ([details](docs/features/File_Support.md#the-mods-overlay)).
 - **Plugins.** A WebAssembly module asks for capabilities by name, the user answers before its first run, and every refusal is shown ([plugins](plugins/README.md)).
@@ -173,6 +175,7 @@ Dependencies run one way, foundation → io → title → domain → runtime →
 - [docs/](docs/README.md) indexes every document, and [the roadmap](docs/direction/Roadmap.md) says what is done and what comes next.
 - [AGENTS.md](AGENTS.md) holds the rules every contributor and agent session follows, and [the development workflow](docs/guides/Development_Workflow.md) how a change lands.
 - [The format guide](docs/guides/New_Format_Implementation_Guide.md) brings a new format up from reconnaissance to the app.
+- [GTA_VI_Builds.md](docs/features/GTA_VI_Builds.md) says what is read, saved and refused of each GTA VI build, and [the platforms plan](docs/direction/GTA_VI_Platforms_Plan.md) how a platform became something a file states.
 - [The GTA VI modding guide](docs/guides/GTA_VI_Modding.md) goes from the keys of an executable to a patched copy of an archive, and [the acceptance sheet](docs/guides/In_Game_Acceptance.md) says what to look for in a running game.
 - RAGE's binary layout specifications are held out of the repository ([Private_Tier.md](docs/guides/Private_Tier.md)).
 

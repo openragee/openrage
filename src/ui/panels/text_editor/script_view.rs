@@ -68,12 +68,15 @@ fn name_at(rope: &Rope, caret: usize) -> Option<Named> {
     })
 }
 
-/// Puts the caret on the first character of line `line`, which the next paint scrolls to.
+/// Puts the caret on the first character of line `line`, which the next paint scrolls to the top of the view.
 fn jump(state: &mut EditorState, rope: &Rope, line: u32) {
     let line = (line as usize).min(rope.len_lines().saturating_sub(1));
     state.caret.cursor = rope.line_to_char(line);
     state.caret.collapse();
     state.caret.desired_col = None;
+    // ⚠ Past every line: the paint scrolls up to the caret's line, which leaves that line at the
+    // top, where scrolling down to it would leave a function's head alone at the bottom.
+    state.caret.scroll_y = f32::MAX;
     state.revision = state.revision.wrapping_add(1);
 }
 
@@ -297,6 +300,8 @@ mod tests {
         jump(&mut state, &rope, 2);
         assert_eq!((state.caret.cursor, state.caret.anchor), (5, 5));
         assert_eq!(state.revision, 1);
+        // Below every line, so that the paint scrolls up to the line and leaves it at the top.
+        assert!(state.caret.scroll_y >= f32::MAX);
         // A line past the end is the last line, never a fault.
         jump(&mut state, &rope, u32::MAX);
         assert_eq!(state.caret.cursor, 5);

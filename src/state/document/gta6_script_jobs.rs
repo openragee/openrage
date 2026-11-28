@@ -1,7 +1,7 @@
 //! A script decompiled again on a thread of its own, at another level or with one more function
 //! of a program too large to decompile whole, and the scripts that wait for the load worker.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
@@ -39,6 +39,14 @@ pub struct Jobs(BTreeMap<DocumentId, Job>);
 
 impl PanelState for Jobs {
     const KEY: &'static str = "gta6_script_jobs";
+}
+
+/// The archives a project has been built of, or begun to be, for a script read from them and decompiled alone: each is built once a session.
+#[derive(Default)]
+pub struct Offered(pub(super) BTreeSet<PathBuf>);
+
+impl PanelState for Offered {
+    const KEY: &'static str = "gta6_script_offered";
 }
 
 /// The bytes of a script that wait for the load worker, as the inline loader was handed them.
@@ -195,8 +203,34 @@ impl AppState {
         }
     }
 
-    /// Land each decompile that is done, and drop and stop the job of a script that is closed.
+    /// Build the project of the archive an open script was read from and decompiled alone, as that script's job: one build at a time, each archive once a session.
+    // ⚠ A build stopped or failed is not begun again: the inspector's button begins it.
+    pub(super) fn build_wanted_gta6_project(&mut self) {
+        let jobs = self.panels.peek::<Jobs>();
+        if jobs.is_some_and(|jobs| jobs.0.values().any(|job| job.building.is_some())) {
+            return;
+        }
+        let offered = self.panels.peek::<Offered>();
+        let wanted = self.documents.iter().find_map(|d| {
+            let DocPayload::Gta6Script(script) = &d.payload else {
+                return None;
+            };
+            let alone = script.read.project.is_none();
+            let archive = script.archive.as_ref().filter(|_| alone)?;
+            // A decompile in flight for the script is its user's, and a build would stop it.
+            let busy = jobs.is_some_and(|jobs| jobs.0.contains_key(&d.id));
+            let built = offered.is_some_and(|offered| offered.0.contains(archive));
+            (!busy && !built).then(|| (d.id, archive.clone()))
+        });
+        if let Some((doc, archive)) = wanted {
+            self.panels.get::<Offered>().0.insert(archive);
+            self.build_gta6_project(doc);
+        }
+    }
+
+    /// Land each decompile that is done, drop and stop the job of a script that is closed, and begin the build a script of an archive waits for.
     pub(crate) fn poll_gta6_scripts(&mut self) {
+        self.build_wanted_gta6_project();
         let jobs = self.panels.peek::<Jobs>();
         if jobs.is_none_or(|jobs| jobs.0.is_empty()) {
             return;

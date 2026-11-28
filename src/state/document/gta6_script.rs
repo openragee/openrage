@@ -66,6 +66,9 @@ const NOT_A_HEAD: &[&str] = &[
     "in",
 ];
 
+/// What a line that goes on with the head above it starts with past that head's indent.
+const CONTINUED: &str = "    ";
+
 /// The level the next script opens at, which the inspector's choice sets: the load worker sees no panel.
 static LEVEL: Mutex<Level> = Mutex::new(Level::Source);
 
@@ -319,10 +322,23 @@ fn class_head(head: &str) -> Option<&str> {
 
 /// The function a comment line stands for where the source gives it no body: its name and its offset.
 fn bodiless(line: &str) -> Option<(&str, u32)> {
-    let (name, rest) = line.strip_prefix("// ")?.split_once(" at 0x")?;
+    let comment = line.strip_prefix("// ")?;
+    listed_bodiless(comment).or_else(|| sourced_bodiless(comment))
+}
+
+/// A function with no body as a listing, or a large program's line of a function not picked, writes it: `name at 0x000040: why`.
+fn listed_bodiless(comment: &str) -> Option<(&str, u32)> {
+    let (name, rest) = comment.split_once(" at 0x")?;
     let (at, _) = rest.split_once(": ")?;
     let at = u32::from_str_radix(at, 16).ok()?;
     is_name(name).then_some((name, at))
+}
+
+/// A function with no body as the source level writes it, by the slot name that states its offset: `func_000040: no body (why)`.
+fn sourced_bodiless(comment: &str) -> Option<(&str, u32)> {
+    let (name, rest) = comment.split_once(": ")?;
+    let at = stated_offset(name).filter(|_| rest.starts_with("no body ("))?;
+    Some((name, at))
 }
 
 /// The classes and functions `text` lists: each line that is a head with an opening brace alone on the line under it, at the head's own indent.
@@ -363,13 +379,33 @@ fn outline_of(text: &str, program: &Program) -> Vec<OutlineRow> {
             });
             continue;
         }
+        // A listing's own syntax ends a head with its offset as a comment, and the source level so
+        // ends the head of a function whose name states no offset.
+        let (head, noted) = match body.split_once(" //") {
+            Some((head, comment)) => (head.trim_end(), noted_offset(comment.trim())),
+            None => (body.trim_end(), None),
+        };
+        // A class head too long for its line goes on over lines indented under it, each but the
+        // last ending on a comma.
+        if head.ends_with(',') && class_head(head).is_some() {
+            let deeper = |next: &str| {
+                let rest = next.strip_prefix(&line[..indent]);
+                rest.is_some_and(|rest| rest.starts_with(CONTINUED))
+            };
+            while (lines.peek()).is_some_and(|(_, next)| deeper(next)) {
+                let last = lines
+                    .next()
+                    .is_some_and(|(_, next)| !next.trim_end().ends_with(','));
+                if last {
+                    break;
+                }
+            }
+        }
         let opens =
             (lines.peek()).is_some_and(|(_, next)| next.strip_prefix(&line[..indent]) == Some("{"));
         if !opens {
             continue;
         }
-        // A listing's own syntax ends a head with its offset as a comment.
-        let head = body.split(" //").next().unwrap_or(body).trim_end();
         let found = match class_head(head) {
             Some(name) => Some((name, true)),
             None => function_head(head).map(|name| (name, false)),
@@ -382,11 +418,41 @@ fn outline_of(text: &str, program: &Program) -> Vec<OutlineRow> {
                 lines: 1,
                 depth,
                 class,
-                at: offset(name).filter(|_| !class),
+                at: offset(name).or(noted).filter(|_| !class),
             });
         }
     }
-    rows
+    classes_first(rows)
+}
+
+/// The offset the comment after a head notes: a slot name, or `0x` and the offset as a listing writes it.
+fn noted_offset(comment: &str) -> Option<u32> {
+    if let Some(at) = stated_offset(comment) {
+        return Some(at);
+    }
+    let digits = comment.strip_prefix("0x")?;
+    let hex = !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_hexdigit());
+    hex.then(|| u32::from_str_radix(digits, 16).ok()).flatten()
+}
+
+/// `rows` with each class at the margin, and the rows it holds under it, before every other row at the margin, each in the order of its lines.
+// ⚠ A row's place is its selection: a class keeps what it holds right under it, or folding it
+// would hide another's rows.
+fn classes_first(rows: Vec<OutlineRow>) -> Vec<OutlineRow> {
+    let mut classes = Vec::with_capacity(rows.len());
+    let mut rest = Vec::new();
+    let mut in_class = false;
+    for row in rows {
+        if row.depth == 0 {
+            in_class = row.class;
+        }
+        match in_class {
+            true => classes.push(row),
+            false => rest.push(row),
+        }
+    }
+    classes.extend(rest);
+    classes
 }
 
 /// What stands over the lines of the functions a large program's source leaves out.

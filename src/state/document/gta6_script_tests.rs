@@ -74,6 +74,87 @@ fn the_outline_lists_the_heads_of_a_source_and_nothing_a_statement_opens() {
 }
 
 #[test]
+fn the_outline_lists_the_classes_with_what_they_hold_before_the_free_functions() {
+    // As the source level writes a program: free functions first, then each class.
+    let source = "\
+void main()
+{
+}
+
+class type_00000000AAAA0001
+{
+    void Run()
+    {
+    }
+}
+
+// func_000040: no body (a demo reason: of words)
+
+class type_00000000AAAA0002
+{
+}
+";
+    let doc = document(source);
+    type Row<'a> = (&'a str, u32, u8, bool, Option<u32>);
+    let rows: Vec<Row<'_>> = (doc.outline.iter())
+        .map(|r| (r.name.as_str(), r.line, r.depth, r.class, r.at))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("type_00000000AAAA0001", 4, 0, true, None),
+            ("Run", 6, 1, false, None),
+            ("type_00000000AAAA0002", 13, 0, true, None),
+            ("main", 0, 0, false, Some(0x10)),
+            ("func_000040", 11, 0, false, Some(0x40)),
+        ]
+    );
+    // A name is still followed to its line, wherever its row stands.
+    assert_eq!(doc.definition("func_000040").map(|row| row.line), Some(11));
+    assert_eq!(doc.definition("main").map(|row| row.line), Some(0));
+}
+
+#[test]
+fn a_class_head_over_several_lines_is_one_row_and_a_head_takes_the_offset_its_comment_notes() {
+    let source = "\
+class type_00000000AAAA0001 : type_00000000AAAA0002, type_00000000AAAA0003,
+    type_00000000AAAA0004,
+    type_00000000AAAA0005
+{
+    void Run(var p0) // func_000020
+    {
+    }
+    void Stop() // a note
+    {
+    }
+}
+class type_00000000AAAA0006 // a closure
+{
+}
+";
+    let doc = document(source);
+    type Row<'a> = (&'a str, u32, u32, u8, bool, Option<u32>);
+    let rows: Vec<Row<'_>> = (doc.outline.iter())
+        .map(|r| (r.name.as_str(), r.line, r.lines, r.depth, r.class, r.at))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("type_00000000AAAA0001", 0, 11, 0, true, None),
+            ("Run", 4, 3, 1, false, Some(0x20)),
+            ("Stop", 7, 3, 1, false, None),
+            ("type_00000000AAAA0006", 11, 3, 0, true, None),
+        ]
+    );
+    // The function the slot names is the one whose head notes it.
+    assert_eq!(doc.definition("func_000020").map(|row| row.line), Some(4));
+    assert_eq!(noted_offset("0x000040"), Some(0x40));
+    for none in ["a closure", "0x", "func_", "base type_00000000AAAA0002"] {
+        assert_eq!(noted_offset(none), None, "{none}");
+    }
+}
+
+#[test]
 fn a_line_is_a_head_only_where_its_whole_shape_is_one() {
     assert_eq!(function_head("void Add(var p0)"), Some("Add"));
     assert_eq!(function_head("Demo(var p0)"), Some("Demo"));
@@ -102,6 +183,13 @@ fn a_line_is_a_head_only_where_its_whole_shape_is_one() {
         Some(("main", 0x10))
     );
     assert_eq!(bodiless("// a note at 0x10"), None);
+    // The source level names a function with no body by the slot that states its offset.
+    assert_eq!(
+        bodiless("// func_000040: no body (a demo reason at 0x10: of words)"),
+        Some(("func_000040", 0x40))
+    );
+    assert_eq!(bodiless("// func_000040: a note"), None);
+    assert_eq!(bodiless("// project: no body (a note)"), None);
 }
 
 #[test]
@@ -632,4 +720,49 @@ fn a_project_is_built_only_for_a_script_of_an_archive_and_a_pick_waits_for_it() 
     let progress = Arc::clone(&job.progress);
     state.drop_gta6_script_job(id);
     assert!(progress.stopped());
+}
+
+#[test]
+fn a_script_of_an_archive_decompiled_alone_has_its_project_built_once_as_its_job() {
+    let mut state = AppState::default();
+    let folder = tempfile::tempdir().expect("a scratch folder");
+    let archive_at = |name: &str| {
+        let archive = folder.path().join(name);
+        std::fs::write(&archive, [0u8; 16]).expect("written");
+        archive
+    };
+    let of = |archive: &PathBuf| Gta6ScriptDocument {
+        archive: Some(archive.clone()),
+        ..document("")
+    };
+    let archive = archive_at("demo_archive.rpf");
+    // Decompiled with a project already: nothing to build.
+    let mut with = of(&archive);
+    with.read.project = Some(folder.path().join("project.json"));
+    let read_with = a_script_in(&mut state, with);
+    state.build_wanted_gta6_project();
+    assert!(state.gta6_script_job(read_with).is_none());
+
+    // The file is no archive, so the build fails on its thread; here only its job is looked at.
+    let id = a_script_in(&mut state, of(&archive));
+    state.build_wanted_gta6_project();
+    let job = state
+        .gta6_script_job(id)
+        .expect("the build begun for the script");
+    assert!(job.building.is_some() && job.focus.is_none());
+    // Another script of the archive waits for the build in flight, and is not built for again.
+    let second = a_script_in(&mut state, of(&archive));
+    state.build_wanted_gta6_project();
+    assert!(state.gta6_script_job(second).is_none());
+    state.drop_gta6_script_job(id);
+    state.build_wanted_gta6_project();
+    assert!(state.gta6_script_job(id).is_none() && state.gta6_script_job(second).is_none());
+
+    // The poll that lands decompiles is what begins a build.
+    let other = archive_at("demo_other.rpf");
+    let third = a_script_in(&mut state, of(&other));
+    state.poll_gta6_scripts();
+    let offered = state.panels.peek::<super::jobs::Offered>();
+    assert!(offered.is_some_and(|offered| offered.0.contains(&other)));
+    state.drop_gta6_script_job(third);
 }

@@ -433,16 +433,36 @@ fn apart(a: (bool, u32), b: (bool, u32), cells: u32) -> bool {
     a.0 != b.0 || a.1.abs_diff(b.1) >= cells
 }
 
-/// The runs of locals the code uses as one value: gathered into a group whole, cleared through the first one's address, or copied cell by cell to or from another row.
+/// The locals a load of `bytes` bytes through the first one's own address takes every byte of, where they are two or more: the first and how many.
+fn loaded_whole(addr: &Expr, offset: u32, bytes: u32) -> Option<(u32, u32)> {
+    let Expr::AddrOf {
+        var: Var::Local(first),
+        cell: 0,
+    } = addr
+    else {
+        return None;
+    };
+    let cells = bytes / 8;
+    (offset == 0 && bytes.is_multiple_of(8) && cells >= 2).then_some((*first, cells))
+}
+
+/// The runs of locals the code uses as one value: gathered into a group whole, loaded whole through the first one's address, cleared through it, or copied cell by cell to or from another row.
 // ⚠ A copy says no more of the row copied into than the row copied from holds: such a run is tied.
 fn suggested(f: &cfg::Function, stated: &Wanted) -> Hints {
     let mut hints = Hints::new();
     each_top(&f.cfg, &mut |top| {
         top.walk(&mut |e| {
-            if let Expr::Cells(items) = e {
-                if let Some((first, cells)) = local_row(items) {
-                    hint(&mut hints, first, cells, false);
-                }
+            let used = match e {
+                Expr::Cells(items) => local_row(items),
+                Expr::LoadBytes {
+                    addr,
+                    offset,
+                    bytes,
+                } => loaded_whole(addr, *offset, *bytes),
+                _ => None,
+            };
+            if let Some((first, cells)) = used {
+                hint(&mut hints, first, cells, false);
             }
         });
     });
@@ -1232,12 +1252,130 @@ fn regrouped(
     });
 }
 
-/// What one run did: counts of runs made one variable, and of `extract_bytes` made plainer.
+/// The variable an address is the own address of, and how many bytes into it, where the address is that moved on by a constant.
+fn own_place(addr: &Expr) -> Option<(Var, u64)> {
+    let (inner, by) = match addr {
+        Expr::ByteOffset {
+            addr: inner,
+            offset,
+        } => match &**offset {
+            Expr::Const(c) if c.bits <= u64::from(u32::MAX) => (&**inner, c.bits),
+            _ => return None,
+        },
+        other => (other, 0),
+    };
+    let Expr::AddrOf { var, cell } = inner else {
+        return None;
+    };
+    Some((*var, 8 * u64::from(*cell) + by))
+}
+
+/// The cells of a frame variable or temporary of two cells or more, as its head, or a temporary's one assignment, states them.
+fn several(head: &Head, widths: &BTreeMap<Var, u32>, var: Var) -> Option<u32> {
+    let info = head
+        .vars
+        .get(&var)
+        .filter(|info| info.width == Width::Cells)?;
+    let cells = match (var.is_temporary(), frame_cell(var)) {
+        (true, _) => widths.get(&var).copied().or_else(|| kind_cells(&info.kind)),
+        (false, Some(_)) => kind_cells(&info.kind),
+        (false, None) => None,
+    };
+    cells.filter(|cells| *cells >= 2)
+}
+
+/// Writes each clear of a field of a variable of several cells as that field made zero, `x.f_N = default`, with the count of those written.
+// A field is whole cells past the variable's first byte and within its last. ⚠ Only where every
+// address of the variable is that of an access within it: a value whose address is handed on or
+// kept, as a kick-off's machine is, keeps its clears for the passes after this one that read them.
+fn field_zeros(f: &mut cfg::Function, widths: &BTreeMap<Var, u32>) -> usize {
+    let head = &f.head;
+    let inside = |addr: &Expr, offset: u32, bytes: Option<u32>| -> Option<Var> {
+        let (var, at) = own_place(addr)?;
+        let cells = several(head, widths, var)?;
+        let bytes = bytes.filter(|bytes| *bytes > 0)?;
+        let end = at + u64::from(offset) + u64::from(bytes);
+        (end <= 8 * u64::from(cells)).then_some(var)
+    };
+    // The mentions of each variable's address, and those of them an access within it goes through.
+    let mut all: BTreeMap<Var, u64> = BTreeMap::new();
+    let mut within: BTreeMap<Var, u64> = BTreeMap::new();
+    for block in &f.cfg.blocks {
+        for stmt in &block.stmts {
+            let var = stored(stmt).and_then(|(addr, offset, bytes)| inside(addr, offset, bytes));
+            if let Some(var) = var {
+                *within.entry(var).or_insert(0) += 1;
+            }
+        }
+    }
+    each_top(&f.cfg, &mut |top| {
+        top.walk(&mut |e| {
+            let var = match e {
+                Expr::AddrOf { var, .. } => {
+                    *all.entry(*var).or_insert(0) += 1;
+                    None
+                }
+                Expr::Load { ty, addr, offset } => inside(addr, *offset, Some(ty.bytes())),
+                Expr::LoadBytes {
+                    addr,
+                    offset,
+                    bytes,
+                } => inside(addr, *offset, Some(*bytes)),
+                _ => None,
+            };
+            if let Some(var) = var {
+                *within.entry(var).or_insert(0) += 1;
+            }
+        });
+    });
+    let kept =
+        |var: Var| all.get(&var).copied().unwrap_or(0) > within.get(&var).copied().unwrap_or(0);
+    // Each clear written, by block and place.
+    let mut zeros: Vec<(usize, usize, Var, u32, u32)> = Vec::new();
+    for (b, block) in f.cfg.blocks.iter().enumerate() {
+        for (at, stmt) in block.stmts.iter().enumerate() {
+            let Stmt::ZeroBytes { addr, bytes } = stmt else {
+                continue;
+            };
+            if *bytes < 16 || !bytes.is_multiple_of(8) {
+                continue;
+            }
+            let Some((var, from)) = own_place(addr) else {
+                continue;
+            };
+            let field = from > 0 && inside(addr, 0, Some(*bytes)) == Some(var) && !kept(var);
+            if let (true, Ok(offset)) = (field, u32::try_from(from)) {
+                zeros.push((b, at, var, offset, *bytes));
+            }
+        }
+    }
+    let count = zeros.len();
+    for (b, at, var, offset, bytes) in zeros {
+        let store = Stmt::StoreBytes {
+            addr: Expr::AddrOf { var, cell: 0 },
+            offset,
+            bytes,
+            value: Expr::ZeroSlots(bytes / 8),
+        };
+        if let Some(stmt) = f
+            .cfg
+            .blocks
+            .get_mut(b)
+            .and_then(|block| block.stmts.get_mut(at))
+        {
+            *stmt = store;
+        }
+    }
+    count
+}
+
+/// What one run did: counts of runs made one variable, of `extract_bytes` made plainer, and of clears of a field written as its zero.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Made {
     pub params: usize,
     pub locals: usize,
     pub bytes: usize,
+    pub zeros: usize,
 }
 
 /// Makes one variable of each run of cells that holds one value, and passes a value of several cells whole.
@@ -1252,6 +1390,7 @@ pub fn run(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) {
         params = done.params,
         locals = done.locals,
         bytes = done.bytes,
+        zeros = done.zeros,
         "aggregates"
     );
 }
@@ -1271,6 +1410,7 @@ pub(crate) fn apply(f: &mut cfg::Function, project: &Project) -> Made {
     let premade = (f.head.vars.iter())
         .any(|(var, info)| frame_cell(*var).is_some() && info.width == Width::Cells);
     if made.is_empty() && widths.is_empty() && !premade {
+        done.zeros = field_zeros(f, &widths);
         return done;
     }
     let runs: Runs = made
@@ -1330,6 +1470,8 @@ pub(crate) fn apply(f: &mut cfg::Function, project: &Project) -> Made {
         };
         f.head.vars.insert(var, info);
     }
+    // After the head names the runs made, whose fields are then fields of one variable.
+    done.zeros = field_zeros(f, &widths);
     done
 }
 

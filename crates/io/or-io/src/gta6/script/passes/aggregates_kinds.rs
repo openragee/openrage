@@ -242,12 +242,20 @@ fn within(candidates: &Candidates, addr: &Expr, offset: u32, bytes: u32) -> Opti
 
 /// The candidate a statement writes a field of through the address of one of its cells: a scalar, at most one cell's bytes, or zeroes, all within it.
 // ⚠ Not `store_f32_slots`, which states no count of bytes, and no store of more than a cell of a
-// value, which may bring in a part of a value of another kind.
+// value, which may bring in a part of a value of another kind; zero cells bring in none.
 fn stored_within(candidates: &Candidates, stmt: &Stmt) -> Option<Var> {
     match stmt {
         Stmt::Store {
             kind, addr, offset, ..
         } => within(candidates, addr, *offset, kind.bytes()),
+        Stmt::StoreBytes {
+            addr,
+            offset,
+            bytes,
+            value: Expr::ZeroSlots(cells),
+        } if u64::from(*bytes) <= 8 * u64::from(*cells) => {
+            within(candidates, addr, *offset, *bytes)
+        }
         Stmt::StoreBytes {
             addr,
             offset,

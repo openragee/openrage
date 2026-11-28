@@ -153,6 +153,7 @@ fn a_parameter_the_signature_gives_two_cells_is_one_variable() {
         params: 1,
         locals: 0,
         bytes: 0,
+        zeros: 0,
     };
     assert_eq!(apply(&mut function(3, body(), both()), &project), counted);
 
@@ -713,4 +714,111 @@ fn a_parameter_given_each_cell_of_a_local_made_before_in_order_is_given_the_loca
     let made = grouped(f, &project, on());
     let cells = Expr::Cells(vec![cell(local(4), 0), cell(local(4), 0)]);
     assert_eq!(made.cfg.blocks[0].stmts[0], set(Var::Param(1), cells));
+}
+
+/// `load_bytes(&local_n, offset, bytes)`.
+fn loaded(n: u32, offset: u32, bytes: u32) -> Expr {
+    Expr::LoadBytes {
+        addr: Box::new(address(n)),
+        offset,
+        bytes,
+    }
+}
+
+#[test]
+fn locals_loaded_whole_through_the_first_ones_address_are_one_local() {
+    let body = |last: Option<Stmt>, load: Expr| {
+        let mut stmts = vec![
+            set(Var::Local(4), param(0)),
+            set(Var::Local(5), param(1)),
+            used(0x100, vec![load]),
+        ];
+        stmts.extend(last);
+        stmts
+    };
+    let made = grouped(
+        function(2, body(None, loaded(4, 0, 16)), leaves()),
+        Project::empty(),
+        on(),
+    );
+    assert_eq!(
+        made.cfg.blocks[0].stmts,
+        [
+            set(Var::Local(4), Expr::Cells(vec![param(0), param(1)])),
+            used(0x100, vec![local(4)]),
+        ]
+    );
+    assert_eq!(
+        shape(&made, Var::Local(4)),
+        Some((Width::Cells, Kind::Aggregate(2)))
+    );
+    assert_eq!(shape(&made, Var::Local(5)), None);
+
+    let untouched = |f: Function| assert_eq!(grouped(f.clone(), Project::empty(), on()), f);
+    // A cell assigned alone is a cell of its own.
+    let alone = body(Some(set(Var::Local(5), int(1))), loaded(4, 0, 16));
+    untouched(function(2, alone, leaves()));
+    // Bytes that end inside a cell, or start past the first byte, are no value of whole cells.
+    untouched(function(2, body(None, loaded(4, 0, 12)), leaves()));
+    untouched(function(2, body(None, loaded(4, 8, 16)), leaves()));
+    // With the pass switched off nothing is grouped.
+    let f = function(2, body(None, loaded(4, 0, 16)), leaves());
+    let off = on().without(Pass::Aggregates);
+    assert_eq!(grouped(f.clone(), Project::empty(), off), f);
+}
+
+/// `zero_bytes(byte_offset(&v, offset), bytes);`.
+fn field_clear(v: Var, offset: i32, bytes: u32) -> Stmt {
+    let own = Expr::AddrOf { var: v, cell: 0 };
+    Stmt::ZeroBytes {
+        addr: Expr::ByteOffset {
+            addr: Box::new(own),
+            offset: Box::new(int(offset)),
+        },
+        bytes,
+    }
+}
+
+#[test]
+fn a_clear_of_a_field_of_a_value_of_several_cells_is_that_field_made_zero() {
+    let body = |v: Var, clear: Stmt, after: Option<Stmt>| {
+        let mut stmts = vec![set(v, Expr::ZeroSlots(4)), clear];
+        stmts.extend(after);
+        stmts.push(used(0x100, vec![Expr::Var(v)]));
+        stmts
+    };
+    let cleared = |clear: Stmt, after: Option<Stmt>| {
+        let mut f = function(1, Vec::new(), leaves());
+        let v = wide(&mut f);
+        f.cfg.blocks[0].stmts = body(v, clear, after);
+        (f, v)
+    };
+    let (f, v) = cleared(field_clear(Var::Value { at: 0x10, index: 0 }, 16, 16), None);
+    let mut f2 = f.clone();
+    let made = grouped(f, Project::empty(), on());
+    let zero = Stmt::StoreBytes {
+        addr: Expr::AddrOf { var: v, cell: 0 },
+        offset: 16,
+        bytes: 16,
+        value: Expr::ZeroSlots(2),
+    };
+    assert_eq!(made.cfg.blocks[0].stmts, body(v, zero, None));
+    assert_eq!(apply(&mut f2, Project::empty()).zeros, 1);
+
+    let untouched = |clear: Stmt, after: Option<Stmt>| {
+        let (f, _) = cleared(clear, after);
+        assert_eq!(grouped(f.clone(), Project::empty(), on()), f);
+    };
+    let v = Var::Value { at: 0x10, index: 0 };
+    // Bytes that end inside a cell, a clear past the value's end, and one from its first byte stay clears.
+    untouched(field_clear(v, 16, 12), None);
+    untouched(field_clear(v, 24, 16), None);
+    untouched(field_clear(v, 0, 16), None);
+    // An address of the value handed on may be read for what the clear leaves.
+    let handed = used(0x200, vec![Expr::AddrOf { var: v, cell: 0 }]);
+    untouched(field_clear(v, 16, 16), Some(handed));
+    // With the pass switched off the clear stays.
+    let (f, _) = cleared(field_clear(v, 16, 16), None);
+    let off = on().without(Pass::Aggregates);
+    assert_eq!(grouped(f.clone(), Project::empty(), off), f);
 }

@@ -424,4 +424,24 @@ fn a_value_filled_field_by_field_and_handed_whole_to_a_vector_is_a_vector() {
         value: local(4),
     };
     untouched(filled(POINT, wide));
+
+    // Zero cells written over bytes within the value bring in nothing: they are a field made zero.
+    let zeroes = |cell: u32, cells: u32| Stmt::StoreBytes {
+        addr: Expr::AddrOf {
+            var: Var::Local(0),
+            cell,
+        },
+        offset: 0,
+        bytes: 16,
+        value: Expr::ZeroSlots(cells),
+    };
+    let done = kinded_with(
+        function(&[(0, TWO)], filled(POINT, zeroes(0, 2))),
+        &names,
+        on(),
+    );
+    assert_eq!(kind_of(&done, Var::Local(0)), Some(Kind::Vector));
+    // Fewer zero cells than the bytes leave the rest unsaid, and zeroes past the end write beyond it.
+    untouched(filled(POINT, zeroes(0, 1)));
+    untouched(filled(POINT, zeroes(1, 2)));
 }

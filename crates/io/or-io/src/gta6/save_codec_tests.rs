@@ -9,17 +9,21 @@ fn real_save() -> Option<(Vec<u8>, Vec<u8>)> {
         r"C:\Users\seed\AppData\Local\victory\data\7952987A\saves\0009000000000001",
         r"\00000000-0000-0000-0000-00007952987a\SARC0015~f3ad35e1a05a7da0"
     );
-    let versions = std::fs::read_dir(dir).ok()?.filter_map(|e| {
-        let name = e.ok()?.file_name().into_string().ok()?;
-        let at = name.strip_prefix('v')?.parse::<u32>().ok()?;
-        Some((at, format!(r"{}\{}\0", dir, name)))
-    }).collect::<std::collections::BTreeMap<u32, String>>();
+    let versions = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| {
+            let name = e.ok()?.file_name().into_string().ok()?;
+            let at = name.strip_prefix('v')?.parse::<u32>().ok()?;
+            Some((at, format!(r"{}\{}\0", dir, name)))
+        })
+        .collect::<std::collections::BTreeMap<u32, String>>();
     let (_, newest) = versions.into_iter().last()?;
     let file = std::fs::read(newest).ok()?;
     if !file.starts_with(b"ASAV") {
         return None;
     }
-    let exe = std::fs::read(r"K:\Documents\gtavi-xbox-build-1.0.2.1\game_scarlett_master.exe").ok()?;
+    let exe =
+        std::fs::read(r"K:\Documents\gtavi-xbox-build-1.0.2.1\game_scarlett_master.exe").ok()?;
     let cipher = crate::gta6::save_crypto::SaveCipher::from_exe(&exe).ok()?;
     let payload = cipher.crypt(file.get(0x170..)?);
     let body = payload[..payload.len() - MAC].to_vec();
@@ -55,7 +59,12 @@ fn a_realistic_mix_round_trips() {
         data.push(255 - i as u8);
     }
     let stream = lz4_compress(&data);
-    assert!(stream.len() < data.len(), "the mix should compress: {} -> {}", data.len(), stream.len());
+    assert!(
+        stream.len() < data.len(),
+        "the mix should compress: {} -> {}",
+        data.len(),
+        stream.len()
+    );
     let back = lz4_decompress(&stream, 1 << 20).expect("a made stream decodes");
     assert_eq!(back, data);
 }
@@ -70,7 +79,9 @@ fn a_match_offset_of_zero_fills_with_zeros() {
 
 #[test]
 fn the_real_save_decodes_and_round_trips() {
-    let Some((body, _mac)) = real_save() else { return };
+    let Some((body, _mac)) = real_save() else {
+        return;
+    };
     let jsav = decode(&body).expect("the real payload decodes");
     let saved = jsav.save().expect("the decoded JSAV saves back");
     let mac = [0u8; MAC];
@@ -87,5 +98,9 @@ fn the_real_save_matches_the_games_own_decoder() {
     // open as the same JSAV.
     let Some((body, _)) = real_save() else { return };
     let jsav = decode(&body).expect("the real payload decodes");
-    assert_eq!(jsav.code.len() + jsav.script.len(), 82, "a story save holds 82 blocks");
+    assert_eq!(
+        jsav.code.len() + jsav.script.len(),
+        82,
+        "a story save holds 82 blocks"
+    );
 }

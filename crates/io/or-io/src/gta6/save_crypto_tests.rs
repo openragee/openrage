@@ -30,9 +30,7 @@ fn the_seed_block_matches_the_emulated_executable() {
 #[test]
 fn the_first_counter_block_matches_the_emulated_executable() {
     let Some(cipher) = cipher() else { return };
-    let counter = [
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-    ];
+    let counter = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
     assert_eq!(cipher.keystream_block(&counter), REFERENCE_COUNTER_BLOCK);
 }
 
@@ -47,7 +45,10 @@ fn the_counter_carries_from_the_last_byte() {
     assert_eq!(SaveCipher::next_counter(&short), after);
     let mut counter = [0xFF; 16];
     counter[0] = 0xFD;
-    assert_eq!(SaveCipher::next_counter(&counter), [0xFE, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(
+        SaveCipher::next_counter(&counter),
+        [0xFE, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    );
 }
 
 #[test]
@@ -61,7 +62,9 @@ fn a_payload_round_trips_through_the_one_operation() {
 
 #[test]
 fn the_newest_autosave_decrypts_to_a_jsav_head() {
-    let (Some(cipher), Ok(save)) = (cipher(), std::fs::read(SAVE)) else { return };
+    let (Some(cipher), Ok(save)) = (cipher(), std::fs::read(SAVE)) else {
+        return;
+    };
     assert!(save.starts_with(b"ASAV"));
     let plain = cipher.crypt(save.get(0x170..).unwrap());
     assert_eq!(&plain[2..6], b"JSAV");
@@ -75,13 +78,17 @@ fn the_decrypted_payload_ends_with_a_pkcs7_pad_and_a_32_byte_tag() {
     // MAC the security singleton verifies (`AsavSecurity::Verify`, vtable slot 8 at 0x1428d4530).
     // The reader's cursor over the payload excludes that tag (slot 9 returns 0x20), and its unpad is
     // `FUN_144c11810`: the last byte before the tag states the pad, every pad byte equals it.
-    let (Some(cipher), Ok(save)) = (cipher(), std::fs::read(SAVE)) else { return };
+    let (Some(cipher), Ok(save)) = (cipher(), std::fs::read(SAVE)) else {
+        return;
+    };
     let plain = cipher.crypt(save.get(0x170..).unwrap());
     let body = &plain[..plain.len() - 32];
     let pad = body[body.len() - 1] as usize;
     assert!((1..=16).contains(&pad), "the pad is {pad}, not 1..=16");
     assert!(
-        body[body.len() - pad..].iter().all(|byte| *byte as usize == pad),
+        body[body.len() - pad..]
+            .iter()
+            .all(|byte| *byte as usize == pad),
         "the pad bytes are not the pad value"
     );
 }
@@ -94,8 +101,13 @@ fn the_two_time_pad_shows_in_two_saves_of_one_profile() {
     let (Some(cipher), Ok(a), Ok(b)) = (
         cipher(),
         std::fs::read(SAVE),
-        std::fs::read(SAVE.replace(r"\SARC0015~f3ad35e1a05a7da0\v35\0", r"\SARC0001~f3a9b5e1a0576e49\v2\0")),
-    ) else { return };
+        std::fs::read(SAVE.replace(
+            r"\SARC0015~f3ad35e1a05a7da0\v35\0",
+            r"\SARC0001~f3a9b5e1a0576e49\v2\0",
+        )),
+    ) else {
+        return;
+    };
     let (pa, pb) = (cipher.crypt(&a[0x170..]), cipher.crypt(&b[0x170..]));
     let zeros = pa
         .iter()
@@ -103,5 +115,8 @@ fn the_two_time_pad_shows_in_two_saves_of_one_profile() {
         .take(0x40)
         .filter(|(x, y)| x == y)
         .count();
-    assert!(zeros >= 0x10, "the two heads share only {zeros} of the first 0x40 bytes");
+    assert!(
+        zeros >= 0x10,
+        "the two heads share only {zeros} of the first 0x40 bytes"
+    );
 }

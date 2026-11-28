@@ -39,8 +39,8 @@ pub const INIT_TABLES_RVA: u32 = 0x60C_0BE0;
 /// its `u11`, then `u10` and `u5`; the second half-step reuses them in the order its own four
 /// state words list.
 pub const T_TABLE_RVAS: [u32; 16] = [
-    0x60C_2FE0, 0x60C_43E0, 0x60C_1BE0, 0x60C_57E0, 0x60C_53E0, 0x60C_3FE0, 0x60C_2BE0, 0x60C_27E0, 0x60C_4FE0,
-    0x60C_23E0, 0x60C_3BE0, 0x60C_37E0, 0x60C_33E0, 0x60C_1FE0, 0x60C_4BE0, 0x60C_47E0,
+    0x60C_2FE0, 0x60C_43E0, 0x60C_1BE0, 0x60C_57E0, 0x60C_53E0, 0x60C_3FE0, 0x60C_2BE0, 0x60C_27E0,
+    0x60C_4FE0, 0x60C_23E0, 0x60C_3BE0, 0x60C_37E0, 0x60C_33E0, 0x60C_1FE0, 0x60C_4BE0, 0x60C_47E0,
 ];
 /// The counter seed measured at `IV_RVA` of the 1.0.2.1 build, kept as the fallback a build whose
 /// sections move needs.
@@ -56,7 +56,9 @@ pub const REFERENCE_BLOCK: [u8; 16] = [
 /// Why a cipher is not read from an executable.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CryptoError {
-    #[error("the bytes are not a PE image: no MZ or no PE\\0\\0 at the offset the DOS header states")]
+    #[error(
+        "the bytes are not a PE image: no MZ or no PE\\0\\0 at the offset the DOS header states"
+    )]
     NotAnImage,
     #[error("RVA {rva:#X} lies in no section of the image")]
     NoSection { rva: u32 },
@@ -110,7 +112,10 @@ impl SaveCipher {
         };
         let read = |rva: u32, len: usize, what: &'static str| -> Result<&[u8], CryptoError> {
             let at = offset(rva)?;
-            exe.get(at..at + len).ok_or(CryptoError::Truncated { what, len: exe.len() })
+            exe.get(at..at + len).ok_or(CryptoError::Truncated {
+                what,
+                len: exe.len(),
+            })
         };
         let mut init_tables = [[0u8; 256]; 16];
         for (i, table) in init_tables.iter_mut().enumerate() {
@@ -127,7 +132,10 @@ impl SaveCipher {
         let blob = read(KEY_BLOB_RVA, KEY_BLOB, "the key blob")?;
         let magic = u32::from_le_bytes(blob[0..4].try_into().unwrap());
         if magic != KEY_MAGIC {
-            return Err(CryptoError::BadMagic { at: KEY_BLOB_RVA as usize, found: magic });
+            return Err(CryptoError::BadMagic {
+                at: KEY_BLOB_RVA as usize,
+                found: magic,
+            });
         }
         let mut round_keys = [0u32; 60];
         for (i, word) in round_keys.iter_mut().enumerate() {
@@ -142,9 +150,17 @@ impl SaveCipher {
             Err(CryptoError::NoSection { .. }) => MEASURED_IV,
             Err(e) => return Err(e),
         };
-        let cipher = Self { init_tables, t_tables, round_keys, sboxes, seed };
+        let cipher = Self {
+            init_tables,
+            t_tables,
+            round_keys,
+            sboxes,
+            seed,
+        };
         if cipher.keystream_block(&cipher.seed) != REFERENCE_BLOCK {
-            return Err(CryptoError::ReferenceMismatch { found: cipher.keystream_block(&cipher.seed) });
+            return Err(CryptoError::ReferenceMismatch {
+                found: cipher.keystream_block(&cipher.seed),
+            });
         }
         Ok(cipher)
     }
@@ -160,7 +176,8 @@ impl SaveCipher {
     /// executable's own, kept exactly: the order of the table reads is what makes the keystream.
     pub fn keystream_block(&self, counter: &[u8; 16]) -> [u8; 16] {
         let [t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15] = &self.t_tables;
-        let [i0, i1, i2, i3, i4, i5, i6, i7, i8, i9, i10, i11, i12, i13, i14, i15] = &self.init_tables;
+        let [i0, i1, i2, i3, i4, i5, i6, i7, i8, i9, i10, i11, i12, i13, i14, i15] =
+            &self.init_tables;
         let rk = &self.round_keys;
         let mut s0 = (i0[counter[0] as usize] as u32) << 24
             | (i1[counter[1] as usize] as u32) << 16

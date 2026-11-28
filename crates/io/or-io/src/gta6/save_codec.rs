@@ -26,7 +26,9 @@ pub enum CodecError {
     TooLarge { decoded: usize, cap: usize },
     #[error("the pad at the payload's end is {found}, which is not 1..=16, or its bytes are not the pad")]
     BadPad { found: u8 },
-    #[error("the payload's body ends at {len} bytes, before a pad and a 32-byte MAC could end there")]
+    #[error(
+        "the payload's body ends at {len} bytes, before a pad and a 32-byte MAC could end there"
+    )]
     TooShort { len: usize },
     #[error("the decompressed stream is not a JSAV: {0}")]
     NotJsav(#[from] crate::gta6::save::SaveError),
@@ -52,7 +54,9 @@ pub fn lz4_decompress(src: &[u8], cap: usize) -> Result<Vec<u8>, CodecError> {
         let mut literals = token as usize >> 4;
         if literals >= 15 {
             loop {
-                let more = *src.get(i).ok_or(malformed("a literal length runs past the stream", i))?;
+                let more = *src
+                    .get(i)
+                    .ok_or(malformed("a literal length runs past the stream", i))?;
                 i += 1;
                 literals += more as usize;
                 if more != 0xFF {
@@ -65,7 +69,10 @@ pub fn lz4_decompress(src: &[u8], cap: usize) -> Result<Vec<u8>, CodecError> {
             .filter(|end| *end <= src.len())
             .ok_or(malformed("the literals run past the stream", i))?;
         if out.len() + literals > cap {
-            return Err(CodecError::TooLarge { decoded: out.len() + literals, cap });
+            return Err(CodecError::TooLarge {
+                decoded: out.len() + literals,
+                cap,
+            });
         }
         out.extend_from_slice(&src[i..end]);
         i = end;
@@ -73,13 +80,17 @@ pub fn lz4_decompress(src: &[u8], cap: usize) -> Result<Vec<u8>, CodecError> {
             return Ok(out); // the last sequence: literals alone, no match
         }
         let offset = u16::from_le_bytes(std::array::from_fn(|k| {
-            *src.get(i + k).ok_or(malformed("a match offset runs past the stream", i + k)).unwrap()
+            *src.get(i + k)
+                .ok_or(malformed("a match offset runs past the stream", i + k))
+                .unwrap()
         })) as usize;
         i += 2;
         let mut matchlen = (token & 0xF) as usize + 4;
         if token & 0xF == 15 {
             loop {
-                let more = *src.get(i).ok_or(malformed("a match length runs past the stream", i))?;
+                let more = *src
+                    .get(i)
+                    .ok_or(malformed("a match length runs past the stream", i))?;
                 i += 1;
                 matchlen += more as usize;
                 if more != 0xFF {
@@ -88,11 +99,17 @@ pub fn lz4_decompress(src: &[u8], cap: usize) -> Result<Vec<u8>, CodecError> {
             }
         }
         if offset > out.len() {
-            return Err(malformed("a match offset reaches before the output's start", i - 2));
+            return Err(malformed(
+                "a match offset reaches before the output's start",
+                i - 2,
+            ));
         }
         let out_end = out.len() + matchlen;
         if out_end > cap {
-            return Err(CodecError::TooLarge { decoded: out_end, cap });
+            return Err(CodecError::TooLarge {
+                decoded: out_end,
+                cap,
+            });
         }
         if offset == 0 {
             out.resize(out_end, 0);
@@ -195,7 +212,11 @@ pub fn lz4_compress(bytes: &[u8]) -> Vec<u8> {
 pub fn decode(body: &[u8]) -> Result<Jsav, CodecError> {
     let pad = match body.len().checked_sub(1).filter(|at| *at >= MAC) {
         Some(at) => body[at],
-        None => return Err(CodecError::TooShort { len: body.len() + MAC }),
+        None => {
+            return Err(CodecError::TooShort {
+                len: body.len() + MAC,
+            })
+        }
     };
     if !(1..=16).contains(&pad) || body[body.len() - pad as usize..] != vec![pad; pad as usize] {
         return Err(CodecError::BadPad { found: pad });

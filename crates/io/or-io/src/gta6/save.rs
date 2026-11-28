@@ -782,10 +782,7 @@ impl Asav {
     /// whose payload the passed cipher XORs back to its stored plaintext by the same operation the
     /// game wrote it with; every other kind is plain and is returned as it stands. The reverse
     /// direction is the same call, for the cipher is a counter-mode XOR.
-    pub fn payload_after_cipher(
-        &self,
-        cipher: &crate::gta6::save_crypto::SaveCipher,
-    ) -> Vec<u8> {
+    pub fn payload_after_cipher(&self, cipher: &crate::gta6::save_crypto::SaveCipher) -> Vec<u8> {
         if self.header.kind == 1 {
             cipher.crypt(&self.payload)
         } else {

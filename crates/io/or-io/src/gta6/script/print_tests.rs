@@ -3434,3 +3434,153 @@ fn a_cast_to_a_named_type_takes_a_cast_or_a_complement_without_parentheses() {
     let sum = Expr::binary(BinOp::Add, local(1), local(2));
     assert_eq!(named(sum), "(type_0123456789ABCDEF)(local_1 + local_2)");
 }
+
+#[test]
+fn a_narrow_store_to_the_whole_of_a_variable_as_wide_as_its_kind_is_the_variable_assigned() {
+    let names = Names::default();
+    let cx = at(&names, Level::Source);
+    let store = |kind: StoreKind, offset: u32, value: Expr| Stmt::Store {
+        kind,
+        addr: address(Var::Local(0), 0),
+        offset,
+        value,
+    };
+    let text_with = |cx: &Context<'_>, declared: Kind, s: &Stmt| {
+        let head = kinds(&[(Var::Local(0), declared)]);
+        let mut out = String::new();
+        Writer::in_context(&mut out, cx, &head).simple(s)
+    };
+    let text = |declared: Kind, s: &Stmt| text_with(&cx, declared, s);
+    let seven = store(StoreKind::I32, 0, int(7));
+    assert_eq!(text(Kind::I32, &seven), "local_0 = 7");
+    let top = store(StoreKind::I32, 0, high());
+    assert_eq!(text(Kind::U32, &top), "local_0 = 0x9A3B5C7D");
+    let one = store(StoreKind::U8, 0, int(1));
+    assert_eq!(text(Kind::U8, &one), "local_0 = (byte)1");
+    assert_eq!(text(Kind::Bool, &one), "local_0 = true");
+    let zero = store(StoreKind::U8, 0, int(0));
+    assert_eq!(text(Kind::Bool, &zero), "local_0 = false");
+    let less = Expr::binary(
+        BinOp::Lt,
+        Expr::cast(Scalar::I32, local(2)),
+        Expr::cast(Scalar::I32, local(3)),
+    );
+    let compared = text(Kind::Bool, &store(StoreKind::U8, 0, less));
+    assert!(compared.starts_with("local_0 = "), "{compared}");
+    assert!(
+        compared.contains(" < ") && !compared.contains("->"),
+        "{compared}"
+    );
+    // A float takes the bits the store writes as the float they are, never a converted number.
+    let bits = store(StoreKind::I32, 0, int(0x3F80_0000));
+    assert_eq!(text(Kind::F32, &bits), "local_0 = 1.0f");
+    let held = store(StoreKind::I32, 0, local(1));
+    assert_eq!(text(Kind::F32, &held), "local_0 = as_f32(local_1)");
+
+    // ⚠ Fewer bytes than the kind holds, bytes further in, a truth of other bytes than 0 or 1,
+    // a kind nothing proves, and `kinds` off keep the store through the address.
+    assert_eq!(text(Kind::I32, &one), "(&local_0)->f_0 = (byte)1");
+    assert_eq!(
+        text(Kind::I32, &store(StoreKind::I32, 4, int(7))),
+        "(&local_0)->f_4 = 7"
+    );
+    let five = store(StoreKind::U8, 0, int(5));
+    assert_eq!(text(Kind::Bool, &five), "(&local_0)->f_0 = (byte)5");
+    let cell = store(StoreKind::U8, 0, local(1));
+    assert_eq!(text(Kind::Bool, &cell), "(&local_0)->f_0 = (byte)local_1");
+    assert_eq!(text(Kind::Unknown, &seven), "(&local_0)->f_0 = 7");
+    let off = Context::new(
+        &names,
+        Project::empty(),
+        Options::at(Level::Source).without(Pass::Kinds),
+    );
+    assert_eq!(text_with(&off, Kind::I32, &seven), "(&local_0)->f_0 = 7");
+}
+
+/// A project that holds one value type of 0x20 bytes, a head whose `local_0` is an array of values of it, and the type.
+fn values_array(of: fn(String) -> Kind) -> (Project, Head, TypeKey) {
+    let key = TypeKey(0xA0A0_0000_8000_0010);
+    let mut project = Project::default();
+    let facts = TypeFacts {
+        byte_size: 0x20,
+        flags: 0x10,
+        ..TypeFacts::default()
+    };
+    project.types.insert(key, facts);
+    let array = Kind::Array(Box::new(of(key.to_string())));
+    let head = kinds(&[(Var::Local(0), array)]);
+    (project, head, key)
+}
+
+#[test]
+fn a_field_of_an_element_of_an_array_of_values_is_the_field_of_the_element_in_place() {
+    let value = |ty: String| Kind::Value { ty, cells: 4 };
+    let (project, head, key) = values_array(value);
+    let mut names = Names::default();
+    let cx = Context::new(&names, &project, Options::at(Level::Source));
+    let element = || intrinsic("array_element_address", vec![local(0), local(1)]);
+    let read = |e: &Expr| sharp_in(&head, &cx, e);
+    assert_eq!(
+        read(&load(Scalar::U64, element(), 8)),
+        "local_0[local_1].f_8"
+    );
+    let last = load(Scalar::I32, element(), 0x1C);
+    assert_eq!(read(&last), "(int)local_0[local_1].f_1C");
+    // A part of the element's first bytes is the field there, never the element.
+    let first = load(Scalar::I32, element(), 0);
+    assert_eq!(read(&first), "(int)local_0[local_1].f_0");
+    // A value held in the element, and its first bytes.
+    let inner = || offset(element(), int(0x10));
+    let within = load(Scalar::I32, inner(), 4);
+    assert_eq!(read(&within), "(int)local_0[local_1].f_10.f_4");
+    assert_eq!(
+        read(&load(Scalar::U64, inner(), 0)),
+        "local_0[local_1].f_10"
+    );
+    let set = Stmt::Store {
+        kind: StoreKind::U8,
+        addr: element(),
+        offset: 4,
+        value: local(2),
+    };
+    let mut out = String::new();
+    let stored = Writer::in_context(&mut out, &cx, &head).simple(&set);
+    assert_eq!(stored, "local_0[local_1].f_4 = (byte)local_2");
+    // A load the fields pass read as a field goes by its name on the element too.
+    let owned = ExprSugar::Field { owner: key };
+    let field = || Expr::sugar(owned, load(Scalar::U64, element(), 8));
+    assert_eq!(read(&field()), "local_0[local_1].f_8");
+    names.fields.insert((key, 8), "zq_rim_mark".to_owned());
+    let cx = Context::new(&names, &project, Options::at(Level::Source));
+    assert_eq!(
+        sharp_in(&head, &cx, &field()),
+        "local_0[local_1].zq_rim_mark"
+    );
+
+    // ⚠ Past the element's bytes the access reaches another element, and with no type the
+    // project holds, or `fields` off, nothing says what the element is: the address stays.
+    let names = Names::default();
+    let cx = Context::new(&names, &project, Options::at(Level::Source));
+    let past = load(Scalar::U64, element(), 0x1C);
+    assert_eq!(sharp_in(&head, &cx, &past), "(&local_0[local_1])->f_1C");
+    let alone = at(&names, Level::Source);
+    assert_eq!(
+        sharp_in(&head, &alone, &last),
+        "(int)(&local_0[local_1])->f_1C"
+    );
+    let off = Options::at(Level::Source).without(Pass::Fields);
+    let off = Context::new(&names, &project, off);
+    let eight = load(Scalar::U64, element(), 8);
+    assert_eq!(sharp_in(&head, &off, &eight), "(&local_0[local_1])->f_8");
+}
+
+#[test]
+fn an_element_of_an_array_of_references_keeps_its_address_before_a_field() {
+    let (project, head, _) = values_array(Kind::Object);
+    let names = Names::default();
+    let cx = Context::new(&names, &project, Options::at(Level::Source));
+    let element = intrinsic("array_element_address", vec![local(0), local(1)]);
+    // ⚠ `a[i].f_8` would read through the reference the element holds.
+    let read = load(Scalar::U64, element, 8);
+    assert_eq!(sharp_in(&head, &cx, &read), "(&local_0[local_1])->f_8");
+}

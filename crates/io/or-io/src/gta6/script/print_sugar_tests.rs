@@ -1288,3 +1288,38 @@ fn a_field_of_a_variables_own_bytes_is_written_as_the_place_they_are() {
     let field = Expr::sugar(ExprSugar::Field { owner }, load);
     assert_eq!(text(&[], &head(), field), "(&local_0)->f_18");
 }
+
+#[test]
+fn a_field_stored_in_an_element_of_an_array_of_values_goes_in_place_by_its_name() {
+    let key = TypeKey(0xA0A0_0000_8000_0010);
+    let mut project = Project::default();
+    let facts = crate::gta6::script::project::TypeFacts {
+        byte_size: 0x20,
+        flags: 0x10,
+        ..Default::default()
+    };
+    project.types.insert(key, facts);
+    let element = Kind::Value {
+        ty: key.to_string(),
+        cells: 4,
+    };
+    let head = kinds(&[(Var::Local(0), Kind::Array(Box::new(element)))]);
+    let at_element = intrinsic("array_element_address", vec![local(0), local(1)]);
+    let stored = store(StoreKind::U64, at_element, 8, local(2));
+    let body = vec![group(Group::Field { owner: key }, vec![stored])];
+    let mut names = Names::default();
+    names.fields.insert((key, 8), "zq_rim_mark".to_owned());
+    let cx = Context::new(&names, &project, Options::default());
+    let text = written_in(&function_of(head.clone(), body.clone()), &cx);
+    assert!(
+        text.contains("\n    local_0[local_1].zq_rim_mark = local_2;\n"),
+        "{text}"
+    );
+    // ⚠ With no such type in the project nothing says what the element is: its address stays.
+    let cx = Context::new(&names, Project::empty(), Options::default());
+    let text = written_in(&function_of(head, body), &cx);
+    assert!(
+        text.contains("\n    (&local_0[local_1])->f_8 = local_2;\n"),
+        "{text}"
+    );
+}

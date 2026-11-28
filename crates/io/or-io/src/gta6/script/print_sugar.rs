@@ -594,6 +594,8 @@ impl Writer<'_> {
                 kind: ExprSugar::Field { .. },
                 ..
             } => self.expr(addr, POSTFIX),
+            // An element of an array of values: the store is written in place, as its load is.
+            Expr::Call { .. } => self.element_at(addr)?,
             _ => return None,
         };
         let text = self.simple(store);

@@ -43,6 +43,7 @@ use super::listing::{Import, Listing, Target, Wrapper};
 use super::names::{declared_natives, Names};
 use super::passes::types::yielded_shape;
 use super::passes::{async_await, classes, closures};
+use super::project::layouts;
 use super::project::signatures::native_key;
 use super::project::{Param, TypeFacts};
 use super::tree;
@@ -102,9 +103,14 @@ const ITEM: &str = "item, item_2 and on is the element a foreach reads where the
 /// What a header says of the names of variables, which no list gives.
 const DERIVED: &str = "a variable named otherwise than by its slot (p1, local_2, v_.., stack_..) \
                        has a name derived from the native, the type, the field or the getter its \
-                       value comes from or goes to, or the script type a list names that it is \
-                       proved to hold, or is i, j or k where it only counts a loop, loops side by \
-                       side sharing one, and no list names a variable";
+                       value comes from or goes to, the method a delegate it holds is bound to, \
+                       or the script type a list names that it is proved to hold; it is length \
+                       where it holds an array's length, item or the singular of the field a \
+                       foreach goes through where it is that loop's element, and i, j or k where \
+                       it only counts a loop, loops side by side sharing one; a lambda's variable \
+                       that would hide its binder's object is its slot name and the lambda's \
+                       offset (local_0_00277D), and a local past the frame's slots holds a field \
+                       of a closure that is not written; no list names a variable";
 
 /// The comment that says what the words of a file mean, by the passes that write them.
 fn words(options: &Options) -> String {
@@ -1601,8 +1607,11 @@ impl<'a> Writer<'a> {
         }
     }
 
-    /// What a field read through `addr` is written after, with its mark: a variable's own bytes as the place they are, `(&x)->` where `x` holds one cell and `x.` where it holds several, and `e.` after any other address.
+    /// What a field read through `addr` is written after, with its mark: a variable's own bytes as the place they are, `(&x)->` where `x` holds one cell and `x.` where it holds several, `a[i].` at an element of an array of values, and `e.` after any other address.
     fn field_base(&mut self, addr: &Expr) -> String {
+        if let Some(element) = self.element_at(addr) {
+            return format!("{element}.");
+        }
         match addr {
             Expr::AddrOf { var, cell: 0 } if self.single(*var) => {
                 format!("(&{})->", self.var(*var))
@@ -1615,6 +1624,69 @@ impl<'a> Writer<'a> {
     /// Whether a dot after `var` goes through what it holds: true C# with `fields` on, and a variable [`reads_through`] says holds one cell.
     fn single(&self, var: Var) -> bool {
         self.sharp && self.options.on(Pass::Fields) && reads_through(self.head, var)
+    }
+
+    /// The script value type `addr` is the address of an element of, where the array is a variable the kinds pass declares an array of values of it: [`element_type`].
+    fn element_typed(&self, addr: &Expr) -> Option<TypeKey> {
+        element_type(self.head, self.project, addr)
+    }
+
+    /// `a[i]` in true C# where `addr` is the address of element `i` of an array of values [`element_type`] types: what stands at that address is the element, in place.
+    fn element_at(&mut self, addr: &Expr) -> Option<String> {
+        if !self.sharp {
+            return None;
+        }
+        self.element_typed(addr)?;
+        let Expr::Call { args, .. } = addr else {
+            return None;
+        };
+        let [array, index] = args.as_slice() else {
+            return None;
+        };
+        Some(self.element(array, index))
+    }
+
+    /// Whether an access of `bytes` bytes at the sum of `fields` from `base` is a field of an element of an array of values: [`in_element`].
+    fn element_holds(&self, base: &Expr, fields: &[u64], bytes: Option<u32>) -> bool {
+        let at = fields
+            .iter()
+            .try_fold(0u64, |sum, field| sum.checked_add(*field));
+        match (at, bytes) {
+            (Some(at), Some(bytes)) => in_element(self.head, self.project, base, at, bytes),
+            _ => false,
+        }
+    }
+
+    /// `x = value` for a store [`whole_store`] says true C# writes as the variable assigned; `None` elsewhere.
+    // ⚠ The value is the bits the store writes as the kind reads them: a float from a constant's
+    // bits or under `as_f32`, never converted, and a truth as the 0 or 1 it is.
+    fn assigned_whole(
+        &mut self,
+        kind: StoreKind,
+        addr: &Expr,
+        offset: u32,
+        value: &Expr,
+    ) -> Option<String> {
+        let var = whole_store(self.head, &self.options, addr, offset, kind.bytes(), value)?;
+        let declared = self.head.vars.get(&var).map(|info| info.kind.clone())?;
+        let text = match declared {
+            Kind::F32 => match spell::folded(bits(value)) {
+                Some(c) => spell::literal(&Const::f32(f32::from_bits(c.bits as u32))),
+                None => self.cast(Scalar::F32, value).0,
+            },
+            Kind::Bool => match spell::folded(bits(value)) {
+                Some(c) => ((c.bits & 0xFF) == 1).to_string(),
+                None => self.expr(unread(value), 0),
+            },
+            Kind::I8 => self.stored(Scalar::I8, value),
+            Kind::U8 => self.stored(Scalar::U8, value),
+            Kind::I16 => self.stored(Scalar::I16, value),
+            Kind::U16 => self.stored(Scalar::U16, value),
+            Kind::U32 => self.stored(Scalar::U32, value),
+            Kind::I32 | Kind::Hash => self.stored(Scalar::I32, value),
+            _ => return None,
+        };
+        Some(format!("{} = {text}", self.var(var)))
     }
 
     /// Whether a variable is declared a 32-bit integer, which `++` and `--` step as the code does.
@@ -1704,6 +1776,9 @@ impl<'a> Writer<'a> {
                 offset,
                 value,
             } => {
+                if let Some(text) = self.assigned_whole(*kind, addr, *offset, value) {
+                    return text;
+                }
                 let narrow = match kind {
                     StoreKind::U8 => Some(Scalar::U8),
                     StoreKind::U16 => Some(Scalar::U16),
@@ -1740,7 +1815,12 @@ impl<'a> Writer<'a> {
                 && cells_of(value, self.head) == Some(bytes / 8) =>
             {
                 let (place, _) = self.place_of(addr, *offset, true, Some(*bytes));
-                format!("{place} = {}", self.value(value))
+                // C# types a bare `default` from the place it is assigned to.
+                let value = match bits(value) {
+                    Expr::ZeroSlots(_) => "default".to_owned(),
+                    _ => self.value(value),
+                };
+                format!("{place} = {value}")
             }
             Stmt::StoreBytes {
                 addr,
@@ -2489,6 +2569,27 @@ impl<'a> Writer<'a> {
         let (mut text, variable) = match base {
             Expr::AddrOf { var, cell: 0 } => (self.var(*var), true),
             Expr::AddrOf { var, cell } => (format!("{}[{cell}]", self.var(*var)), true),
+            // A field of an element of an array of values is the element's field, in place:
+            // `a[i].f_8`, and a part of its first bytes `a[i].f_0`, as of a value in a field.
+            Expr::Call {
+                callee: Callee::Intrinsic { name, .. },
+                args,
+                ..
+            } if sharp
+                && name == "array_element_address"
+                && self.element_holds(base, &fields, bytes) =>
+            {
+                if let [array, index] = args.as_slice() {
+                    let mut text = self.element(array, index);
+                    for (n, field) in fields.iter().enumerate().rev() {
+                        if !(*field == 0 && n == 0 && embedded) {
+                            let _ = write!(text, ".f_{field:X}");
+                        }
+                    }
+                    return (text, POSTFIX);
+                }
+                (self.expr(base, POSTFIX), false)
+            }
             // `*&a[i]` is `a[i]`: what stands at the address of an element is the element.
             Expr::Call {
                 callee: Callee::Intrinsic { name, .. },
@@ -3780,6 +3881,68 @@ fn unread(e: &Expr) -> &Expr {
         e = &**inner;
     }
     e
+}
+
+/// Whether `e` yields 0 or 1 and nothing else by its own form: a truth, a negation, a comparison, `&&` or `||`.
+fn yields_truth(e: &Expr) -> bool {
+    match e {
+        Expr::Truth(_) | Expr::Unary { op: UnOp::Not, .. } => true,
+        Expr::Binary { op, .. } => op.is_logical(),
+        _ => false,
+    }
+}
+
+/// The variable a store of `bytes` bytes at `offset` through `addr` writes the whole of as true C# declares it, where the source level writes the store `x = value`: fewer bytes than a cell at the start of a variable of one cell whose declared kind is that wide, and for a `bool` a value of 0 or 1.
+// ⚠ C# holds no byte of such a variable that the store leaves: the kind the kinds pass declares
+// is the proof. A truth is only a constant whose low byte is 0 or 1, or what yields 0 or 1 alone.
+pub(super) fn whole_store(
+    head: &Head,
+    options: &Options,
+    addr: &Expr,
+    offset: u32,
+    bytes: u32,
+    value: &Expr,
+) -> Option<Var> {
+    let Expr::AddrOf { var, cell: 0 } = addr else {
+        return None;
+    };
+    let on = true_csharp(options) && options.on(Pass::Kinds) && options.on(Pass::Fields);
+    if !on || offset != 0 || bytes >= 8 || !reads_through(head, *var) {
+        return None;
+    }
+    let declared = &head.vars.get(var)?.kind;
+    if kind_bytes(declared) != Some(bytes) {
+        return None;
+    }
+    let truth = match spell::folded(bits(value)) {
+        Some(c) => (c.bits & 0xFF) <= 1,
+        None => yields_truth(unread(value)),
+    };
+    (*declared != Kind::Bool || truth).then_some(*var)
+}
+
+/// The script value type `addr` is the address of an element of: `addr` is `array_element_address(a, i)` of a variable `a` the kinds pass declares an array of values of that type.
+// ⚠ By the declared kind alone, as the fields pass reads it: an array of references holds a
+// reference at the address, whose field `a[i].f_N` would read through it.
+pub(super) fn element_type(head: &Head, project: &Project, addr: &Expr) -> Option<TypeKey> {
+    let array = layouts::element_array(addr)?;
+    let info = head.vars.get(&array)?;
+    layouts::element_of(project, &info.kind)
+}
+
+/// Whether an access of `bytes` bytes at byte `offset` from `addr` lies in one element of an array of values [`element_type`] types and is less than all of it, where the source level writes it the element's field in place: `a[i].f_8`.
+pub(super) fn in_element(
+    head: &Head,
+    project: &Project,
+    addr: &Expr,
+    offset: u64,
+    bytes: u32,
+) -> bool {
+    let typed = element_type(head, project, addr);
+    let (Some(ty), Ok(offset)) = (typed, u32::try_from(offset)) else {
+        return false;
+    };
+    layouts::within_element(project, ty, offset, bytes)
 }
 
 /// Whether `e` is a constant with no bit set, under any reading of it.

@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
 use super::class::{Class, ClassKind, Field, Method, Role, Unit};
-use super::ir::{Callee, Expr, Kind, TypeKey, Var};
+use super::ir::{Callee, Expr, Kind, TypeKey, Var, FUNCTION_OFFSET};
 use super::passes::closures;
 use super::print::{self, Lambdas, ListingWriter, Read};
 use super::project::types;
@@ -276,7 +276,7 @@ pub(crate) fn in_place<'u>(unit: &'u Unit, cx: &Context<'_>) -> Lambdas<'u> {
         tree::each_expr(&method.function.body, &mut |top| {
             top.walk(&mut |e| match e {
                 Expr::FunctionRef { program, at } if *program == unit.program => {
-                    *named.entry(*at).or_default() += 1;
+                    *named.entry(*at & FUNCTION_OFFSET).or_default() += 1;
                 }
                 Expr::Call {
                     callee: Callee::Local { at, .. },

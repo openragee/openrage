@@ -312,7 +312,11 @@ fn a_function_of_a_choice_between_bare_floats_compiles_for_direct3d_12() {
     let model = hlsl::ShaderModel::V6_0;
     let written = hlsl_of((&vertex, &fragment), ShaderStage::Fragment, model).expect("written");
     let Some(dxc) = dxc::compiler() else {
-        panic!("no DXC: set WGPU_DX12_COMPILER=dxc with dxcompiler.dll on PATH");
+        or_test_support::skip_device(
+            "a_function_of_a_choice_between_bare_floats_compiles_for_direct3d_12",
+            "no DXC: set WGPU_DX12_COMPILER=dxc with dxcompiler.dll on PATH",
+        );
+        return;
     };
     let arguments = arguments(
         &written.entry,

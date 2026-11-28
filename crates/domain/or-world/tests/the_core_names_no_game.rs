@@ -1,7 +1,8 @@
 //! The architecture the core and its adapters are held to: a module of the core names no game, no
 //! title's crate and no file extension of a game, leans on no module that does and holds no
 //! static; the core depends on no crate of its own layer or above; and no adapter crate depends on
-//! another adapter, on a crate of the runtime, on a tool or on the app.
+//! another adapter or any crate of the domain but the core, on a crate of the runtime, on a tool or
+//! on the app.
 //!
 //! ⚠ Each rule has a ledger of what broke it the day it was written: the modules of one title's
 //! model that still live in the core, and the shared modules that lean on them. An entry that no
@@ -14,62 +15,12 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 /// The modules of the core that name a game, by their path under its `src`.
-const NAMES_A_GAME: &[&str] = &[
-    "archetypes.rs",
-    "collision/bound.rs",
-    "content_flags.rs",
-    "execute.rs",
-    "extension.rs",
-    "extents.rs",
-    "field.rs",
-    "generate.rs",
-    "group.rs",
-    "keys.rs",
-    "lib.rs",
-    "manifest.rs",
-    "manifest_build.rs",
-    "map_data.rs",
-    "map_types.rs",
-    "partition.rs",
-    "plan.rs",
-    "prefab.rs",
-    "state.rs",
-    "streaming_rules.rs",
-    "transform.rs",
-    "xml.rs",
-];
+const NAMES_A_GAME: &[&str] = &["streaming_rules.rs"];
 
 /// The modules of the core that name no game and lean on one that does: the module, and the one it leans on.
 const LEANS_ON: &[(&str, &str)] = &[
-    ("collision/bvh.rs", "extents.rs"),
-    ("collision/set.rs", "extents.rs"),
-    ("collision/shape.rs", "extents.rs"),
-    ("create.rs", "archetypes.rs"),
-    ("create.rs", "content_flags.rs"),
-    ("create.rs", "generate.rs"),
-    ("create.rs", "map_data.rs"),
-    ("create.rs", "map_types.rs"),
-    ("create.rs", "transform.rs"),
-    ("doors/find.rs", "extension.rs"),
-    ("doors/find.rs", "field.rs"),
-    ("doors/find.rs", "keys.rs"),
-    ("doors/find.rs", "map_data.rs"),
-    ("doors/find.rs", "map_types.rs"),
     ("interior_portals.rs", "streaming_rules.rs"),
-    ("scenario.rs", "field.rs"),
     ("streaming.rs", "streaming_rules.rs"),
-    ("validate.rs", "field.rs"),
-    ("validate.rs", "group.rs"),
-    ("validate.rs", "keys.rs"),
-    ("validate.rs", "map_data.rs"),
-    ("validate.rs", "map_types.rs"),
-    ("write.rs", "archetypes.rs"),
-    ("write.rs", "content_flags.rs"),
-    ("write.rs", "extents.rs"),
-    ("write.rs", "field.rs"),
-    ("write.rs", "keys.rs"),
-    ("write.rs", "map_data.rs"),
-    ("write.rs", "map_types.rs"),
 ];
 
 fn workspace() -> PathBuf {
@@ -354,7 +305,7 @@ fn faults_of_the_cores_manifest(root: &Path) -> Vec<String> {
         .collect()
 }
 
-/// What an adapter crate under `root` depends on that it may not: another adapter, a crate of the runtime, a tool or the app.
+/// What an adapter crate under `root` depends on that it may not: another adapter or any crate of its layer but the core, a crate of the runtime, a tool or the app.
 fn faults_of_the_adapters(root: &Path) -> Vec<String> {
     let domain = root.join("crates/domain");
     let mut adapters: Vec<String> = std::fs::read_dir(&domain)
@@ -365,14 +316,18 @@ fn faults_of_the_adapters(root: &Path) -> Vec<String> {
         .filter(|name| name.starts_with("or-world-"))
         .collect();
     adapters.sort();
-    let forbidden = above_the_domain(root);
+    // ⚠ A crate of the domain that an adapter leaned on would be free to lean on the adapter no
+    // more: the resolver and the edit store read the adapter, never the other way.
+    let mut forbidden = above_the_domain(root);
+    forbidden.extend(packages(root, "domain"));
+    forbidden.remove("or-world");
     let mut faults = Vec::new();
     for adapter in &adapters {
         let folder = domain.join(adapter);
         let manifest = std::fs::read_to_string(folder.join("Cargo.toml")).unwrap_or_default();
         for dependency in dependencies(&manifest) {
             let another = dependency != *adapter && adapters.contains(&dependency);
-            if another || forbidden.contains(&dependency) {
+            if another || (dependency != *adapter && forbidden.contains(&dependency)) {
                 faults.push(format!("{adapter} depends on {dependency}"));
             }
         }
@@ -402,6 +357,11 @@ fn the_core_names_no_game_outside_its_ledger() {
 
 #[test]
 fn no_adapter_crate_depends_on_another_or_above_itself() {
+    let domain = packages(&workspace(), "domain");
+    assert!(
+        domain.contains("or-depends") && domain.contains("or-maps") && domain.contains("or-world"),
+        "the crates of the domain were read as {domain:?}"
+    );
     let faults = faults_of_the_adapters(&workspace());
     assert!(
         faults.is_empty(),
@@ -471,7 +431,7 @@ fn the_forest_takes_how_a_parent_waits_from_the_policy() {
         "the forest states one title's rule as a constructor of its own again"
     );
     // The one driver outside the core states its title's rule by the same policy value.
-    let outside = read("crates/domain/or-depends/src/world_forest.rs");
+    let outside = read("crates/domain/or-world-gta5/src/world_forest.rs");
     assert!(outside.contains("Forest::waiting_for(Children::Stated)"));
 }
 
@@ -593,7 +553,12 @@ fn a_planted_import_of_another_adapter_fails_the_adapters() {
     let scratch = tempfile::tempdir().expect("a scratch folder");
     let root = scratch.path();
     write(root, "Cargo.toml", "[package]\nname = \"the-app\"\n");
-    for above in ["tools/a-tool", "runtime/or-renderer", "runtime/a-runtime"] {
+    for above in [
+        "tools/a-tool",
+        "runtime/or-renderer",
+        "runtime/a-runtime",
+        "domain/a-store",
+    ] {
         let name = above.rsplit('/').next().expect("a name");
         write(
             root,
@@ -643,6 +608,8 @@ fn a_planted_import_of_another_adapter_fails_the_adapters() {
         ("or-renderer = { workspace = true }\n", "or-renderer"),
         ("a-tool.workspace = true\n", "a-tool"),
         ("a-runtime.workspace = true\n", "a-runtime"),
+        // A crate of the adapter's own layer that is not the core: an edit store, a resolver.
+        ("a-store.workspace = true\n", "a-store"),
         (
             "\n[dev-dependencies]\nthe-app = { path = \"../../..\" }\n",
             "the-app",

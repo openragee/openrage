@@ -13,9 +13,9 @@ use or_maps::doors::{
 };
 use or_maps::import::{add_files, Incoming};
 use or_maps::model::{Maps, Waiver};
-use or_maps::place::{read_pasted, Pasted};
 use or_maps::sample::{map_file, types_file, Archetype, Entity};
 use or_maps::{check, inspect, rule_of, Depth};
+use or_world::place::{read_pasted, Pasted};
 
 const DOOR: &str = "shop_door_l";
 const GATE: &str = "yard_barrier_a";

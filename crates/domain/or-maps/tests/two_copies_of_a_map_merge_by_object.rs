@@ -15,7 +15,7 @@ use or_io::meta::{
     MetaInstance, Value,
 };
 use or_maps::changes::{map_changes, EntityChange, SourceChanges};
-use or_maps::edit::{add_entity, place_entity, pose_of, remove_entity, Pose};
+use or_maps::edit::{add_entity, place_entity, pose_of, remove_entity};
 use or_maps::facts::Name;
 use or_maps::import::{add_files, Incoming};
 use or_maps::merge::{
@@ -23,6 +23,7 @@ use or_maps::merge::{
     Merge, Ref, Side, Take,
 };
 use or_maps::sample::{map_file, types_file, Archetype, Entity};
+use or_world::transform::Pose;
 
 fn map(entities: &[Entity<'_>]) -> CMapData {
     CMapData::from_bytes(&map_file("harbour", entities, ([0.0; 3], [100.0; 3]))).unwrap()
@@ -105,12 +106,12 @@ fn parents(map: &CMapData) -> BTreeMap<u32, Option<u32>> {
         .collect()
 }
 
-/// What `or_world::validate` finds in `map` as it saves.
+/// What `or_world_gta5::validate` finds in `map` as it saves.
 fn problems(map: &CMapData) -> Vec<String> {
     let bytes = map.to_bytes().expect("the merged map saves");
     let document = MetaDocument::parse(or_io::meta::default_library(), bytes).expect("reads back");
-    let view = or_world::map_data::MapData::new(&document.instance).expect("a CMapData");
-    (or_world::validate::check(&view).iter())
+    let view = or_world_gta5::map_data::MapData::new(&document.instance).expect("a CMapData");
+    (or_world_gta5::validate::check(&view).iter())
         .map(ToString::to_string)
         .collect()
 }
@@ -1382,17 +1383,21 @@ fn a_copy_in_another_container_merges_into_the_container_of_the_base() {
     moved(&mut ours, 0, [2.0, 1.0, 0.0]);
     // Theirs is a map made from nothing, which is a PSO where the base is an RBM file: the two crates by their guids, one moved,
     // and a bench.
-    let mut built = or_world::create::map("harbour");
+    let mut built = or_world_gta5::create::map("harbour");
     for (name, at) in [
         ("prop_crate_a", [1.0, 1.0, 0.0]),
         ("prop_crate_b", [7.0, 1.0, 0.0]),
         ("prop_bench", [9.0, 9.0, 0.0]),
     ] {
-        let placed = or_world::create::Placed {
+        let placed = or_world_gta5::create::Placed {
             flags: 32,
-            ..or_world::create::Placed::at(HashedString::new(name), Vec3::from_array(at), 100.0)
+            ..or_world_gta5::create::Placed::at(
+                HashedString::new(name),
+                Vec3::from_array(at),
+                100.0,
+            )
         };
-        or_world::create::place(&mut built, &placed).unwrap();
+        or_world_gta5::create::place(&mut built, &placed).unwrap();
     }
     let saved = built.to_bytes().unwrap();
     assert_eq!(detect_binary_format(&saved), Some(BinaryFormat::Pso));
@@ -1410,14 +1415,14 @@ fn a_copy_in_another_container_merges_into_the_container_of_the_base() {
 
 #[test]
 fn roots_built_here_and_never_saved_are_refused_with_the_reason_and_merge_once_saved() {
-    let mut base = or_world::create::map("harbour");
+    let mut base = or_world_gta5::create::map("harbour");
     for (name, at) in [
         ("prop_crate_a", [1.0, 1.0, 0.0]),
         ("prop_crate_b", [7.0, 1.0, 0.0]),
     ] {
         let placed =
-            or_world::create::Placed::at(HashedString::new(name), Vec3::from_array(at), 100.0);
-        or_world::create::place(&mut base, &placed).unwrap();
+            or_world_gta5::create::Placed::at(HashedString::new(name), Vec3::from_array(at), 100.0);
+        or_world_gta5::create::place(&mut base, &placed).unwrap();
     }
     let sides = |base: &CMapData| {
         let (mut ours, mut theirs) = (base.clone(), base.clone());

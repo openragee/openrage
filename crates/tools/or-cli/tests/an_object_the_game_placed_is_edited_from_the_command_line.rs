@@ -6,7 +6,7 @@
 //! binary that calls `or_cli::run` between two markers, with a configuration directory of its own so that no key of this machine
 //! is read.
 
-#[path = "../../../domain/or-depends/tests/world_fixture/mod.rs"]
+#[path = "../../../domain/or-world-gta5/tests/world_fixture/mod.rs"]
 mod world_fixture;
 
 use std::collections::BTreeMap;
@@ -109,7 +109,7 @@ fn install(scratch: &Path) -> PathBuf {
 fn logical(root: &Path, name: &str) -> String {
     let game = world_fixture::mount(root);
     let (index, _) =
-        or_depends::WorldIndex::build(&or_depends::MountedWorld::new(&game, root), None);
+        or_world_gta5::WorldIndex::build(&or_world_gta5::MountedWorld::new(&game, root), None);
     let map = index.map(world_fixture::hash(name));
     map.unwrap_or_else(|| panic!("the install holds {name}"))
         .logical

@@ -4,7 +4,7 @@
 //! renumbered so the rule that names a broken one stays silent, and a session says and does what one by one says and does for an
 //! archetype the pack does not declare, a type file that does not cook and the first record of a file that holds none.
 //!
-//! ⚠ The files are the crate's samples and what `or_world::create` makes, so the clean checkout runs this.
+//! ⚠ The files are the crate's samples and what `or_world_gta5::create` makes, so the clean checkout runs this.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -23,8 +23,8 @@ use or_maps::sample::{
     child_map_file, map_file, map_file_with_container_lods, types_file, Archetype, Entity,
 };
 use or_maps::{check, inspect, Depth};
-use or_world::archetypes::ArchetypeIndex;
-use or_world::create;
+use or_world_gta5::archetypes::ArchetypeIndex;
+use or_world_gta5::create;
 
 const SLOD: &str = "city_slod.metadata.src";
 const LOD: &str = "city_lod.metadata.src";

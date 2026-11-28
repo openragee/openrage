@@ -99,7 +99,7 @@ fn manifest_problems(resource: &Path, at: &str, stated: &manifest::Outcome) -> V
         }
         Err(e) => return vec![format!("`{at}` cannot be read: {e}")],
     };
-    match or_world::manifest_build::stated_in(&bytes) {
+    match or_world_gta5::manifest_build::stated_in(&bytes) {
         Ok(held) if held != stated.stated => vec![format!(
             "`{at}` states other type files than the sources and the kept manifests come to"
         )],

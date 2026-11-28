@@ -17,7 +17,7 @@ use glam::Vec3;
 use serde::Deserialize;
 
 use crate::doors::SetDoors;
-use crate::script_text::{fill, number, MOST_DECIMALS};
+use or_world_gta5::script_text::{fill, number, MOST_DECIMALS};
 
 /// What the `format` of a file of door forms says.
 pub const FORMAT: &str = "openrage-door-forms";

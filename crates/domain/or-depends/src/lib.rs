@@ -16,36 +16,19 @@
 //! a retail install's value trees do not fit in memory together.
 
 pub mod audio;
-pub mod catalogue;
 pub mod census;
-pub mod contents;
 pub mod export;
-pub mod find;
-pub mod models;
-pub mod placement;
 pub mod resolve;
 pub mod rules;
-pub mod tables;
-pub mod vehicles;
-pub mod world_collision;
-pub mod world_forest;
-pub mod world_index;
 
+// The fixtures of the world index's own tests, which the resolver's and the census's build on.
 #[cfg(test)]
+#[path = "../../or-world-gta5/src/tests_support.rs"]
+// Each of the two crates that include the file builds on a part of it.
+#[allow(dead_code)]
 mod tests_support;
 
-pub use catalogue::{Catalogue, Kind, Located};
 pub use census::{Census, Coverage, PhysicsRivals, TextureSources};
-pub use contents::ModelContents;
 pub use export::{export, ExportError, Exported, MANIFEST};
-pub use models::ModelCatalogue;
-pub use placement::{Placed, Placement, PlacementIndex, Watch};
-pub use resolve::{
-    ArchetypeAssetIndex, ArchetypeAssets, DependencySet, Edge, Found, Resolver, Via,
-};
+pub use resolve::{DependencySet, Edge, Found, Resolver};
 pub use rules::{Derivable, Rule, Stated, RULES};
-pub use tables::InstallTables;
-pub use vehicles::VehicleCatalogue;
-pub use world_collision::WorldCollision;
-pub use world_forest::WorldForest;
-pub use world_index::{MountedWorld, WorldIndex, WorldSource};

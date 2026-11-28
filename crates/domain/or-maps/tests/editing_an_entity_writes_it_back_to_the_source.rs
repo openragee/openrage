@@ -10,11 +10,12 @@ use or_io::decl::File;
 use or_io::meta::typed::{CMapData, CMapTypes};
 use or_maps::edit::{
     add_archetype, add_entity, edit_map, edit_types, grow_extents, place_entity, pose_of,
-    remove_archetype, remove_entity, Pose,
+    remove_archetype, remove_entity,
 };
 use or_maps::facts::{cooked, Name};
 use or_maps::import::{add_files, Incoming};
 use or_maps::sample::{map_file, types_file, Archetype, Entity};
+use or_world::transform::Pose;
 
 /// A map set holding a map file of `entities` and a type file of two crates, and the folder of the map file's source.
 fn source(dir: &Path, entities: &[Entity<'_>]) -> (PathBuf, PathBuf) {

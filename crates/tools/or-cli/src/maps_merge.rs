@@ -347,9 +347,10 @@ mod tests {
     use glam::Vec3;
     use or_io::decl::File;
     use or_io::meta::typed::CMapData;
-    use or_maps::edit::{add_entity, place_entity, pose_of, remove_entity, Pose};
+    use or_maps::edit::{add_entity, place_entity, pose_of, remove_entity};
     use or_maps::facts::Name;
     use or_maps::sample::{map_file, Entity};
+    use or_world::transform::Pose;
     use serde_json::Value;
 
     use super::*;

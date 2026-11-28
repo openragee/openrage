@@ -10,8 +10,8 @@ use glam::{Quat, Vec3};
 // preview's collider (`or_simulation::collision`) makes triangles of the same bounds and leaves
 // out the primitives of a geometry, so the two do not agree on a curved bound.
 mod association;
-mod bound;
 mod bvh;
+mod collider;
 mod set;
 mod shape;
 
@@ -19,8 +19,9 @@ pub use association::{
     associate, Association, AssociationOptions, BoundAssociation, LeafAssociation, Left, NotJudged,
     Proposed, Reason, BOX_SLACK, GROUND_SLOPE, GROUND_STEP, JUDGED_FROM, MOST, SHARED_CORNER,
 };
-pub use bound::BoundCollider;
+pub use collider::BoundCollider;
 pub use set::CollisionSet;
+pub use shape::{Obb, Shape, Similarity, Touch};
 
 /// Which piece of a bound a shape is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

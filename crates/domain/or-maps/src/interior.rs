@@ -19,8 +19,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use or_io::meta::MetaDocument;
-use or_world::map_types::Interior;
-use or_world::{keys, MapTypes};
+use or_world_gta5::map_types::Interior;
+use or_world_gta5::{keys, MapTypes};
 use serde::Serialize;
 
 use crate::facts::{name_at, Name, Names};
@@ -367,7 +367,7 @@ pub fn listed(interior: &Interior<'_>, names: Names<'_>) -> Listed {
             })
             .collect(),
         time_cycle_modifiers: interior.time_cycle_modifier_count(),
-        broken: (or_world::validate::check_interior(interior).iter())
+        broken: (or_world_gta5::validate::check_interior(interior).iter())
             .map(ToString::to_string)
             .collect(),
         findings: check(interior),

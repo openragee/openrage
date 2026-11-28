@@ -21,7 +21,7 @@ use or_io::meta::{build_library, write_meta_binary, BinaryFormat, MetaInstance, 
 use or_world::contract::WorldSpec;
 use or_world::kit::{Fixture, Grounded, HeldBack, InteriorAt, Ladder, Lit, Scene, Timed};
 use or_world::model::SwitchId;
-use or_world::state::{flags as group_flags, NOT_BY_DEFAULT};
+use or_world_gta5::state::{flags as group_flags, NOT_BY_DEFAULT};
 use or_world_gta5::{Gta5Title, LEGACY};
 
 use crate::forest_fixture::{

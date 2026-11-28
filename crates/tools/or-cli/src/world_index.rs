@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use glam::Vec3;
-use or_depends::world_index::{refresh, KeptState, Report};
-use or_depends::{MountedWorld, Via, WorldIndex};
 use or_title::MountedGame;
+use or_world_gta5::world_index::{refresh, KeptState, Report};
+use or_world_gta5::{MountedWorld, Via, WorldIndex};
 use serde_json::json;
 
 use super::world::flag_value;
@@ -270,7 +270,7 @@ pub(super) fn numbers_of(args: &[String], valued: &[&str]) -> Result<Vec<f32>, S
     let Some(other) = words.iter().find(|word| number(word).is_none()) else {
         return Ok(numbers);
     };
-    use or_maps::place::{read_pasted, Pasted};
+    use or_world::place::{read_pasted, Pasted};
     match read_pasted(&words.join(" ")) {
         Ok(Pasted::Place(place)) => Ok([Some(place.x), Some(place.y), place.z]
             .into_iter()

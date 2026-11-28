@@ -8,14 +8,14 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use glam::Vec3;
-use or_depends::world_forest::{Model, NoModel};
-use or_depends::{WorldForest, WorldIndex};
 use or_world::contract::WorldInstall;
 use or_world::driver::Driver;
 use or_world::model::{is_interior_key, AssetKey, Index, MapId, Moment, Switched};
 use or_world::streaming::{NodeState, View};
-use or_world::WorldState;
+use or_world_gta5::world_forest::{Model, NoModel};
+use or_world_gta5::WorldState;
 use or_world_gta5::{Gta5World, Linked, BOX, BOXED_UNDECLARED, BOXED_UNNAMED};
+use or_world_gta5::{WorldForest, WorldIndex};
 
 /// Bytes of maps either side may hold let go of: more than one view's.
 const ROOMY: u64 = 1 << 30;
@@ -69,8 +69,8 @@ pub fn by_the_forest(
     let mut seen = Seen::default();
     for wanted in &streamed.wanted {
         let why = match wanted.why {
-            or_depends::world_forest::Why::Own => None,
-            or_depends::world_forest::Why::ParentOf(child) => Some(child),
+            or_world_gta5::world_forest::Why::Own => None,
+            or_world_gta5::world_forest::Why::ParentOf(child) => Some(child),
         };
         seen.wanted.insert(wanted.map.hash, why);
     }

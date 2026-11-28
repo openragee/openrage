@@ -5,14 +5,14 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use glam::Vec3;
-use or_depends::find::{
+use or_title::{MapMode, MountedGame};
+use or_world::place::{read_pasted, Pasted};
+use or_world_gta5::find::{
     find, models_asked, names_of, place_maps, placements_of, Asked, Budget, Detail, Found,
     GroundFound, Install, ModelFound, ModelPlacements, Named, Rank, SearchNames,
 };
-use or_depends::{MountedWorld, PlacementIndex, WorldCollision, WorldIndex};
-use or_maps::place::{read_pasted, Pasted};
-use or_maps::script_text::{ScriptForm, ScriptForms};
-use or_title::{MapMode, MountedGame};
+use or_world_gta5::script_text::{ScriptForm, ScriptForms};
+use or_world_gta5::{MountedWorld, PlacementIndex, WorldCollision, WorldIndex};
 use serde_json::json;
 
 use super::world::flag_value;
@@ -327,8 +327,7 @@ fn find_json(
     notes: &[String],
 ) -> serde_json::Value {
     let xyz = |at: Vec3| json!([at.x, at.y, at.z]);
-    let file =
-        |file: &or_depends::find::FileNamed| json!({ "name": file.name, "logical": file.logical });
+    let file = |file: &or_world_gta5::find::FileNamed| json!({ "name": file.name, "logical": file.logical });
     let place = found.place.as_ref().map(|place| {
         let ground = match &place.ground {
             GroundFound::At { height, bound } => json!({ "height": height, "bound": bound }),

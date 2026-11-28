@@ -13,10 +13,10 @@
 use std::path::{Path, PathBuf};
 
 use or_maps::delete::{self, Why};
-use or_maps::edit::Pose;
 use or_maps::operation::{At, Done, Error, Operation, Record};
 use or_maps::Maps;
 use or_project::ModuleKind;
+use or_world::transform::Pose;
 
 use super::maps::{Pick, PickKind, Step, KEPT};
 use crate::state::AppState;
@@ -623,8 +623,12 @@ impl AppState {
         ) else {
             return;
         };
-        let dropped =
-            or_maps::gizmo::drop_to_ground(&scene.obbs(), at, pose, self.workbench.maps.snap.floor);
+        let dropped = or_world::gizmo::drop_to_ground(
+            &scene.obbs(),
+            at,
+            pose,
+            self.workbench.maps.snap.floor,
+        );
         if dropped.position == pose.position {
             return;
         }

@@ -10,8 +10,8 @@ use or_io::gta5::CPathRegion;
 use or_io::meta::MetaInstance;
 use or_source::asset::Source;
 use or_source::textures::Extraction;
-use or_world::doors::{find, Found, FoundBy, NamePatterns};
-use or_world::{ExtensionKind, MapData, MapTypes};
+use or_world_gta5::doors::{find, Found, FoundBy, NamePatterns};
+use or_world_gta5::{ExtensionKind, MapData, MapTypes};
 
 /// What the searches of doors over a set of maps came to.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -64,7 +64,7 @@ impl DoorCount {
 }
 
 /// Whether one of `extensions` is the door extension.
-fn states_a_door<'a>(mut extensions: impl Iterator<Item = or_world::Extension<'a>>) -> bool {
+fn states_a_door<'a>(mut extensions: impl Iterator<Item = or_world_gta5::Extension<'a>>) -> bool {
     extensions.any(|extension| extension.kind() == ExtensionKind::Door)
 }
 

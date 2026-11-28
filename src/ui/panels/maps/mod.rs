@@ -2,7 +2,7 @@
 //! selection.
 //!
 //! ⚠ **Thin by design.** Every rule, every read and every write is `or-maps`'s and runs through `state.workbench.maps`; a panel reads what the
-//! last scan left, draws it, and asks for a change. The manipulator's geometry is `or_maps::gizmo`'s: a panel turns a pointer into a ray and
+//! last scan left, draws it, and asks for a change. The manipulator's geometry is `or_world::gizmo`'s: a panel turns a pointer into a ray and
 //! the ray into a pose.
 
 mod entity;

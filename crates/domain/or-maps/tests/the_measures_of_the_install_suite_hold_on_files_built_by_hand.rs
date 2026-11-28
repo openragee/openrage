@@ -19,7 +19,7 @@ use or_io::gta5::bounds::PhBoundAny;
 use or_io::gta5::{CNodeAddress, CPathNode, CPathRegion, PhMaterialMgrId};
 use or_io::meta::instance::HashedString;
 use or_io::meta::{MetaInstance, Value};
-use or_world::ExtensionKind;
+use or_world_gta5::ExtensionKind;
 
 fn pointers(items: Vec<MetaInstance>) -> Value {
     let boxed = |inst| Value::Pointer(Some(Box::new(inst)));

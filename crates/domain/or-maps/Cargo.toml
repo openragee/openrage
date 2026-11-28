@@ -11,8 +11,11 @@ description = "The maps engine: the map files of a project as content, with thei
 [dependencies]
 # The typed world family a map's files are opened and saved with.
 or-io = { workspace = true, features = ["meta"] }
-# The world model: extents, the checks of the engine, interiors.
+# The world core: the collision queries, the manipulator, a pose and what a person pastes read as a place.
 or-world.workspace = true
+# GTA V's world model: extents, the checks of the engine, interiors, the forms a script takes a position in, and the
+# name an area's bounds go by.
+or-world-gta5.workspace = true
 # The contract through which content reaches a plan.
 or-project.workspace = true
 # The folders a source is: what one cooks to, the metadata source of a map file, and a game file's way in.
@@ -32,7 +35,5 @@ tempfile.workspace = true
 or-test-support.workspace = true
 # The mounted install the map files are measured on.
 or-title.workspace = true
-# The world index of the synthetic mount a first edit is answered from, and the fixture that builds one.
-or-depends.workspace = true
 # The archives the tests of a mapping that comes in write, with the crate that reads them.
 zip = { version = "8", default-features = false, features = ["deflate-flate2"] }

@@ -7,7 +7,7 @@ use or_io::gta6::map::{Aabb, Archetype, Entity};
 use or_io::hash::literal_string_hash as lit;
 use or_io::meta::binary::hash_index::default_hash_index;
 use or_io::meta::{MetaInstance, Value};
-use or_maps::edit::Pose;
+use or_world::transform::Pose;
 
 const ENTITIES_MIN: u32 = lit(b"entitiesExtentsMin");
 const ENTITIES_MAX: u32 = lit(b"entitiesExtentsMax");

@@ -11,7 +11,6 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
-use or_depends::{Catalogue, Kind};
 use or_io::container::rpf::crypto::{extract_keys, Gta5RetailCryptoProvider, RpfCryptoProvider};
 use or_io::decl::File;
 use or_io::meta::typed::{CBaseArchetypeDefAny, CMapTypes};
@@ -19,6 +18,7 @@ use or_project::content::rule::Severity;
 use or_project::resource::{rule_of, unheld_texture_dictionaries};
 use or_test_support::{game_roots, skip_install, GAME_ROOT_ENV};
 use or_title::{build_mounted_game, DlcCutoff, Game, GtaInstall, MountedGame};
+use or_world_gta5::{Catalogue, Kind};
 
 const WHAT: &str =
     "how_many_texture_dictionaries_the_type_files_of_an_install_name_and_no_file_holds";

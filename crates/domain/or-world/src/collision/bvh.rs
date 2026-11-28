@@ -2,7 +2,7 @@
 
 use glam::Vec3;
 
-use crate::extents::Aabb;
+use crate::aabb::Aabb;
 
 /// The most items a leaf holds.
 const LEAF_ITEMS: usize = 4;

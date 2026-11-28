@@ -8,10 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use or_depends::{
-    ArchetypeAssetIndex, Catalogue, Census, ExportError, Exported, Found, InstallTables, Kind,
-    ModelContents, PlacementIndex, Resolver, Via,
-};
+use or_depends::{Census, ExportError, Exported, Found, Resolver};
 use or_io::container::rpf::crypto::NoOpCryptoProvider;
 use or_io::container::rpf::RpfBuilder;
 use or_io::decl::{File as _, Gen8};
@@ -21,6 +18,9 @@ use or_io::meta::instance::value::HashedString;
 use or_io::meta::{MetaInstance, Value};
 use or_title::vfs::{build_mounted_game, DlcCutoff};
 use or_title::{GtaInstall, MountedGame};
+use or_world_gta5::{
+    ArchetypeAssetIndex, Catalogue, InstallTables, Kind, ModelContents, PlacementIndex, Via,
+};
 
 fn hash(name: &str) -> u32 {
     or_io::string_hash(name.as_bytes())
@@ -114,7 +114,7 @@ fn expected_edges() -> u64 {
 fn census_over(catalogue: &Catalogue) -> Census {
     let tree = fixture_types();
     let mut index = ArchetypeAssetIndex::new();
-    index.add(or_world::MapTypes::new(&tree).expect("a CMapTypes"));
+    index.add(or_world_gta5::MapTypes::new(&tree).expect("a CMapTypes"));
     let tables = InstallTables::default();
     let resolver = Resolver::new(catalogue, &index, &tables);
     let mut census = Census::new();
@@ -250,7 +250,7 @@ fn a_placement_query_counts_what_it_walked_as_well_as_what_it_found() {
 
     let mut index = PlacementIndex::watching([hash("prop_a")]);
     for tree in &maps {
-        index.add(&or_world::MapData::new(tree).expect("a CMapData"));
+        index.add(&or_world_gta5::MapData::new(tree).expect("a CMapData"));
     }
 
     assert_eq!(index.seen(), 6, "every placement walked, watched or not");
@@ -328,7 +328,7 @@ fn a_model_body_settles_its_collision_and_its_dictionary_entries() {
         ("prop_gone", "prop_gone", "pack", ""),
     ]);
     let mut index = ArchetypeAssetIndex::new();
-    index.add(or_world::MapTypes::new(&tree).expect("a CMapTypes"));
+    index.add(or_world_gta5::MapTypes::new(&tree).expect("a CMapTypes"));
     let contents = ModelContents::read(&game, &catalogue, &index);
     assert_eq!((contents.dictionaries(), contents.drawables()), (1, 2));
     assert_eq!(contents.unreadable(), 0);
@@ -387,7 +387,7 @@ fn an_archetype_whose_asset_is_only_a_bound_resolves_to_that_bound() {
         ("col_marked", "col_marked", "", "names_no_file"),
     ]);
     let mut index = ArchetypeAssetIndex::new();
-    index.add(or_world::MapTypes::new(&tree).expect("a CMapTypes"));
+    index.add(or_world_gta5::MapTypes::new(&tree).expect("a CMapTypes"));
     let tables = InstallTables::default();
     let resolver = Resolver::new(&catalogue, &index, &tables);
 
@@ -462,7 +462,7 @@ fn a_maps_static_bounds_resolve_through_its_manifest_group() {
     let stated: &[&str] = &["m_group_0", "hi@m_group_0", "m_group_1"];
     let manifest = manifest_naming("MapDataGroups", "CMapDataGroup", &[("m_group", stated)]);
     let mut tables = InstallTables::new();
-    tables.add_manifest(or_world::Manifest::new(&manifest).expect("a CPackFileMetaData"));
+    tables.add_manifest(or_world_gta5::Manifest::new(&manifest).expect("a CPackFileMetaData"));
     let archetypes = ArchetypeAssetIndex::new();
     let resolver = Resolver::new(&catalogue, &archetypes, &tables);
 
@@ -531,14 +531,14 @@ fn a_non_group_maps_static_bounds_resolve_by_filename_stem() {
         &[("m_group", &["m_group_0"])],
     );
     let mut tables = InstallTables::new();
-    tables.add_manifest(or_world::Manifest::new(&manifest).expect("a CPackFileMetaData"));
+    tables.add_manifest(or_world_gta5::Manifest::new(&manifest).expect("a CPackFileMetaData"));
     let mut map = MetaInstance::new("CMapData");
     map.set("streamingExtentsMin", Value::Vec3([-100.0; 3]));
     map.set("streamingExtentsMax", Value::Vec3([100.0; 3]));
     let mut contents = ModelContents::new();
     assert!(contents.add_map(
         hash("m_plain"),
-        or_world::MapData::new(&map).expect("a CMapData")
+        or_world_gta5::MapData::new(&map).expect("a CMapData")
     ));
     let stem: &[&str] = &["m_plain_0", "hi@m_plain_0", "ma@m_plain_1"];
     for bound in stem {
@@ -630,7 +630,7 @@ fn an_interior_archetypes_bounds_resolve_through_the_manifest() {
         &[("v_int_test", stated)],
     );
     let mut tables = InstallTables::new();
-    tables.add_manifest(or_world::Manifest::new(&manifest).expect("a CPackFileMetaData"));
+    tables.add_manifest(or_world_gta5::Manifest::new(&manifest).expect("a CPackFileMetaData"));
     let mut interior = MetaInstance::new("CMloArchetypeDef");
     interior.set("name", Value::Hash(HashedString::new("v_int_test")));
     let mut types = MetaInstance::new("CMapTypes");
@@ -640,7 +640,7 @@ fn an_interior_archetypes_bounds_resolve_through_the_manifest() {
         Value::Array(vec![Value::Pointer(Some(Box::new(interior)))]),
     );
     let mut archetypes = ArchetypeAssetIndex::new();
-    archetypes.add(or_world::MapTypes::new(&types).expect("a CMapTypes"));
+    archetypes.add(or_world_gta5::MapTypes::new(&types).expect("a CMapTypes"));
     let resolver = Resolver::new(&catalogue, &archetypes, &tables);
 
     let set = resolver
@@ -691,7 +691,7 @@ fn export_of(
     let catalogue = catalogue_over(&game);
     let tree = fixture_types();
     let mut index = ArchetypeAssetIndex::new();
-    index.add(or_world::MapTypes::new(&tree).expect("a CMapTypes"));
+    index.add(or_world_gta5::MapTypes::new(&tree).expect("a CMapTypes"));
     let tables = InstallTables::default();
     let resolver = Resolver::new(&catalogue, &index, &tables);
     let set = resolver.of_archetype(hash("prop_a")).expect("declared");
@@ -762,7 +762,7 @@ fn an_export_missing_one_piece_refuses_and_names_it() {
 fn an_archetype_is_found_by_the_asset_it_names() {
     let tree = model_types(&[("arch_x", "model_x", "", "")]);
     let mut index = ArchetypeAssetIndex::new();
-    index.add(or_world::MapTypes::new(&tree).expect("a CMapTypes"));
+    index.add(or_world_gta5::MapTypes::new(&tree).expect("a CMapTypes"));
     assert_eq!(index.archetype_of(hash("arch_x")), Some(hash("arch_x")));
     assert_eq!(index.archetype_of(hash("model_x")), Some(hash("arch_x")));
     assert_eq!(index.archetype_of(hash("nothing")), None);
@@ -824,7 +824,7 @@ fn a_real_install_resolves_what_its_type_files_declare() {
         else {
             continue;
         };
-        if let Some(types) = or_world::MapTypes::new(&tree) {
+        if let Some(types) = or_world_gta5::MapTypes::new(&tree) {
             archetypes.add(types);
         }
     }
@@ -916,7 +916,7 @@ fn a_bound_whose_front_gives_no_root_is_read_whole() {
         let mut contents = ModelContents::new();
         assert!(contents.add_map(
             hash("m_plain"),
-            or_world::MapData::new(&map).expect("a CMapData")
+            or_world_gta5::MapData::new(&map).expect("a CMapData")
         ));
         let asked = std::cell::Cell::new(false);
         let ok = contents.read_bound_from(
@@ -989,7 +989,7 @@ fn a_loose_bound_is_read_through_a_folder_device_and_given_its_verdict() {
     let mut contents = ModelContents::new();
     assert!(contents.add_map(
         hash("m_loose"),
-        or_world::MapData::new(&map).expect("a CMapData")
+        or_world_gta5::MapData::new(&map).expect("a CMapData")
     ));
     for bound in ["m_loose_0", "ma@m_loose_1"] {
         assert!(

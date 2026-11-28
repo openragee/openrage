@@ -10,11 +10,11 @@
 use std::collections::BTreeMap;
 
 use glam::{Quat, Vec3};
-use or_world::Placement;
+use or_world_gta5::Placement;
 
 use crate::facts::{Facts, Name, Role};
-use crate::gizmo::Obb;
 use crate::model::MapSet;
+use or_world::gizmo::Obb;
 
 /// The box an entity of an undeclared archetype is drawn as, half a metre either way.
 pub const UNKNOWN_HALF: f32 = 0.5;

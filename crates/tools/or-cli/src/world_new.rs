@@ -8,9 +8,9 @@ use or_io::decl::File as _;
 use or_io::meta::instance::HashedString;
 use or_io::meta::typed::CMapData;
 use or_io::meta::{BinaryFormat, ErrorMode};
-use or_world::archetypes::ArchetypeIndex;
-use or_world::create::{self, Placed};
-use or_world::map_types::MapTypes;
+use or_world_gta5::archetypes::ArchetypeIndex;
+use or_world_gta5::create::{self, Placed};
+use or_world_gta5::map_types::MapTypes;
 
 const USAGE: &str = "world new-map --name <map-name> [--entity <archetype> --at <x,y,z> \
                      --lod-dist <distance> [--turn <x,y,z degrees>] [--scale <xy>[,<z>]] \
@@ -49,7 +49,7 @@ fn triple(flag: &str, text: &str) -> Result<Vec3, String> {
 
 /// The place `--at` names: `x,y,z`, or any form of a place with a height that a script writes, as `world at` reads one.
 fn position(text: &str) -> Result<Vec3, String> {
-    use or_maps::place::{read_pasted, Pasted};
+    use or_world::place::{read_pasted, Pasted};
     triple("--at", text).or_else(|refused| match read_pasted(text) {
         Ok(Pasted::Place(place)) => match place.z {
             Some(z) => Ok(Vec3::new(place.x, place.y, z)),
@@ -103,7 +103,7 @@ fn entity(args: &[String]) -> Result<Option<Placed>, String> {
     );
     if let Some(turn) = value("--turn") {
         let degrees = triple("--turn", turn)?;
-        placed.rotation = or_maps::edit::Pose::rotation_of_degrees(degrees.to_array());
+        placed.rotation = or_world::transform::Pose::rotation_of_degrees(degrees.to_array());
     }
     if let Some(scale) = value("--scale") {
         (placed.scale_xy, placed.scale_z) = match numbers("--scale", scale)?.as_slice() {

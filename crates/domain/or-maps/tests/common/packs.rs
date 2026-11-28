@@ -10,8 +10,8 @@ use or_io::meta::{Diagnostics, MetaInstance, SchemaLibrary, Value};
 use or_maps::layout;
 use or_title::dlc::{ContentXml, DataFileEntry, ListItem, SetupContentType, SetupData};
 use or_title::MountedGame;
-use or_world::map_types::{ArchetypeKind, MapTypes};
-use or_world::{field, keys, Manifest};
+use or_world_gta5::map_types::{ArchetypeKind, MapTypes};
+use or_world_gta5::{field, keys, Manifest};
 
 /// The name the mount gives the title update, which is no pack of the DLC list.
 const TITLE_UPDATE: &str = "TitleUpdate";

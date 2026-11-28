@@ -5,15 +5,15 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use or_depends::find::names_of;
-use or_depends::{MountedWorld, WorldIndex, WorldSource};
 use or_io::meta::MetaDocument;
 use or_io::HashFlavour;
 use or_maps::doors::{survey, SetDoors};
 use or_maps::{MapSet, Maps};
 use or_world::collision::CollisionSet;
-use or_world::doors::{NamePatterns, Names};
-use or_world::{MapData, MapTypes};
+use or_world_gta5::doors::{NamePatterns, Names};
+use or_world_gta5::find::names_of;
+use or_world_gta5::{MapData, MapTypes};
+use or_world_gta5::{MountedWorld, WorldIndex, WorldSource};
 use serde_json::json;
 
 use crate::project::Failure;
@@ -140,7 +140,8 @@ pub(crate) fn listed_path(
     lies_at: &dyn Fn(&str) -> Option<String>,
     map: &str,
 ) -> Result<String, String> {
-    let listed = |listed: &&or_depends::world_index::Map| listed.logical.eq_ignore_ascii_case(map);
+    let listed =
+        |listed: &&or_world_gta5::world_index::Map| listed.logical.eq_ignore_ascii_case(map);
     if let Some(listed) = index.maps().iter().find(listed) {
         return Ok(listed.logical.clone());
     }
@@ -377,7 +378,7 @@ mod tests {
             self.whole.identity()
         }
 
-        fn archives(&self) -> Vec<or_depends::world_index::Archive> {
+        fn archives(&self) -> Vec<or_world_gta5::world_index::Archive> {
             self.whole.archives()
         }
 

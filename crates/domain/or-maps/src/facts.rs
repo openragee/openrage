@@ -12,9 +12,9 @@ use std::path::Path;
 
 use or_io::meta::{MetaDocument, MetaInstance, Value};
 pub use or_project::content::facts::{stays_inside, Depth};
-use or_world::keys;
-use or_world::map_types::ArchetypeKind;
-use or_world::{field, MapData, MapTypes};
+use or_world_gta5::keys;
+use or_world_gta5::map_types::ArchetypeKind;
+use or_world_gta5::{field, MapData, MapTypes};
 
 use crate::model::Maps;
 
@@ -182,7 +182,7 @@ pub struct EntityFact {
     pub archetype: Name,
     pub guid: u32,
     pub position: [f32; 3],
-    /// The four floats the file stores, whose meaning depends on [`EntityFact::interior`] (`or_world::Placement`).
+    /// The four floats the file stores, whose meaning depends on [`EntityFact::interior`] (`or_world_gta5::Placement`).
     pub rotation: [f32; 4],
     pub scale_xy: f32,
     pub scale_z: f32,
@@ -205,12 +205,12 @@ pub struct MapInside {
     pub flags: u32,
     pub content_flags: u32,
     pub entities: Vec<EntityFact>,
-    /// The archetype each entity and each grass batch places, which is what the manifest's derivation reads (`or_world::manifest::placed`).
+    /// The archetype each entity and each grass batch places, which is what the manifest's derivation reads (`or_world_gta5::manifest::placed`).
     pub placed: Vec<u32>,
     /// The extents the file states, none where it states none.
     pub stored_entities: Option<([f32; 3], [f32; 3])>,
     pub stored_streaming: Option<([f32; 3], [f32; 3])>,
-    /// What the engine would misread of the LOD hierarchy of the file, one sentence each (`or_world::validate`).
+    /// What the engine would misread of the LOD hierarchy of the file, one sentence each (`or_world_gta5::validate`).
     pub problems: Vec<String>,
     /// What the engine would misread of the records the file holds beside its entities, its far lights and its occlude models, one sentence each.
     pub record_problems: Vec<String>,
@@ -436,7 +436,7 @@ pub fn inside_of(bytes: &[u8], extension: &str, names: Names<'_>) -> Result<Insi
     }
 }
 
-fn entity_fact(entity: &or_world::Entity<'_>, names: Names<'_>) -> EntityFact {
+fn entity_fact(entity: &or_world_gta5::Entity<'_>, names: Names<'_>) -> EntityFact {
     let inst = entity.instance();
     EntityFact {
         archetype: name_at(inst, keys::ARCHETYPE_NAME, names),
@@ -461,7 +461,7 @@ pub fn entity_fact_of(
 ) -> Result<EntityFact, String> {
     match crate::operation::Record::entity(entity)?.0 {
         Value::Struct(inst) | Value::Pointer(Some(inst)) => {
-            Ok(entity_fact(&or_world::Entity::new(&inst), names))
+            Ok(entity_fact(&or_world_gta5::Entity::new(&inst), names))
         }
         _ => Err("the entity has no record a map file holds".to_string()),
     }
@@ -469,7 +469,7 @@ pub fn entity_fact_of(
 
 fn read_map(map: &MapData<'_>, names: Names<'_>) -> MapInside {
     let root = map.instance();
-    let found = or_world::validate::check(map);
+    let found = or_world_gta5::validate::check(map);
     let said = |of_a_record: bool| -> Vec<String> {
         (found.iter())
             .filter(|problem| problem.is_of_a_record() == of_a_record)
@@ -490,7 +490,7 @@ fn read_map(map: &MapData<'_>, names: Names<'_>) -> MapInside {
         entities: (map.entities())
             .map(|entity| entity_fact(&entity, names))
             .collect(),
-        placed: or_world::manifest::placed(map),
+        placed: or_world_gta5::manifest::placed(map),
         stored_entities: map
             .stored_entities_extents()
             .map(|(min, max)| (min.to_array(), max.to_array())),
@@ -535,7 +535,7 @@ fn read_types(types: &MapTypes<'_>, names: Names<'_>) -> TypesInside {
     }
 }
 
-fn read_interior(interior: &or_world::Interior<'_>) -> InteriorFact {
+fn read_interior(interior: &or_world_gta5::Interior<'_>) -> InteriorFact {
     InteriorFact {
         rooms: interior
             .rooms()
@@ -563,7 +563,7 @@ fn read_interior(interior: &or_world::Interior<'_>) -> InteriorFact {
             .collect(),
         entity_sets: interior.entity_set_count(),
         entities: interior.entity_count(),
-        problems: or_world::validate::check_interior(interior)
+        problems: or_world_gta5::validate::check_interior(interior)
             .iter()
             .map(ToString::to_string)
             .collect(),

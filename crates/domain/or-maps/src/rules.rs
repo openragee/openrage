@@ -781,7 +781,7 @@ fn numbers(held: &[usize]) -> String {
 ///
 /// ⚠ Only an entity whose archetype a type file of the set declares has a box to place. Any other is judged by where it stands, which
 /// the box of its entities and the box the map streams by both have to hold whatever its box is, so a map that places one is short
-/// by at least what this says (`or_world::extents::Extents::is_complete`).
+/// by at least what this says (`or_world_gta5::extents::Extents::is_complete`).
 fn extents_short(
     map: &crate::facts::MapInside,
     declared: &BTreeMap<u32, Vec<(&str, usize, &ArchetypeFact)>>,
@@ -808,9 +808,9 @@ fn extents_short(
             continue;
         };
         let placement = if entity.interior {
-            or_world::Placement::InteriorInstance
+            or_world_gta5::Placement::InteriorInstance
         } else {
-            or_world::Placement::Entity
+            or_world_gta5::Placement::Entity
         };
         let scale = or_world::transform::scale_of(entity.scale_xy, entity.scale_z);
         let corners = or_world::transform::placed_corners(

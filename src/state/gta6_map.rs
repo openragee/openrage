@@ -13,8 +13,8 @@ use glam::{Quat, Vec3};
 use or_io::container::rpf::{read_rpf9_body, Rpf9BodyKind, Rpf9Role, Rpf9ZlibRun};
 use or_io::gta6::map::{self, Archetype, Entity, MapBody, MapData};
 use or_job::{Cancel, Progress};
-use or_maps::gizmo::Obb;
 use or_maps::{Name, Placed, Scene};
+use or_world::gizmo::Obb;
 
 use super::jobs::{file_name, JobKind, Outcome, RunningJob, Then};
 use super::rpf9_scan::{scanned_body, view_of, Row, View};

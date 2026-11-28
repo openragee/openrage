@@ -4,7 +4,7 @@ use std::process::ExitCode;
 
 use or_io::meta::binary::parse_meta_binary_full;
 use or_io::meta::{Diagnostics, ErrorMode, MetaInstance};
-use or_world::{
+use or_world_gta5::{
     archetypes::ArchetypeIndex, content_flags, extents, map_data::MapData, map_types::MapTypes,
     validate, MapGroup,
 };
@@ -147,7 +147,7 @@ fn report_map(map: &MapData<'_>) {
 }
 
 fn report_types(types: &MapTypes<'_>) {
-    use or_world::map_types::ArchetypeKind;
+    use or_world_gta5::map_types::ArchetypeKind;
 
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
     let mut rooms = 0;
@@ -378,7 +378,7 @@ fn cmd_check(args: &[String]) -> ExitCode {
         let overstated = group
             .child_count_disagreements()
             .iter()
-            .filter(|p| matches!(p, or_world::GroupProblem::ChildCountOverstated { .. }))
+            .filter(|p| matches!(p, or_world_gta5::GroupProblem::ChildCountOverstated { .. }))
             .count();
         println!("  {overstated:>8}  overstate theirs, which is advisory rather than refused");
 
@@ -424,8 +424,8 @@ fn cmd_check(args: &[String]) -> ExitCode {
     }
 }
 
-fn group_kind_of(problem: &or_world::GroupProblem) -> &'static str {
-    use or_world::GroupProblem::*;
+fn group_kind_of(problem: &or_world_gta5::GroupProblem) -> &'static str {
+    use or_world_gta5::GroupProblem::*;
     match problem {
         ParentMapMissing { .. } => "parent map not in the group",
         ParentIndexWithoutParentMap { .. } => "cross-file LOD link on a map with no parent",
@@ -572,7 +572,7 @@ fn cmd_manifest(args: &[String]) -> ExitCode {
         }
     });
 
-    let mut stated = or_world::StatedDependencies::new();
+    let mut stated = or_world_gta5::StatedDependencies::new();
     let mut manifests_read = 0usize;
     for path in &manifest_paths {
         let Some(bytes) = mount.vfs.open(path) else {
@@ -581,7 +581,7 @@ fn cmd_manifest(args: &[String]) -> ExitCode {
         let Ok(root) = parse(&bytes, ErrorMode::Lenient) else {
             continue;
         };
-        if let Some(manifest) = or_world::Manifest::new(&root) {
+        if let Some(manifest) = or_world_gta5::Manifest::new(&root) {
             stated.add(manifest);
             manifests_read += 1;
         }
@@ -623,7 +623,7 @@ fn cmd_manifest(args: &[String]) -> ExitCode {
     // the whole map's statement and reports 456 disagreements that are one
     // map each. Only the fold is kept, never a parsed tree.
     let limit = limit_of(args);
-    let mut derived_by_name: BTreeMap<u32, or_world::manifest::Dependencies> = BTreeMap::new();
+    let mut derived_by_name: BTreeMap<u32, or_world_gta5::manifest::Dependencies> = BTreeMap::new();
     let mut files = 0usize;
     for path in &world_paths {
         if !path.to_ascii_lowercase().ends_with(".ymap") {
@@ -642,7 +642,7 @@ fn cmd_manifest(args: &[String]) -> ExitCode {
             continue;
         };
         files += 1;
-        let derived = or_world::manifest::dependencies_of(&map, &index);
+        let derived = or_world_gta5::manifest::dependencies_of(&map, &index);
         let slot = derived_by_name.entry(map.name()).or_default();
         slot.types.extend(derived.types);
         slot.unresolved += derived.unresolved;
@@ -652,8 +652,8 @@ fn cmd_manifest(args: &[String]) -> ExitCode {
         derived_by_name.len()
     );
 
-    let resident = or_world::manifest::resident_type_files();
-    let mut agreement = or_world::manifest::Agreement::default();
+    let resident = or_world_gta5::manifest::resident_type_files();
+    let mut agreement = or_world_gta5::manifest::Agreement::default();
     let mut unstated_types: BTreeMap<u32, u64> = BTreeMap::new();
     for (&name, derived) in &derived_by_name {
         let before = agreement.derived_extra;
@@ -737,7 +737,7 @@ fn cmd_to_xml(args: &[String]) -> ExitCode {
         }
     };
     if !args.iter().any(|a| a == "--anyway") {
-        let why = match or_world::xml::converge(&bytes) {
+        let why = match or_world_gta5::xml::converge(&bytes) {
             Ok(c) if c.values_moved => Some("re-importing its XML loses a value".to_string()),
             Ok(_) => None,
             Err(e) => Some(e.to_string()),
@@ -754,7 +754,7 @@ fn cmd_to_xml(args: &[String]) -> ExitCode {
     let xml = parse_meta_binary_full(crate::meta::schema(), &bytes, &mut diags)
         .map_err(|e| e.to_string())
         .and_then(|(root, layout)| {
-            or_world::xml::export(&root, &layout).map_err(|e| e.to_string())
+            or_world_gta5::xml::export(&root, &layout).map_err(|e| e.to_string())
         });
     let xml = match xml {
         Ok(x) => x,
@@ -825,7 +825,7 @@ fn cmd_from_xml(args: &[String]) -> ExitCode {
             .map(|d| d.format)
             .unwrap_or(or_io::meta::BinaryFormat::Rbm),
     };
-    match or_world::xml::import(&xml, format, donor.as_ref()) {
+    match or_world_gta5::xml::import(&xml, format, donor.as_ref()) {
         Ok(bytes) => match std::fs::write(out, &bytes) {
             Ok(()) => {
                 eprintln!("Wrote {out} ({} bytes, {})", bytes.len(), format.label());
@@ -850,7 +850,7 @@ fn cmd_from_xml(args: &[String]) -> ExitCode {
 /// nothing, which is a PSO.
 ///
 /// A created map has to appear in a manifest to exist for the game, so this
-/// needs the mounted install and refuses whatever [`or_world::Plan`] refuses.
+/// needs the mounted install and refuses whatever [`or_world_gta5::Plan`] refuses.
 /// `--manifest` carries the plan out instead, writing the manifest entry
 /// beside the map.
 fn cmd_create(args: &[String]) -> ExitCode {
@@ -915,12 +915,12 @@ fn cmd_create(args: &[String]) -> ExitCode {
             index.add(types);
         }
     }
-    let mut stated = or_world::StatedDependencies::new();
+    let mut stated = or_world_gta5::StatedDependencies::new();
     mount.for_each_file(|logical, _c, leaf| {
         if leaf.to_ascii_lowercase().ends_with(".ymf") {
             if let Some(bytes) = mount.vfs.open(logical) {
                 if let Ok(tree) = parse(&bytes, ErrorMode::Lenient) {
-                    if let Some(manifest) = or_world::Manifest::new(&tree) {
+                    if let Some(manifest) = or_world_gta5::Manifest::new(&tree) {
                         stated.add(manifest);
                     }
                 }
@@ -933,11 +933,11 @@ fn cmd_create(args: &[String]) -> ExitCode {
     // one to would refuse every map that places a blade of grass.
     let types = {
         let map = MapData::new(&root).expect("checked above");
-        let derived = or_world::manifest::dependencies_of(&map, &index);
-        let resident = or_world::manifest::resident_type_files();
+        let derived = or_world_gta5::manifest::dependencies_of(&map, &index);
+        let resident = or_world_gta5::manifest::resident_type_files();
         derived.types.difference(&resident).copied().collect()
     };
-    let plan = or_world::Plan::new().with(or_world::Edit::CreateMap {
+    let plan = or_world_gta5::Plan::new().with(or_world_gta5::Edit::CreateMap {
         name: name_hash,
         parent: parent_hash,
         types,
@@ -951,10 +951,10 @@ fn cmd_create(args: &[String]) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    set_hash(&mut root, or_world::keys::NAME, name_hash);
-    set_hash(&mut root, or_world::keys::PARENT, parent_hash);
+    set_hash(&mut root, or_world_gta5::keys::NAME, name_hash);
+    set_hash(&mut root, or_world_gta5::keys::PARENT, parent_hash);
 
-    let encoded = match or_world::write::encode(&root, &layout) {
+    let encoded = match or_world_gta5::write::encode(&root, &layout) {
         Ok(bytes) => bytes,
         Err(e) => {
             eprintln!("Error: {e}");
@@ -1015,7 +1015,7 @@ pub(crate) fn name_or_hash(text: &str) -> u32 {
 }
 
 fn set_hash(root: &mut MetaInstance, key: u32, hash: u32) {
-    if let Some(slot) = or_world::field::get_mut(root, key) {
+    if let Some(slot) = or_world_gta5::field::get_mut(root, key) {
         match slot {
             or_io::meta::Value::Hash(h) => {
                 h.hash = hash;
@@ -1084,14 +1084,14 @@ fn cmd_partition(args: &[String]) -> ExitCode {
             "other"
         };
 
-        let counts = or_world::partition::LayerCounts::of(&map);
+        let counts = or_world_gta5::partition::LayerCounts::of(&map);
         if counts.is_single_layer() {
             single += 1;
         } else {
             mixed += 1;
         }
-        if or_world::partition::StreamingClass::of(&map)
-            == or_world::partition::StreamingClass::Critical
+        if or_world_gta5::partition::StreamingClass::of(&map)
+            == or_world_gta5::partition::StreamingClass::Critical
         {
             critical += 1;
         }
@@ -1102,7 +1102,7 @@ fn cmd_partition(args: &[String]) -> ExitCode {
         slot.2 += counts.lod as u64;
         slot.3 += counts.slod as u64;
 
-        let divergence = or_world::Divergence::of(&map);
+        let divergence = or_world_gta5::Divergence::of(&map);
         for bit in 0..32u32 {
             if divergence.extra & (1 << bit) != 0 {
                 *extra_bits.entry(bit).or_default() += 1;

@@ -9,29 +9,23 @@ publish.workspace = true
 description = "What an asset needs and where it is placed, resolved over a mounted install"
 
 [dependencies]
-glam.workspace = true
 # `.ymap`, `.ytyp` and `_manifest.ymf` arrive as value trees.
 or-io = { workspace = true, features = ["awc", "meta", "rel"] }
-# The placement substrate, borrowed rather than re-derived. An index that
-# built its own model of map data would be the second model `or-world`
-# exists to avoid. The collision query the bounds of a mount are asked through
-# is there too, and reads no file: this crate hands it what the mount holds.
-or-world.workspace = true
-# ⚠ The one thing that puts this crate above the domain line rather than
-# inside `or-world`: a dependency is a name until something says which file
-# in which archive that name is, and only a mount knows.
+# ⚠ The mount a dependency is resolved over: a dependency is a name until something says which file in which
+# archive that name is, and only a mount knows.
 or-title.workspace = true
-# What a person pastes read as a place or a hash, and the forms a script takes a position in, which a search
-# reads its text with and copies a result as. ⚠ `or-maps` names this crate for its tests alone (a dev-dependency, for
-# the first edit's fixture), so no build depends on itself, and a change to either crate gates the other.
-or-maps.workspace = true
+# GTA V's world: the catalogue, the tables, the contents of a model and the world index, which the resolver, the
+# census and the export read. ⚠ The edge points this way alone: the adapter names nothing of this crate.
+or-world-gta5.workspace = true
 thiserror.workspace = true
-# The kept world index says when it refuses a file and reads the install again.
-tracing.workspace = true
-# The kept world index is a zlib stream, whose checksum says a file is whole.
-flate2.workspace = true
 
 [dev-dependencies]
+# The collision probe the fixture of the world index asks the ground with.
+or-world.workspace = true
+# The positions the tests of the world index place their maps at.
+glam.workspace = true
+# The zlib stream a sealed index is, which the tests of the world index open and alter.
+flate2.workspace = true
 or-test-support.workspace = true
 # Scratch folders the tests remove when they end, a failed test's too.
 tempfile.workspace = true

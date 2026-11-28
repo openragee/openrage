@@ -16,11 +16,12 @@ use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use or_cli::DependencyIndex;
-use or_depends::{Catalogue, Found, Kind, Located, ModelContents, PlacementIndex};
+use or_depends::Found;
 use or_io::container::RpfCryptoProvider;
 use or_job::{Cancel, Progress};
 use or_title::vfs::{build_mounted_game_with, DlcCutoff};
 use or_title::{GtaInstall, MountOptions};
+use or_world_gta5::{Catalogue, Kind, Located, ModelContents, PlacementIndex};
 
 use super::document::{DocumentId, RpfNodeId};
 use super::jobs::{file_name, JobKind, Outcome, RunningJob, Then};

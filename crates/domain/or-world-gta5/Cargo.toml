@@ -14,9 +14,6 @@ thiserror.workspace = true
 tracing.workspace = true
 # The contract, the kept file and the driver this crate answers.
 or-world.workspace = true
-# ⚠ The world index, the forest's reader and the collision of a mount as they stand: this edge
-# turns round when their files move here.
-or-depends.workspace = true
 # The keys of an install, a model and a texture dictionary as owned values, and a relationship
 # file as a value tree.
 or-io = { workspace = true, features = ["meta"] }
@@ -24,10 +21,15 @@ or-io = { workspace = true, features = ["meta"] }
 or-title.workspace = true
 # Cancellation and progress, which an opening is handed.
 or-job.workspace = true
+# The forms a script takes a position in are data, read from JSON.
+serde.workspace = true
+serde_json.workspace = true
+# A sealed index of an archive's rows is a zlib stream, whose checksum says it is whole.
+flate2.workspace = true
 
 [dev-dependencies]
 or-test-support.workspace = true
-# The fixtures of `or-depends`' own suites write maps, type files, manifests and bounds as the
+# The fixtures of this crate's own suites write maps, type files, manifests and bounds as the
 # bytes the game ships them in.
 or-io = { workspace = true, features = ["meta"] }
 # Scratch folders the tests remove when they end, a failed test's too; the kit's macro names it.

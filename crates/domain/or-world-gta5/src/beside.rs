@@ -5,14 +5,14 @@
 //! types no member of a map's `instancedData`, so what one instance of a list states is read by
 //! nothing in the tree.
 
+use crate::field;
+use crate::keys;
+use crate::map_data::{DistantLodLight, LodLight};
+use crate::MapData;
 use glam::Vec3;
 use or_io::literal_string_hash;
 use or_io::meta::{MetaInstance, Value};
-use or_world::field;
-use or_world::keys;
-use or_world::map_data::{DistantLodLight, LodLight};
 use or_world::model::{Light, LightKind, OccluderBox, OccluderMesh, Occluders};
-use or_world::MapData;
 
 const I_COS_Z: u32 = literal_string_hash(b"iCosZ");
 const I_SIN_Z: u32 = literal_string_hash(b"iSinZ");

@@ -13,13 +13,13 @@ use std::time::{Duration, Instant};
 use glam::Vec3;
 use or_io::decl::File;
 use or_io::meta::typed::CMapData;
-use or_maps::edit::Pose;
 use or_maps::facts::Inside;
 use or_maps::operation::{apply, At, Operation, PoseData};
 use or_maps::sample::{
     child_map_file, map_file, map_file_with_container_lods, types_file, Archetype, Entity,
 };
 use or_maps::{delete, Name};
+use or_world::transform::Pose;
 
 use super::front_door::{NewProject, Template};
 use super::the_wardrobe_workspace::{bare, until, write};

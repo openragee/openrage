@@ -20,7 +20,7 @@
 //! are in the list below; the 505 it spelled differently from the library
 //! did not move, because the library already won every disagreement.
 //!
-//! The manifest keys are here because `or_world::keys` resolves without a
+//! The manifest keys are here because `or_world_gta5::keys` resolves without a
 //! library; `every_key_is_a_name_meta_publishes` breaks if one goes.
 //!
 //! These names reach the write path: the binary writers resolve a field's

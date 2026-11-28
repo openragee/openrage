@@ -1,7 +1,7 @@
 //! The manifest of a pack's maps: the `_manifest.ymf` that tells the game which type files each map needs before it loads.
 //!
 //! The lists are `or-world`'s derivation over what the sources place and declare, and the document is written by
-//! `or_world::manifest_build` from the manifests of the game the module keeps in its `manifests` folder. A manifest is not made from
+//! `or_world_gta5::manifest_build` from the manifests of the game the module keeps in its `manifests` folder. A manifest is not made from
 //! nothing: the tree declares none of its classes, so it is typed by a kept manifest, and with none kept nothing is written and the
 //! plan says so. A map taken from the game keeps the entry the game states for it, because the derivation and the shipped manifests
 //! agree for most maps and not all. A map that is not the game's and places an archetype no type file of the content declares keeps
@@ -14,8 +14,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use or_world::manifest::{dependencies_of_placed, resident_type_files};
-use or_world::manifest_build::{self, BuildError, Wanted};
+use or_world_gta5::manifest::{dependencies_of_placed, resident_type_files};
+use or_world_gta5::manifest_build::{self, BuildError, Wanted};
 use sha2::{Digest, Sha256};
 
 use crate::facts::{map_name, named_paths, Facts, Name, Role};

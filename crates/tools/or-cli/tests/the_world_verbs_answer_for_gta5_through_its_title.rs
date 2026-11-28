@@ -6,7 +6,7 @@
 //! runs in a child of this test binary that calls `or_cli::run` between two markers. The child is
 //! given its own configuration directory, which is where the index is kept.
 
-#[path = "../../../domain/or-depends/tests/world_fixture/mod.rs"]
+#[path = "../../../domain/or-world-gta5/tests/world_fixture/mod.rs"]
 mod world_fixture;
 
 use std::io::Write;

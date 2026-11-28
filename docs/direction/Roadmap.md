@@ -237,7 +237,7 @@ corpus. R38b, from the UX review of
   - [x] [R33a Path nodes ynd](#r33a-path-nodes-ynd) — declared in `or-io` and opened as an owned value (#208, #220); the app opens it as `DocumentKind::Ynd` with an outline of its nodes, links and junctions and a save (#351), which the owner ruled is "the editor opens it" (2026-10-01)
   - [ ] [R33b Navmesh ynv](#r33b-navmesh-ynv) — declared in `or-io` with a `packed(4)` quadtree record (#215) and opened as an owned `CNavMesh` (#287); the app opens it as `DocumentKind::Ynv` with an outline of its sectors and polygons, and the viewport draws its polygons filled and outlined and its leaf sectors' boxes; open: the owner's judgement of that view (2026-10-01)
   - [x] [R33c Recordings yvr and ywr](#r33c-recordings-yvr-and-ywr) — declared in `or-io` as `CVehicleRecording` and `FwWaypointRecordingRoute` and opened owned; every file both installs ship reads, saves and reaches its fixed point; the app opens both and `openrage-cli convert` reads them; the corpus stages a sample of each from both installs, and its gates run on a corpus run and pass
-  - [x] [R33d Scenario points](#r33d-scenario-points) — `CScenarioPointRegion` is declared by hand in `or_io::meta` over the document's own type table (OD-META-TYPED, 2026-10-01); `or_world::scenario` names every point's type and model set against the install's manifests, and an edited region saves to its own layout; creating a region waits on R62
+  - [x] [R33d Scenario points](#r33d-scenario-points) — `CScenarioPointRegion` is declared by hand in `or_io::meta` over the document's own type table (OD-META-TYPED, 2026-10-01); `or_world_gta5::scenario` names every point's type and model set against the install's manifests, and an edited region saves to its own layout; creating a region waits on R62
   - [x] [R33e Navmesh index stability](#r33e-navmesh-index-stability) — `CNavMesh::disable_polygon` cuts a polygon off by writing its edges, and the edges into it, as leading nowhere, since no shipped bit marks a disabled polygon, and `delete_polygon` removes one and renumbers what names the later ones, or refuses naming the edges, special links and cells that still reach it; `openrage-cli navmesh disable` and `delete` and the `.ynv` outline's polygon menu do both; whether the game skips a disabled polygon is the owner's to load
 - [ ] [R34 Audio and media](#r34-audio-and-media) — decomposed into a codec, a schema family and a licensing question
   - [x] [R34a The audio wave container](#r34a-the-audio-wave-container) — `.awc` reads, writes back byte-identically and decodes PCM16, ADPCM and Enhanced's MP3, in `or-io` behind its `awc` feature, and de-interleaves multi-channel containers, checked by continuity and a hand-built container since none states a channel peak, and the app opens one, lists its streams, plays them on every platform, exports them to WAV and replaces a stream from WAV in the codec it has, PCM16, ADPCM or MP3, rebuilding a multi-channel stream's shared blocks, as `openrage-cli awc` does; the app and `openrage-cli awc export` decode every stream through `or-media`'s one interface and codec table; Legacy's eight codec byte 5 streams are XMA, identified by their packets and decoded by `or-media`'s port of FFmpeg's WMA Pro decoder to FFmpeg's own samples and to the peaks they state, so the app plays and exports them, while replacing an XMA stream, which no open encoder exists for, and replacing an MP3 channel of a multi-channel stream are open
@@ -1984,7 +1984,7 @@ gives the bytes cut to `limit`, but a resource read from an archive returns at l
 its header (`read_prefix` takes `limit.max(Rsc7::HEADER_LEN)`) and an entry
 decrypted whole, a `.ysc` in an encrypted archive, in full whatever the limit, which cannot matter
 for a `.ybn`. The retail equivalence test declares its own `FRONT` of 4,096 beside `BOUND_FRONT` in
-`crates/domain/or-depends/src/contents.rs`, which is private and which `ModelContents::read_bound`
+`crates/domain/or-world-gta5/src/contents.rs`, which is private and which `ModelContents::read_bound`
 reads, so lowering one leaves the evidence on the other; every "reads only the header" assertion
 measures the length of the bytes returned and not what the archive was asked for, so a read of the
 whole body that is then cut passes them, and nothing pins `read_at` bounded. The two retail-install
@@ -3304,7 +3304,7 @@ train track node graphs, and scenario points resolved against the game's real in
 The counts crawl every copy; through the mounted VFS there are 259 distinct `.ynd` regions per
 edition, and a reader is scoped by the distinct count. `.ynd` and `.ynv` are declared in `or-io` and
 open as owned values, and so do `.yvr` and `.ywr`; scenario regions are declared in `or_io::meta`, and their
-domain layer is `or_world::scenario`.
+domain layer is `or_world_gta5::scenario`.
 
 **Risk.** ⚠ Navmesh indices are referenced across files, so a well-meaning "compact the list" is a
 game-breaking edit; that is why disable-not-delete is the default.
@@ -3429,10 +3429,10 @@ names every point's type through its own look-ups and saves to the tree's own sa
 the file as that edit and nothing else
 (`an_edited_point_reaches_the_file_as_that_edit_and_nothing_else`).
 
-`or_world::scenario` is the domain layer: `ScenarioManifests` reads the scenario-info and model-set
+`or_world_gta5::scenario` is the domain layer: `ScenarioManifests` reads the scenario-info and model-set
 manifests and names each point's scenario type, and its model set from the vehicle or the ped table
 as its type spawns, against them; `set_scenario_type` re-types a point by name.
-`crates/domain/or-world/tests/naming_every_scenario_point.rs` re-types a point in every staged
+`crates/domain/or-world-gta5/tests/naming_every_scenario_point.rs` re-types a point in every staged
 region and saves it as the value tree saves the same edit, and over a retail Legacy install names
 all 159,866 points of its 205 regions against the manifests it ships, 103,608 of them with a model
 set (`every_installed_points_type_and_model_set_is_named_by_a_manifest`, at `cfcd9d4c`). Creating a
@@ -8137,7 +8137,7 @@ Legacy world files and 12,759 of 12,759 Enhanced ones (#146).
 `Rsc7::invent_single_chunk_seal` seals it as one power-of-two chunk (`DatResourceSizes::single_chunk`,
 since an object straddling chunks resolves against the wrong allocation; no shipped page has one
 straddling, 0 of 29,059 regions in `what_shipped_rbm_pages_are_shaped_like`), and
-`or_world::write::encode` falls back to it only on the writer's `MetaError::OutgrewItsLayout`
+`or_world_gta5::write::encode` falls back to it only on the writer's `MetaError::OutgrewItsLayout`
 refusal, because re-encoding against a synthesised layout changes every document
 (`synthesising_a_document_that_did_not_grow_would_change_it`: none of the 2,338 staged RBM documents
 re-encodes to its own bytes, the figure its file's module comment states).
@@ -8793,7 +8793,7 @@ clean clone passes hosted CI with the synthetic round trips; `cargo-deny` is cle
 
 **What.** Read a Menyoo spooner placement file into entities a map can hold, and place them through
 the path a prefab takes. Split out of [R32](#r32-world-data-ymap-ytyp-and-interiors), which has the
-world side: `or_world::prefab::place` turns and moves a set of entities into a map's value tree,
+world side: `or_world_gta5::prefab::place` turns and moves a set of entities into a map's value tree,
 `WorkingSet::place_prefab` writes that placement into a working set, and `WorkingSet::state_types`
 adds the type files the map's manifest entry must name; `openrage-cli world prefab` does both. What
 is missing is the format — a third-party tool's XML, versioned by that tool, with no specification.
@@ -9664,7 +9664,7 @@ and the choice, kept on disk and rebuilt only where the install changed. It adds
 (`the_world_index_names_everything_a_real_install_lists`, 2026-11-26;
 [figures](../reference/Crate_Reference.md#domain-crates)), and the index names the copy of a file
 the title update patches, the one the mount opens.
-`crates/domain/or-depends/src/world_index.rs` reads every map, type file, manifest and bound an
+`crates/domain/or-world-gta5/src/world_index.rs` reads every map, type file, manifest and bound an
 archive at a time, answers the maps and carried bounds at a position and is kept on disk by each
 archive's stamp (`the_world_index_of_a_mount`), behind `openrage-cli world index` and `world at`.
 `DlcCutoff::Level` stops the mount at a pack of the DLC list and `MountOptions::mode` takes the map
@@ -9818,11 +9818,11 @@ the list of maps only a script requests, with a stated naming rule for two versi
 ([brief](World_Editor_Plan.md#layers-of-what-the-game-hides-r70f)).
 
 **Where it stands.** Not built. The viewport draws a `.ynv`'s polygons ([R33b](#r33b-navmesh-ynv)).
-`crates/domain/or-world/src/map_data.rs` reads a box occluder, the stored box of an occlusion mesh
+`crates/domain/or-world-gta5/src/map_data.rs` reads a box occluder, the stored box of an occlusion mesh
 and, since the data part of [R70o](#r70o-parked-vehicles-zones-lights-and-occluders), a parked
 vehicle, a timecycle zone and a far light with every member the installs state. The GTA VI World
 panel lists the script-managed groups, and no screen uses
-`crates/domain/or-world/src/state.rs` for GTA V.
+`crates/domain/or-world-gta5/src/state.rs` for GTA V.
 
 **Depends on.** [R70c](#r70c-the-gta-v-world-streamed-and-drawn) and
 [R70g](#r70g-collision-as-a-query); the data part of
@@ -9851,12 +9851,12 @@ caller, and `openrage-cli world ground` answers a position
 `crates/domain/or-world/src/collision/`: `BoundCollider` is a bound's exact shapes under a tree, and
 `CollisionSet` holds the colliders its caller hands it by key and answers a ray, a swept sphere, a
 box overlap and the ground, held on bounds built by hand
-(`crates/domain/or-world/tests/collision_queries.rs`,
-`crates/domain/or-world/tests/collision_world.rs`).
-`crates/domain/or-depends/src/world_collision.rs` is the caller that hands it a mount's: the static
+(`crates/domain/or-world-gta5/tests/collision_queries.rs`,
+`crates/domain/or-world-gta5/tests/collision_world.rs`).
+`crates/domain/or-world-gta5/src/world_collision.rs` is the caller that hands it a mount's: the static
 bounds the index names for a column, held under a budget of bytes, behind
 `openrage-cli world ground`, on mounts built by hand
-(`crates/domain/or-depends/tests/the_ground_under_a_place_of_a_mount.rs`). Named and not loaded:
+(`crates/domain/or-world-gta5/tests/the_ground_under_a_place_of_a_mount.rs`). Named and not loaded:
 the collision of an interior and of a placed prop, which needs the entity's placement and is next;
 `WorldCollision::place` is its seam. The install check holds on both installs and settles a
 node's scale (`the_ground_under_a_real_installs_road_nodes_is_within_a_step_of_them`, 2026-11-26;
@@ -9902,7 +9902,7 @@ a session for each pack it edits, written when the project is saved
 [on screen](Workbench_UX_Design.md#what-the-map-screen-builds),
 [timings](../reference/Crate_Reference.md#domain-crates)). And a map, a
 built entity, a type file and a base archetype made
-with no donor and no snapshot (`crates/domain/or-world/src/create.rs`), behind
+with no donor and no snapshot (`crates/domain/or-world-gta5/src/create.rs`), behind
 `openrage-cli world new-map` and `world archetypes`, which pass the rules of a pack
 (`a_map_and_a_type_file_made_from_nothing_enter_a_pack_and_break_none_of_its_rules`).
 
@@ -10149,7 +10149,7 @@ doors carry, a game door moved or deleted, two doors at one place, and a door wh
 
 **Where it stands.** The headless part is built on packs made by hand, and no screen uses it:
 the search, the pairing, the arc, the rules `doors-overlap` and `door-blocked`, the copy forms and
-`openrage-cli maps doors` (`crates/domain/or-world/tests/the_doors_of_a_map.rs`,
+`openrage-cli maps doors` (`crates/domain/or-world-gta5/tests/the_doors_of_a_map.rs`,
 `crates/domain/or-maps/tests/the_doors_of_a_pack.rs`;
 [what each reads, and the counts](../reference/Crate_Reference.md#domain-crates)). On each
 install 470 doors are found by the extension, which 220 entities state (56 of the maps and 164
@@ -10196,7 +10196,7 @@ drawn on a selected parking spot
 ([brief](World_Editor_Plan.md#parked-vehicles-zones-lights-and-occluders-r70o)).
 
 **Where it stands.** The data part is built: `crates/io/or-io/src/meta/typed/map_records.rs` types
-these records as members of `CMapData` with save refusals, `crates/domain/or-world/src/map_data.rs` reads them as views,
+these records as members of `CMapData` with save refusals, `crates/domain/or-world-gta5/src/map_data.rs` reads them as views,
 and the install suite passes on both
 (`every_map_of_an_install_reads_its_records_typed_states_the_members_typed_and_saves_to_its_fixed_point`,
 2026-11-25; [the census and what is left](../reference/Crate_Reference.md#io-crates)). A
@@ -10282,7 +10282,7 @@ its extents is split at the build, by area, its links carried across the parts
 installs; nothing ran in a game. A Map content hands a build `stream/_manifest.ymf`,
 stating for each map the type files `or-world`'s derivation finds
 (`a_build_writes_a_manifest_that_reads_back_naming_the_type_file_its_map_needs`), and the line
-`this_is_a_map`. `crates/domain/or-world/src/manifest_build.rs` types it by the manifests of the
+`this_is_a_map`. `crates/domain/or-world-gta5/src/manifest_build.rs` types it by the manifests of the
 game a content keeps (`openrage-cli maps keep-manifest`): a map one of
 them states keeps that entry
 (`a_map_taken_from_the_game_keeps_the_entry_the_game_states_where_the_derived_one_differs`), and a
@@ -10324,7 +10324,7 @@ pack and is locked by the same sentence
 Left: the change set that turns the maps of a story pack on, for a pack loaded in the game to
 answer ([R70a](#r70a-what-the-game-loads)); the entry of a manifest an interior's type file is
 stated by; the line for the server's configuration; the split, which
-`crates/domain/or-world/src/partition.rs` plans by level of detail and does not apply; one manifest
+`crates/domain/or-world-gta5/src/partition.rs` plans by level of detail and does not apply; one manifest
 for two Map contents of a build, refused today as one path; keeping a manifest from the editor; and
 every stated map of an install
 ([the writer in full](../reference/Crate_Reference.md#domain-crates)).
@@ -10654,7 +10654,7 @@ the colours shown, copied, and its sheet. The grid of thumbnails waits for the p
 
 **Where it stands.** The data of the two lists is built, headless, and no screen calls it
 ([in full, with the figures](../reference/Crate_Reference.md#domain-crates)).
-`crates/domain/or-depends/src/models.rs` lists an install's models from the world index alone, with
+`crates/domain/or-world-gta5/src/model_catalogue.rs` lists an install's models from the world index alone, with
 no file opened: each archetype once under the last type file to declare it, with its kind, box,
 sphere, level-of-detail distance, dictionaries, pack, the file that holds it and how often the maps
 place it, a page at a time with the total, by text, pack, kind, size and placed or never placed,
@@ -10663,7 +10663,7 @@ that patches a pack holds is listed under that pack
 (`what_a_folder_that_patches_a_pack_holds_is_listed_under_that_pack_and_opened_from_the_update`).
 `crates/title/or-title/src/install/vehicles.rs` reads the vehicle data files a mount would load for
 each vehicle's model, game name, class and type as the file's text states them, and
-`crates/domain/or-depends/src/vehicles.rs` pages them by text, class, type and pack
+`crates/domain/or-world-gta5/src/vehicles.rs` pages them by text, class, type and pack
 (`the_vehicles_of_a_mount`, whose
 `a_filter_by_class_lists_the_vehicles_the_data_puts_in_that_class_and_no_other` is the first check
 of this row). `openrage-cli world models` and `world vehicles` print both. Both installs hold the
@@ -11073,8 +11073,54 @@ split as the brief lists, `WorldForest` a thin wrapper over the core's driver wi
 surface as it is, and GTA V's index on the core's kept file
 ([brief](Unified_World_Plan.md#the-gta-v-files-moved-into-the-adapter-r71n)).
 
-**Where it stands.** Not started. How many local branches of R70 change the three crates is in
-[the plan's risks](Unified_World_Plan.md#risks).
+**Where it stands.** The move is built and the two rewrites it asked for are not (2026-11-28, on
+`main` at `d617d7a38`).
+
+- **Moved.** `or-world` is the core alone: GTA V's model (the views over a map and a type file,
+  the write path, the plans, the doors, the reading of a bound) is in `or-world-gta5` with its
+  suites, and so is the world half of `or-depends` (the catalogue, the tables, the contents, the
+  placements, the world index, the collision of a mount, the search, the catalogues of models and
+  vehicles, `WorldForest`). `or-depends` keeps the resolver, the census, the export, the rules and
+  the audio, and reads the adapter; `or-maps` reads the adapter and the core, and its place parser
+  and its manipulator are the core's, its script forms the adapter's. The edges run core, adapter,
+  then `or-depends` and `or-maps`, with none back, which `cargo tree -e normal,build,dev` shows for
+  each of the four and `no_adapter_crate_depends_on_another_or_above_itself` holds.
+- **Split.** The box type is the core's `aabb`; the placement convention is the adapter's
+  `transform` and the scale, the corners and `Pose` stay the core's; a collider of shapes with its
+  queries is the core's and the reading of a bound into shapes the adapter's, behind the trait
+  `OfBound`; `Via` and `ArchetypeAssetIndex` left the resolver for the adapter's
+  `archetype_assets`. ⚠ A moved file changed in its imports and its visibility alone; what else
+  changed is the splits above, `area_of` moved into the adapter's catalogue, and one test of the
+  script forms that reads a sample map of `or-maps`, which is now
+  `crates/domain/or-maps/tests/a_heading_written_for_a_stored_rotation_is_the_turn_about_z.rs`.
+- **Counted.** `cargo nextest list --profile all` over `or-world`, `or-world-gta5`, `or-world-gta6`,
+  `or-worlds`, `or-depends`, `or-maps`, `or-project`, `or-cli` and the app lists 6142 tests before
+  and after, with no test's name lost or gained; no body changed. The ledger of
+  `crates/domain/or-world/tests/the_core_names_no_game.rs` shrank from 22 files and 29 pairs to
+  one file and two pairs. The slow tier holds the six install suites that moved under
+  `or-world-gta5`.
+- **Not built: `WorldForest` over the core's driver.** It still runs its own loop. The driver
+  states why a map gave nothing as a sentence where `WorldForest` states an `Unread`, keys a map by
+  its row where `WorldForest` keys it by its name, needs an install and a linked index where
+  `WorldForest` is lent an index and a source, finds wanted maps by a scan of every row, and
+  differs for an interior entity whose archetype no type file declares
+  ([R71d](#r71d-the-gta-v-world-behind-the-contract-and-one-kept-file)); each is a change of the
+  driver or of what `WorldForest` answers, and this row may change neither.
+- **Not built: one kept file.** `world_index::refresh` still keeps GTA V's index in its own file,
+  beside the core's kept file the contract's index stands on. Tests this row may not change hold
+  the old file's bytes (`a_kept_file_of_another_version_or_another_key_is_rebuilt_never_trusted`,
+  `a_truncated_or_corrupt_kept_file_is_refused_with_an_error_and_rebuilt` and
+  `a_kept_file_that_states_what_no_index_holds_is_refused` of
+  `crates/domain/or-depends/tests/the_world_index_of_a_mount.rs`,
+  `a_kept_file_of_the_version_before_is_rebuilt_never_trusted` and
+  `a_kept_file_that_states_an_archetype_of_no_kind_is_refused_and_read_again` of
+  `crates/domain/or-world-gta5/tests/the_models_of_a_mount.rs`) and its folder
+  (`an_install_has_one_kept_index_of_its_own_under_the_configuration_folder` of `or-cli`), so the
+  file goes when the owner says which of the two rules gives way.
+- **Left beside them.** The scene's types stay in `or-maps`, since `Placed` names that crate's
+  `Name`; `or-cli` still includes the fixtures by path, now from the adapter's tests; and
+  `crates/domain/or-depends/tests/the_world_index_of_a_mount.rs` stays in `or-depends`, since one of
+  its tests resolves an archetype through `Resolver`.
 
 **Depends on.** [R71d](#r71d-the-gta-v-world-behind-the-contract-and-one-kept-file), and the finished branches of R70 landed, which the owner names.
 

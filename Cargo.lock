@@ -3097,6 +3097,7 @@ dependencies = [
  "or-wardrobe",
  "or-weapons",
  "or-world",
+ "or-world-gta5",
  "or-world-gta6",
  "pelite",
  "pollster",
@@ -3185,6 +3186,7 @@ dependencies = [
  "or-wardrobe",
  "or-weapons",
  "or-world",
+ "or-world-gta5",
  "or-worlds",
  "serde",
  "serde_json",
@@ -3218,13 +3220,12 @@ dependencies = [
  "flate2",
  "glam",
  "or-io",
- "or-maps",
  "or-test-support",
  "or-title",
  "or-world",
+ "or-world-gta5",
  "tempfile",
  "thiserror 1.0.69",
- "tracing",
 ]
 
 [[package]]
@@ -3318,13 +3319,13 @@ name = "or-maps"
 version = "0.1.0"
 dependencies = [
  "glam",
- "or-depends",
  "or-io",
  "or-project",
  "or-source",
  "or-test-support",
  "or-title",
  "or-world",
+ "or-world-gta5",
  "serde",
  "serde_json",
  "sha2",
@@ -3584,7 +3585,6 @@ dependencies = [
  "or-io",
  "or-job",
  "or-test-support",
- "or-title",
  "serde",
  "tempfile",
  "thiserror 1.0.69",
@@ -3595,13 +3595,15 @@ dependencies = [
 name = "or-world-gta5"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "glam",
- "or-depends",
  "or-io",
  "or-job",
  "or-test-support",
  "or-title",
  "or-world",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror 1.0.69",
  "tracing",

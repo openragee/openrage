@@ -16,12 +16,13 @@ use or_io::meta::{
     build_library, canonical, write_meta_binary, BinaryFormat, MetaDocument, MetaInstance, Value,
 };
 use or_maps::changes::map_changes;
-use or_maps::edit::{add_entity, place_entity, pose_of, remove_entity, Pose};
+use or_maps::edit::{add_entity, place_entity, pose_of, remove_entity};
 use or_maps::facts::Name;
 use or_maps::merge::{
     merge_maps, merge_types, By, Conflict, Did, Disagreement, Error, Merge, Ref, Take,
 };
 use or_maps::sample::{map_file, map_file_with_container_lods, types_file, Archetype, Entity};
+use or_world::transform::Pose;
 
 fn map(entities: &[Entity<'_>]) -> CMapData {
     CMapData::from_bytes(&map_file("harbour", entities, ([0.0; 3], [100.0; 3]))).unwrap()
@@ -110,19 +111,19 @@ fn parent_of(map: &CMapData, at: [f32; 3]) -> Option<[f32; 3]> {
         .map(|parent| place(&map.entities[parent]))
 }
 
-/// What `or_world::validate` finds in `map` as it saves.
+/// What `or_world_gta5::validate` finds in `map` as it saves.
 fn problems(map: &CMapData) -> Vec<String> {
     let bytes = map.to_bytes().expect("the merged map saves");
     let document = MetaDocument::parse(or_io::meta::default_library(), bytes).expect("reads back");
-    let view = or_world::map_data::MapData::new(&document.instance).expect("a CMapData");
-    (or_world::validate::check(&view).iter())
+    let view = or_world_gta5::map_data::MapData::new(&document.instance).expect("a CMapData");
+    (or_world_gta5::validate::check(&view).iter())
         .map(ToString::to_string)
         .collect()
 }
 
 /// The entities of `map` whose count of children is not the number of entities of `map` that name them: none in a map no child map adds to.
 ///
-/// ⚠ `or_world::validate` does not judge a count, which a child map adds to, so the counts are judged here.
+/// ⚠ `or_world_gta5::validate` does not judge a count, which a child map adds to, so the counts are judged here.
 fn miscounted(map: &CMapData) -> Vec<(usize, u32, usize)> {
     (map.entities.iter().enumerate())
         .filter_map(|(at, entity)| {

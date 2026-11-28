@@ -7,12 +7,12 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use glam::Vec3;
-use or_depends::find::Rank;
-use or_depends::models::{Model, Page, Query, Sort};
-use or_depends::vehicles::{VehiclePage, VehicleQuery};
-use or_depends::{Kind, ModelCatalogue, VehicleCatalogue};
 use or_title::{MapMode, MountedGame};
-use or_world::ArchetypeKind;
+use or_world_gta5::find::Rank;
+use or_world_gta5::model_catalogue::{Model, Page, Query, Sort};
+use or_world_gta5::vehicles::{VehiclePage, VehicleQuery};
+use or_world_gta5::ArchetypeKind;
+use or_world_gta5::{Kind, ModelCatalogue, VehicleCatalogue};
 use serde_json::json;
 
 use super::world::flag_value;
@@ -322,7 +322,7 @@ fn models_json(
     let named = |hash: u32| {
         (hash != 0).then(|| json!({ "hash": hex(hash), "name": catalogue.dictionary_name(hash) }))
     };
-    let declaration = |declared: &or_depends::models::Declared<'_>| {
+    let declaration = |declared: &or_world_gta5::model_catalogue::Declared<'_>| {
         json!({
             "typeFile": declared.type_file.name,
             "logical": declared.type_file.logical,

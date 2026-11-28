@@ -10,8 +10,8 @@ use or_io::gta5::{File as _, GtaDrawable, GtaFragType, PgDictionary};
 use or_io::meta::binary::parse_meta_binary_full;
 use or_io::meta::{Diagnostics, ErrorMode};
 use or_io::Generation;
-use or_world::generate::{self, Agreement, AssetKind, Authoring, Closeness, DrawableFacts};
-use or_world::map_types::MapTypes;
+use or_world_gta5::generate::{self, Agreement, AssetKind, Authoring, Closeness, DrawableFacts};
+use or_world_gta5::map_types::MapTypes;
 
 macro_rules! facts_of {
     ($lod:expr, $name:expr, $kind:expr, $dict:expr) => {{
@@ -211,7 +211,7 @@ pub fn run(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let encoded = match or_world::write::encode(&tree, &layout) {
+    let encoded = match or_world_gta5::write::encode(&tree, &layout) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("Error: {e}");
@@ -237,13 +237,13 @@ fn from_nothing(
             return ExitCode::from(2);
         }
     };
-    let mut types = or_world::create::types(name);
+    let mut types = or_world_gta5::create::types(name);
     types.archetypes.extend(
         facts
             .iter()
-            .map(|f| or_world::create::archetype(f, authoring)),
+            .map(|f| or_world_gta5::create::archetype(f, authoring)),
     );
-    let encoded = match or_world::create::types_file(&types, format) {
+    let encoded = match or_world_gta5::create::types_file(&types, format) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("Error: {e}");

@@ -1,7 +1,7 @@
 //! A scanned GTA VI map entity's placement as fields that take what is typed, and the button that
 //! stands it on the ground; each change is one step of Undo.
 
-use or_maps::edit::Pose;
+use or_world::transform::Pose;
 
 use super::entity::number;
 use crate::ui::accessible_name::named;

@@ -7,10 +7,11 @@ use std::process::ExitCode;
 
 use glam::{Quat, Vec3};
 use or_maps::collision::{
-    apply_all, area_of, carried, object_box, propose, Applied, Error, Operation, Operations,
-    Planned, Proposal,
+    apply_all, carried, object_box, propose, Applied, Error, Operation, Operations, Planned,
+    Proposal,
 };
 use or_world::collision::{AssociationOptions, NotJudged, Reason};
+use or_world_gta5::catalogue::area_of;
 use serde_json::{json, Value};
 
 use crate::maps::maps_of;

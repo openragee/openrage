@@ -5,11 +5,11 @@ use std::sync::Arc;
 
 use glam::{Affine3A, Vec3};
 
-use super::bound::{obb_of, BoundCollider};
 use super::bvh::{boxes_touch, reaches};
+use super::collider::{obb_of, BoundCollider};
 use super::shape::{Obb, Shape, Similarity, Touch};
 use super::{BoxOverlap, CollisionError, GroundProbe, Hit, OrientedBox, Part};
-use crate::extents::Aabb;
+use crate::aabb::Aabb;
 
 /// How many steps of a float at the size of a point's coordinates the ground probe starts above its rise: what a point found on
 /// a slope at map coordinates is off its plane by, measured over 4,000 asks at up to 7,000 m

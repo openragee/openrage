@@ -279,7 +279,7 @@ fn a_map_taken_from_an_install_is_stated_as_the_install_states_it_from_the_manif
         let Some(bytes) = game.vfs.open(path) else {
             continue;
         };
-        let Ok(said) = or_world::manifest_build::stated_in(&bytes) else {
+        let Ok(said) = or_world_gta5::manifest_build::stated_in(&bytes) else {
             continue;
         };
         for (map, types) in said {
@@ -335,7 +335,8 @@ fn a_map_taken_from_an_install_is_stated_as_the_install_states_it_from_the_manif
         let bytes = written
             .file
             .unwrap_or_else(|| panic!("{logical}: no manifest is written: {:?}", written.notes));
-        let read = or_world::manifest_build::stated_in(&bytes).expect("the manifest reads back");
+        let read =
+            or_world_gta5::manifest_build::stated_in(&bytes).expect("the manifest reads back");
         assert_eq!(
             read.get(name),
             stated.get(name),
@@ -365,7 +366,7 @@ fn printed(value: &or_io::meta::Value) -> String {
 fn entries_of(bytes: &[u8]) -> Vec<String> {
     use or_io::meta::binary::hash_index::with_public_names_only;
     use or_io::meta::binary::parse_meta_binary_full;
-    use or_world::{field, keys};
+    use or_world_gta5::{field, keys};
     with_public_names_only(|| {
         let (root, _) = parse_meta_binary_full(
             &or_io::meta::SchemaLibrary::default(),
@@ -392,8 +393,8 @@ fn entries_of(bytes: &[u8]) -> Vec<String> {
 fn flags_stated_for(bytes: &[u8], name: u32) -> Vec<u32> {
     use or_io::meta::binary::hash_index::with_public_names_only;
     use or_io::meta::binary::parse_meta_binary_full;
-    use or_world::manifest_build::MANIFEST_FLAGS;
-    use or_world::{field, keys};
+    use or_world_gta5::manifest_build::MANIFEST_FLAGS;
+    use or_world_gta5::{field, keys};
     with_public_names_only(|| {
         let (root, _) = parse_meta_binary_full(
             &or_io::meta::SchemaLibrary::default(),
@@ -414,7 +415,7 @@ fn flags_stated_for(bytes: &[u8], name: u32) -> Vec<u32> {
 /// ⚠ The staged files stay where they are staged: none is copied into the tree, and a build keeps one only in a person's project.
 #[test]
 fn every_staged_manifest_of_the_game_is_written_back_stating_what_it_states() {
-    use or_world::manifest_build::{build, interior_flags, stated_in, BuildError, Wanted};
+    use or_world_gta5::manifest_build::{build, interior_flags, stated_in, BuildError, Wanted};
 
     const WHAT: &str = "every_staged_manifest_of_the_game_is_written_back_stating_what_it_states";
     let origin = or_test_support::owned_corpus_origin(

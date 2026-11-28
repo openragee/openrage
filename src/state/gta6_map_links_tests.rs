@@ -1,8 +1,8 @@
 use glam::Quat;
 use or_io::gta6::map::links::{LodLink, LodParentMap};
 use or_io::gta6::map::{Aabb, Entity};
-use or_maps::gizmo::Obb;
 use or_maps::{Name, Placed, Scene};
+use or_world::gizmo::Obb;
 
 use super::*;
 

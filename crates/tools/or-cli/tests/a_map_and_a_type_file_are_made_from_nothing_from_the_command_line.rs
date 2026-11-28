@@ -10,9 +10,9 @@ use or_io::decl::File;
 use or_io::meta::instance::HashedString;
 use or_io::meta::typed::{CMapData, CMapTypes};
 use or_io::meta::{detect_binary_format, BinaryFormat, MetaDocument, SchemaLibrary};
-use or_world::archetypes::ArchetypeIndex;
-use or_world::create::{self, Placed};
-use or_world::generate::{AssetKind, Authoring, DrawableFacts};
+use or_world_gta5::archetypes::ArchetypeIndex;
+use or_world_gta5::create::{self, Placed};
+use or_world_gta5::generate::{AssetKind, Authoring, DrawableFacts};
 
 const BENCH: &str = "prop_bench_01a";
 
@@ -93,7 +93,7 @@ fn a_map_made_with_an_entity_places_it_where_it_was_put_inside_its_extents() {
             .expect("the type file reads")
             .instance;
         let mut index = ArchetypeIndex::new();
-        index.add(or_world::map_types::MapTypes::new(&tree).expect("a CMapTypes"));
+        index.add(or_world_gta5::map_types::MapTypes::new(&tree).expect("a CMapTypes"));
         let mut made = create::map("hills");
         let placed = Placed {
             scale_xy: 2.0,
@@ -187,7 +187,7 @@ fn the_turn_the_scale_and_the_flags_of_an_entity_are_what_was_typed() {
     let opened = CMapData::from_bytes(&std::fs::read(&map).unwrap()).expect("opens");
     let entity = &opened.entities[0];
     let stored = entity.rotation;
-    let placing = or_world::transform::Placement::Entity
+    let placing = or_world_gta5::transform::Placement::Entity
         .rotation_of([stored.x, stored.y, stored.z, stored.w]);
     let quarter = glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
     assert!(placing.abs_diff_eq(quarter, 1e-6), "{placing}");

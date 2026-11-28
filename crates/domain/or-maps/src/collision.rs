@@ -9,7 +9,7 @@
 //! once an earlier operation of the same list has built its soup again.
 //!
 //! ⚠ **The versions of an area are written together.** The game reads an area's collision from up to three files, told apart by
-//! their names as the dependency index reads a map's static bounds: `<area>`, `hi@<area>` and `ma@<area>` ([`VERSION_PREFIXES`]).
+//! their names as the dependency index reads a map's static bounds: `<area>`, `hi@<area>` and `ma@<area>` (`or_world_gta5::catalogue::VERSION_PREFIXES`).
 //! An operation names one of them, and every bounds source beside it that is a version of the same area takes the same change, on
 //! the polygons with the same corners to within [`SAME_CORNER`]. A version that lacks one of the polygons, or the soup, makes the
 //! operation refuse and is named, and so is a bound the source cannot build again; nothing is then written.
@@ -38,6 +38,8 @@ use or_source::bounds::{Inputs, KIND};
 use or_world::collision::{
     associate, Association, AssociationOptions, BoundCollider, CollisionSet, OrientedBox,
 };
+use or_world_gta5::catalogue::area_of;
+use or_world_gta5::collision::OfBound;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::edit;
@@ -51,22 +53,11 @@ pub const FORMAT: &str = "openrage-collision-operations";
 /// The one schema of a list this build reads and writes.
 pub const SCHEMA: u32 = 1;
 
-/// What comes before the name of an area in the name of a version of its collision; the third version has the name alone.
-pub const VERSION_PREFIXES: [&str; 2] = ["hi@", "ma@"];
-
 /// How far apart two versions may hold one corner, in metres: each stores it in the quantum of its own bound, millimetres for an area, so a centimetre apart is one corner; unmeasured on game files.
 pub const SAME_CORNER: f32 = 0.01;
 
 /// How far the axes of a composite's matrix may be from one length and right angles, as a fraction, and still carry a rigid move.
 const SKEW: f32 = 1e-3;
-
-/// The area a bound's file is a version of the collision of: its name without `hi@` or `ma@`.
-pub fn area_of(name: &str) -> &str {
-    VERSION_PREFIXES
-        .iter()
-        .find_map(|prefix| name.strip_prefix(prefix))
-        .unwrap_or(name)
-}
 
 /// Why a list of operations was not read, or an operation not applied.
 #[derive(Debug, thiserror::Error)]

@@ -8,7 +8,7 @@
 //! [`crate::operation`], which [`apply`] does whole or not at all and whose inverses put every file back byte for byte.
 //!
 //! The typed roots save with no schema snapshot, so the deletion is written on any machine; the links are followed the way
-//! `or_world::execute` follows them over value trees, which it writes only where a snapshot is staged.
+//! `or_world_gta5::execute` follows them over value trees, which it writes only where a snapshot is staged.
 //!
 //! ⚠ **A plan sees the sources of the pack and nothing else.** A map whose parent is one of these and that is not among the sources
 //! keeps the indexes it had, which then name other entities. What the sources themselves show of that is said as a [`Note`]: a link
@@ -33,13 +33,13 @@ use or_io::meta::instance::HashedString;
 use or_io::meta::typed::{CEntityDefAny, CMapData};
 use or_io::meta::{MetaDocument, Value};
 use or_source::metadata::Inputs;
-use or_world::MapData;
+use or_world_gta5::MapData;
 
 use crate::edit::in_parent_map;
 use crate::facts::{map_name, named_paths, stays_inside, Name};
 use crate::model::{self, Maps};
 use crate::operation::{self, Applied, At, Operation};
-use crate::script_text::{self, ScriptForm};
+use or_world_gta5::script_text::{self, ScriptForm};
 
 /// Why a deletion was not planned.
 #[derive(Debug, thiserror::Error)]

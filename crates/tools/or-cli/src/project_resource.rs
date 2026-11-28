@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::ExitCode;
 
-use or_depends::{ArchetypeAssetIndex, Catalogue, Kind};
 use or_project::resource::{check, Install, Options, Report, FILE_MEMORY_LIMIT};
+use or_world_gta5::{ArchetypeAssetIndex, Catalogue, Kind};
 
 use crate::project::{parse, Failure};
 use crate::wardrobe_fix::without;
@@ -157,7 +157,7 @@ mod tests {
             Value::Array(vec![Value::Pointer(Some(Box::new(archetype)))]),
         );
         let mut archetypes = ArchetypeAssetIndex::new();
-        archetypes.add(or_world::MapTypes::new(&types).expect("a type file"));
+        archetypes.add(or_world_gta5::MapTypes::new(&types).expect("a type file"));
         let asked = Mounted {
             catalogue: &catalogue,
             archetypes: &archetypes,

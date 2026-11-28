@@ -19,7 +19,7 @@ use or_io::hash::literal_string_hash as lit;
 use or_io::meta::binary::hash_index::default_hash_index;
 use or_io::meta::instance::HashedString;
 use or_io::meta::{MetaInstance, Value};
-use or_maps::edit::Pose;
+use or_world::transform::Pose;
 
 use super::meta_edit::value_at;
 use super::presets::MetaStep;
@@ -774,7 +774,7 @@ mod tests {
         let pose = state.selected_pose().expect("the entity's pose");
         let boxes = state.scanned_map().expect("shown").scene.obbs();
         let floor = state.workbench.maps.snap.floor;
-        let stood = or_maps::gizmo::drop_to_ground(&boxes, 0, pose, floor);
+        let stood = or_world::gizmo::drop_to_ground(&boxes, 0, pose, floor);
         assert_ne!(
             stood.position, pose.position,
             "its box starts above the floor"

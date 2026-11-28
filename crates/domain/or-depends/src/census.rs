@@ -2,10 +2,11 @@
 
 use std::collections::BTreeMap;
 
-use or_world::AssetType;
+use or_world_gta5::AssetType;
 
-use crate::catalogue::{Catalogue, Kind};
-use crate::resolve::{DependencySet, Found, Via};
+use crate::resolve::{DependencySet, Found};
+use or_world_gta5::catalogue::{Catalogue, Kind};
+use or_world_gta5::Via;
 
 /// A count and what it was out of.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -252,10 +253,11 @@ impl Census {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::resolve::{ArchetypeAssetIndex, Resolver};
-    use crate::tables::InstallTables;
+    use crate::resolve::Resolver;
     use crate::tests_support::{archetype_types, catalogue_of};
-    use or_world::MapTypes;
+    use or_world_gta5::tables::InstallTables;
+    use or_world_gta5::ArchetypeAssetIndex;
+    use or_world_gta5::MapTypes;
 
     #[test]
     fn a_coverage_over_nothing_has_no_ratio() {

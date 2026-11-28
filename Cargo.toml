@@ -335,6 +335,9 @@ or-content.workspace = true
 or-plugin.workspace = true
 or-transport.workspace = true
 or-world.workspace = true
+# GTA V's world: its model of a map and a type file, the catalogue and the placements the Uses panel asks, and the
+# forms a script takes a position in.
+or-world-gta5.workspace = true
 or-world-gta6.workspace = true
 # Cancellation and progress-as-data, shared with `or-cli`. The app does depend
 # on `or-cli`, to host the `openrage-cli` binary; `or-job` keeps the job model

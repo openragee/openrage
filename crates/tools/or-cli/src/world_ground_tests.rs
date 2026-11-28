@@ -580,8 +580,8 @@ fn a_level_leaves_out_the_bounds_of_the_packs_after_it_and_a_mode_leaves_out_non
 
 #[test]
 fn ground_that_lists_no_material_and_ground_a_caller_placed_are_said_as_such() {
-    use or_depends::world_collision::{Collider, Ground, Streamed};
     use or_world::collision::{Hit, Part};
+    use or_world_gta5::world_collision::{Collider, Ground, Streamed};
 
     let hit = Hit {
         distance: 4.0,

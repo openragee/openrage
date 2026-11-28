@@ -4,8 +4,8 @@
 //! A field is left when its value is let go (Tab, Enter or a click elsewhere), and a value that parses is written to the map file as one step
 //! of Undo; one that does not is put back as it was. The names of the fields are the engine's.
 
-use or_maps::edit::Pose;
 use or_maps::{Name, Role};
+use or_world::transform::Pose;
 
 use super::{action_button, shown};
 use crate::state::front_door::counted;

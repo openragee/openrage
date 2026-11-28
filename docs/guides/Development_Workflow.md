@@ -391,7 +391,7 @@ tier names.
 - ⚠ **Forty-two older binaries that read an install are still in the default
   tier** (the files under a crate's `tests/` that call `game_roots()`, against
   the binaries `.config/nextest.toml` names, 2026-11-26),
-  `or-world::every_untouched_world_file_reencodes` among them. With no install
+  `or-world-gta5::every_untouched_world_file_reencodes` among them. With no install
   named each skips; with `OPENRAGE_GAME_ROOT` exported for a whole shell, a bare
   `cargo nextest run` or `just ready` ends each at 30 s, so the variable is set
   for one command, as the points below say. Most of them hold tests built by
@@ -404,7 +404,7 @@ tier names.
   and report a suite that skipped as not run, never as passed.
 - **Run one binary at a time**, on one install and then on the other edition,
   with the variable set for that command alone:
-  `OPENRAGE_GAME_ROOT=<install root> just test-install or-depends the_world_index_of_a_real_install`.
+  `OPENRAGE_GAME_ROOT=<install root> just test-install or-world-gta5 the_world_index_of_a_real_install`.
   A suite reads tens of gigabytes, so the recipe runs a binary's tests one
   after another, and two suites are never started together. It is never a
   lane's gate. A part of a test's name after the suite keeps the run to the

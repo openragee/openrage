@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use or_depends::Kind;
+use or_world_gta5::Kind;
 
 use super::*;
 use crate::state::dependencies::{Answer, Listed};

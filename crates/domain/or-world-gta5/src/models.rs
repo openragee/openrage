@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use or_depends::WorldSource;
+use crate::WorldSource;
 use or_io::codec::mesh::{GrcDataSize, GrcFvfChannel, VertexSource};
 use or_io::decl::{File, Gen8, Gen9};
 use or_io::gta5::drawable::DrawableTarget;

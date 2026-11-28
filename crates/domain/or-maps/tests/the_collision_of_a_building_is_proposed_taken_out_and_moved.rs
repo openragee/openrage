@@ -17,8 +17,8 @@ use or_io::gta5::bounds::build::{build, COMPOSITE_ITEM_THRESHOLD};
 use or_io::gta5::bounds::{PhBoundAny, PhBoundBVH, PhBoundComposite};
 use or_maps::collision::sample::area_bound;
 use or_maps::collision::{
-    apply, apply_all, area_of, bounds_sources, carried, object_box, propose, Error, Operation,
-    Operations, Proposal, FORMAT, SAME_CORNER,
+    apply, apply_all, bounds_sources, carried, object_box, propose, Error, Operation, Operations,
+    Proposal, FORMAT, SAME_CORNER,
 };
 use or_maps::import::{add_files, Incoming};
 use or_maps::sample::{map_file, types_file, Archetype, Entity};
@@ -29,6 +29,8 @@ use or_source::textures::Extraction;
 use or_world::collision::{
     AssociationOptions, BoundCollider, CollisionSet, GroundProbe, OrientedBox,
 };
+use or_world_gta5::catalogue::area_of;
+use or_world_gta5::collision::OfBound;
 
 const PLAIN: &str = "street_1.bounds.src";
 const HI: &str = "hi@street_1.bounds.src";

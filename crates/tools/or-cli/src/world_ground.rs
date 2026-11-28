@@ -5,12 +5,12 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use glam::Vec3;
-use or_depends::world_collision::{GroundAnswer, WorldCollision};
-use or_depends::world_index::Bound;
-use or_depends::MountedWorld;
 use or_io::gta5::data::materials_palette::MaterialPalette;
 use or_title::{DlcCutoff, MapMode, MountOptions, MountedGame};
 use or_world::collision::GroundProbe;
+use or_world_gta5::world_collision::{GroundAnswer, WorldCollision};
+use or_world_gta5::world_index::Bound;
+use or_world_gta5::MountedWorld;
 use serde_json::json;
 
 use super::world::flag_value;

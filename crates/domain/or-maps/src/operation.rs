@@ -52,9 +52,10 @@ use or_io::meta::Value;
 use or_source::metadata::Inputs;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::edit::{self, in_parent_map, Edited, Pose};
+use crate::edit::{self, in_parent_map, Edited};
 use crate::facts::{stays_inside, Name};
 use crate::model::{self, Maps};
+use or_world::transform::Pose;
 
 mod interior;
 mod session;
@@ -1043,14 +1044,14 @@ fn first_entity(
         Some(text) => HashedString::new(text),
         None => HashedString::from_hash(placed.hash),
     };
-    let chosen = or_world::create::Placed {
+    let chosen = or_world_gta5::create::Placed {
         rotation: pose.rotation,
         scale_xy: pose.scale_xy,
         scale_z: pose.scale_z,
         flags: like.map_or(0, |like| like.flags),
-        ..or_world::create::Placed::at(archetype, pose.position, 0.0)
+        ..or_world_gta5::create::Placed::at(archetype, pose.position, 0.0)
     };
-    let mut entity = or_world::create::entity(&chosen, 1).map_err(|e| e.to_string())?;
+    let mut entity = or_world_gta5::create::entity(&chosen, 1).map_err(|e| e.to_string())?;
     if let Some(like) = like {
         entity.lod_dist = like.lod_dist;
         entity.child_lod_dist = like.child_lod_dist;
@@ -1162,11 +1163,11 @@ fn container_lods_hold(map: &CMapData, lowest: usize) -> Result<(), String> {
     let Some(Value::Array(lods)) = map.carried("containerLods") else {
         return Ok(());
     };
-    let parent_index = or_world::field::name_hash("parentIndex");
+    let parent_index = or_world_gta5::field::name_hash("parentIndex");
     let moved = lods.iter().find_map(|lod| {
         let named = match lod {
             Value::Struct(lod) | Value::Pointer(Some(lod)) => {
-                or_world::field::i32_at(lod, parent_index)
+                or_world_gta5::field::i32_at(lod, parent_index)
             }
             _ => None,
         };

@@ -5,7 +5,7 @@
 //! ⚠ The command prints with `println!`, which a test cannot read back in its own process, so what it says is read from a child of
 //! this test binary that calls `or_cli::run`.
 
-#[path = "../../../domain/or-depends/tests/world_fixture/mod.rs"]
+#[path = "../../../domain/or-world-gta5/tests/world_fixture/mod.rs"]
 mod world_fixture;
 
 use std::collections::BTreeMap;

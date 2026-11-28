@@ -1,59 +1,6 @@
-//! Placement conventions, and the one asymmetry that is pure folklore.
+//! The neutral half of a placement: a scale from the two numbers that carry it, the corners of a placed box, and a pose.
 
-use glam::{Quat, Vec3};
-
-/// What a placement's stored rotation means.
-///
-/// ⚠ **The two differ, and nothing in the file says so.** A `CEntityDef`
-/// stores the **conjugate** of the rotation that places it; a
-/// `CMloInstanceDef` — the same struct with five fields appended, placing an
-/// interior — stores the rotation itself. An interior's *contents* are
-/// `CEntityDef`s again and go back to the conjugate, so the exception is one
-/// struct deep and reverses twice on the way into a room.
-///
-/// Read the wrong one and the object is still the right size in the right
-/// place, mirrored about its own axes, which is why this survives review.
-///
-/// ⚠ Recomputing entity extents over 2,878 retail Legacy `.ymap` and
-/// comparing with the extents those files store: conjugating reproduces 807
-/// exactly and 1,559 to within a centimetre, and not conjugating reproduces
-/// 552 and 867. The 552 that survive the wrong convention are the maps whose
-/// entities are all unrotated, where the two agree — see
-/// `identity_hides_the_asymmetry`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Placement {
-    /// A `CEntityDef`: stored conjugated.
-    Entity,
-    /// A `CMloInstanceDef`: stored as-is.
-    InteriorInstance,
-}
-
-impl Placement {
-    /// The rotation that places the object, from the four stored floats.
-    ///
-    /// The stored order is `x, y, z, w`.
-    pub fn rotation_of(self, stored: [f32; 4]) -> Quat {
-        let q = Quat::from_xyzw(stored[0], stored[1], stored[2], stored[3]);
-        let q = if q.length_squared() > f32::EPSILON {
-            q.normalize()
-        } else {
-            Quat::IDENTITY
-        };
-        match self {
-            Placement::Entity => q.conjugate(),
-            Placement::InteriorInstance => q,
-        }
-    }
-
-    /// The four floats to store for a rotation.
-    pub fn store(self, rotation: Quat) -> [f32; 4] {
-        let q = match self {
-            Placement::Entity => rotation.conjugate(),
-            Placement::InteriorInstance => rotation,
-        };
-        [q.x, q.y, q.z, q.w]
-    }
-}
+use glam::{EulerRot, Quat, Vec3};
 
 /// An entity's scale, from the two floats that carry it.
 ///
@@ -77,49 +24,41 @@ pub fn placed_corners(bb_min: Vec3, bb_max: Vec3, rotation: Quat, position: Vec3
     out
 }
 
+/// Where an entity stands: its position, its rotation as the rotation that places it, and its scale.
+///
+/// A file may store the rotation another way and stores one number of scale for the two horizontal axes beside one for the
+/// vertical, so a pose is what a person means and the title's edit stores it the way its file does.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Pose {
+    pub position: Vec3,
+    pub rotation: Quat,
+    /// The scale of X and Y together.
+    pub scale_xy: f32,
+    pub scale_z: f32,
+}
+
+impl Pose {
+    /// The rotation as degrees about X, Y and Z, which `from_degrees` turns back into the same rotation.
+    pub fn degrees(&self) -> [f32; 3] {
+        let (x, y, z) = self.rotation.to_euler(EulerRot::XYZ);
+        [x.to_degrees(), y.to_degrees(), z.to_degrees()]
+    }
+
+    /// The rotation that is `degrees` about X, then Y, then Z.
+    pub fn rotation_of_degrees(degrees: [f32; 3]) -> Quat {
+        Quat::from_euler(
+            EulerRot::XYZ,
+            degrees[0].to_radians(),
+            degrees[1].to_radians(),
+            degrees[2].to_radians(),
+        )
+        .normalize()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn an_interior_instance_stores_the_rotation_an_entity_stores_conjugated() {
-        let quarter = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
-        let stored = [quarter.x, quarter.y, quarter.z, quarter.w];
-
-        let as_entity = Placement::Entity.rotation_of(stored);
-        let as_interior = Placement::InteriorInstance.rotation_of(stored);
-
-        assert!((as_interior * Vec3::X).abs_diff_eq(Vec3::Y, 1e-5));
-        assert!((as_entity * Vec3::X).abs_diff_eq(-Vec3::Y, 1e-5));
-        assert!(as_entity.abs_diff_eq(as_interior.conjugate(), 1e-6));
-    }
-
-    /// Identity is the case where the two conventions agree, which is why a
-    /// corpus full of unrotated props cannot tell them apart.
-    #[test]
-    fn identity_hides_the_asymmetry() {
-        let stored = [0.0, 0.0, 0.0, 1.0];
-        assert!(Placement::Entity
-            .rotation_of(stored)
-            .abs_diff_eq(Placement::InteriorInstance.rotation_of(stored), 1e-6));
-    }
-
-    #[test]
-    fn storing_a_rotation_reverses_reading_one() {
-        let q = Quat::from_euler(glam::EulerRot::XYZ, 0.3, -1.1, 2.0);
-        for placement in [Placement::Entity, Placement::InteriorInstance] {
-            let back = placement.rotation_of(placement.store(q));
-            assert!(back.abs_diff_eq(q, 1e-6), "{placement:?}");
-        }
-    }
-
-    /// A zero quaternion is not a rotation, and normalising one yields NaN.
-    #[test]
-    fn a_zero_quaternion_reads_as_no_rotation() {
-        let r = Placement::Entity.rotation_of([0.0; 4]);
-        assert!(r.is_finite());
-        assert!(r.abs_diff_eq(Quat::IDENTITY, 1e-6));
-    }
 
     #[test]
     fn corners_cover_the_box() {

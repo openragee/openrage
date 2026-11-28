@@ -26,7 +26,7 @@ use or_io::meta::typed::{
     CBaseArchetypeDefAny, CEntityDefAny, CMapTypes, CMloArchetypeDef, CMloEntitySet, CMloPortalDef,
     CMloRoomDef, CMloTimeCycleModifier,
 };
-use or_world::validate::Holder;
+use or_world_gta5::validate::Holder;
 use serde::{Deserialize, Serialize};
 
 use super::{first_entity, name_of, Changed, Context, Operation, Record};
@@ -484,7 +484,7 @@ fn free_guid(mlo: &CMloArchetypeDef) -> u32 {
     let stated = (mlo.entities.iter().chain(in_sets))
         .map(|e| e.guid)
         .collect();
-    or_world::create::free_guid_among(&stated).unwrap_or(0)
+    or_world_gta5::create::free_guid_among(&stated).unwrap_or(0)
 }
 
 /// The words every refusal of the outside gives.

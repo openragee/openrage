@@ -17,9 +17,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use glam::Vec3;
-use or_depends::world_forest::read;
-use or_depends::world_index::refresh;
-use or_depends::{MountedWorld, WorldCollision, WorldSource};
 use or_io::container::rpf::crypto::{extract_keys, Gta5RetailCryptoProvider, RpfCryptoProvider};
 use or_job::{Cancel, Progress};
 use or_title::vfs::{build_mounted_game_with, DlcCutoff, MountOptions};
@@ -36,9 +33,12 @@ use or_world::model::{
 };
 use or_world::slots::OptionValue;
 use or_world::streaming::NodeState;
+use or_world_gta5::world_forest::read;
+use or_world_gta5::world_index::refresh;
 use or_world_gta5::{
     Body, Gta5Title, Gta5World, Holding, Linked, Materials, BOX, ENHANCED, LEGACY, LEVEL, TITLE,
 };
+use or_world_gta5::{MountedWorld, WorldCollision, WorldSource};
 
 /// The cameras every install is asked about, each at noon and at midnight.
 const CAMERAS: [Vec3; 8] = [
@@ -241,7 +241,7 @@ fn the_rules_of_the_kit_that_take_no_built_scene_hold_over_a_real_install() {
     // forest state.
     let own = Gta5World::over(mounted(&root, &exe), root.clone());
     let policy = own.policy();
-    let state = or_world::WorldState::at(12, "EXTRASUNNY");
+    let state = or_world_gta5::WorldState::at(12, "EXTRASUNNY");
     let seen: Vec<(Vec3, usize, usize, usize)> = (CAMERAS.iter())
         .map(|eye| {
             let view = policy.view(*eye, Vec3::ZERO, std::f32::consts::FRAC_PI_4);
@@ -255,8 +255,8 @@ fn the_rules_of_the_kit_that_take_no_built_scene_hold_over_a_real_install() {
             for hash in seen.wanted.keys().filter(|map| !seen.unread.contains(map)) {
                 let map = linked.world.map(*hash).expect("a map of the index");
                 let bytes = source.open(map.archive, &map.logical).expect("its file");
-                let root = or_depends::world_index::parse(&bytes).expect("a map");
-                let data = or_world::MapData::new(&root).expect("a map");
+                let root = or_world_gta5::world_index::parse(&bytes).expect("a map");
+                let data = or_world_gta5::MapData::new(&root).expect("a map");
                 occluders += data.box_occluder_count() + data.occlude_model_count();
                 lights += data.lod_lights().map_or(0, |far| far.len());
             }

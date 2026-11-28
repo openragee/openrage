@@ -9,14 +9,13 @@
 //! map file, so the import's own refusal is held on a map file whose name no source folder can take.
 
 mod common;
-#[path = "../../or-depends/tests/world_fixture/mod.rs"]
+#[path = "../../or-world-gta5/tests/world_fixture/mod.rs"]
 mod world_fixture;
 
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use or_depends::{MountedWorld, WorldIndex};
 use or_io::meta::{MetaDocument, MetaInstance};
 use or_maps::changes::{self, EntityChange, SourceChanges};
 use or_maps::first_edit::{
@@ -28,8 +27,9 @@ use or_maps::sample::{child_map_file, map_file, Entity};
 use or_maps::Maps;
 use or_project::{Container, Module, Output, Project, Target};
 use or_title::MountedGame;
-use or_world::execute::{identity, links_by_identity, Key};
-use or_world::{MapData, MapGroup};
+use or_world_gta5::execute::{identity, links_by_identity, Key};
+use or_world_gta5::{MapData, MapGroup};
+use or_world_gta5::{MountedWorld, WorldIndex};
 
 const BOX: ([f32; 3], [f32; 3]) = ([0.0; 3], [100.0; 3]);
 
@@ -327,7 +327,7 @@ fn ignored(project: &Made) -> Vec<String> {
 fn world(project: &Made, mounted: &Mounted<'_>) -> BTreeMap<String, MetaInstance> {
     let mut trees = BTreeMap::new();
     // A map whose parent map does not read is left out, as nothing can say what its links name.
-    let whole = |map: &&or_depends::world_index::Map| {
+    let whole = |map: &&or_world_gta5::world_index::Map| {
         let parent = mounted.index.parent_of(map);
         map.read && parent.map_or(map.parent == 0, |parent| parent.read)
     };
@@ -349,7 +349,7 @@ fn links(trees: &BTreeMap<String, MetaInstance>) -> BTreeMap<Key, Key> {
     let mut group = MapGroup::new();
     for (name, tree) in trees {
         let map = MapData::new(tree).expect("a map file");
-        assert_eq!(or_world::validate::check(&map), Vec::new(), "{name}");
+        assert_eq!(or_world_gta5::validate::check(&map), Vec::new(), "{name}");
         group.add_from(&map, name);
     }
     assert_eq!(group.check(), Vec::new(), "the group holds");

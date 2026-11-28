@@ -517,8 +517,8 @@ fn keep_manifest(args: &[String]) -> Result<ExitCode, Failure> {
         }
     };
     for (shown, bytes) in &incoming {
-        let stated =
-            or_world::manifest_build::stated_in(bytes).map_err(|e| Run(format!("{shown}: {e}")))?;
+        let stated = or_world_gta5::manifest_build::stated_in(bytes)
+            .map_err(|e| Run(format!("{shown}: {e}")))?;
         let kept =
             or_maps::manifest::keep(&folder, bytes).map_err(|e| Run(format!("{shown}: {e}")))?;
         println!(
@@ -556,7 +556,7 @@ fn stating(
         .filter_map(|path| {
             let bytes = game.vfs.open(&path)?;
             // ⚠ A `.ymf` that is no manifest a build can write from is passed by: the install holds a few in another container.
-            let stated = or_world::manifest_build::stated_in(&bytes).ok()?;
+            let stated = or_world_gta5::manifest_build::stated_in(&bytes).ok()?;
             wanted
                 .iter()
                 .any(|map| stated.contains_key(map))
@@ -715,9 +715,10 @@ fn delete(args: &[String]) -> Result<ExitCode, Failure> {
                     "--radius takes metres above nought, and `{text}` is none"
                 ))
             })?,
-        None => or_maps::script_text::HIDE_RADIUS,
+        None => or_world_gta5::script_text::HIDE_RADIUS,
     };
-    let forms = or_maps::script_text::ScriptForms::built_in().map_err(|e| Run(e.to_string()))?;
+    let forms =
+        or_world_gta5::script_text::ScriptForms::built_in().map_err(|e| Run(e.to_string()))?;
     let form_id = flags.get("--script").map_or("lua", String::as_str);
     let form = forms.form(form_id).ok_or_else(|| {
         let known: Vec<&str> = forms.forms.iter().map(|form| form.id.as_str()).collect();
@@ -980,7 +981,7 @@ mod tests {
 
     #[test]
     fn the_door_survey_takes_the_colliders_a_mount_streams_and_names_one() {
-        use or_depends::world_collision::Collider;
+        use or_world_gta5::world_collision::Collider;
         let colliders: or_world::collision::CollisionSet<Collider> = Default::default();
         let patterns = or_maps::doors::built_in_patterns().unwrap();
         let (model, set) = (or_maps::Maps::new(), or_maps::MapSet::new("shop"));

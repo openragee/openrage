@@ -18,10 +18,11 @@ use or_maps::changes::{
     entity_changes, map_changes, source_changes, types_changes, EntityChange, Error, MapChanges,
     Matched, PackSources, SourceChanges, Stated,
 };
-use or_maps::edit::{add_entity, edit_map, place_entity, pose_of, remove_entity, Pose};
+use or_maps::edit::{add_entity, edit_map, place_entity, pose_of, remove_entity};
 use or_maps::facts::Name;
 use or_maps::import::{add_files, Incoming};
 use or_maps::sample::{child_map_file, map_file, types_file, Archetype, Entity};
+use or_world::transform::Pose;
 
 fn hash(name: &str) -> u32 {
     Name::from_text(name).hash

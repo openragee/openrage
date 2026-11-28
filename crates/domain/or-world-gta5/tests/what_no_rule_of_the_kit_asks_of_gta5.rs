@@ -4,17 +4,14 @@
 //! and a pack the title update patches.
 
 mod compare;
-#[path = "../../or-depends/tests/forest_fixture/mod.rs"]
 mod forest_fixture;
 mod hand_built;
-#[path = "../../or-depends/tests/world_fixture/mod.rs"]
 mod world_fixture;
 
 use std::path::Path;
 use std::sync::Arc;
 
 use glam::{Quat, Vec3};
-use or_depends::{MountedWorld, WorldIndex};
 use or_job::{Cancel, Progress};
 use or_world::caps::Capability;
 use or_world::collision::OrientedBox;
@@ -25,10 +22,11 @@ use or_world::model::{
     interior_key, AssetKey, Element, ElementFormat, Feed, FeedName, Gate, Index, Mesh, Model,
     Moment, PlacementRow, Semantic, SwitchId, Switched, EVERY_HOUR,
 };
-use or_world::state::{flags, NOT_BY_DEFAULT};
 use or_world::streaming::{NodeState, ParentRef, View};
-use or_world::WorldState;
+use or_world_gta5::state::{flags, NOT_BY_DEFAULT};
+use or_world_gta5::WorldState;
 use or_world_gta5::{Gta5Title, Gta5World, Linked, BOX, LEGACY, TITLE, WORDS};
+use or_world_gta5::{MountedWorld, WorldIndex};
 
 use forest_fixture::{
     arch, ent, install, manifest_bytes, map_around, map_file, types_file, Arch, Ent, Files, MapOf,
@@ -537,7 +535,7 @@ fn a_pack_the_title_update_patches_links_from_its_sections_as_or_depends_indexes
         let row = index.named(u64::from(hash("m_patched"))).expect("a row");
         // The box the patch's copy states, which stands 3,000 m from the pack's own.
         let boxes = index.map(row).and_then(|row| row.boxes);
-        assert_eq!(boxes, or_depends::world_forest::map_box(stated));
+        assert_eq!(boxes, or_world_gta5::world_forest::map_box(stated));
         assert!(boxes.is_some_and(|boxes| boxes.entities.0.x == 3000.0));
     }
 }

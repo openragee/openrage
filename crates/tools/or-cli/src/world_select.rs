@@ -6,11 +6,11 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use glam::Vec3;
-use or_depends::world_forest::{Instance, Model, Selected, Streamed, Why};
-use or_depends::{Catalogue, Kind, MountedWorld, WorldForest, WorldIndex, WorldSource};
 use or_title::{MapMode, MountedGame};
 use or_world::streaming::{Level, NodeState, View};
-use or_world::WorldState;
+use or_world_gta5::world_forest::{Instance, Model, Selected, Streamed, Why};
+use or_world_gta5::WorldState;
+use or_world_gta5::{Catalogue, Kind, MountedWorld, WorldForest, WorldIndex, WorldSource};
 use serde_json::json;
 
 use super::world::flag_value;
@@ -162,7 +162,7 @@ fn why_in_words(index: &WorldIndex, why: Why) -> String {
 struct Needs<'a> {
     kind: &'static str,
     hash: u32,
-    found: Option<&'a or_depends::Located>,
+    found: Option<&'a or_world_gta5::Located>,
 }
 
 impl Needs<'_> {
@@ -340,7 +340,7 @@ pub(super) fn select_json(
     let unread: Vec<_> = (streamed.unread.iter())
         .map(|(map, why)| json!({ "name": map.name, "logical": map.logical, "why": why.to_string() }))
         .collect();
-    let interior = |at: &or_depends::world_forest::InteriorAt, why: Option<String>| {
+    let interior = |at: &or_world_gta5::world_forest::InteriorAt, why: Option<String>| {
         json!({
             "archetype": hex(at.archetype),
             "map": map_name(index, at.map),

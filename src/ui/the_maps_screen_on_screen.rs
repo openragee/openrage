@@ -8,8 +8,8 @@
 use std::path::{Path, PathBuf};
 
 use glam::{Quat, Vec3};
-use or_maps::gizmo::{Axis, Gizmo, Mode, View};
 use or_maps::sample::{map_file, types_file, Archetype, Entity};
+use or_world::gizmo::{Axis, Gizmo, Mode, View};
 
 use super::frames_of_the_shell::{key, Shell};
 use super::the_front_door_on_screen::{
@@ -541,7 +541,7 @@ fn an_entity_moved_or_added_past_the_extents_grows_them_in_the_same_step() {
 
     let pose = shell.state.selected_pose().expect("a pose");
     shell.state.place_selected_entity(
-        or_maps::edit::Pose {
+        or_world::transform::Pose {
             position: Vec3::new(150.0, 20.0, 0.5),
             ..pose
         },
@@ -571,7 +571,7 @@ fn an_entity_moved_or_added_past_the_extents_grows_them_in_the_same_step() {
 
     shell.state.add_entity_at(
         or_maps::Name::from_text("prop_crate_a"),
-        or_maps::edit::Pose {
+        or_world::transform::Pose {
             position: Vec3::new(300.0, 20.0, 0.5),
             ..pose
         },
@@ -720,7 +720,7 @@ fn a_map_edit_not_yet_saved_marks_the_project_in_the_status_bar_and_in_propertie
     select_entity(&mut shell, 0);
     assert!(!shows(&shell, "harbour ●"), "{:?}", names(&shell));
     let pose = shell.state.selected_pose().expect("a pose");
-    let moved = or_maps::edit::Pose {
+    let moved = or_world::transform::Pose {
         position: pose.position + Vec3::X,
         ..pose
     };
@@ -914,7 +914,7 @@ fn an_edit_says_what_its_operation_went_without_as_a_warning() {
     };
     select_entity(&mut shell, 0);
     let pose = shell.state.selected_pose().expect("a pose");
-    let far = |x: f32| or_maps::edit::Pose {
+    let far = |x: f32| or_world::transform::Pose {
         position: Vec3::new(x, 20.0, 0.5),
         ..pose
     };

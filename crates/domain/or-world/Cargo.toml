@@ -15,16 +15,11 @@ thiserror.workspace = true
 tracing.workspace = true
 # Cancellation and progress, which an opening is handed.
 or-job.workspace = true
-# `.ymap` and `.ytyp` are metadata containers, so the bytes arrive as a
-# MetaInstance and this crate is the layer that says what they mean. It holds
-# no reader of its own and must not grow one.
-or-io = { workspace = true, features = ["meta"] }
 
 [dev-dependencies]
 or-test-support.workspace = true
 # Scratch folders the tests remove when they end, a failed test's too.
 tempfile.workspace = true
-# The install censuses crawl a retail install for world files. Both sit below
-# this layer, so the edge points the right way even as a dev-dependency.
+# The file extensions of the declared formats, which the architecture test holds the core clear of, and the hashes the
+# tests of what a person pastes are read against.
 or-io.workspace = true
-or-title.workspace = true

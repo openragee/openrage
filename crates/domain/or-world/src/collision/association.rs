@@ -29,7 +29,7 @@ use std::collections::HashMap;
 use glam::Vec3;
 use serde::Serialize;
 
-use super::bound::obb_of;
+use super::collider::obb_of;
 use super::shape::{Obb, Shape};
 use super::{CollisionSet, OrientedBox, Part};
 

@@ -2,8 +2,8 @@
 //! needs no model, and an entity picked, dragged along the ground and let go is one placement written to its map file.
 
 use glam::{Vec2 as World, Vec3};
-use or_maps::gizmo::{footprint, Obb};
 use or_maps::{Placed, Scene};
+use or_world::gizmo::{footprint, Obb};
 
 use super::MapsUi;
 use crate::render::map_overlay::{is_full_detail, level_colour};
@@ -21,7 +21,7 @@ pub(super) struct PlanDrag {
     index: usize,
     /// Where the pointer was in the world when the drag began, and the pose it began with.
     from: World,
-    start: or_maps::edit::Pose,
+    start: or_world::transform::Pose,
 }
 
 /// The world to the screen and back for a plan laid out over `rect`.
@@ -202,8 +202,8 @@ fn canvas(ui: &mut egui::Ui, state: &mut AppState, shown: &mut MapsUi) {
 
     // What the pointer does.
     let mut pick: Option<Option<Pick>> = None;
-    let mut commit: Option<(usize, or_maps::edit::Pose)> = None;
-    let mut new_preview: Option<(usize, or_maps::edit::Pose)> = None;
+    let mut commit: Option<(usize, or_world::transform::Pose)> = None;
+    let mut new_preview: Option<(usize, or_world::transform::Pose)> = None;
     let mut ended = false;
     let shift = ui.input(|i| i.modifiers.shift);
     let pan = response.dragged_by(egui::PointerButton::Middle)

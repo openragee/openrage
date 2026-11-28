@@ -9,7 +9,7 @@
 //! binary that calls `or_cli::run` between two markers, with a configuration directory of its own so that no key of this machine
 //! is read.
 
-#[path = "../../../domain/or-depends/tests/world_fixture/mod.rs"]
+#[path = "../../../domain/or-world-gta5/tests/world_fixture/mod.rs"]
 mod world_fixture;
 
 use std::io::Write;

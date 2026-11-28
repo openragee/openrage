@@ -1,6 +1,6 @@
 //! The doors of a pack's map sets: found, read, paired, opened against what stands near them, and held to the door rules.
 //!
-//! The finding and the geometry are `or_world::doors`'. This is what a pack adds: the name patterns that say a model is a door, kept
+//! The finding and the geometry are `or_world_gta5::doors`'. This is what a pack adds: the name patterns that say a model is a door, kept
 //! as data in `door_patterns.json`; the door rules, as data with the codes and the waivers of [`crate::rules`]; and one row for each
 //! door of a set, which `openrage-cli maps doors` lists as text and as JSON.
 //!
@@ -13,18 +13,18 @@ use std::path::Path;
 use glam::{Quat, Vec3};
 use or_io::meta::MetaDocument;
 use or_world::collision::{CollisionSet, OrientedBox};
-use or_world::doors::{
+use or_world_gta5::doors::{
     clearance, find, pair, read_leaf, Blocker, Clearance, EntityAt, FoundBy, HingeSide, Leaf,
     Motion, NamePatterns, PatternError, PlacedEntity, Unread, Way, WidthAxis,
 };
-use or_world::{MapData, MapTypes};
+use or_world_gta5::{MapData, MapTypes};
 use serde::{Deserialize, Serialize};
 
-use crate::edit::Pose;
 use crate::facts::{cooked, inspect, Depth, Fact, Name, Names, Role};
 use crate::model::{MapSet, Maps};
 use crate::rules::{Finding, Place, Rule, Severity};
-use crate::script_text::heading_of;
+use or_world::transform::Pose;
+use or_world_gta5::script_text::heading_of;
 
 /// What the `format` of a file of door patterns says.
 pub const PATTERNS_FORMAT: &str = "openrage-door-patterns";
@@ -257,7 +257,7 @@ pub fn survey<K: Ord + Clone + fmt::Display>(
     set: &MapSet,
     maps: &[(&str, MapData<'_>)],
     types: &[MapTypes<'_>],
-    names: or_world::doors::Names<'_>,
+    names: or_world_gta5::doors::Names<'_>,
     patterns: &NamePatterns,
     colliders: &CollisionSet<K>,
 ) -> SetDoors {

@@ -32,7 +32,7 @@ use or_project::{
 use or_source::sample::{drawable_dictionary, texture_dictionary};
 use or_title::dlc::{ContentXml, DlcList};
 use or_title::{build_mounted_game, DlcCutoff, GtaInstall};
-use or_world::manifest_build::stated_in;
+use or_world_gta5::manifest_build::stated_in;
 
 const CRATE_A: &str = "prop_crate_a";
 const MANIFEST: &str = "stream/_manifest.ymf";
@@ -253,9 +253,12 @@ fn a_map_no_kept_manifest_states_takes_an_entry_with_the_type_file_it_needs_and_
         )
         .expect("the manifest reads");
         let entries: Vec<Option<u32>> =
-            or_world::field::structs_at(&root, or_world::keys::IMAP_DEPENDENCIES_2)
+            or_world_gta5::field::structs_at(&root, or_world_gta5::keys::IMAP_DEPENDENCIES_2)
                 .map(|entry| {
-                    or_world::field::u32_at(entry, or_world::manifest_build::MANIFEST_FLAGS)
+                    or_world_gta5::field::u32_at(
+                        entry,
+                        or_world_gta5::manifest_build::MANIFEST_FLAGS,
+                    )
                 })
                 .collect();
         entries
@@ -1245,8 +1248,10 @@ fn flags_of_the_entries(bytes: &[u8]) -> Vec<Option<u32>> {
         &mut or_io::meta::Diagnostics::lenient(),
     )
     .expect("the manifest reads");
-    or_world::field::structs_at(&root, or_world::keys::IMAP_DEPENDENCIES_2)
-        .map(|entry| or_world::field::u32_at(entry, or_world::manifest_build::MANIFEST_FLAGS))
+    or_world_gta5::field::structs_at(&root, or_world_gta5::keys::IMAP_DEPENDENCIES_2)
+        .map(|entry| {
+            or_world_gta5::field::u32_at(entry, or_world_gta5::manifest_build::MANIFEST_FLAGS)
+        })
         .collect()
 }
 
@@ -1304,7 +1309,7 @@ fn a_map_no_kept_manifest_states_that_places_interiors_alone_takes_the_flag_of_a
     );
     assert_eq!(
         flags_of_the_entries(&written),
-        [Some(or_world::manifest_build::INTERIOR_DATA)]
+        [Some(or_world_gta5::manifest_build::INTERIOR_DATA)]
     );
 }
 
@@ -1506,7 +1511,7 @@ fn a_map_a_kept_manifest_states_as_an_interiors_map_is_named_where_it_places_wha
     keep(
         &folder,
         "harbour",
-        4 | or_world::manifest_build::INTERIOR_DATA,
+        4 | or_world_gta5::manifest_build::INTERIOR_DATA,
         &[],
     );
     let model = Maps::read(&folder).unwrap();
@@ -1514,7 +1519,7 @@ fn a_map_a_kept_manifest_states_as_an_interiors_map_is_named_where_it_places_wha
     let written = stated.file.expect("a manifest is written");
     assert_eq!(
         flags_of_the_entries(&written),
-        [Some(4 | or_world::manifest_build::INTERIOR_DATA)],
+        [Some(4 | or_world_gta5::manifest_build::INTERIOR_DATA)],
         "the flags the game states are kept"
     );
     let [note] = stated.notes.as_slice() else {

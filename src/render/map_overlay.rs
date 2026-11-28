@@ -5,9 +5,9 @@
 //! with the ones plugins draw, in front of everything, through `append`, the one place this joins the viewport's line list.
 
 use glam::{Quat, Vec3};
-use or_maps::gizmo::{Gizmo, Handle, Obb};
 use or_maps::{Placed, Scene};
 use or_renderer::LineVertex;
+use or_world::gizmo::{Gizmo, Handle, Obb};
 
 use crate::state::AppState;
 use crate::ui::dock::Workspace;
@@ -145,9 +145,9 @@ fn colour_of(placed: &Placed) -> [f32; 4] {
 }
 
 /// The frame the manipulator's axes follow: the entity's own turn for a rotate and a scale, the world's for a move.
-pub fn frame_of(mode: or_maps::gizmo::Mode, rotation: Quat) -> Quat {
+pub fn frame_of(mode: or_world::gizmo::Mode, rotation: Quat) -> Quat {
     match mode {
-        or_maps::gizmo::Mode::Move => Quat::IDENTITY,
+        or_world::gizmo::Mode::Move => Quat::IDENTITY,
         _ => rotation,
     }
 }

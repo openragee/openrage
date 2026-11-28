@@ -1,7 +1,7 @@
 //! What an operation does where the pack holds less than it reads: an entity of an archetype no type file of the pack declares, the
 //! last entity or archetype of a file, and the first of a file that holds none.
 //!
-//! ⚠ The files are the crate's samples and what `or_world::create` makes, so the clean checkout runs this.
+//! ⚠ The files are the crate's samples and what `or_world_gta5::create` makes, so the clean checkout runs this.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -14,8 +14,8 @@ use or_maps::model::Maps;
 use or_maps::operation::{apply, apply_all, At, Operation, PoseData};
 use or_maps::sample::{map_file, types_file, Archetype, Entity};
 use or_maps::{check, inspect, Depth};
-use or_world::archetypes::ArchetypeIndex;
-use or_world::create;
+use or_world_gta5::archetypes::ArchetypeIndex;
+use or_world_gta5::create;
 
 const HARBOUR: &str = "harbour.metadata.src";
 const YARD: &str = "yard.metadata.src";

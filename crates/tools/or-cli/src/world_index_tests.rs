@@ -203,7 +203,7 @@ fn the_index_verb_says_why_a_kept_index_did_not_serve() {
     let whole = std::fs::read(&kept).expect("kept");
     std::fs::write(&kept, &whole[..whole.len() / 2]).expect("written");
     let (lines, json) = said_of(&other, &kept);
-    let why = or_depends::world_index::KeptError::Damaged.to_string();
+    let why = or_world_gta5::world_index::KeptError::Damaged.to_string();
     assert!(
         said(
             &lines,

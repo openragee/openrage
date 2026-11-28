@@ -260,7 +260,7 @@ fn entity(
         return;
     };
     let corners = row.corners(*min, *max).map(glam::Vec3::from);
-    let hull: Vec<egui::Pos2> = (or_maps::gizmo::footprint(&corners).iter())
+    let hull: Vec<egui::Pos2> = (or_world::gizmo::footprint(&corners).iter())
         .map(|p| at(p.to_array()))
         .collect();
     if hull.len() >= 3 {

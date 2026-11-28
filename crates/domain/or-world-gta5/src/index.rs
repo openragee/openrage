@@ -4,17 +4,17 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use or_depends::tables::is_txd_relationships;
-use or_depends::world_forest::read;
-use or_depends::world_forest::{map_box, request_of, Request};
-use or_depends::world_index::{self, Kept, Map};
-use or_depends::{InstallTables, WorldIndex, WorldSource};
+use crate::state::Gate as GroupGate;
+use crate::tables::is_txd_relationships;
+use crate::world_forest::read;
+use crate::world_forest::{map_box, request_of, Request};
+use crate::world_index::{self, Kept, Map};
+use crate::{InstallTables, WorldIndex, WorldSource};
 use or_io::meta::instance::parse_schemaless;
 use or_io::meta::MetaInstance;
 use or_world::contract::{WorldError, WorldIndexer};
 use or_world::kept::Section;
 use or_world::model::{Gate, Index, MapId, MapRow, PlacementRow, SwitchId, EVERY_HOUR};
-use or_world::state::Gate as GroupGate;
 
 use crate::install::Gta5World;
 use crate::source::One;

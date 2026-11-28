@@ -2,22 +2,20 @@
 //! and an index of its own, a second start reads no archive, an archive that changed is the only
 //! one read again, and the rows joined from the sections are the index `or_depends` builds itself.
 
-#[path = "../../or-depends/tests/forest_fixture/mod.rs"]
 mod forest_fixture;
 mod hand_built;
-#[path = "../../or-depends/tests/world_fixture/mod.rs"]
 mod world_fixture;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use or_depends::{MountedWorld, WorldIndex};
 use or_job::{Cancel, Progress};
 use or_world::contract::{Keys, Opening, WorldInstall, WorldSpec, WorldTitle};
 use or_world::kept::{self, Report, Verdict};
 use or_world::model::Index;
 use or_world::slots::OptionValue;
 use or_world_gta5::{Gta5Title, Gta5World, Linked, LEGACY, LEVEL, MODE, TITLE};
+use or_world_gta5::{MountedWorld, WorldIndex};
 
 use forest_fixture::{arch, ent, map_around, map_file, types_file};
 use world_fixture::{cube, dlc_list_bytes, hash, mount_all, write_archive, write_pack};

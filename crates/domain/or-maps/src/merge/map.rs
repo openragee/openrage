@@ -181,7 +181,7 @@ fn union_of(a: ([f32; 3], [f32; 3]), b: ([f32; 3], [f32; 3])) -> ([f32; 3], [f32
 
 /// A guid none of `stated` is, by the rule a new entity of a map takes one, which `stated` then holds.
 fn free_guid(stated: &mut BTreeSet<u32>) -> Option<u32> {
-    let free = or_world::create::free_guid_among(stated)?;
+    let free = or_world_gta5::create::free_guid_among(stated)?;
     stated.insert(free);
     Some(free)
 }

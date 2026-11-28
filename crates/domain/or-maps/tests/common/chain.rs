@@ -21,12 +21,13 @@ use or_io::decl::File;
 use or_io::meta::typed::CMapData;
 use or_io::meta::{MetaDocument, MetaInstance};
 use or_maps::delete::{self, Error};
-use or_maps::edit::{pose_of, read_entity, Pose};
+use or_maps::edit::{pose_of, read_entity};
 use or_maps::import::{add_files, Incoming};
 use or_maps::operation::{apply, apply_all, inverses, At, Operation, PoseData, Record};
 use or_maps::put_back;
-use or_world::execute::{identity, links_by_identity, Key};
-use or_world::{GroupProblem, MapData, MapGroup};
+use or_world::transform::Pose;
+use or_world_gta5::execute::{identity, links_by_identity, Key};
+use or_world_gta5::{GroupProblem, MapData, MapGroup};
 
 /// How many threads the files and the trees of an install are spread over, as `what_the_rules_say_of_the_install` spreads its files.
 const WORKERS: usize = 12;
@@ -209,7 +210,7 @@ fn problems<'a>(trees: impl Iterator<Item = &'a MetaInstance>) -> BTreeSet<Strin
             continue;
         };
         group.add(&map);
-        for problem in or_world::validate::check(&map) {
+        for problem in or_world_gta5::validate::check(&map) {
             found.insert(format!("{:#010X}: {problem}", map.name()));
         }
     }

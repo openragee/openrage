@@ -3,21 +3,19 @@
 //! models, places and fades, and the same models waited for.
 
 mod compare;
-#[path = "../../or-depends/tests/forest_fixture/mod.rs"]
 mod forest_fixture;
 mod hand_built;
-#[path = "../../or-depends/tests/world_fixture/mod.rs"]
 mod world_fixture;
 
 use std::sync::Arc;
 
 use glam::Vec3;
-use or_depends::{MountedWorld, WorldIndex};
 use or_world::contract::WorldInstall;
 use or_world::kept;
 use or_world::model::Index;
 use or_world::streaming::FADE;
 use or_world_gta5::{Gta5World, TITLE};
+use or_world_gta5::{MountedWorld, WorldIndex};
 
 use forest_fixture::{arch, ent, install, map_around, map_file, types_file, Ent, Files, ORPHAN};
 use world_fixture::{cube, mount};
@@ -124,7 +122,7 @@ fn odd_files() -> Files {
         ..ent("lamp", [3000.0, y, 0.0])
     };
     let far_lod = forest_fixture::MapOf {
-        flags: or_world::state::NOT_BY_DEFAULT,
+        flags: or_world_gta5::state::NOT_BY_DEFAULT,
         streaming: cube([9000.0, 9000.0, 0.0], 10.0),
         extents: cube([9001.0, 9001.0, 1.0], 1.0),
         ..map_around(

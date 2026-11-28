@@ -47,7 +47,7 @@ fn base_models() -> Vec<ArchetypeSpec> {
             ..ArchetypeSpec::base("prop_bench", sized(2.0, 1.0, 1.0))
         },
         ArchetypeSpec {
-            kind: or_world::ArchetypeKind::Time,
+            kind: or_world_gta5::ArchetypeKind::Time,
             texture_dictionary: "props_txd",
             ..ArchetypeSpec::base("prop_tower", sized(4.0, 4.0, 30.0))
         },
@@ -57,7 +57,7 @@ fn base_models() -> Vec<ArchetypeSpec> {
         },
         ArchetypeSpec::base("prop_ghost", sized(3.0, 3.0, 3.0)),
         ArchetypeSpec {
-            kind: or_world::ArchetypeKind::Mlo,
+            kind: or_world_gta5::ArchetypeKind::Mlo,
             entities: vec!["prop_crate"],
             texture_dictionary: "txd_nowhere",
             ..ArchetypeSpec::base("v_shop", sized(12.0, 8.0, 4.0))

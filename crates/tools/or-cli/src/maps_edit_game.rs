@@ -4,10 +4,10 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use or_depends::WorldIndex;
 use or_maps::first_edit::{self, Change, Edit, Place, Record, Which};
 use or_project::Target;
 use or_title::MountedGame;
+use or_world_gta5::WorldIndex;
 use serde_json::{json, Value};
 
 use crate::maps::{deletion_lines, maps_of};

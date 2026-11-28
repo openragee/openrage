@@ -4,6 +4,7 @@
 //! ⚠ Every expected value is computed from the fixture's own lists, and each test says how many
 //! things it compared: an index that named nothing would agree with a mount that listed nothing.
 
+#[path = "../../or-world-gta5/tests/world_fixture/mod.rs"]
 mod world_fixture;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -11,14 +12,15 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use glam::Vec3;
-use or_depends::world_index::{
+use or_depends::Resolver;
+use or_title::MountedGame;
+use or_world_gta5::world_index::{
     refresh, Archive, Kept, KeptError, KeptState, Stamp, RULES, VERSION,
 };
-use or_depends::{
-    ArchetypeAssetIndex, Catalogue, InstallTables, Kind, ModelContents, MountedWorld, Resolver,
-    Via, WorldIndex, WorldSource,
+use or_world_gta5::{
+    ArchetypeAssetIndex, Catalogue, InstallTables, Kind, ModelContents, MountedWorld, Via,
+    WorldIndex, WorldSource,
 };
-use or_title::MountedGame;
 use world_fixture::{
     bound_bytes, cube, hash, held_to_its_mount, manifest_bytes, map_bytes, mount, mount_all,
     stated_by_the_files, types_bytes, write_archive, Counting, Held, MapSpec, Span, Stated,
@@ -237,7 +239,9 @@ fn centre(s: Span) -> Vec3 {
     (vec3(s.0) + vec3(s.1)) * 0.5
 }
 
-fn names<'a>(maps: impl IntoIterator<Item = &'a or_depends::world_index::Map>) -> BTreeSet<String> {
+fn names<'a>(
+    maps: impl IntoIterator<Item = &'a or_world_gta5::world_index::Map>,
+) -> BTreeSet<String> {
     maps.into_iter().map(|map| map.name.clone()).collect()
 }
 
@@ -415,13 +419,13 @@ fn resolver_inputs(game: &MountedGame) -> (Catalogue, InstallTables, ModelConten
     };
     let mut tables = InstallTables::new();
     let manifest = read("common:/data/levels/gta5/_manifest.ymf");
-    tables.add_manifest(or_world::Manifest::new(&manifest).expect("a CPackFileMetaData"));
+    tables.add_manifest(or_world_gta5::Manifest::new(&manifest).expect("a CPackFileMetaData"));
     let mut contents = ModelContents::new();
     for located in catalogue.of_kind(Kind::MapData) {
         let map = read(&located.logical);
         contents.add_map(
             hash(&located.stem),
-            or_world::MapData::new(&map).expect("a CMapData"),
+            or_world_gta5::MapData::new(&map).expect("a CMapData"),
         );
     }
     let bounds: Vec<u32> = (catalogue.of_kind(Kind::Bounds))
@@ -602,7 +606,7 @@ fn an_interiors_bound_whose_box_is_about_the_interior_is_answered_at_no_position
     let (_scratch, root) = install_of(&archives);
     let game = mount(&root);
     let index = built(&game, &root);
-    let names = |found: Vec<or_depends::world_index::BoundAt<'_>>| -> Vec<String> {
+    let names = |found: Vec<or_world_gta5::world_index::BoundAt<'_>>| -> Vec<String> {
         found.iter().map(|at| at.bound.name.clone()).collect()
     };
 
@@ -968,7 +972,7 @@ fn a_kept_file_of_another_version_or_another_key_is_rebuilt_never_trusted() {
         let game = (mount(a), mount(b));
         let stamps = |game, root| {
             let source = MountedWorld::new(game, root);
-            let archives = or_depends::WorldSource::archives(&source);
+            let archives = or_world_gta5::WorldSource::archives(&source);
             assert!(archives.iter().all(|archive| archive.stamp.is_some()));
             archives
         };
@@ -1080,7 +1084,7 @@ fn a_truncated_or_corrupt_kept_file_is_refused_with_an_error_and_rebuilt() {
 }
 
 /// What an index says of every archetype, lowest name first.
-fn archetypes(index: &WorldIndex) -> Vec<or_depends::world_index::Archetype> {
+fn archetypes(index: &WorldIndex) -> Vec<or_world_gta5::world_index::Archetype> {
     let mut all: Vec<_> = index.archetypes().copied().collect();
     all.sort_by_key(|archetype| archetype.name);
     all

@@ -5,12 +5,12 @@
 //! reached from the keyboard: the arrows, Page Up and Page Down move the entity a step, the brackets turn it, and the Selection panel takes
 //! the numbers typed. Nothing here needs the mouse alone.
 //!
-//! ⚠ The geometry is `or_maps::gizmo`'s and the lines are `crate::render::map_overlay`'s; this lays out the tools and turns the pointer into a
+//! ⚠ The geometry is `or_world::gizmo`'s and the lines are `crate::render::map_overlay`'s; this lays out the tools and turns the pointer into a
 //! ray. The set is drawn as boxes: a model is drawn where its source is found in the pack, which this view does not yet do.
 
 use glam::{Vec2, Vec3};
-use or_maps::edit::Pose;
-use or_maps::gizmo::{self, Drag, Gizmo, Handle, Mode, View};
+use or_world::gizmo::{self, Drag, Gizmo, Handle, Mode, View};
+use or_world::transform::Pose;
 
 use super::{action_button, MapsUi};
 use crate::render::map_overlay;

@@ -4,8 +4,8 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use or_depends::world_index::{Archive, Stamp};
-use or_depends::WorldSource;
+use crate::world_index::{Archive, Stamp};
+use crate::WorldSource;
 use or_title::vfs::{ArchiveDevice, EntryFacts, FileDevice};
 use or_title::MountedGame;
 

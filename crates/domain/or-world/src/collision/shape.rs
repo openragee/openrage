@@ -2,7 +2,7 @@
 
 use glam::{Affine3A, Vec2, Vec3};
 
-use crate::extents::Aabb;
+use crate::aabb::Aabb;
 
 /// A ray within this cosine of a triangle's plane lies in it, and hits nothing.
 const IN_PLANE: f32 = 1e-6;
@@ -21,7 +21,7 @@ const SWEEP_STEPS: usize = 64;
 
 /// A rotation, a uniform scale and a translation: what keeps a sphere a sphere.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Similarity {
+pub struct Similarity {
     matrix: Affine3A,
     scale: f32,
 }
@@ -83,7 +83,7 @@ impl Similarity {
 
 /// A box with its own axes, which are units at right angles.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Obb {
+pub struct Obb {
     pub centre: Vec3,
     pub axes: [Vec3; 3],
     pub half: Vec3,
@@ -146,7 +146,7 @@ impl Obb {
 
 /// Where a query met a shape.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Touch {
+pub struct Touch {
     pub t: f32,
     pub point: Vec3,
     pub normal: Vec3,
@@ -159,7 +159,7 @@ type Entry = (f32, Vec3, bool);
 
 /// One convex piece of a bound.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum Shape {
+pub enum Shape {
     Triangle {
         a: Vec3,
         b: Vec3,

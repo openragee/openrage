@@ -10,16 +10,16 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::ExitCode;
 
-use or_depends::{
-    ArchetypeAssetIndex, Catalogue, Census, DependencySet, Derivable, InstallTables, Kind,
-    ModelContents, PlacementIndex, Resolver, Stated, Via, RULES,
-};
+use or_depends::{Census, DependencySet, Derivable, Resolver, Stated, RULES};
 use or_io::decl::Gen8;
 use or_io::gta5::gen8::GrcTexture;
 use or_io::gta5::{File as _, GtaDrawable, GtaFragType, PgDictionary};
 use or_io::meta::binary::parse_meta_binary_full;
 use or_io::meta::{Diagnostics, ErrorMode, MetaInstance};
-use or_world::{MapData, MapTypes};
+use or_world_gta5::{
+    ArchetypeAssetIndex, Catalogue, InstallTables, Kind, ModelContents, PlacementIndex, Via,
+};
+use or_world_gta5::{MapData, MapTypes};
 
 use super::world::{flag_value, limit_of, name_or_hash};
 
@@ -178,7 +178,7 @@ impl DependencyIndex {
                 continue;
             };
             let Some(root) = parse(&bytes) else { continue };
-            if or_depends::tables::is_txd_relationships(&root) {
+            if or_world_gta5::tables::is_txd_relationships(&root) {
                 tables.add_relationships(&root);
             }
         }
@@ -187,7 +187,7 @@ impl DependencyIndex {
                 continue;
             };
             let Some(root) = parse(&bytes) else { continue };
-            if let Some(manifest) = or_world::Manifest::new(&root) {
+            if let Some(manifest) = or_world_gta5::Manifest::new(&root) {
                 tables.add_manifest(manifest);
             }
         }
@@ -724,7 +724,7 @@ fn cmd_textures(args: &[String]) -> ExitCode {
         let Some(asset) = set.asset_edge() else {
             continue;
         };
-        let (or_depends::Kind::Drawable | or_depends::Kind::Fragment) = asset.kind else {
+        let (or_world_gta5::Kind::Drawable | or_world_gta5::Kind::Fragment) = asset.kind else {
             continue;
         };
         let or_depends::Found::File(path) = &asset.found else {
@@ -736,7 +736,7 @@ fn cmd_textures(args: &[String]) -> ExitCode {
             continue;
         };
         let drawable = match asset.kind {
-            or_depends::Kind::Drawable => {
+            or_world_gta5::Kind::Drawable => {
                 GtaDrawable::<Gen8>::from_bytes(&bytes).ok().map(|d| d.base)
             }
             _ => GtaFragType::<Gen8>::from_bytes(&bytes)
@@ -763,9 +763,9 @@ fn cmd_textures(args: &[String]) -> ExitCode {
             .unwrap_or_default();
 
         // The dictionaries behind this model, in fall-through order.
-        let mut tiers: Vec<(or_depends::Via, u32)> = Vec::new();
+        let mut tiers: Vec<(or_world_gta5::Via, u32)> = Vec::new();
         for edge in &set.edges {
-            if edge.kind == or_depends::Kind::TextureDict && edge.is_resolved() {
+            if edge.kind == or_world_gta5::Kind::TextureDict && edge.is_resolved() {
                 tiers.push((edge.via, edge.name));
             }
         }
@@ -773,7 +773,10 @@ fn cmd_textures(args: &[String]) -> ExitCode {
             if txd_names.contains_key(hash) || txd_names.len() >= CACHE_CAP {
                 continue;
             }
-            let Some(located) = loaded.catalogue.find(*hash, or_depends::Kind::TextureDict) else {
+            let Some(located) = loaded
+                .catalogue
+                .find(*hash, or_world_gta5::Kind::TextureDict)
+            else {
                 continue;
             };
             let Some(bytes) = loaded.mount.vfs.open(&located.logical) else {
@@ -813,13 +816,13 @@ fn cmd_textures(args: &[String]) -> ExitCode {
                         .is_some_and(|names| names.contains(&key))
                 });
                 match tier.map(|(via, _)| via) {
-                    Some(or_depends::Via::ArchetypeTextureDictionary) => {
+                    Some(or_world_gta5::Via::ArchetypeTextureDictionary) => {
                         sources.archetype_dictionary += 1
                     }
-                    Some(or_depends::Via::TextureDictionaryParent) => {
+                    Some(or_world_gta5::Via::TextureDictionaryParent) => {
                         sources.parent_dictionary += 1
                     }
-                    Some(or_depends::Via::ManifestHdTexture) => sources.manifest_hd += 1,
+                    Some(or_world_gta5::Via::ManifestHdTexture) => sources.manifest_hd += 1,
                     _ => sources.nowhere += 1,
                 }
             }
@@ -943,7 +946,7 @@ fn cmd_rules() -> ExitCode {
                 Stated::ByFilename => "by filename".to_string(),
             };
             let to = match rule.to {
-                or_depends::Kind::Other => "(no file)".to_string(),
+                or_world_gta5::Kind::Other => "(no file)".to_string(),
                 kind => format!(".{}", kind.extension()),
             };
             println!("  -> {to:<9} {verdict}");

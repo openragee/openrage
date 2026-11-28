@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 
 use or_title::MountedGame;
 
-use crate::resolve::{DependencySet, Edge, Found, Via};
+use crate::resolve::{DependencySet, Edge, Found};
+use or_world_gta5::Via;
 
 /// The file an export writes beside the copies, one line per edge.
 pub const MANIFEST: &str = "manifest.txt";

@@ -2,7 +2,7 @@
 //! entity with no entity to copy, an entity that is no copy is the record a copy with the same fields would be, and the first
 //! record an operation builds in an empty file is to the byte the one a copy of another file's gives.
 //!
-//! ⚠ The files are made here, by `or_world::create` and the crate's samples, so the clean checkout runs this. No schema snapshot
+//! ⚠ The files are made here, by `or_world_gta5::create` and the crate's samples, so the clean checkout runs this. No schema snapshot
 //! is installed in this process, which is what a user's machine has.
 
 use std::path::{Path, PathBuf};
@@ -14,7 +14,7 @@ use or_io::meta::typed::{CMapData, CMapTypes};
 use or_io::meta::{detect_binary_format, BinaryFormat, MetaDocument, SchemaLibrary};
 use or_maps::edit::{
     add_archetype, add_entity, add_new_archetype, add_new_entity, edit_map, edit_types,
-    grow_extents, pose_of, read_archetype, read_entity, Pose,
+    grow_extents, pose_of, read_archetype, read_entity,
 };
 use or_maps::facts::{cooked, Name};
 use or_maps::import::{add_files, Incoming};
@@ -22,14 +22,15 @@ use or_maps::model::Maps;
 use or_maps::operation::{apply, At, Operation};
 use or_maps::sample::{map_file, types_file, Entity};
 use or_maps::{check, inspect, Depth, Severity};
-use or_world::archetypes::ArchetypeIndex;
-use or_world::create::{self, Placed};
-use or_world::generate::{AssetKind, Authoring, DrawableFacts};
-use or_world::map_types::MapTypes;
+use or_world::transform::Pose;
+use or_world_gta5::archetypes::ArchetypeIndex;
+use or_world_gta5::create::{self, Placed};
+use or_world_gta5::generate::{AssetKind, Authoring, DrawableFacts};
+use or_world_gta5::map_types::MapTypes;
 
 const CRATE: &str = "prop_crate_a";
 
-/// The archetype of the crate, a cube two units on a side, as `or_world::create` makes it from nothing.
+/// The archetype of the crate, a cube two units on a side, as `or_world_gta5::create` makes it from nothing.
 fn crate_archetype() -> or_io::meta::typed::CBaseArchetypeDefAny {
     create::archetype(
         &DrawableFacts {

@@ -3,7 +3,7 @@
 //! Every extension [`crate::Kind`] classifies must carry a ruling, and a
 //! [`Derivable::No`] its reason; the suite fails otherwise.
 
-use crate::Kind;
+use or_world_gta5::Kind;
 
 /// Where a reference is written down.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

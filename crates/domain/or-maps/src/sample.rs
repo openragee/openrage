@@ -3,11 +3,11 @@
 //!
 //! The classes are the engine's, with the members the typed world family reads (`or_io::meta::typed`), so a file made here opens as
 //! `CMapData` or `CMapTypes`, saves, and cooks from a source. It is a test fixture and not a way to make a map: its RBM classes carry
-//! a zero signature no shipped file has. `or_world::create` makes a map from nothing.
+//! a zero signature no shipped file has. `or_world_gta5::create` makes a map from nothing.
 
 use or_io::meta::instance::HashedString;
 use or_io::meta::{build_library, canonical, write_meta_binary, BinaryFormat, MetaInstance, Value};
-use or_world::Placement;
+use or_world_gta5::Placement;
 
 const PSC: &str = r#"<?xml version="1.0"?>
 <ParserSchema>
@@ -85,7 +85,10 @@ pub struct Stated<'a> {
 /// A `_manifest.ymf` that states `stated`, in the container the game ships its manifests in.
 pub fn manifest_file(stated: &[Stated<'_>]) -> Vec<u8> {
     // ⚠ A member the public table of names lacks is spelled by its hash in a document, and the writer looks it up under that spelling.
-    let flags = format!("hash_{:08X}", or_world::field::name_hash("manifestFlags"));
+    let flags = format!(
+        "hash_{:08X}",
+        or_world_gta5::field::name_hash("manifestFlags")
+    );
     let entries = stated
         .iter()
         .map(|said| {

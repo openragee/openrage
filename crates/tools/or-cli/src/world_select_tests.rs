@@ -9,7 +9,7 @@ use crate::forest_fixture::{
 };
 use crate::world_fixture::{cube, mount};
 
-use or_world::state::{flags as group_flags, NOT_BY_DEFAULT};
+use or_world_gta5::state::{flags as group_flags, NOT_BY_DEFAULT};
 
 use super::*;
 

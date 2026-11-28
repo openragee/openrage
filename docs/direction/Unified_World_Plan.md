@@ -38,7 +38,7 @@ At `9fdf0fee` the World screen's viewer is `src/state/gta6_worldview/` (55 files
 
 GTA V's world is headless: `openrage-cli world` reaches it and no screen draws it.
 
-At `9fdf0fee` its model is the modules of `crates/domain/or-world/src/` outside the core's (12,996 lines); the index of an install with its kept file and mount source is `crates/domain/or-depends/src/world_index.rs` and its folder; the streaming driver and its map reader are `crates/domain/or-depends/src/world_forest.rs` and its folder; and the edit vocabularies with their session are `crates/domain/or-maps/src/` (22,178 lines).
+At `9fdf0fee` its model is the modules of `crates/domain/or-world/src/` outside the core's (12,996 lines); the index of an install with its kept file and mount source is `crates/domain/or-world-gta5/src/world_index.rs` and its folder; the streaming driver and its map reader are `crates/domain/or-world-gta5/src/world_forest.rs` and its folder; and the edit vocabularies with their session are `crates/domain/or-maps/src/` (22,178 lines).
 
 - **`or-world` is GTA V's model with a core beside it.** Its header states two invariants the core respects: nothing there copies the tree a reader produced, and nothing keys on a field's spelling.
 - **Three edit vocabularies are bound to the project**: entities in `crates/domain/or-maps/src/operation.rs`, roads in `crates/domain/or-maps/src/roads/operation.rs` and collision in `crates/domain/or-maps/src/collision.rs`, each with named operations, inverses and digest guards. The session of `crates/domain/or-maps/src/operation/session.rs` is opened over a project folder and writes at a flush. A collision operation's inverse is whole files, and an entity removal renumbers a second file. `or-maps` depends on `or-project` and `or-source`, which the core cannot.
@@ -72,15 +72,15 @@ Each row is a duplicate the programme ends, at `9fdf0fee`:
 
 | What | GTA V | GTA VI |
 |---|---|---|
-| The index of an install | `crates/domain/or-depends/src/world_index.rs` | `src/state/gta6_worldview/index.rs` and five neighbours |
-| A kept file of rows, checked against the archives' size and time | `crates/domain/or-depends/src/world_index/kept.rs` | `src/state/gta6_worldview/index_keep.rs`, and a second in `src/state/gta6_world_fill.rs` |
-| The driver around the forest, which both share (`Forest` of `crates/domain/or-world/src/streaming.rs`): wanted maps, read, insert, select, instances | `crates/domain/or-depends/src/world_forest.rs` | `src/state/gta6_worldview/stream.rs` and its neighbours |
-| What is switched on at an hour | `crates/domain/or-world/src/state.rs` | `src/state/gta6_worldview/index_states.rs` |
-| A map's extents grown to hold an entity | `crates/domain/or-maps/src/edit.rs`, `crates/domain/or-world/src/extents.rs` | `src/state/gta6_map_extents.rs` |
-| Removing an entity and repairing links across maps | `crates/domain/or-world/src/execute.rs`, `crates/domain/or-maps/src/delete.rs` | `crates/io/or-io/src/gta6/map_grow.rs`, `src/state/gta6_map_entity.rs` |
+| The index of an install | `crates/domain/or-world-gta5/src/world_index.rs` | `src/state/gta6_worldview/index.rs` and five neighbours |
+| A kept file of rows, checked against the archives' size and time | `crates/domain/or-world-gta5/src/world_index/kept.rs` | `src/state/gta6_worldview/index_keep.rs`, and a second in `src/state/gta6_world_fill.rs` |
+| The driver around the forest, which both share (`Forest` of `crates/domain/or-world/src/streaming.rs`): wanted maps, read, insert, select, instances | `crates/domain/or-world-gta5/src/world_forest.rs` | `src/state/gta6_worldview/stream.rs` and its neighbours |
+| What is switched on at an hour | `crates/domain/or-world-gta5/src/state.rs` | `src/state/gta6_worldview/index_states.rs` |
+| A map's extents grown to hold an entity | `crates/domain/or-maps/src/edit.rs`, `crates/domain/or-world-gta5/src/extents.rs` | `src/state/gta6_map_extents.rs` |
+| Removing an entity and repairing links across maps | `crates/domain/or-world-gta5/src/execute.rs`, `crates/domain/or-maps/src/delete.rs` | `crates/io/or-io/src/gta6/map_grow.rs`, `src/state/gta6_map_entity.rs` |
 | The undo of the Map screen | `src/state/workbench/maps.rs` | the document's own steps |
 | The box scene of the Map screen | `crates/domain/or-maps/src/scene.rs` | `src/state/gta6_map.rs` |
-| A map body read for its nodes, its occluders and its lights | one read, of `crates/domain/or-world/src/map_data.rs` | three loops with three pools: the forest's, the occluders' and the lights' |
+| A map body read for its nodes, its occluders and its lights | one read, of `crates/domain/or-world-gta5/src/map_data.rs` | three loops with three pools: the forest's, the occluders' and the lights' |
 
 ## The shape
 
@@ -214,9 +214,9 @@ The core's `Capability` has the seven values below; what is chosen at open is an
 
 | Capability | GTA V | GTA VI | RDR2, expected |
 |---|---|---|---|
-| A height of the ground | yes, from the bounds `crates/domain/or-depends/src/world_collision.rs` streams | yes, from the install's height map (`ground_under`) | unmeasured |
+| A height of the ground | yes, from the bounds `crates/domain/or-world-gta5/src/world_collision.rs` streams | yes, from the install's height map (`ground_under`) | unmeasured |
 | A collision query with hits and overlaps | yes: `crates/domain/or-world/src/collision/` | no | unmeasured |
-| Placement rows and find | yes: `crates/domain/or-depends/src/find.rs` | rows for one archive; no search | no |
+| Placement rows and find | yes: `crates/domain/or-world-gta5/src/find.rs` | rows for one archive; no search | no |
 | A weather gate on what streams | yes | none found | unmeasured |
 | An edit store | yes, in a project | yes, over a document | no |
 | A base to compare with, put back to and merge against | yes | no | no |
@@ -355,7 +355,7 @@ A row is one programme part, lands in the parts its brief lists, and ends on a c
 
 - **R71d and R71b's first part run together**, and R71i beside the drawing rows.
 - **R71d lands before R71b's second part**, which rebases its lines of the workspace manifest, the lock file and the registry. So GTA VI's own loop is deleted only after both adapters call the core's driver.
-- **R71a edited two files the branches of R70 change**: in `crates/domain/or-world/src/streaming.rs` how a parent waits became the enum `Children`, which `Forest::waiting_for` takes, and the constructor call in `crates/domain/or-depends/src/world_forest.rs` passes `Children::Stated` ([ruling 7](#asked-of-the-owner)).
+- **R71a edited two files the branches of R70 change**: in `crates/domain/or-world/src/streaming.rs` how a parent waits became the enum `Children`, which `Forest::waiting_for` takes, and the constructor call in `crates/domain/or-world-gta5/src/world_forest.rs` passes `Children::Stated` ([ruling 7](#asked-of-the-owner)).
 
 Rules for every row: no window is opened, and a screen is checked on `just shots` and `just self-check --viewport`; documents travel with the code; a moved test keeps its body; and a format's read path changed by a move runs that format's slow suite.
 
@@ -369,11 +369,11 @@ Taken on 2026-11-27 on the owner's Mac, with no code path of a screen or a verb 
 
 ### The GTA V world behind the contract, and one kept file (R71d)
 
-Read [the contract](#the-contract) with `crates/domain/or-world/src/fake.rs`, an adapter whole in one file, `crates/domain/or-depends/src/world_index.rs` with its folder, `crates/domain/or-depends/src/world_forest.rs`, `crates/title/or-title/src/vfs/game_mount.rs` and the fixtures of `crates/domain/or-depends/tests/`.
+Read [the contract](#the-contract) with `crates/domain/or-world/src/fake.rs`, an adapter whole in one file, `crates/domain/or-world-gta5/src/world_index.rs` with its folder, `crates/domain/or-world-gta5/src/world_forest.rs`, `crates/title/or-title/src/vfs/game_mount.rs` and the fixtures of `crates/domain/or-depends/tests/`.
 
 - **Builds.** or-world-gta5 as a new crate over the core, `or-depends`, `or-io` and `or-title`. What the kit asks of it is in [what an adapter writes](#what-an-adapter-writes-to-pass-the-kit).
   - *Its title and indexer*: an id, both games' ids, the options (the level by the mount's cutoff, story or multiplayer), the layers through the mount's options, the keys of the opening; rows for each archive, a link that leaves the mount's own tables on the index, and a version of its rules.
-  - *Its map reader*: that of `crates/domain/or-depends/src/world_forest/read.rs`, as a body that states its occluders and lights, says in one call what draws each node, and lays out its entities and lists; its interiors are bodies of their own, each read from the body that places it.
+  - *Its map reader*: that of `crates/domain/or-world-gta5/src/world_forest/read.rs`, as a body that states its occluders and lights, says in one call what draws each node, and lays out its entities and lists; its interiors are bodies of their own, each read from the body that places it.
   - *Its policy*: `Children::Stated` and `streams_in`; the clock and weather of a map as a `Gate` on its row; its state groups as switches; its capabilities, with the words an instance carries.
   - *Its models*: what names a model and its textures, as asset keys and asks grouped by dictionary. ⚠ The kit's rule `every_model_a_selection_draws_with_reads_whole` asks that each model the scene draws with reads whole, with its textures. Names alone do not pass it, so this row brings forward from R71e the decode of a drawable to the core's model, for the models the hand-built install holds or gains; the dictionary's entry, the fragment, the second target, the dictionary of textures read once and the surface by sampler names stay R71e's.
   - *What the contract lacks and this row adds*: a height of the ground and a collision query as methods a capability gates; the kit's second tier, over the hand-built install of `or-depends`' fixtures; and the registry crate with its first line.
@@ -430,9 +430,9 @@ Read `crates/runtime/or-renderer/src/world.rs`, `crates/runtime/or-renderer/src/
 
 Read the manifests of `or-depends` and `or-maps`, and `crates/domain/or-depends/src/resolve.rs`.
 
-- **Builds.** One mechanical commit on `main` between waves, with no other lane open on the three crates. The GTA V modules of `or-world` move with `git mv`. The splits: `crates/domain/or-world/src/collision/bound.rs` and the half of the collision set that faces a bound go to the adapter, and the box type is lifted out of `crates/domain/or-world/src/extents.rs` into the core; the placement convention of `crates/domain/or-world/src/transform.rs` goes, and `scale_of` and `placed_corners` stay; the scene's types go to the core and its builder stays in `or-maps`. The world half of `or-depends` moves with the catalogue, the tables, the contents, the two types of the resolver its index names and `crates/domain/or-depends/src/tests_support.rs`, so that the resolver left behind imports the adapter and no ring forms; the script forms of `crates/domain/or-maps/src/script_text.rs` and the filename rule of an area's bounds go with it, and the place parser and the manipulator go to the core, which ends the edge from `or-depends` to `or-maps`. `WorldForest` becomes a thin wrapper over the core's driver with its public surface as it is, GTA V's index is kept by the core's mechanism, and each file moved leaves the ledgers of the core's architecture test.
-- **Deletes.** `crates/domain/or-depends/src/world_index/kept.rs`; GTA V's own loop inside `WorldForest`; the include by path of `or-depends`' fixtures into `or-cli`.
-- **Check.** The tests of `crates/domain/or-depends/tests/the_forest_of_a_mount.rs`, `crates/domain/or-depends/tests/the_world_index_of_a_real_install.rs` and the world suites of `or-cli` pass with no body changed, none deleted. `cargo tree` shows no ring. One world kept-file format is left in the tree. The slow tier holds every install suite it held, under its new key.
+- **Builds.** One mechanical commit on `main` between waves, with no other lane open on the three crates. The GTA V modules of `or-world` move with `git mv`. The splits: `crates/domain/or-world-gta5/src/collision/bound.rs` and the half of the collision set that faces a bound go to the adapter, and the box type is lifted out of `crates/domain/or-world-gta5/src/extents.rs` into the core; the placement convention of `crates/domain/or-world/src/transform.rs` goes, and `scale_of` and `placed_corners` stay; the scene's types go to the core and its builder stays in `or-maps`. The world half of `or-depends` moves with the catalogue, the tables, the contents, the two types of the resolver its index names and `crates/domain/or-world-gta5/src/tests_support.rs`, so that the resolver left behind imports the adapter and no ring forms; the script forms of `crates/domain/or-world-gta5/src/script_text.rs` and the filename rule of an area's bounds go with it, and the place parser and the manipulator go to the core, which ends the edge from `or-depends` to `or-maps`. `WorldForest` becomes a thin wrapper over the core's driver with its public surface as it is, GTA V's index is kept by the core's mechanism, and each file moved leaves the ledgers of the core's architecture test.
+- **Deletes.** `crates/domain/or-world-gta5/src/world_index/kept.rs`; GTA V's own loop inside `WorldForest`; the include by path of `or-depends`' fixtures into `or-cli`.
+- **Check.** The tests of `crates/domain/or-world-gta5/tests/the_forest_of_a_mount.rs`, `crates/domain/or-world-gta5/tests/the_world_index_of_a_real_install.rs` and the world suites of `or-cli` pass with no body changed, none deleted. `cargo tree` shows no ring. One world kept-file format is left in the tree. The slow tier holds every install suite it held, under its new key.
 - **Must not touch.** What a GTA V file reads or writes as.
 - **Not known.** Which of the two GTA V deletions with renumbering survives; R71l settles it.
 
@@ -482,7 +482,7 @@ Read `crates/domain/or-maps/src/operation.rs` with its session, the two other vo
 
 ### The world tools built once (R71j)
 
-Read [World_Editor_UX_Design.md](World_Editor_UX_Design.md), `crates/domain/or-maps/src/gizmo.rs`, `src/render/viewport/pick.rs` and `src/ui/commands/target.rs`.
+Read [World_Editor_UX_Design.md](World_Editor_UX_Design.md), `crates/domain/or-world/src/gizmo.rs`, `src/render/viewport/pick.rs` and `src/ui/commands/target.rs`.
 
 - **Builds.** The surface the screen rows of R70 stand on, for every title: the pick by an id pass, the selection outline and the manipulator in the overlay pass, the registry of layers and of panel sections, a command's capability in the command table, and placement rows as a capability. GTA VI's placement rows replace the Map screen's world store and its kept file.
 - **Deletes.** `src/state/gta6_world.rs` and `src/state/gta6_world_fill.rs`.

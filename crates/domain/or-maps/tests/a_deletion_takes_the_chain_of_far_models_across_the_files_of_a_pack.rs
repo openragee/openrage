@@ -15,10 +15,10 @@ use or_maps::delete::{self, Deletion, Error, Lowered, Note, Why};
 use or_maps::import::{add_files, Incoming};
 use or_maps::operation::{apply_all, inverses, At, Operation};
 use or_maps::sample::{child_map_file, map_file, types_file, Archetype, Entity};
-use or_maps::script_text::{ScriptForms, HIDE_RADIUS};
 use or_maps::Maps;
-use or_world::execute::{identity, links_by_identity, Key};
-use or_world::{MapData, MapGroup};
+use or_world_gta5::execute::{identity, links_by_identity, Key};
+use or_world_gta5::script_text::{ScriptForms, HIDE_RADIUS};
+use or_world_gta5::{MapData, MapGroup};
 
 const SLOD: &str = "city_slod.metadata.src";
 const LOD: &str = "city_lod.metadata.src";
@@ -212,7 +212,7 @@ fn read(folder: &Path) -> Read {
     for (source, tree) in &trees {
         let map = MapData::new(tree).expect("a map file");
         assert_eq!(
-            or_world::validate::check(&map),
+            or_world_gta5::validate::check(&map),
             Vec::new(),
             "{source} is held to the checks of one file"
         );

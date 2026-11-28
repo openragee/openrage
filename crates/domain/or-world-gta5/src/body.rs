@@ -5,17 +5,17 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use or_depends::world_forest::read::{self, Placed, ReadMap, What};
-use or_depends::world_forest::{self, NoModel, Unread};
-use or_depends::world_index::{self, Map};
-use or_depends::WorldSource;
+use crate::world_forest::read::{self, Placed, ReadMap, What};
+use crate::world_forest::{self, NoModel, Unread};
+use crate::world_index::{self, Map};
+use crate::MapData;
+use crate::WorldSource;
 use or_world::contract::{MapBody, MapReader, Worker, WorldError};
 use or_world::model::{
     interior_key, signed_fade, AssetKey, Drawn, Draws, Index, Instance, Instances, InteriorPlaced,
     Light, MapId, Moment, Occluders,
 };
 use or_world::streaming::{Node, ParentRef};
-use or_world::MapData;
 
 use crate::beside::{beside, Beside};
 use crate::index::{linked, map_of};
@@ -247,6 +247,6 @@ impl Gta5World {
 }
 
 /// The index GTA V's link made of `index`, for a caller that names a map by its hash.
-pub(crate) fn world_of(index: &Index) -> Result<&or_depends::WorldIndex, WorldError> {
+pub(crate) fn world_of(index: &Index) -> Result<&crate::WorldIndex, WorldError> {
     Ok(&linked(index)?.world)
 }

@@ -8,11 +8,11 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use or_cli::DependencyIndex;
-use or_depends::Via;
 use or_io::container::resource::{Compression, ResourceEnvelope as _, Rsc7};
 use or_io::container::rpf::crypto::{NoOpCryptoProvider, RpfCryptoProvider};
 use or_io::container::rpf::RpfArchive;
 use or_title::{build_mounted_game, ArchiveDevice, DlcCutoff, FileDevice, GtaInstall};
+use or_world_gta5::Via;
 
 use super::nested_archives_survive_a_save::archive;
 use super::uses_reaches_every_pack::{bound_spanning, plain_map};

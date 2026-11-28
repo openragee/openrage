@@ -41,7 +41,7 @@ use or_io::meta::instance::HashedString;
 use or_io::meta::typed::{
     CBaseArchetypeDef, CBaseArchetypeDefAny, CEntityDef, CEntityDefAny, CMapData, CMapTypes,
 };
-use or_world::Placement;
+use or_world_gta5::Placement;
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 

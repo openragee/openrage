@@ -14,11 +14,12 @@
 
 use std::path::{Path, PathBuf};
 
-use glam::{EulerRot, Quat, Vec3};
+use glam::Vec3;
 use or_io::decl::File;
 use or_io::meta::instance::HashedString;
 use or_io::meta::typed::{CBaseArchetypeDefAny, CEntityDefAny, CMapData, CMapTypes};
-use or_world::Placement;
+use or_world::transform::Pose;
+use or_world_gta5::Placement;
 
 /// What an edit changed in the XML of a source.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,39 +78,6 @@ pub fn edit_types(
     let mut root = CMapTypes::from_bytes(&cooked(dir)?).map_err(|e| e.to_string())?;
     change(&mut root)?;
     write_back(dir, &root.to_bytes().map_err(|e| e.to_string())?)
-}
-
-/// Where an entity stands: its position, its rotation as the rotation that places it, and its scale.
-///
-/// The file stores a rotation conjugated for an entity and as it is for an interior instance (`or_world::Placement`), and one number
-/// of scale for the two horizontal axes (`scaleXY`) beside one for the vertical (`scaleZ`), so a pose is what a person means and
-/// [`set_pose`] stores it the way the file does.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Pose {
-    pub position: Vec3,
-    pub rotation: Quat,
-    /// The scale of X and Y together.
-    pub scale_xy: f32,
-    pub scale_z: f32,
-}
-
-impl Pose {
-    /// The rotation as degrees about X, Y and Z, which `from_degrees` turns back into the same rotation.
-    pub fn degrees(&self) -> [f32; 3] {
-        let (x, y, z) = self.rotation.to_euler(EulerRot::XYZ);
-        [x.to_degrees(), y.to_degrees(), z.to_degrees()]
-    }
-
-    /// The rotation that is `degrees` about X, then Y, then Z.
-    pub fn rotation_of_degrees(degrees: [f32; 3]) -> Quat {
-        Quat::from_euler(
-            EulerRot::XYZ,
-            degrees[0].to_radians(),
-            degrees[1].to_radians(),
-            degrees[2].to_radians(),
-        )
-        .normalize()
-    }
 }
 
 /// How the file stores the rotation of this entity.
@@ -188,7 +156,7 @@ pub fn add_entity(
         Some(text) => HashedString::new(text),
         None => HashedString::from_hash(archetype.hash),
     };
-    entity.guid = or_world::create::free_guid(map);
+    entity.guid = or_world_gta5::create::free_guid(map);
     entity.parent_index = -1;
     entity.num_children = 0;
     set_pose(&mut entity, pose);
@@ -204,9 +172,9 @@ pub(crate) fn in_parent_map(flags: u32) -> bool {
 /// Add an entity to `map` that is no copy: `placed`, with no parent, no children and a guid of its own; its index. The save refuses it in an RBM map that holds no entity.
 pub fn add_new_entity(
     map: &mut CMapData,
-    placed: &or_world::create::Placed,
+    placed: &or_world_gta5::create::Placed,
 ) -> Result<usize, String> {
-    or_world::create::place(map, placed).map_err(|e| e.to_string())
+    or_world_gta5::create::place(map, placed).map_err(|e| e.to_string())
 }
 
 /// Take the entity `index` out of `map`, with the LOD links renumbered: what named it as a parent has none now, a parent it named has one child fewer, and what named an entity after it names the one before.
@@ -289,7 +257,7 @@ pub fn add_archetype(
     Ok(types.archetypes.len() - 1)
 }
 
-/// Add `archetype` to `types`, a record that is no copy (`or_world::create::archetype`); its index. A name the type file declares is refused, and the save refuses it in an RBM type file that holds none.
+/// Add `archetype` to `types`, a record that is no copy (`or_world_gta5::create::archetype`); its index. A name the type file declares is refused, and the save refuses it in an RBM type file that holds none.
 pub fn add_new_archetype(
     types: &mut CMapTypes,
     archetype: CBaseArchetypeDefAny,

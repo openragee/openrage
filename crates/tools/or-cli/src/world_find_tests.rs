@@ -3,7 +3,7 @@
 
 use crate::world_fixture;
 
-use or_maps::place::PastedPlace;
+use or_world::place::PastedPlace;
 
 use super::*;
 

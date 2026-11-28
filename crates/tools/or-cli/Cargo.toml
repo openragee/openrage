@@ -16,11 +16,14 @@ or-io = { workspace = true, features = ["authoring", "awc", "fxc", "gfx", "gta6"
 # The one decode of an `.awc` stream, whichever codec it is stored in, for `awc export`.
 or-media.workspace = true
 or-title.workspace = true
-# The world model, for openrage-cli world on a `.ymap` or `.ytyp`.
+# The world core: the contract, the kept file and the driver the neutral world verbs answer through.
 or-world.workspace = true
 # The titles whose world this build opens, for the world verbs any title answers.
 or-worlds.workspace = true
-# The vector type `or_world::generate` takes a drawable's bounds in.
+# GTA V's world: its model, for openrage-cli world on a `.ymap` or `.ytyp`, and its index, its forest, its collision
+# and its search, for the world verbs of GTA V's own.
+or-world-gta5.workspace = true
+# The vector type `or_world_gta5::generate` takes a drawable's bounds in.
 glam.workspace = true
 # The dependency graph over a mount, for openrage-cli depends.
 or-depends.workspace = true

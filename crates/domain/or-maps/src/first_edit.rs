@@ -36,11 +36,12 @@ use or_source::game_import::{tree_digest, Created};
 use serde::{Deserialize, Serialize};
 
 use crate::delete::{self, Beyond, Deletion, Reached};
-use crate::edit::{pose_of, Pose};
+use crate::edit::pose_of;
 use crate::facts::{named_paths, stays_inside};
 use crate::import::{self, Incoming};
 use crate::model::{self, Maps};
 use crate::operation::{self, digest_of, At, Done, Operation, PoseData, Session, Written};
+use or_world::transform::Pose;
 
 /// The file a record states it is.
 pub const FORMAT: &str = "openrage-first-edit";

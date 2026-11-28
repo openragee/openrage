@@ -7,13 +7,13 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use or_maps::edit::Pose;
-use or_maps::gizmo::{Handle, Mode};
 use or_maps::operation::Operation;
 use or_maps::{Depth, Facts, Finding, MapSet, Maps, Placed, Scene};
 use or_project::{Container, Module, ModuleKind};
 use or_renderer::{LineVertex, OrbitCamera};
 use or_source::game_import::{Created, Report, Verdict, Watch};
+use or_world::gizmo::{Handle, Mode};
+use or_world::transform::Pose;
 
 use super::pack_import::{self, each_file, made, refused, PackJob};
 use super::Workbench;
@@ -142,9 +142,9 @@ impl Default for Snapping {
 
 impl Snapping {
     /// The snap for the manipulator, the grid held or not as the person ticked, inverted for as long as Ctrl is down.
-    pub fn for_drag(&self, invert: bool) -> or_maps::gizmo::Snap {
+    pub fn for_drag(&self, invert: bool) -> or_world::gizmo::Snap {
         let on = |on: bool| on != invert;
-        or_maps::gizmo::Snap {
+        or_world::gizmo::Snap {
             grid: on(self.grid_on).then_some(self.grid),
             degrees: on(self.turn_on).then_some(self.turn),
             scale: on(self.scale_on).then_some(self.scale),
@@ -560,7 +560,7 @@ impl AppState {
 }
 
 /// The pose a box stands at.
-pub fn pose_of_box(obb: &or_maps::gizmo::Obb) -> Pose {
+pub fn pose_of_box(obb: &or_world::gizmo::Obb) -> Pose {
     Pose {
         position: obb.position,
         rotation: obb.rotation,

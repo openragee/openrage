@@ -9,7 +9,7 @@
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
 
-use or_depends::WorldSource;
+use crate::WorldSource;
 use or_io::codec::texture::{GrcTextureFormat, TextureSource};
 use or_io::decl::{File, Gen8, Gen9};
 use or_io::gta5::gen8::GrcTexture;

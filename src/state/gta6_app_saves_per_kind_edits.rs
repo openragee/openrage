@@ -8,7 +8,7 @@ use or_io::gta5::particle::PtxEffectRule;
 use or_io::gta6::anim::{AnimAt, AnimEdit, ExpressionGroup};
 use or_io::gta6::headerless::{Entry, ParameterValue, Resource};
 use or_io::meta::{MetaInstance, Value};
-use or_maps::edit::Pose;
+use or_world::transform::Pose;
 
 use crate::state::document::DocumentId;
 use crate::state::gta6_edit::MaterialEdit;

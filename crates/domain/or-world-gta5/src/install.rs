@@ -3,9 +3,9 @@
 
 use std::path::PathBuf;
 
+use crate::world_forest::streams_in;
+use crate::{WorldCollision, WorldSource};
 use glam::Vec3;
-use or_depends::world_forest::streams_in;
-use or_depends::{WorldCollision, WorldSource};
 use or_title::MountedGame;
 use or_world::caps::{Capability, WorldCaps};
 use or_world::collision::{BoxOverlap, GroundProbe, Hit, OrientedBox};

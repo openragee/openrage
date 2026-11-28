@@ -11,7 +11,7 @@ use or_io::meta::instance::value::HashedString;
 use or_io::meta::{MetaInstance, Value};
 use or_title::vfs::{build_mounted_game_with, DlcCutoff, MountedGame};
 use or_title::{GtaInstall, MountOptions};
-use or_world::{field, keys};
+use or_world_gta5::{field, keys};
 
 /// What a reference field offers, and how the field stores a choice.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -56,13 +56,13 @@ impl ReferenceNames {
     /// The tables in scope inside `inst`, given those in scope around it.
     pub fn within(&self, inst: &MetaInstance) -> Self {
         let mut names = self.clone();
-        if let Some(types) = or_world::MapTypes::new(inst) {
+        if let Some(types) = or_world_gta5::MapTypes::new(inst) {
             names.archetypes = types
                 .archetypes()
                 .filter_map(|a| hashed(field::get(a.instance(), keys::NAME)?))
                 .collect();
         }
-        if let Some(interior) = or_world::Archetype::new(inst).interior() {
+        if let Some(interior) = or_world_gta5::Archetype::new(inst).interior() {
             names.rooms = interior
                 .rooms()
                 .map(|r| r.name().unwrap_or_default())
@@ -124,7 +124,7 @@ pub struct InteriorSets(HashMap<u32, Arc<[HashedString]>>);
 impl InteriorSets {
     /// Add the interiors one `.ytyp` declares; a later file wins.
     pub fn add(&mut self, types: &MetaInstance) {
-        let Some(types) = or_world::MapTypes::new(types) else {
+        let Some(types) = or_world_gta5::MapTypes::new(types) else {
             return;
         };
         for archetype in types.archetypes() {

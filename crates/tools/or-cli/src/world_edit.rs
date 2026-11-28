@@ -12,11 +12,11 @@ use std::process::ExitCode;
 use glam::Vec3;
 use or_io::meta::binary::{parse_meta_binary_full, MetaLayout};
 use or_io::meta::{Diagnostics, MetaInstance};
-use or_world::execute::WorkingSet;
-use or_world::map_data::MapData;
-use or_world::prefab::{self, Catalogue, EntityShape};
-use or_world::state::{weather_name, Gate, StateGroups, WorldState};
-use or_world::{ArchetypeIndex, Manifest, MapTypes};
+use or_world_gta5::execute::WorkingSet;
+use or_world_gta5::map_data::MapData;
+use or_world_gta5::prefab::{self, Catalogue, EntityShape};
+use or_world_gta5::state::{weather_name, Gate, StateGroups, WorldState};
+use or_world_gta5::{ArchetypeIndex, Manifest, MapTypes};
 
 use super::world::{flag_value, mounted_winners, name_or_hash};
 
@@ -443,8 +443,8 @@ pub fn cmd_create_executed(args: &[String]) -> ExitCode {
     let types_index = types_index(&game, &winners);
     let types: BTreeSet<u32> = {
         let map = MapData::new(&donor_root).expect("a map");
-        let derived = or_world::manifest::dependencies_of(&map, &types_index);
-        let resident = or_world::manifest::resident_type_files();
+        let derived = or_world_gta5::manifest::dependencies_of(&map, &types_index);
+        let resident = or_world_gta5::manifest::resident_type_files();
         derived.types.difference(&resident).copied().collect()
     };
 
@@ -607,7 +607,7 @@ fn prefab_capture(args: &[String]) -> ExitCode {
         eprintln!("Refusing: {e}");
         return ExitCode::FAILURE;
     }
-    let bytes = match or_world::write::encode(&captured, &layout) {
+    let bytes = match or_world_gta5::write::encode(&captured, &layout) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("Refusing: {e}\n  Nothing was written.");
@@ -698,7 +698,7 @@ fn prefab_place(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let bytes = match or_world::write::encode(&root, &layout) {
+    let bytes = match or_world_gta5::write::encode(&root, &layout) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("Refusing: {e}\n  Nothing was written.");
@@ -785,8 +785,10 @@ fn place_executed(
     };
     let needed: BTreeSet<u32> = {
         let doc = ws.document(target).expect("added above");
-        let derived =
-            or_world::manifest::dependencies_of(&MapData::new(&doc.root).expect("a map"), &index);
+        let derived = or_world_gta5::manifest::dependencies_of(
+            &MapData::new(&doc.root).expect("a map"),
+            &index,
+        );
         if derived.unresolved > 0 {
             eprintln!(
                 "Refusing: {} placed archetype(s) are declared by no type file in the install, so \
@@ -795,7 +797,7 @@ fn place_executed(
             );
             return ExitCode::FAILURE;
         }
-        let resident = or_world::manifest::resident_type_files();
+        let resident = or_world_gta5::manifest::resident_type_files();
         derived.types.difference(&resident).copied().collect()
     };
     let stated = match ws.state_types(map, &needed) {

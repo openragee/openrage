@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::gta6::script::ir::{self, Callee, Expr, ExprSugar, Scalar, Var, VarInfo, Width};
+use crate::gta6::script::ir::{self, Callee, Expr, ExprSugar, Kind, Scalar, Var, VarInfo, Width};
 use crate::gta6::script::tree::{self, Group, Stmt, Sugar};
 use crate::gta6::script::{Context, Pass, Stats};
 
@@ -32,18 +32,25 @@ pub fn truth(path: &str, args: usize) -> bool {
     table::truth(path, args)
 }
 
+/// The kind a call of the runtime's member `path` with `args` arguments yields, where its library declares every public overload of that member to return it: a truth, a number or a string.
+// ⚠ As `truth`: only where the user's list names the call rightly. A member whose overloads
+// return objects, values of several cells or enums states none.
+pub fn result(path: &str, args: usize) -> Option<Kind> {
+    table::result(path, args)
+}
+
 /// Reads each call of the runtime's library the table holds as the C# it is.
 pub fn run(f: &mut tree::Function, cx: &Context<'_>, _stats: &mut Stats) {
     if !cx.options.on(Pass::Runtime) {
         return;
     }
     let body = &mut f.body;
-    let reached = Reached::of(body);
-    let made = made(body, &reached, &f.head.vars);
+    let frame = Frame::of(body, &f.head.vars);
+    let made = made(body, &frame, &f.head.vars);
     // An explicit stack: a body nests as deep as its listing does.
     let mut work: Vec<&mut Vec<Stmt>> = vec![body];
     while let Some(list) = work.pop() {
-        construct(list, &reached);
+        construct(list, &frame);
         for stmt in list {
             tops(stmt, &mut |top, taken| read_all(top, taken, &made));
             work.extend(tree::nested_mut(stmt));
@@ -187,9 +194,10 @@ fn exact(e: &Expr, made: &BTreeMap<Var, u32>) -> Option<u32> {
 /// The variables of a body that hold an object of one builtin type and nothing else, by the type's index: every assignment of each makes such an object, and no pointer or wider variable may reach it.
 // ⚠ A parameter is handed whatever its callers pass, and a global whatever any program stores:
 // neither is one. Every statement that may assign a variable is a simple one, a construct's
-// included; one through an address is ruled out by `reached`, and one of a value of several
-// cells into a lower local, which runs across the locals after it, by `vars`.
-fn made(body: &[Stmt], reached: &Reached, vars: &BTreeMap<Var, VarInfo>) -> BTreeMap<Var, u32> {
+// included; one through an address is ruled out by `frame`, and one of a value of several
+// cells into a lower local, which runs across the locals after it, by `vars`, but of a local
+// `frame` holds alone, which no other variable runs across.
+fn made(body: &[Stmt], frame: &Frame, vars: &BTreeMap<Var, VarInfo>) -> BTreeMap<Var, u32> {
     let mut seen: BTreeMap<Var, Option<u32>> = BTreeMap::new();
     tree::each_simple(body, &mut |stmt| {
         let of = match stmt {
@@ -217,11 +225,11 @@ fn made(body: &[Stmt], reached: &Reached, vars: &BTreeMap<Var, VarInfo>) -> BTre
         .min();
     let own = |var: &Var| {
         let kind = match var {
-            Var::Local(n) => lowest_wide.is_none_or(|low| low > *n),
+            Var::Local(n) => frame.alone.contains(n) || lowest_wide.is_none_or(|low| low > *n),
             Var::Value { .. } | Var::Stack { .. } => !wide(var),
             Var::Param(_) | Var::Global { .. } => false,
         };
-        kind && !reached.has(*var)
+        kind && !frame.has(*var)
     };
     seen.into_iter()
         .filter(|(var, _)| own(var))
@@ -229,12 +237,145 @@ fn made(body: &[Stmt], reached: &Reached, vars: &BTreeMap<Var, VarInfo>) -> BTre
         .collect()
 }
 
+/// What a pointer the body takes may reach of its variables.
+// ⚠ A local `values::widths` proves one cell wide is one no other variable runs across: the
+// address of a local below it, handed to a function or gone through, stops short of it. Only an
+// address that names its cell, or runs onto it by a stated count, reaches it. One moved by a
+// count nothing states, worked on as a number, handed to an intrinsic or kept anywhere may come
+// out anywhere: then no local is held alone.
+struct Frame {
+    reached: Reached,
+    /// The locals proved one cell wide that no address the body takes reaches.
+    alone: BTreeSet<u32>,
+}
+
+impl Frame {
+    fn of(body: &[Stmt], vars: &BTreeMap<Var, VarInfo>) -> Frame {
+        Frame {
+            reached: Reached::of(body),
+            alone: alone(body, vars),
+        }
+    }
+
+    /// Whether code that is not handed `var` may still read or write it.
+    fn has(&self, var: Var) -> bool {
+        match var {
+            Var::Local(n) if self.alone.contains(&n) => false,
+            other => self.reached.has(other),
+        }
+    }
+}
+
+/// The locals proved one cell wide that no address `body` takes reaches: none where an address of a local is used other than in place.
+fn alone(body: &[Stmt], vars: &BTreeMap<Var, VarInfo>) -> BTreeSet<u32> {
+    let mut alone: BTreeSet<u32> = vars
+        .iter()
+        .filter_map(|(var, info)| match var {
+            Var::Local(n) if info.single && info.width == Width::Cell => Some(*n),
+            _ => None,
+        })
+        .collect();
+    if alone.is_empty() {
+        return alone;
+    }
+    let mut taken = 0usize;
+    // The first cell and the last of each address of a local used in place.
+    let mut placed: Vec<(u32, u32)> = Vec::new();
+    tree::each_expr(body, &mut |top| {
+        top.walk(&mut |e| match e {
+            Expr::AddrOf {
+                var: Var::Local(_), ..
+            } => taken += 1,
+            Expr::Call { callee, args, .. } if !matches!(callee, Callee::Intrinsic { .. }) => {
+                placed.extend(args.iter().filter_map(|arg| span(arg, 0, Some(1))));
+            }
+            Expr::Load { ty, addr, offset } => {
+                placed.extend(span(addr, *offset, Some(ty.bytes())));
+            }
+            Expr::LoadBytes {
+                addr,
+                offset,
+                bytes,
+            } => placed.extend(span(addr, *offset, Some(*bytes))),
+            _ => {}
+        });
+    });
+    tree::each_simple(body, &mut |stmt| {
+        let at = match stmt {
+            ir::Stmt::Store {
+                kind, addr, offset, ..
+            } => span(addr, *offset, Some(kind.bytes())),
+            ir::Stmt::StoreBytes {
+                addr,
+                offset,
+                bytes,
+                ..
+            } => span(addr, *offset, Some(*bytes)),
+            ir::Stmt::StoreF32Slots { addr, offset, .. } => span(addr, *offset, None),
+            ir::Stmt::ZeroBytes { addr, bytes } => span(addr, 0, Some(*bytes)),
+            ir::Stmt::StepI32 { addr, offset, .. } => span(addr, *offset, Some(4)),
+            // An address a statement assigns or keeps is no access in place.
+            _ => None,
+        };
+        placed.extend(at);
+    });
+    if placed.len() != taken {
+        return BTreeSet::new();
+    }
+    for (first, last) in placed {
+        let reached: Vec<u32> = alone.range(first..=last).copied().collect();
+        for n in reached {
+            alone.remove(&n);
+        }
+    }
+    alone
+}
+
+/// The first local cell and the last that `bytes` bytes at `offset` past `addr` run over, where `addr` is a local's address moved by stated counts; with no `bytes`, to the frame's end.
+fn span(addr: &Expr, offset: u32, bytes: Option<u32>) -> Option<(u32, u32)> {
+    let (first, moved) = in_place(addr)?;
+    let from = moved.checked_add(u64::from(offset))?;
+    let past = match bytes {
+        Some(bytes) => from.saturating_add(u64::from(bytes.max(1)) - 1) / 8,
+        None => u64::from(u32::MAX),
+    };
+    let last = u64::from(first).saturating_add(past);
+    Some((first, u32::try_from(last).unwrap_or(u32::MAX)))
+}
+
+/// The cell a local's address names and the bytes it is then moved by, where every move is by a count stated as a constant.
+fn in_place(addr: &Expr) -> Option<(u32, u64)> {
+    let mut e = addr;
+    let mut moved: u64 = 0;
+    loop {
+        match e {
+            Expr::AddrOf {
+                var: Var::Local(n),
+                cell,
+            } => return Some((n.saturating_add(*cell), moved)),
+            Expr::Sugar {
+                kind: ExprSugar::Ref | ExprSugar::Out,
+                e: inner,
+            } => e = &**inner,
+            // ⚠ A count with its sign bit set may move the address down the frame.
+            Expr::ByteOffset { addr, offset } => match &**offset {
+                Expr::Const(c) if c.bits < 0x8000_0000 => {
+                    moved = moved.checked_add(c.bits)?;
+                    e = &**addr;
+                }
+                _ => return None,
+            },
+            _ => return None,
+        }
+    }
+}
+
 /// Groups each object made and the constructor of its own type the next statement runs on it into the one `new` they were.
-fn construct(list: &mut Vec<Stmt>, reached: &Reached) {
+fn construct(list: &mut Vec<Stmt>, frame: &Frame) {
     let mut out: Vec<Stmt> = Vec::with_capacity(list.len());
     for stmt in list.drain(..) {
         match (out.pop(), stmt) {
-            (Some(Stmt::Simple(made)), Stmt::Simple(call)) if constructs(&made, &call, reached) => {
+            (Some(Stmt::Simple(made)), Stmt::Simple(call)) if constructs(&made, &call, frame) => {
                 let parts = vec![made, call];
                 let kind = Group::Construct;
                 out.push(Stmt::Sugar(Box::new(Sugar::Group { kind, parts })));
@@ -251,7 +392,7 @@ fn construct(list: &mut Vec<Stmt>, reached: &Reached) {
 /// Whether `made` makes an object of a type of the runtime and `call` runs that type's constructor on it, handed nothing that could see the object before it is made.
 // ⚠ `x = new T(a)` evaluates `a` before `x` holds the object: no argument may name the
 // variable, and no pointer or other function may reach it.
-fn constructs(made: &ir::Stmt, call: &ir::Stmt, reached: &Reached) -> bool {
+fn constructs(made: &ir::Stmt, call: &ir::Stmt, frame: &Frame) -> bool {
     let (
         ir::Stmt::Assign {
             target,
@@ -272,7 +413,7 @@ fn constructs(made: &ir::Stmt, call: &ir::Stmt, reached: &Reached) -> bool {
     let own = ty.id & BUILTIN != 0 && ty.id & !BUILTIN == *of;
     let constructor = table::reading(path, args.len()) == Some(Reading::Constructor);
     let void = returns.is_none_or(|n| n == 0);
-    let unseen = !reached.has(*target) && !passed.iter().any(|arg| mentions(arg, *target));
+    let unseen = !frame.has(*target) && !passed.iter().any(|arg| mentions(arg, *target));
     own && constructor && void && receiver == target && unseen
 }
 

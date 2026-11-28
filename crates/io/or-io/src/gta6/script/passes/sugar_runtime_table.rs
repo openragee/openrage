@@ -5,6 +5,9 @@
 //! comes only from a user's list, so a call no list names is never found here. A generic type's
 //! count of parameters follows an underscore, as a list spells it: `Dictionary_2`.
 
+use crate::gta6::script::ir::Kind;
+
+use self::Answer::{Text, F32, F64, I16, I32, I64, I8, U16, U32, U64, U8};
 use self::Form::{Get, Method, New, Open, OpenGet, OpenSet, Set, Static, StaticGet};
 
 /// One set of overloads of a member.
@@ -38,6 +41,43 @@ pub(super) struct Type {
     pub members: &'static [(&'static str, Form)],
     /// The members every public overload of which returns `bool`.
     pub truths: &'static [&'static str],
+    /// The members every public overload of which returns the one number or string stated.
+    pub results: &'static [(&'static str, Answer)],
+}
+
+/// What every public overload of a member returns, where that is a number or a string.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Answer {
+    I8,
+    U8,
+    I16,
+    U16,
+    I32,
+    U32,
+    I64,
+    U64,
+    F32,
+    F64,
+    /// A reference to a `string`.
+    Text,
+}
+
+impl Answer {
+    fn kind(self) -> Kind {
+        match self {
+            Answer::I8 => Kind::I8,
+            Answer::U8 => Kind::U8,
+            Answer::I16 => Kind::I16,
+            Answer::U16 => Kind::U16,
+            Answer::I32 => Kind::I32,
+            Answer::U32 => Kind::U32,
+            Answer::I64 => Kind::I64,
+            Answer::U64 => Kind::U64,
+            Answer::F32 => Kind::F32,
+            Answer::F64 => Kind::F64,
+            Answer::Text => Kind::String,
+        }
+    }
 }
 
 /// What a call of a member of the library reads as in C#.
@@ -133,6 +173,26 @@ pub(super) fn truth(path: &str, args: usize) -> bool {
     declared && ty.truths.contains(&member)
 }
 
+/// The kind a call of the member `path` with `args` arguments yields, where it is of an overload the table holds and every public overload of that member returns that kind.
+// ⚠ A value of several cells, an object of a type and an enum are no kind stated here.
+pub(super) fn result(path: &str, args: usize) -> Option<Kind> {
+    if truth(path, args) {
+        return Some(Kind::Bool);
+    }
+    let (ty, member) = found(path)?;
+    let declared = ty
+        .members
+        .iter()
+        .any(|(name, form)| *name == member && takes(*form, args) && answers(*form));
+    let answer = ty.results.iter().find(|(name, _)| *name == member);
+    answer.filter(|_| declared).map(|(_, answer)| answer.kind())
+}
+
+/// Whether an overload of the form `form` hands back what its declaration returns.
+fn answers(form: Form) -> bool {
+    !matches!(form, Form::Set | Form::OpenSet | Form::New(_))
+}
+
 /// The members of a whole number.
 const WHOLE: &[(&str, Form)] = &[
     ("CompareTo", Method(&[1])),
@@ -178,6 +238,10 @@ const FLOATING_TRUTHS: &[&str] = &[
     "TryParse",
 ];
 
+/// What the members of every number return, but `Parse`, which returns a value of the number's own type.
+const NUMBER_RESULTS: &[(&str, Answer)] =
+    &[("CompareTo", I32), ("GetHashCode", I32), ("ToString", Text)];
+
 /// Every type the table holds, each once.
 pub(super) const TYPES: &[Type] = &[
     Type {
@@ -193,6 +257,7 @@ pub(super) const TYPES: &[Type] = &[
             ("ToString", Open(&[0])),
         ],
         truths: &["Equals", "ReferenceEquals"],
+        results: &[("GetHashCode", I32), ("ToString", Text)],
     },
     // The class every value type derives from: its members are handed the value boxed.
     Type {
@@ -204,6 +269,7 @@ pub(super) const TYPES: &[Type] = &[
             ("ToString", Open(&[0])),
         ],
         truths: &["Equals"],
+        results: &[("GetHashCode", I32), ("ToString", Text)],
     },
     // ⚠ No type a script declares derives from `Delegate`: C# refuses one, and a delegate type
     // a compiler declares holds no method bodies of its own.
@@ -225,6 +291,7 @@ pub(super) const TYPES: &[Type] = &[
             ("op_Inequality", Static(&[2])),
         ],
         truths: &["get_HasSingleTarget", "op_Equality", "op_Inequality"],
+        results: &[],
     },
     // An abstract class C# lets a script derive from.
     Type {
@@ -283,6 +350,13 @@ pub(super) const TYPES: &[Type] = &[
             "get_IsValueType",
             "op_Equality",
             "op_Inequality",
+        ],
+        results: &[
+            ("GetHashCode", I32),
+            ("ToString", Text),
+            ("get_Name", Text),
+            ("get_FullName", Text),
+            ("get_Namespace", Text),
         ],
     },
     Type {
@@ -346,6 +420,37 @@ pub(super) const TYPES: &[Type] = &[
             "op_Equality",
             "op_Inequality",
         ],
+        results: &[
+            ("CompareTo", I32),
+            ("Compare", I32),
+            ("CompareOrdinal", I32),
+            ("Concat", Text),
+            ("Copy", Text),
+            ("Format", Text),
+            ("GetHashCode", I32),
+            ("IndexOf", I32),
+            ("IndexOfAny", I32),
+            ("Insert", Text),
+            ("Intern", Text),
+            ("Join", Text),
+            ("LastIndexOf", I32),
+            ("LastIndexOfAny", I32),
+            ("Normalize", Text),
+            ("PadLeft", Text),
+            ("PadRight", Text),
+            ("Remove", Text),
+            ("Replace", Text),
+            ("Substring", Text),
+            ("ToLower", Text),
+            ("ToLowerInvariant", Text),
+            ("ToString", Text),
+            ("ToUpper", Text),
+            ("ToUpperInvariant", Text),
+            ("Trim", Text),
+            ("TrimEnd", Text),
+            ("TrimStart", Text),
+            ("get_Length", I32),
+        ],
     },
     // ⚠ C# refuses a class that derives from `Array`.
     Type {
@@ -399,6 +504,20 @@ pub(super) const TYPES: &[Type] = &[
             "get_IsReadOnly",
             "get_IsSynchronized",
         ],
+        results: &[
+            ("GetLength", I32),
+            ("GetLongLength", I64),
+            ("GetLowerBound", I32),
+            ("GetUpperBound", I32),
+            ("get_Length", I32),
+            ("get_LongLength", I64),
+            ("get_Rank", I32),
+            ("BinarySearch", I32),
+            ("FindIndex", I32),
+            ("FindLastIndex", I32),
+            ("IndexOf", I32),
+            ("LastIndexOf", I32),
+        ],
     },
     // ⚠ The objects of `Enum` are boxed enums, and an enum declares no method.
     Type {
@@ -423,6 +542,13 @@ pub(super) const TYPES: &[Type] = &[
             ("TryParse", Static(&[2, 3, 4])),
         ],
         truths: &["Equals", "HasFlag", "IsDefined", "TryParse"],
+        results: &[
+            ("CompareTo", I32),
+            ("GetHashCode", I32),
+            ("ToString", Text),
+            ("Format", Text),
+            ("GetName", Text),
+        ],
     },
     Type {
         name: "System.Random",
@@ -437,6 +563,12 @@ pub(super) const TYPES: &[Type] = &[
             ("get_Shared", StaticGet),
         ],
         truths: &[],
+        results: &[
+            ("Next", I32),
+            ("NextDouble", F64),
+            ("NextInt64", I64),
+            ("NextSingle", F32),
+        ],
     },
     Type {
         name: "System.WeakReference",
@@ -450,6 +582,7 @@ pub(super) const TYPES: &[Type] = &[
             ("get_TrackResurrection", OpenGet),
         ],
         truths: &["get_IsAlive", "get_TrackResurrection"],
+        results: &[],
     },
     Type {
         name: "System.WeakReference_1",
@@ -460,12 +593,14 @@ pub(super) const TYPES: &[Type] = &[
             ("TryGetTarget", Method(&[1])),
         ],
         truths: &["TryGetTarget"],
+        results: &[],
     },
     Type {
         name: "System.EventArgs",
         value: false,
         members: &[("Ctor", New(&[0]))],
         truths: &[],
+        results: &[],
     },
     Type {
         name: "System.Exception",
@@ -482,6 +617,13 @@ pub(super) const TYPES: &[Type] = &[
             ("get_StackTrace", OpenGet),
         ],
         truths: &[],
+        results: &[
+            ("ToString", Text),
+            ("get_HResult", I32),
+            ("get_Message", Text),
+            ("get_Source", Text),
+            ("get_StackTrace", Text),
+        ],
     },
     // A static class: every member is on the type.
     Type {
@@ -507,6 +649,20 @@ pub(super) const TYPES: &[Type] = &[
             ("ToUInt64", Static(&[1, 2])),
         ],
         truths: &["ToBoolean"],
+        results: &[
+            ("ToBase64String", Text),
+            ("ToByte", U8),
+            ("ToDouble", F64),
+            ("ToInt16", I16),
+            ("ToInt32", I32),
+            ("ToInt64", I64),
+            ("ToSByte", I8),
+            ("ToSingle", F32),
+            ("ToString", Text),
+            ("ToUInt16", U16),
+            ("ToUInt32", U32),
+            ("ToUInt64", U64),
+        ],
     },
     // A static class: every member is on the type.
     Type {
@@ -524,6 +680,7 @@ pub(super) const TYPES: &[Type] = &[
             ("WaitForPendingFinalizers", Static(&[0])),
         ],
         truths: &[],
+        results: &[("GetGeneration", I32), ("GetTotalMemory", I64)],
     },
     Type {
         name: "System.Boolean",
@@ -538,6 +695,7 @@ pub(super) const TYPES: &[Type] = &[
             ("TryParse", Static(&[2])),
         ],
         truths: &["Equals", "Parse", "TryParse"],
+        results: &[("CompareTo", I32), ("GetHashCode", I32), ("ToString", Text)],
     },
     Type {
         name: "System.Char",
@@ -583,66 +741,82 @@ pub(super) const TYPES: &[Type] = &[
             "IsWhiteSpace",
             "TryParse",
         ],
+        results: &[
+            ("CompareTo", I32),
+            ("GetHashCode", I32),
+            ("ToString", Text),
+            ("GetNumericValue", F64),
+        ],
     },
     Type {
         name: "System.Byte",
         value: true,
         members: WHOLE,
         truths: WHOLE_TRUTHS,
+        results: NUMBER_RESULTS,
     },
     Type {
         name: "System.SByte",
         value: true,
         members: WHOLE,
         truths: WHOLE_TRUTHS,
+        results: NUMBER_RESULTS,
     },
     Type {
         name: "System.Int16",
         value: true,
         members: WHOLE,
         truths: WHOLE_TRUTHS,
+        results: NUMBER_RESULTS,
     },
     Type {
         name: "System.UInt16",
         value: true,
         members: WHOLE,
         truths: WHOLE_TRUTHS,
+        results: NUMBER_RESULTS,
     },
     Type {
         name: "System.Int32",
         value: true,
         members: WHOLE,
         truths: WHOLE_TRUTHS,
+        results: NUMBER_RESULTS,
     },
     Type {
         name: "System.UInt32",
         value: true,
         members: WHOLE,
         truths: WHOLE_TRUTHS,
+        results: NUMBER_RESULTS,
     },
     Type {
         name: "System.Int64",
         value: true,
         members: WHOLE,
         truths: WHOLE_TRUTHS,
+        results: NUMBER_RESULTS,
     },
     Type {
         name: "System.UInt64",
         value: true,
         members: WHOLE,
         truths: WHOLE_TRUTHS,
+        results: NUMBER_RESULTS,
     },
     Type {
         name: "System.Single",
         value: true,
         members: FLOATING,
         truths: FLOATING_TRUTHS,
+        results: NUMBER_RESULTS,
     },
     Type {
         name: "System.Double",
         value: true,
         members: FLOATING,
         truths: FLOATING_TRUTHS,
+        results: NUMBER_RESULTS,
     },
     Type {
         name: "System.Guid",
@@ -669,6 +843,7 @@ pub(super) const TYPES: &[Type] = &[
             "op_Equality",
             "op_Inequality",
         ],
+        results: &[("CompareTo", I32), ("GetHashCode", I32), ("ToString", Text)],
     },
     Type {
         name: "System.Nullable_1",
@@ -682,6 +857,7 @@ pub(super) const TYPES: &[Type] = &[
             ("get_Value", Get),
         ],
         truths: &["Equals", "get_HasValue"],
+        results: &[("GetHashCode", I32), ("ToString", Text)],
     },
     Type {
         name: "System.DateTime",
@@ -765,6 +941,31 @@ pub(super) const TYPES: &[Type] = &[
             "op_GreaterThan",
             "op_GreaterThanOrEqual",
         ],
+        results: &[
+            ("CompareTo", I32),
+            ("GetHashCode", I32),
+            ("ToBinary", I64),
+            ("ToFileTime", I64),
+            ("ToLongDateString", Text),
+            ("ToLongTimeString", Text),
+            ("ToOADate", F64),
+            ("ToShortDateString", Text),
+            ("ToShortTimeString", Text),
+            ("ToString", Text),
+            ("get_Day", I32),
+            ("get_DayOfYear", I32),
+            ("get_Hour", I32),
+            ("get_Microsecond", I32),
+            ("get_Millisecond", I32),
+            ("get_Minute", I32),
+            ("get_Month", I32),
+            ("get_Nanosecond", I32),
+            ("get_Second", I32),
+            ("get_Ticks", I64),
+            ("get_Year", I32),
+            ("Compare", I32),
+            ("DaysInMonth", I32),
+        ],
     },
     Type {
         name: "System.TimeSpan",
@@ -830,6 +1031,27 @@ pub(super) const TYPES: &[Type] = &[
             "op_GreaterThan",
             "op_GreaterThanOrEqual",
         ],
+        results: &[
+            ("CompareTo", I32),
+            ("GetHashCode", I32),
+            ("ToString", Text),
+            ("get_Days", I32),
+            ("get_Hours", I32),
+            ("get_Microseconds", I32),
+            ("get_Milliseconds", I32),
+            ("get_Minutes", I32),
+            ("get_Nanoseconds", I32),
+            ("get_Seconds", I32),
+            ("get_Ticks", I64),
+            ("get_TotalDays", F64),
+            ("get_TotalHours", F64),
+            ("get_TotalMicroseconds", F64),
+            ("get_TotalMilliseconds", F64),
+            ("get_TotalMinutes", F64),
+            ("get_TotalNanoseconds", F64),
+            ("get_TotalSeconds", F64),
+            ("Compare", I32),
+        ],
     },
     Type {
         name: "System.Collections.DictionaryEntry",
@@ -843,6 +1065,7 @@ pub(super) const TYPES: &[Type] = &[
             ("set_Value", Set),
         ],
         truths: &[],
+        results: &[],
     },
     Type {
         name: "System.Collections.Generic.Dictionary_2",
@@ -871,6 +1094,7 @@ pub(super) const TYPES: &[Type] = &[
             "TryAdd",
             "TryGetValue",
         ],
+        results: &[("EnsureCapacity", I32), ("get_Count", I32)],
     },
     Type {
         name: "System.Collections.Generic.List_1",
@@ -914,6 +1138,17 @@ pub(super) const TYPES: &[Type] = &[
             ("get_Count", Get),
         ],
         truths: &["Contains", "Exists", "Remove", "TrueForAll"],
+        results: &[
+            ("BinarySearch", I32),
+            ("EnsureCapacity", I32),
+            ("FindIndex", I32),
+            ("FindLastIndex", I32),
+            ("IndexOf", I32),
+            ("LastIndexOf", I32),
+            ("RemoveAll", I32),
+            ("get_Capacity", I32),
+            ("get_Count", I32),
+        ],
     },
     Type {
         name: "System.Collections.Generic.HashSet_1",
@@ -956,6 +1191,11 @@ pub(super) const TYPES: &[Type] = &[
             "SetEquals",
             "TryGetValue",
         ],
+        results: &[
+            ("EnsureCapacity", I32),
+            ("RemoveWhere", I32),
+            ("get_Count", I32),
+        ],
     },
     Type {
         name: "System.Collections.Generic.Queue_1",
@@ -977,6 +1217,7 @@ pub(super) const TYPES: &[Type] = &[
             ("get_Count", Get),
         ],
         truths: &["Contains", "TryDequeue", "TryPeek"],
+        results: &[("EnsureCapacity", I32), ("get_Count", I32)],
     },
     Type {
         name: "System.Collections.Generic.Stack_1",
@@ -998,6 +1239,7 @@ pub(super) const TYPES: &[Type] = &[
             ("get_Count", Get),
         ],
         truths: &["Contains", "TryPeek", "TryPop"],
+        results: &[("EnsureCapacity", I32), ("get_Count", I32)],
     },
     Type {
         name: "System.Text.StringBuilder",
@@ -1022,6 +1264,13 @@ pub(super) const TYPES: &[Type] = &[
             ("get_MaxCapacity", Get),
         ],
         truths: &["Equals"],
+        results: &[
+            ("EnsureCapacity", I32),
+            ("ToString", Text),
+            ("get_Capacity", I32),
+            ("get_Length", I32),
+            ("get_MaxCapacity", I32),
+        ],
     },
     Type {
         name: "System.Threading.CancellationToken",
@@ -1047,6 +1296,7 @@ pub(super) const TYPES: &[Type] = &[
             "op_Equality",
             "op_Inequality",
         ],
+        results: &[("GetHashCode", I32)],
     },
     Type {
         name: "System.Threading.CancellationTokenSource",
@@ -1063,6 +1313,7 @@ pub(super) const TYPES: &[Type] = &[
             ("CreateLinkedTokenSource", Static(&[1, 2])),
         ],
         truths: &["TryReset", "get_IsCancellationRequested"],
+        results: &[],
     },
     // ⚠ `Wait` returns nothing in some overloads and a truth in others: it answers none.
     Type {
@@ -1106,6 +1357,7 @@ pub(super) const TYPES: &[Type] = &[
             "get_IsCompletedSuccessfully",
             "get_IsFaulted",
         ],
+        results: &[("get_Id", I32)],
     },
     Type {
         name: "System.Threading.Tasks.Task_1",
@@ -1118,5 +1370,6 @@ pub(super) const TYPES: &[Type] = &[
             ("get_Factory", StaticGet),
         ],
         truths: &[],
+        results: &[],
     },
 ];

@@ -470,6 +470,156 @@ fn a_local_a_wider_variable_below_it_may_run_across_proves_no_object() {
         Var::Local(0),
         VarInfo::new(Width::Cells)
     )])));
+    // A local proved one cell wide is one no other variable runs across.
+    let single = VarInfo {
+        single: true,
+        ..VarInfo::new(Width::Cell)
+    };
+    assert!(read(BTreeMap::from([
+        (Var::Local(0), VarInfo::new(Width::Cells)),
+        (Var::Local(1), single),
+    ])));
+}
+
+/// The body after the pass, with the locals `singles` proved one cell wide.
+fn ran_with_singles(body: &[Stmt], singles: &[u32]) -> Vec<Stmt> {
+    let names = Names::default();
+    let cx = Context::new(&names, Project::empty(), Options::default());
+    let single = VarInfo {
+        single: true,
+        ..VarInfo::new(Width::Cell)
+    };
+    let vars = singles
+        .iter()
+        .map(|n| (Var::Local(*n), single.clone()))
+        .collect();
+    let mut f = tree::Function {
+        head: Head { vars, ..head() },
+        body: body.to_vec(),
+    };
+    run(&mut f, &cx, &mut Stats::default());
+    f.body
+}
+
+#[test]
+fn a_local_proved_one_cell_wide_is_reached_by_no_address_but_one_that_names_its_cell() {
+    let path = "System.Random.NextBytes";
+    let made = ir::Stmt::Assign {
+        target: Var::Local(1),
+        value: Expr::NewObject(made_random(INDEX)),
+    };
+    let constructed = ir::Stmt::Eval(builtin("System.Random.Ctor", vec![local(1)], 0));
+    let filled = eval(builtin(path, vec![local(1), p(1)], 0));
+    let handed = |addr: Expr| {
+        eval(builtin(
+            "System.Text.StringBuilder.Append",
+            vec![p(1), addr],
+            1,
+        ))
+    };
+    let body = |before: Stmt| {
+        vec![
+            before,
+            Stmt::Simple(made.clone()),
+            Stmt::Simple(constructed.clone()),
+            filled.clone(),
+        ]
+    };
+    let grouped = |done: &[Stmt]| done.iter().any(|stmt| matches!(stmt, Stmt::Sugar(_)));
+    let load = |offset: u32| Expr::Load {
+        ty: Scalar::U64,
+        addr: Box::new(address(0)),
+        offset,
+    };
+    let moved = |offset: Expr| Expr::ByteOffset {
+        addr: Box::new(address(0)),
+        offset: Box::new(offset),
+    };
+
+    // The address of the local below it handed to a function, gone through for its own cell,
+    // or moved by a count that stays in that cell.
+    for before in [handed(address(0)), handed(load(0)), handed(moved(int(4)))] {
+        let body = body(before);
+        let done = ran_with_singles(&body, &[1]);
+        assert!(grouped(&done) && on_receiver(&done, path), "{done:?}");
+        assert_eq!(tree::desugar(done), body);
+        // With no local proved one cell wide, an address below reaches every local after it.
+        let done = ran_with_singles(&body, &[]);
+        assert!(!grouped(&done) && !on_receiver(&done, path), "{done:?}");
+    }
+
+    // Its own address, the address of the cell of the local below that is its cell, a load and
+    // a move that run onto it, a move by a count nothing states or one down the frame, and an
+    // address kept in a variable or handed to an intrinsic.
+    let intrinsic = Expr::Call {
+        callee: Callee::Intrinsic {
+            name: "array_element_address".to_owned(),
+            ty: None,
+            wrapper: None,
+        },
+        args: vec![address(0), int(0)],
+        returns: Some(1),
+    };
+    for before in [
+        handed(address(1)),
+        handed(Expr::AddrOf {
+            var: Var::Local(0),
+            cell: 1,
+        }),
+        handed(load(8)),
+        handed(moved(int(8))),
+        handed(moved(p(0))),
+        handed(moved(int(-8))),
+        assign(Var::Param(0), address(0)),
+        handed(intrinsic),
+    ] {
+        let body = body(before);
+        let done = ran_with_singles(&body, &[1]);
+        assert!(!grouped(&done) && !on_receiver(&done, path), "{done:?}");
+        assert_eq!(tree::desugar(done), body);
+    }
+}
+
+#[test]
+fn a_member_every_public_overload_of_which_answers_one_kind_yields_it_where_the_call_is_one() {
+    assert_eq!(result("System.Random.NextDouble", 1), Some(Kind::F64));
+    assert_eq!(result("System.Random.Next", 3), Some(Kind::I32));
+    assert_eq!(result("System.Convert.ToInt64", 1), Some(Kind::I64));
+    assert_eq!(result("System.Convert.ToUInt16", 2), Some(Kind::U16));
+    assert_eq!(
+        result("System.TimeSpan.get_TotalMilliseconds", 1),
+        Some(Kind::F64)
+    );
+    assert_eq!(result("System.String.Substring", 2), Some(Kind::String));
+    assert_eq!(result("System.Int32.GetHashCode", 1), Some(Kind::I32));
+    assert_eq!(result("System.Single.ToString", 1), Some(Kind::String));
+    // A truth is a kind as well.
+    assert_eq!(result("System.String.IsNullOrEmpty", 1), Some(Kind::Bool));
+    // No overload takes as many arguments, a member that answers an object, one whose overloads
+    // answer two kinds, one that answers the number's own type, and what the table does not hold.
+    assert_eq!(result("System.Random.Next", 5), None);
+    assert_eq!(result("System.Text.StringBuilder.Append", 2), None);
+    assert_eq!(result("System.TimeSpan.Divide", 2), None);
+    assert_eq!(result("System.Int32.Parse", 1), None);
+    assert_eq!(result("System.Text.StringBuilder.Method_7", 1), None);
+    assert_eq!(result("NextDouble", 1), None);
+}
+
+#[test]
+fn every_kind_the_table_states_is_of_a_member_of_its_type_that_answers_once_and_no_truth() {
+    for ty in TYPES {
+        for (name, _) in ty.results {
+            let answers = ty.members.iter().any(|(member, form)| {
+                member == name && !matches!(form, Form::Set | Form::OpenSet | Form::New(_))
+            });
+            assert!(answers, "{}.{name}", ty.name);
+            assert!(!ty.truths.contains(name), "{}.{name}", ty.name);
+        }
+        let mut names: Vec<&str> = ty.results.iter().map(|(name, _)| *name).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), ty.results.len(), "{}", ty.name);
+    }
 }
 
 #[test]

@@ -43158,6 +43158,1381 @@
    "estimate": "PLAYER::_UNREGISTER_INTERACTION_GROUP",
    "estimate_confidence": "medium",
    "estimate_evidence": "order-audit: after UNREGISTER_INTERACTIVE_FOCUS; deferred FUN_140bd3130(0x4F,h) deletes the class-0x6FB75677 group that shipped _REGISTER_INTERACTION_GROUP (0x4C941FA2) creates; every call is guarded by shipped _IS_INTERACTION_GROUP_VALID(h); first of an unregister run (0x450a780..0x450a950) that mirrors the register run 0x4504dd0..0x45050e0 one for one; conflicts in order with _UNREGISTER_INTERAC"
+  },
+  "0x320C3FF45146827B": {
+   "name": "_0x320C3FF45146827B",
+   "confidence": "unnamed",
+   "rva": "0x03C05330",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 4,
+   "estimate": "FLOCK::_SET_ANIMAL_IS_WILD",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among ADD_ROPE < ADD_SHOCKING_EVENT_FOR_ENTITY < ADD_VEG_MODIFIER_SPHERE < ADD_VEG_MODIFIER_ZONE < SET_ANIMAL_IS_WILD < CREATE_GRAVITY_WELL < GET_ANIMAL_TUNING_BOOL_PARAM < SET_ANIMAL_TUNING_BOOL_PARAM < SET_ANIMAL_TUNING_FLOAT_PARAM; "
+  },
+  "0xCDE1A593D6456087": {
+   "name": "_0xCDE1A593D6456087",
+   "confidence": "unnamed",
+   "rva": "0x03C06D60",
+   "arg_cells": 13,
+   "return_cells": 1,
+   "calls": 6,
+   "estimate": "ENTITY::_CREATE_FOOTPATH_TRAIL",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among CREATE_MODEL_HIDE_EXCLUDING_SCRIPT_OBJECTS < CREATE_MODEL_HIDE < CREATE_MODEL_SWAP < CREATE_SHOCKING_EVENT < CREATE_FOOTPATH_TRAIL < CREATE_TRACKED_POINT < DEACTIVATE_GOAL_CONTEXT < DELETE_CARRIABLE < DELETE_ENTITY; "
+  },
+  "0x953D811632D7B1D0": {
+   "name": "_0x953D811632D7B1D0",
+   "confidence": "unnamed",
+   "rva": "0x03C07380",
+   "arg_cells": 1,
+   "return_cells": 0,
+   "calls": 2,
+   "estimate": "GRAPHICS::_DISABLE_FAR_ARTIFICIAL_LIGHTS",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among DISABLE_COMPOSITE_SHOTGUN_DECALS < DISABLE_DOWNWASH_PTFX < DISABLE_ENTITYMASK < DISABLE_IN_WATER_PTFX < DISABLE_FAR_ARTIFICIAL_LIGHTS < DISABLE_REGION_VFX < DISABLE_VEHICLE_DISTANTLIGHTS < DOES_ENTITY_BELONG_TO_THIS_SCRIPT < DOES_ENTITY_EXIST; "
+  },
+  "0x1B73B694CB0FF758": {
+   "name": "_0x1B73B694CB0FF758",
+   "confidence": "unnamed",
+   "rva": "0x03C09480",
+   "arg_cells": 3,
+   "return_cells": 1,
+   "calls": 1,
+   "estimate": "ENTITY::_GET_OPTIMAL_CARRY_CONFIG",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among GET_CLOSEST_FIRE_POS < GET_COLLISION_INTENSITY < GET_COLLISION_NORMAL_OF_LAST_HIT_FOR_ENTITY < GET_CURRENT_NUMBER_OF_LOCAL_PHOTOS < GET_OPTIMAL_CARRY_CONFIG < GET_DEADEYE_ABILITY_DEPLETION_DELAY < GET_DEFAULT_SCRIPT_RENDERTARGET_RENDER_ID < GET_DISCOVERABLE_NAME_HASH_AND_TYPE_FOR_ENTITY < GET_CONSTRUCTED_DISCOVERED_CHARACTER_NAME; "
+  },
+  "0xD0BFF476779E8E5E": {
+   "name": "_0xD0BFF476779E8E5E",
+   "confidence": "unnamed",
+   "rva": "0x03C09780",
+   "arg_cells": 3,
+   "return_cells": 1,
+   "calls": 120,
+   "estimate": "ENTITY::_GET_ENTITIES_IN_VOLUME",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among GET_DISCOVERABLE_NAME_HASH_AND_TYPE_FOR_ENTITY < GET_CONSTRUCTED_DISCOVERED_CHARACTER_NAME < GET_ENTITIES_NEAR_POINT < GET_ENTITY_ALBEDO < GET_ENTITIES_IN_VOLUME < GET_ENTITY_ALPHA < GET_ENTITY_ANIM_CURRENT_TIME < GET_ENTITY_ATTACHED_AT_SLOT < GET_ENTITY_ATTACHED_TO_PED_LEFT_HAND; "
+  },
+  "0x7704EFEB6CA5CF55": {
+   "name": "_0x7704EFEB6CA5CF55",
+   "confidence": "unnamed",
+   "rva": "0x03C0A6D0",
+   "arg_cells": 2,
+   "return_cells": 2,
+   "calls": 156,
+   "estimate": "ENTITY::_GET_ENTITY_FORWARD_VECTOR_YX",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among GET_ENTITY_MODEL < GET_ENTITY_POPULATION_TYPE < GET_ENTITY_PROOFS < GET_ENTITY_QUATERNION < GET_ENTITY_FORWARD_VECTOR_YX < GET_ENTITY_ROTATION_VELOCITY < GET_ENTITY_ROTATION < GET_ENTITY_SCRIPT < GET_ENTITY_SPEED_VECTOR; "
+  },
+  "0x8D09B8C0C54C5889": {
+   "name": "_0x8D09B8C0C54C5889",
+   "confidence": "unnamed",
+   "rva": "0x03C0CD60",
+   "arg_cells": 5,
+   "return_cells": 2,
+   "calls": 13,
+   "estimate": "ENTITY::_GET_HEADING_OF_ENTITY_BONE",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among GET_STATUS_OF_SORTED_LIST_OPERATION < GET_STATUS_OF_TAKE_HIGH_QUALITY_PHOTO < GET_TIMECYCLE_MODIFIER_INDEX < GET_WORLD_POSITION_OF_ENTITY_BONE < GET_HEADING_OF_ENTITY_BONE < HAS_ANIM_EVENT_FIRED < HAS_COLLISION_LOADED_AROUND_ENTITY < HAS_COLLISION_LOADED_AROUND_POSITION < HAS_ENTITY_BEEN_DAMAGED_BY_ANY_OBJECT; "
+  },
+  "0x651F95D81107C58A": {
+   "name": "_0x651F95D81107C58A",
+   "confidence": "unnamed",
+   "rva": "0x03C0D5F0",
+   "arg_cells": 1,
+   "return_cells": 1,
+   "calls": 294,
+   "estimate": "GRAPHICS::_ANIMPOSTFX_IS_STACKHASH_PLAYING",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among HAS_ENTITY_CLEAR_LOS_TO_COORD < HAS_ENTITY_CLEAR_LOS_TO_ENTITY < HAS_ENTITY_COLLIDED_WITH_ANYTHING < HAS_ENTITY_TAG < ANIMPOSTFX_IS_STACKHASH_PLAYING < IS_ENTITY_A_MISSION_ENTITY < IS_ENTITY_A_PED < IS_ENTITY_A_VEHICLE < IS_ENTITY_AN_OBJECT; "
+  },
+  "0xD043456D3733248E": {
+   "name": "_0xD043456D3733248E",
+   "confidence": "unnamed",
+   "rva": "0x03C0F330",
+   "arg_cells": 2,
+   "return_cells": 1,
+   "calls": 381,
+   "estimate": "ENTITY::_IS_TRACKED_ENTITY_VISIBLE",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among IS_SHOCKING_EVENT_IN_SPHERE < IS_STATE_FLAG_OF_COMPOUND_SET < IS_TEXTURE_IN_DICT < IS_TRACKED_PED_VISIBILITY_PERCENTAGE_NOT_LESS_THAN < IS_TRACKED_ENTITY_VISIBLE < IS_TRACKED_POINT_VALID < IS_TRACKED_POINT_VISIBLE < NUM_PIXELS_VISIBLE_AT_TRACKED_POINT < PIN_CLOSEST_MAP_ENTITY; "
+  },
+  "0x4750A74C6472A2B3": {
+   "name": "_0x4750A74C6472A2B3",
+   "confidence": "unnamed",
+   "rva": "0x03C0FC80",
+   "arg_cells": 1,
+   "return_cells": 0,
+   "calls": 402,
+   "estimate": "GRAPHICS::_ANIMPOSTFX_PLAY_TAG",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among NUM_PIXELS_VISIBLE_AT_TRACKED_POINT < PIN_CLOSEST_MAP_ENTITY < PIN_MAP_ENTITY < PLACE_ENTITY_ON_GROUND_PROPERLY < ANIMPOSTFX_PLAY_TAG < ANIMPOSTFX_PRELOAD_POSTFX_BY_STACKHASH < PROCESS_ENTITY_ATTACHMENTS < QUERY_ENTITY_ATTACHED_AT_SLOT < QUEUE_OPERATION_TO_CREATE_SORTED_LIST_OF_PHOTOS; "
+  },
+  "0xD4042B270C1FC6CD": {
+   "name": "_0xD4042B270C1FC6CD",
+   "confidence": "unnamed",
+   "rva": "0x03C0FD20",
+   "arg_cells": 1,
+   "return_cells": 0,
+   "calls": 35,
+   "estimate": "GRAPHICS::_ANIMPOSTFX_PRELOAD_POSTFX_BY_STACKHASH",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among PIN_CLOSEST_MAP_ENTITY < PIN_MAP_ENTITY < PLACE_ENTITY_ON_GROUND_PROPERLY < ANIMPOSTFX_PLAY_TAG < ANIMPOSTFX_PRELOAD_POSTFX_BY_STACKHASH < PROCESS_ENTITY_ATTACHMENTS < QUERY_ENTITY_ATTACHED_AT_SLOT < QUEUE_OPERATION_TO_CREATE_SORTED_LIST_OF_PHOTOS < REGISTER_ENTITY_EVENT_HANDLER; "
+  },
+  "0xA4D48DB9354B22D2": {
+   "name": "_0xA4D48DB9354B22D2",
+   "confidence": "unnamed",
+   "rva": "0x03C12590",
+   "arg_cells": 2,
+   "return_cells": 0,
+   "calls": 146,
+   "estimate": "GRAPHICS::_ANIMPOSTFX_SET_STRENGTH",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among RESET_ENTITY_ALPHA < RESET_PARTICLE_FX_OVERRIDE < SAVE_HIGH_QUALITY_PHOTO < SCRIPT_OVERRIDE_ENTITY_LOOT_TABLE_PERMANENT < ANIMPOSTFX_SET_STRENGTH < ANIMPOSTFX_SET_POTENCY < SET_CAN_AUTO_VAULT_ON_ENTITY < SET_CAN_CLIMB_ON_ENTITY < SET_CARRIABLE_PICKUP_LIGHT; "
+  },
+  "0xE923AD9F068D0F54": {
+   "name": "_0xE923AD9F068D0F54",
+   "confidence": "unnamed",
+   "rva": "0x03C12660",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 5,
+   "estimate": "GRAPHICS::_ANIMPOSTFX_SET_POTENCY",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among RESET_PARTICLE_FX_OVERRIDE < SAVE_HIGH_QUALITY_PHOTO < SCRIPT_OVERRIDE_ENTITY_LOOT_TABLE_PERMANENT < ANIMPOSTFX_SET_STRENGTH < ANIMPOSTFX_SET_POTENCY < SET_CAN_AUTO_VAULT_ON_ENTITY < SET_CAN_CLIMB_ON_ENTITY < SET_CARRIABLE_PICKUP_LIGHT < SET_DECISION_MAKER_OVERRIDE; "
+  },
+  "0x9D8C4DD8A91F8CA2": {
+   "name": "_0x9D8C4DD8A91F8CA2",
+   "confidence": "unnamed",
+   "rva": "0x03C13800",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 8,
+   "estimate": "ENTITY::_SET_ENTITY_DISABLE_FIRE",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among SET_ENTITY_COORDS_AND_HEADING_NO_OFFSET < SET_ENTITY_COORDS_AND_HEADING < SET_ENTITY_COORDS_NO_OFFSET < SET_ENTITY_COORDS < SET_ENTITY_DISABLE_FIRE < SET_ENTITY_CUSTOM_PICKUP_RADIUS < SET_ENTITY_DYNAMIC < SET_ENTITY_FACTION < SET_ENTITY_FADE_IN; "
+  },
+  "0x734164F8B4BC9453": {
+   "name": "_0x734164F8B4BC9453",
+   "confidence": "unnamed",
+   "rva": "0x03C14E30",
+   "arg_cells": 4,
+   "return_cells": 0,
+   "calls": 196,
+   "estimate": "ENTITY::_SET_ENTITY_THREAT_TIER",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among SET_ENTITY_RENDER_SCORCHED < SET_ENTITY_ROTATION_PARALLEL_TO_LINE < SET_ENTITY_ROTATION < SET_ENTITY_SHOULD_FREEZE_WAITING_ON_COLLISION < SET_ENTITY_THREAT_TIER < SET_ENTITY_TARGETTABLE < SET_ENTITY_VELOCITY < SET_ENTITY_VISIBLE < SET_EVENT_TRACKER_FOR_PED; "
+  },
+  "0x46014ACA5080CF66": {
+   "name": "_0x46014ACA5080CF66",
+   "confidence": "unnamed",
+   "rva": "0x03C15740",
+   "arg_cells": 4,
+   "return_cells": 0,
+   "calls": 4,
+   "estimate": "ENTITY::_SET_ENTITY_LOCKON_POINT_OFFSET",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among SET_GAMEPLAY_CAM_MAX_MOTION_BLUR_STRENGTH_THIS_UPDATE < SET_GLOBAL_BLOCK_CAN_BE_ACCESSED < SET_LIGHTS_COLOR_FOR_ENTITY < SET_LIGHTS_INTENSITY_FOR_ENTITY < SET_ENTITY_LOCKON_POINT_OFFSET < SET_MATERIAL_FILL_LEVEL_FOR_ENTITY < SET_PARTICLE_FX_OVERRIDE < SET_SCRIPT_GFX_DRAW_ORDER < SET_STATE_FLAG_OF_COMPOUND; "
+  },
+  "0x7191C011FD1040FD": {
+   "name": "_0x7191C011FD1040FD",
+   "confidence": "unnamed",
+   "rva": "0x03C1A050",
+   "arg_cells": 3,
+   "return_cells": 1,
+   "calls": 657,
+   "estimate": "STREAMING::_ACTIVATE_GAMEMODE_CONTENT",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: named by the blind readers as out of order; no bracket; 0x143c1e150 -> 0x1413c6ad0: entry=0x141580b20(pack,item), queues command {1,pack,item,requester} via 0x141fc2860 (requester default 0xE7A8CDF1 = script); called only after 0x7A6B returned 0; items are general_optimization_*, postfx_drug_cokegood, club_deal, script_taxi under pack americasstory000"
+  },
+  "0x8077C1877E7F2923": {
+   "name": "_0x8077C1877E7F2923",
+   "confidence": "unnamed",
+   "rva": "0x03C1A810",
+   "arg_cells": 2,
+   "return_cells": 0,
+   "calls": 2076,
+   "estimate": "MISC::_ADD_SCRIPT_AREA_TAG",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: named by the blind readers as out of order; no bracket; 0x143c1c990: area=0x1413975d0(id), finds or creates component type 0x9c (vtable 0x146536ac0) and adds the hash to its list unless present; tag literals include 0x7748019A restrictedarea; _0x09E3FC0CC35714E5(area, tag) is the removal in the same scripts"
+  },
+  "0xB0584804833510A0": {
+   "name": "_0xB0584804833510A0",
+   "confidence": "unnamed",
+   "rva": "0x03C1A920",
+   "arg_cells": 3,
+   "return_cells": 1,
+   "calls": 578,
+   "estimate": "STREAMING::_DEACTIVATE_GAMEMODE_CONTENT",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: named by the blind readers as out of order; no bracket; 0x143c1c340 -> 0x1413c69d0: entry=0x141580b20(pack,item), queues command {2,pack,item,requester} via 0x141fc2860 (the 0x7191 path queues 1); same (0x54C15720, item, 0) arguments as 0x7191/0x7A6B"
+  },
+  "0xC663AE0D5D968A80": {
+   "name": "_0xC663AE0D5D968A80",
+   "confidence": "unnamed",
+   "rva": "0x03CCE580",
+   "arg_cells": 2,
+   "return_cells": 0,
+   "calls": 394,
+   "estimate": "MISC::_CLEAR_LOCATION_FLAG",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among ASSISTED_MOVEMENT_FLUSH_ROUTE < CLEAR_PED_COMBAT_STYLE_MOD < CLEAR_PED_COMBAT_STYLE < DOOR_SYSTEM_CLEAR_FORCED_OPEN_PLAYER < CLEAR_LOCATION_FLAG < CLOSE_DOOR < COLLECTABLE_CATEGORY_GET_NUM_COLLECTABLES < COLLECTABLE_CATEGORY_GET_NUM_FOUND < COLLECTABLE_CATEGORY_GET_NUM_TURNED_IN; unordered (between ASSISTED_MOVEMENT_FLUSH_ROUTE and COUNT_PEDS_IN_COMBAT_WITH_TA"
+  },
+  "0x99A897B09FAD4B21": {
+   "name": "_0x99A897B09FAD4B21",
+   "confidence": "unnamed",
+   "rva": "0x03CCF390",
+   "arg_cells": 1,
+   "return_cells": 1,
+   "calls": 6,
+   "estimate": "COLLECTABLE::_COLLECTABLE_GET_SUBCATEGORY",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among COLLECTABLE_CATEGORY_GET_NUM_FOUND < COLLECTABLE_CATEGORY_GET_NUM_TURNED_IN < COLLECTABLE_GET_CATEGORY < COLLECTABLE_GET_NUM_FOUND < COLLECTABLE_GET_SUBCATEGORY < COLLECTABLE_GET_NUM_TURNED_IN < COLLECTABLE_INCREMENT_NUM_FOUND < COUNT_PEDS_IN_COMBAT_WITH_TARGET_WITHIN_RADIUS < COUNT_PEDS_IN_COMBAT_WITH_TARGET; "
+  },
+  "0x2BB9115365FC0DD5": {
+   "name": "_0x2BB9115365FC0DD5",
+   "confidence": "unnamed",
+   "rva": "0x03CCF440",
+   "arg_cells": 1,
+   "return_cells": 1,
+   "calls": 1,
+   "estimate": "COLLECTABLE::_COLLECTABLE_GET_NUM_TURNED_IN",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among COLLECTABLE_CATEGORY_GET_NUM_TURNED_IN < COLLECTABLE_GET_CATEGORY < COLLECTABLE_GET_NUM_FOUND < COLLECTABLE_GET_SUBCATEGORY < COLLECTABLE_GET_NUM_TURNED_IN < COLLECTABLE_INCREMENT_NUM_FOUND < COUNT_PEDS_IN_COMBAT_WITH_TARGET_WITHIN_RADIUS < COUNT_PEDS_IN_COMBAT_WITH_TARGET < PRINTINT; "
+  },
+  "0x4F3FC8D791D557F4": {
+   "name": "_0x4F3FC8D791D557F4",
+   "confidence": "unnamed",
+   "rva": "0x03CD1970",
+   "arg_cells": 2,
+   "return_cells": 1,
+   "calls": 19,
+   "estimate": "OBJECT::_DOOR_SYSTEM_CHECK_ACTION_FLAG",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among GET_CLOCK_SECONDS < GET_CLOCK_YEAR < GET_COMBAT_FLOAT < GET_CURRENT_TARGET_FOR_PED < DOOR_SYSTEM_CHECK_ACTION_FLAG < GET_DOOR_FROM_HASH < GET_DOOR_OPEN_RATIO < GET_GAMEPLAY_CAM_COORD < GET_GAMEPLAY_CAM_FOV; "
+  },
+  "0x1A708DE222F483A5": {
+   "name": "_0x1A708DE222F483A5",
+   "confidence": "unnamed",
+   "rva": "0x03CD3C60",
+   "arg_cells": 1,
+   "return_cells": 1,
+   "calls": 239,
+   "estimate": "CAMERA::_IS_CAM_DATA_DICT_LOADED",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among IS_CAM_ACTIVE < IS_CAM_INTERPOLATING < IS_CAM_RENDERING < IS_CAM_SHAKING < IS_CAM_DATA_DICT_LOADED < IS_CAMERA_DATA_DICT_LOADING < IS_CINEMATIC_CAM_RENDERING < IS_CINEMATIC_CAM_SHAKING < IS_DOOR_CLOSED; "
+  },
+  "0x11C1E06D679085AE": {
+   "name": "_0x11C1E06D679085AE",
+   "confidence": "unnamed",
+   "rva": "0x03CD58A0",
+   "arg_cells": 4,
+   "return_cells": 0,
+   "calls": 105,
+   "estimate": "CAMERA::_REACTIVATE_PED_HEADSHOT_EXECUTE_SLOWCAM",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among POINT_CAM_AT_ENTITY < POINT_CAM_AT_PED_BONE < REGISTER_HATED_TARGETS_AROUND_PED < REGISTER_HATED_TARGETS_IN_AREA < REACTIVATE_PED_HEADSHOT_EXECUTE_SLOWCAM < REGISTER_TARGET < RELEASE_PED_VISIBILITY_TRACKING < REMOVE_PED_DEFENSIVE_AREA < REMOVE_TARGET; "
+  },
+  "0x395269F19E3F424E": {
+   "name": "_0x395269F19E3F424E",
+   "confidence": "unnamed",
+   "rva": "0x03CD5FF0",
+   "arg_cells": 5,
+   "return_cells": 0,
+   "calls": 3174,
+   "estimate": "OBJECT::_REQUEST_DOOR_FLAGS",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among REMOVE_PED_DEFENSIVE_AREA < REMOVE_TARGET < RENDER_SCRIPT_CAMS < REQUEST_META_PED_COMPONENT < REQUEST_DOOR_FLAGS < RESET_GAMEPLAY_CAM_HEADING_AND_PITCH < SET_CAM_ACTIVE_WITH_INTERP < SET_CAM_ACTIVE < SET_CAM_CONTROLS_MINI_MAP_HEADING; door id + bool + 3 ints: FUN_1417ca540 -> FUN_1417ca700 -> FUN_141360120(door, 7+bool, {mask,values,third}, 1) door command que"
+  },
+  "0x0B0E404D1B486BA1": {
+   "name": "_0x0B0E404D1B486BA1",
+   "confidence": "unnamed",
+   "rva": "0x03CD6B10",
+   "arg_cells": 2,
+   "return_cells": 0,
+   "calls": 17,
+   "estimate": "CAMERA::_SET_CAM_DOF_PARAMS",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among SET_CINEMATIC_CAM_SHAKE_AMPLITUDE < SET_CLOCK_DATE < SET_CLOCK_TIME < SET_COMBAT_FLOAT < SET_CAM_DOF_PARAMS < SET_DOOR_FLAG < SET_DOOR_FLAGS < SET_DOOR_OPEN_RATIO < SET_ENTITY_COORDS_AND_HEADING_NO_OFFSET_DEFERRED; "
+  },
+  "0xBE1B8DA3428AAFFE": {
+   "name": "_0xBE1B8DA3428AAFFE",
+   "confidence": "unnamed",
+   "rva": "0x03CD7BC0",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 110,
+   "estimate": "PED::_SET_PED_COMBAT_ATTRIBUTE_HASH",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among SET_PED_ACCURACY_PROFILE < SET_PED_COMBAT_ABILITY < SET_PED_COMBAT_ATTRIBUTES < SET_PED_COMBAT_BEHAVIOUR < SET_PED_COMBAT_ATTRIBUTE_HASH < SET_PED_COMBAT_INFO < SET_PED_COMBAT_MOVEMENT < SET_PED_COMBAT_RANGE < SET_PED_COMBAT_STYLE_MOD; "
+  },
+  "0xAD75FD1766BA5C1D": {
+   "name": "_0xAD75FD1766BA5C1D",
+   "confidence": "unnamed",
+   "rva": "0x03E88D40",
+   "arg_cells": 4,
+   "return_cells": 1,
+   "calls": 25,
+   "estimate": "LAW::_HAS_PLAYER_BEEN_FOUND_BY_LAW_ACTIVE_SEARCH",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among GET_EVENT_EXISTS < GET_WIND_SPEED < HAS_ADDITIONAL_TEXT_LOADED < HAS_BULLET_IMPACTED_ENTITY < HAS_PLAYER_BEEN_FOUND_BY_LAW_ACTIVE_SEARCH < HAS_BULLET_IMPACTED_IN_AREA < INVENTORY_FITS_SLOT_ID < INVENTORY_COMPARE_GUIDS < INVENTORY_CREATE_ITEM_COLLECTION_WITH_FILTER; "
+  },
+  "0x97EF00AE2929FDB1": {
+   "name": "_0x97EF00AE2929FDB1",
+   "confidence": "unnamed",
+   "rva": "0x03E89700",
+   "arg_cells": 2,
+   "return_cells": 1,
+   "calls": 9,
+   "estimate": "INVENTORY::INVENTORY_FITS_SLOT_ID",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among HAS_ADDITIONAL_TEXT_LOADED < HAS_BULLET_IMPACTED_ENTITY < HAS_PLAYER_BEEN_FOUND_BY_LAW_ACTIVE_SEARCH < HAS_BULLET_IMPACTED_IN_AREA < INVENTORY_FITS_SLOT_ID < INVENTORY_COMPARE_GUIDS < INVENTORY_CREATE_ITEM_COLLECTION_WITH_FILTER < INVENTORY_EQUIP_ITEM_WITH_GUID < INVENTORY_GET_CHILDREN_IN_SLOT_COUNT; "
+  },
+  "0x4DA0A53541FEDA8E": {
+   "name": "_0x4DA0A53541FEDA8E",
+   "confidence": "unnamed",
+   "rva": "0x03E8A130",
+   "arg_cells": 5,
+   "return_cells": 1,
+   "calls": 6,
+   "estimate": "INVENTORY::_INVENTORY_GET_INVENTORY_ITEM_EQUIPPED_IN_SLOT",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among INVENTORY_COMPARE_GUIDS < INVENTORY_CREATE_ITEM_COLLECTION_WITH_FILTER < INVENTORY_EQUIP_ITEM_WITH_GUID < INVENTORY_GET_CHILDREN_IN_SLOT_COUNT < INVENTORY_GET_INVENTORY_ITEM_EQUIPPED_IN_SLOT < INVENTORY_GET_GUID_FROM_ITEMID < INVENTORY_GET_INVENTORY_ID_FROM_PED < INVENTORY_GET_INVENTORY_ITEM_CHILD < INVENTORY_GET_INVENTORY_ITEM; "
+  },
+  "0x86A6E89EC0556D75": {
+   "name": "_0x86A6E89EC0556D75",
+   "confidence": "unnamed",
+   "rva": "0x03E8D0A0",
+   "arg_cells": 2,
+   "return_cells": 1,
+   "calls": 6,
+   "estimate": "ITEMDATABASE::_ITEMDATABASE_GET_AWARD_ITEM_COUNT",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among ITEMDATABASE_FILLOUT_ITEM_INFO < ITEMDATABASE_FILLOUT_UI_DATA < ITEMDATABASE_GET_ACQUIRE_COST < ITEMDATABASE_GET_ACQUIRE_COSTS_COUNT < ITEMDATABASE_GET_AWARD_ITEM_COUNT < ITEMDATABASE_GET_AWARD_COST_MODIFIERS < ITEMDATABASE_GET_AWARD_UNLOCK_FLAG_COUNT < ITEMDATABASE_GET_BUNDLE_ACQUIRE_COST < ITEMDATABASE_GET_BUNDLE_ACQUIRE_COSTS_COUNT; "
+  },
+  "0x5C7B18AA17E2FC87": {
+   "name": "_0x5C7B18AA17E2FC87",
+   "confidence": "unnamed",
+   "rva": "0x03E8D220",
+   "arg_cells": 3,
+   "return_cells": 1,
+   "calls": 1,
+   "estimate": "ITEMDATABASE::_ITEMDATABASE_GET_AWARD_COST_MODIFIERS",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among ITEMDATABASE_FILLOUT_UI_DATA < ITEMDATABASE_GET_ACQUIRE_COST < ITEMDATABASE_GET_ACQUIRE_COSTS_COUNT < ITEMDATABASE_GET_AWARD_ITEM_COUNT < ITEMDATABASE_GET_AWARD_COST_MODIFIERS < ITEMDATABASE_GET_AWARD_UNLOCK_FLAG_COUNT < ITEMDATABASE_GET_BUNDLE_ACQUIRE_COST < ITEMDATABASE_GET_BUNDLE_ACQUIRE_COSTS_COUNT < GET_DEFAULT_ITEM_SLOT_INFO; "
+  },
+  "0xA827E8BD9BAD4E2C": {
+   "name": "_0xA827E8BD9BAD4E2C",
+   "confidence": "unnamed",
+   "rva": "0x03E8D4C0",
+   "arg_cells": 3,
+   "return_cells": 1,
+   "calls": 28,
+   "estimate": "INVENTORY::_GET_DEFAULT_ITEM_SLOT_INFO",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among ITEMDATABASE_GET_AWARD_COST_MODIFIERS < ITEMDATABASE_GET_AWARD_UNLOCK_FLAG_COUNT < ITEMDATABASE_GET_BUNDLE_ACQUIRE_COST < ITEMDATABASE_GET_BUNDLE_ACQUIRE_COSTS_COUNT < GET_DEFAULT_ITEM_SLOT_INFO < ITEMDATABASE_GET_FITS_SLOT_COUNT < ITEMDATABASE_GET_FITS_SLOT_INFO < ITEMDATABASE_GET_HAS_SLOT_COUNT < ITEMDATABASE_GET_HAS_SLOT_INFO; "
+  },
+  "0x25B9A814D864F969": {
+   "name": "_0x25B9A814D864F969",
+   "confidence": "unnamed",
+   "rva": "0x03E8EB30",
+   "arg_cells": 1,
+   "return_cells": 1,
+   "calls": 183,
+   "estimate": "MISC::_QUEUE_SAVEGAME_OPERATION",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among LOG10 < NUM_CRIMES_SUPPRESSED < PAUSE_SCRIPT_TIMER < PIN_INTERIOR_IN_MEMORY < QUEUE_SAVEGAME_OPERATION < POPULATE_NOW < REGISTER_SCRIPT_TIMER < RELEASE_OUTFIT_COLLECTION < REMOVE_DISPATCH_SPAWN_BLOCKING_AREA; "
+  },
+  "0xEA51341D15921F32": {
+   "name": "_0xEA51341D15921F32",
+   "confidence": "unnamed",
+   "rva": "0x03E90BC0",
+   "arg_cells": 1,
+   "return_cells": 0,
+   "calls": 3,
+   "estimate": "PLAYER::_SET_MAX_WANTED_LEVEL_2",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among SET_GAME_PAUSED < SET_ITEM_PROMPT_INFO_REQUEST < SET_LOOT_CASH_AMOUNT < SET_MAX_WANTED_LEVEL < SET_MAX_WANTED_LEVEL_2 < SET_PED_LAW_BEHAVIOUR < SET_MISSION_FLAG < SET_POLICE_IGNORE_PLAYER < SET_RAIN; "
+  },
+  "0x0E8BD0B87E6522A1": {
+   "name": "_0x0E8BD0B87E6522A1",
+   "confidence": "unnamed",
+   "rva": "0x03E90CC0",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 33,
+   "estimate": "LAW::_SET_PED_LAW_BEHAVIOUR",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among SET_ITEM_PROMPT_INFO_REQUEST < SET_LOOT_CASH_AMOUNT < SET_MAX_WANTED_LEVEL < SET_MAX_WANTED_LEVEL_2 < SET_PED_LAW_BEHAVIOUR < SET_MISSION_FLAG < SET_POLICE_IGNORE_PLAYER < SET_RAIN < SET_RANDOM_WEATHER_TYPE; "
+  },
+  "0x0449C28DF1540E7D": {
+   "name": "_0x0449C28DF1540E7D",
+   "confidence": "unnamed",
+   "rva": "0x03E93330",
+   "arg_cells": 4,
+   "return_cells": 0,
+   "calls": 4,
+   "estimate": "IK::_INVERSE_KINEMATICS_SET_DISABLED_FOR_PED",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among DEACTIVATE_INTERIOR_ENTITY_SET < GET_CURRENT_LANGUAGE < GET_INTERIOR_FROM_COLLISION < GET_ROOM_KEY_FOR_GAME_VIEWPORT < INVERSE_KINEMATICS_SET_DISABLED_FOR_PED < INVERSE_KINEMATICS_IS_ACTIVE < INVERSE_KINEMATICS_POINT_AT < INVERSE_KINEMATICS_REQUEST_LOOK_AT < IS_COLLISION_MARKED_OUTSIDE; "
+  },
+  "0xCA4D7C2F8DB34762": {
+   "name": "_0xCA4D7C2F8DB34762",
+   "confidence": "unnamed",
+   "rva": "0x0445E410",
+   "arg_cells": 1,
+   "return_cells": 1,
+   "calls": 3,
+   "estimate": "SCRIPT::_GET_HASH_OF_THREAD",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among GET_GPS_BLIP_ROUTE_FOUND < GET_GPS_BLIP_ROUTE_LENGTH < GET_HASH_OF_THIS_SCRIPT_NAME < GET_IDEAL_PLAYER_SWITCH_TYPE < GET_HASH_OF_THREAD < GET_NTH_CLOSEST_VEHICLE_NODE_FAVOUR_DIRECTION < GET_NTH_CLOSEST_VEHICLE_NODE_ID_WITH_HEADING < GET_PED_REGISTER_PROP < GET_PED_USING_SCENARIO_POINT; "
+  },
+  "0xB4557A3C46C158E7": {
+   "name": "_0xB4557A3C46C158E7",
+   "confidence": "unnamed",
+   "rva": "0x0445EFB0",
+   "arg_cells": 3,
+   "return_cells": 1,
+   "calls": 51,
+   "estimate": "TASK::_GET_SCENARIO_POINT_HEADING",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among GET_PLAYER_SHORT_SWITCH_STATE < GET_PLAYER_SWITCH_STATE < GET_PLAYER_SWITCH_TYPE < GET_RANDOM_VEHICLE_NODE < GET_SCENARIO_POINT_HEADING < GET_SCENARIO_POINT_ENTITY < GET_SCENARIO_POINT_PED_IS_USING < GET_SCENARIO_POINTS_IN_AREA < GET_SCENARIO_POINT_TYPE_PED_IS_USING; "
+  },
+  "0x1682C3978B98E9A1": {
+   "name": "_0x1682C3978B98E9A1",
+   "confidence": "unnamed",
+   "rva": "0x0445F020",
+   "arg_cells": 2,
+   "return_cells": 2,
+   "calls": 18,
+   "estimate": "TASK::_GET_SCENARIO_POINT_ENTITY",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among GET_PLAYER_SWITCH_STATE < GET_PLAYER_SWITCH_TYPE < GET_RANDOM_VEHICLE_NODE < GET_SCENARIO_POINT_HEADING < GET_SCENARIO_POINT_ENTITY < GET_SCENARIO_POINT_PED_IS_USING < GET_SCENARIO_POINTS_IN_AREA < GET_SCENARIO_POINT_TYPE_PED_IS_USING < GET_SCENARIO_POINT_TYPE; "
+  },
+  "0x7648196AFD1444C6": {
+   "name": "_0x7648196AFD1444C6",
+   "confidence": "unnamed",
+   "rva": "0x0445FBB0",
+   "arg_cells": 2,
+   "return_cells": 1,
+   "calls": 9,
+   "estimate": "TASK::_PED_IS_IN_SCENARIO_BASE",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among IS_LOAD_SCENE_ACTIVE < IS_LOAD_SCENE_LOADED < IS_PED_ACTIVE_IN_SCENARIO < IS_PED_EXITING_SCENARIO < PED_IS_IN_SCENARIO_BASE < IS_PED_USING_ANY_SCENARIO < IS_PED_USING_SCENARIO_HASH < IS_PED_USING_THIS_SCENARIO < IS_PLAYER_SWITCH_IN_PROGRESS; "
+  },
+  "0xDE9F8FD657BAD22C": {
+   "name": "_0xDE9F8FD657BAD22C",
+   "confidence": "unnamed",
+   "rva": "0x04461E80",
+   "arg_cells": 3,
+   "return_cells": 2,
+   "calls": 220,
+   "estimate": "TASK::_GET_SCENARIO_POINT_COORDS",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among REMOVE_SCENARIO_BLOCKING_AREA < REMOVE_SCENARIO_BLOCKING_AREAS < REQUEST_MODEL < REQUEST_THREAD_EXIT < GET_SCENARIO_POINT_COORDS < DOES_SCENARIO_POINT_EXIST < SCRIPT_THREAD_ITERATOR_GET_NEXT_THREAD_ID < SCRIPT_THREAD_ITERATOR_RESET < SET_ALL_MAPDATA_CULLED; "
+  },
+  "0x576D3C5F2CD8CAE0": {
+   "name": "_0x576D3C5F2CD8CAE0",
+   "confidence": "unnamed",
+   "rva": "0x04462080",
+   "arg_cells": 1,
+   "return_cells": 0,
+   "calls": 2,
+   "estimate": "STREAMING::SET_GAME_PAUSES_FOR_STREAMING",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among DOES_SCENARIO_POINT_EXIST < SCRIPT_THREAD_ITERATOR_GET_NEXT_THREAD_ID < SCRIPT_THREAD_ITERATOR_RESET < SET_ALL_MAPDATA_CULLED < SET_GAME_PAUSES_FOR_STREAMING < SET_CAM_SPLINE_SMOOTHING_STYLE < SET_HD_AREA < SET_PED_SHOULD_PLAY_COMBAT_SCENARIO_EXIT < SET_PED_SHOULD_PLAY_DIRECTED_NORMAL_SCENARIO_EXIT; "
+  },
+  "0xDDBB343E2839E45E": {
+   "name": "_0xDDBB343E2839E45E",
+   "confidence": "unnamed",
+   "rva": "0x044BC690",
+   "arg_cells": 2,
+   "return_cells": 0,
+   "calls": 461,
+   "estimate": "MAP::SET_BLIP_NAME_FROM_TEXT_FILE",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among BLIP_ADD_MODIFIER < BLIP_ADD_STYLE < BLIP_REMOVE_MODIFIER < BLIP_SET_STYLE < SET_BLIP_NAME_FROM_TEXT_FILE < UILOG_CLEAR_CACHED_OBJECTIVE < CLEAR_GPS_PLAYER_WAYPOINT < CLOSE_ALL_UIAPPS < MAP_ENABLE_REGION_BLIP; "
+  },
+  "0x7283AAD6EBE439B3": {
+   "name": "_0x7283AAD6EBE439B3",
+   "confidence": "unnamed",
+   "rva": "0x044BD7D0",
+   "arg_cells": 2,
+   "return_cells": 0,
+   "calls": 665,
+   "estimate": "TASK::_CLEAR_VEHICLE_TASKS",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among CLEAR_PED_TASKS_IMMEDIATELY < CLEAR_PED_TASKS < CLEAR_SCRIPT_TASK < CLEAR_SEQUENCE_TASK < CLEAR_VEHICLE_TASKS < CLEAR_VEHICLE_TASKS_SECONDARY < CLOSE_PATROL_ROUTE < CLOSE_SEQUENCE_TASK < CUFF_PED; "
+  },
+  "0xF5A0B2E8145DF7E1": {
+   "name": "_0xF5A0B2E8145DF7E1",
+   "confidence": "unnamed",
+   "rva": "0x044BD830",
+   "arg_cells": 2,
+   "return_cells": 0,
+   "calls": 52,
+   "estimate": "TASK::_CLEAR_VEHICLE_TASKS_SECONDARY",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among CLEAR_PED_TASKS < CLEAR_SCRIPT_TASK < CLEAR_SEQUENCE_TASK < CLEAR_VEHICLE_TASKS < CLEAR_VEHICLE_TASKS_SECONDARY < CLOSE_PATROL_ROUTE < CLOSE_SEQUENCE_TASK < CUFF_PED < DOES_BLIP_EXIST; "
+  },
+  "0x6F9534D741E19A55": {
+   "name": "_0x6F9534D741E19A55",
+   "confidence": "unnamed",
+   "rva": "0x044BDE00",
+   "arg_cells": 5,
+   "return_cells": 0,
+   "calls": 183,
+   "estimate": "TASK::_EXIT_PED_SCENARIO_TOWARDS_COORD",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among CLOSE_SEQUENCE_TASK < CUFF_PED < DOES_BLIP_EXIST < DOES_STREAMED_TXD_EXIST < EXIT_PED_SCENARIO_TOWARDS_COORD < EVALUATE_PED_CARRIABLE_STRUGGLE_AVAILABLE < GET_ACTIVE_VEHICLE_MISSION_TYPE < GET_WAYPOINT_COORDS < GET_BLIP_COORDS; FUN_145e536b0(ped, bool, vector): checks ped class bits (0xe8 & 0x380000) == 0x180000, optional coord (FLT_MAX = none), raises event 0"
+  },
+  "0x3C0878C4D64CF2F8": {
+   "name": "_0x3C0878C4D64CF2F8",
+   "confidence": "unnamed",
+   "rva": "0x044BE440",
+   "arg_cells": 0,
+   "return_cells": 2,
+   "calls": 28,
+   "estimate": "MAP::_GET_WAYPOINT_COORDS",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among DOES_STREAMED_TXD_EXIST < EXIT_PED_SCENARIO_TOWARDS_COORD < EVALUATE_PED_CARRIABLE_STRUGGLE_AVAILABLE < GET_ACTIVE_VEHICLE_MISSION_TYPE < GET_WAYPOINT_COORDS < GET_BLIP_COORDS < GET_COLOR_FROM_NAME < GET_HOLD_TO_REEL_SETTING_ENABLED < GET_HUD_SCREEN_POSITION_FROM_WORLD_POSITION; "
+  },
+  "0x58EB2497FA5FEFF1": {
+   "name": "_0x58EB2497FA5FEFF1",
+   "confidence": "unnamed",
+   "rva": "0x044BEEB0",
+   "arg_cells": 3,
+   "return_cells": 2,
+   "calls": 39,
+   "estimate": "TASK::_GET_ITEM_INTERACTION_ENTITY_FROM_PED",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among GET_IS_PED_AIMING_IN_THE_AIR < GET_IS_TASK_ACTIVE < GET_ITEM_INTERACTION_ITEM_ID < GET_ITEM_INTERACTION_PROMPT_PROGRESS < GET_ITEM_INTERACTION_ENTITY_FROM_PED < GET_ITEM_INTERACTION_STATE < GET_NAVMESH_ROUTE_DISTANCE_REMAINING < GET_NAVMESH_ROUTE_RESULT < GET_OBJECT_ITEM_HASH; "
+  },
+  "0x439336FF59A81362": {
+   "name": "_0x439336FF59A81362",
+   "confidence": "unnamed",
+   "rva": "0x044C2C00",
+   "arg_cells": 1,
+   "return_cells": 0,
+   "calls": 21,
+   "estimate": "MAP::_SET_MINIMAP_ZONE",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among SET_MINIMAP_HIDE_FOW < SET_BLIP_COORDS < SET_BLIP_NAME_TO_PLAYER_NAME < SET_BLIP_SPRITE < SET_MINIMAP_ZONE < SET_DRIVE_TASK_CRUISE_SPEED < SET_DRIVE_TASK_DRIVING_STYLE < SET_DRIVE_TASK_MAX_CRUISE_SPEED < SET_ENTITY_LIGHTS_OFF; "
+  },
+  "0xCE08AD99DBE913D0": {
+   "name": "_0xCE08AD99DBE913D0",
+   "confidence": "unnamed",
+   "rva": "0x044C5A50",
+   "arg_cells": 7,
+   "return_cells": 0,
+   "calls": 11,
+   "estimate": "TASK::_TASK_FORCE_FIRE_AT_ENTITY_WHILE_AIMING",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among TASK_FOLLOW_NAV_MESH_TO_COORD < TASK_FOLLOW_PAVEMENT_TO_COORD < TASK_FOLLOW_TO_OFFSET_OF_ENTITY < TASK_FORCE_MOTION_STATE < TASK_FORCE_FIRE_AT_ENTITY_WHILE_AIMING < TASK_GO_STRAIGHT_TO_COORD_RELATIVE_TO_ENTITY < TASK_GO_STRAIGHT_TO_COORD < TASK_GO_TO_COORD_AND_AIM_AT_HATED_ENTITIES_NEAR_COORD < TASK_GO_TO_COORD_AND_AIM_AT_HATED_ENTITIES_NEAR_COORD_USING_COMBAT"
+  },
+  "0x3CE6C12574E0209C": {
+   "name": "_0x3CE6C12574E0209C",
+   "confidence": "unnamed",
+   "rva": "0x044C6F50",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 26,
+   "estimate": "TASK::_TASK_KNOCKED_OUT_SET_TUNING",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among TASK_INTIMIDATED_2 < TASK_INVESTIGATE < TASK_JUMP_2 < TASK_JUMP < TASK_KNOCKED_OUT_SET_TUNING < TASK_KNOCKED_OUT_SET_DURATION < TASK_KNOCKED_OUT < TASK_LEAVE_ANY_VEHICLE < TASK_LEAVE_VEHICLE; "
+  },
+  "0x1E908484004ADF5C": {
+   "name": "_0x1E908484004ADF5C",
+   "confidence": "unnamed",
+   "rva": "0x044C6FB0",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 29,
+   "estimate": "TASK::_TASK_KNOCKED_OUT_SET_DURATION",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among TASK_INVESTIGATE < TASK_JUMP_2 < TASK_JUMP < TASK_KNOCKED_OUT_SET_TUNING < TASK_KNOCKED_OUT_SET_DURATION < TASK_KNOCKED_OUT < TASK_LEAVE_ANY_VEHICLE < TASK_LEAVE_VEHICLE < TASK_LOOK_AT_ENTITY; "
+  },
+  "0xD3102DEA56E81C60": {
+   "name": "_0xD3102DEA56E81C60",
+   "confidence": "unnamed",
+   "rva": "0x044C8680",
+   "arg_cells": 9,
+   "return_cells": 0,
+   "calls": 13,
+   "estimate": "TASK::_TASK_START_SCENARIO_IN_PLACE_2",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among TASK_SKY_DIVE < TASK_STAND_STILL < TASK_START_SCENARIO_AT_POSITION < TASK_START_SCENARIO_IN_PLACE_HASH < TASK_START_SCENARIO_IN_PLACE_2 < TASK_SWAP_FISHING_BAIT < TASK_TURN_PED_TO_FACE_COORD < TASK_TURN_PED_TO_FACE_ENTITY < TASK_TURN_TO_FACE_CLOSEST_PED; "
+  },
+  "0x2538D1A96F333EA8": {
+   "name": "_0x2538D1A96F333EA8",
+   "confidence": "unnamed",
+   "rva": "0x044CAAA0",
+   "arg_cells": 0,
+   "return_cells": 1,
+   "calls": 183,
+   "estimate": "SYSTEM::TIMERA",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among TASK_WANDER_IN_AREA < TASK_WANDER_IN_VOLUME < TASK_WANDER_STANDARD < TASK_WANDER_SWIM < TIMERA < TEXT_BLOCK_DELETE < TEXT_BLOCK_IS_LOADED < TEXT_BLOCK_REQUEST < TRIGGER_SONAR_BLIP_ON_ENTITY; "
+  },
+  "0x13EB5E998516C3BA": {
+   "name": "_0x13EB5E998516C3BA",
+   "confidence": "unnamed",
+   "rva": "0x045012C0",
+   "arg_cells": 2,
+   "return_cells": 1,
+   "calls": 27,
+   "estimate": "PLAYER::_GET_PLAYER_FREE_AIM_CLOSEST_ENTITY",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among GET_PED_MODEL_NAME_IN_POPULATION_SET < GET_PLAYER_CHARACTER_HASH < GET_PLAYER_GROUP < GET_PLAYER_ID_FROM_PED < GET_PLAYER_FREE_AIM_CLOSEST_ENTITY < GET_PLAYER_INDEX < GET_PLAYER_INTERACTION_TARGET_ENTITY < GET_PLAYER_PED < GET_PLAYER_TARGET_ENTITY; "
+  },
+  "0xF8F71B7DE5AE4019": {
+   "name": "_0xF8F71B7DE5AE4019",
+   "confidence": "unnamed",
+   "rva": "0x045032B0",
+   "arg_cells": 1,
+   "return_cells": 1,
+   "calls": 25,
+   "estimate": "PLAYER::_IS_PLAYER_FREE_FOCUSING",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among IS_PLAYER_DEAD < IS_PLAYER_FREE_AIMING_AT_ENTITY < IS_PLAYER_FREE_AIMING < IS_PLAYER_FREE_FOR_AMBIENT_TASK < IS_PLAYER_FREE_FOCUSING < IS_PLAYER_PLAYING < IS_PLAYER_TARGETTING_ANYTHING < IS_PLAYER_TARGETTING_ENTITY < IS_PLAYER_TELEPORT_ACTIVE; "
+  },
+  "0xD7A5B49889717E51": {
+   "name": "_0xD7A5B49889717E51",
+   "confidence": "unnamed",
+   "rva": "0x04504290",
+   "arg_cells": 4,
+   "return_cells": 0,
+   "calls": 5,
+   "estimate": "PLAYER::_SET_PLAYER_DEAD_EYE_AURA_BY_HASH",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among LATCH_OBJECT_JOINT < MODIFY_INFINITE_TRAIL_VISION < MODIFY_PLAYER_UI_PROMPT_FOR_PED < MODIFY_PLAYER_UI_PROMPT < SET_PLAYER_DEAD_EYE_AURA_BY_HASH < PLAYER_PED_ID < REGISTER_INTERACTION_GROUP_FROM_STRUCT < REGISTER_INTERACTION_GROUP < REGISTER_INTERACTION_ON_TRIGGERED; "
+  },
+  "0x54A7A9BEF9C3D1B2": {
+   "name": "_0x54A7A9BEF9C3D1B2",
+   "confidence": "unnamed",
+   "rva": "0x04507C70",
+   "arg_cells": 2,
+   "return_cells": 0,
+   "calls": 53,
+   "estimate": "PLAYER::SET_PLAYER_FORCE_SKIP_AIM_INTRO",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among RESET_PLAYER_INPUT_GAIT < SET_AI_PLAYER_DEFENSE_MODIFIER_AGAINST_AI < SET_AI_WEAPON_DAMAGE_MODIFIER < SET_PED_SHOULD_IGNORE_AVOIDANCE_VOLUMES < SET_PLAYER_FORCE_SKIP_AIM_INTRO < SET_PLAYER_CAN_LEAVE_PARACHUTE_SMOKE_TRAIL < SET_PLAYER_CAN_PICKUP_HAT < SET_PLAYER_CONTROL < SET_PLAYER_DEFENSE_TYPE_MODIFIER; "
+  },
+  "0x1AC032FA6C0B6635": {
+   "name": "_0x1AC032FA6C0B6635",
+   "confidence": "unnamed",
+   "rva": "0x04507DB0",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 34,
+   "estimate": "PLAYER::_SET_PLAYER_DEFENSE_TYPE_MODIFIER",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among SET_PLAYER_FORCE_SKIP_AIM_INTRO < SET_PLAYER_CAN_LEAVE_PARACHUTE_SMOKE_TRAIL < SET_PLAYER_CAN_PICKUP_HAT < SET_PLAYER_CONTROL < SET_PLAYER_DEFENSE_TYPE_MODIFIER < SET_PLAYER_COOPERATE_PROMPT_THIS_FRAME < SET_PLAYER_FORCED_AIM < SET_PLAYER_HAS_DISCOVERED_CHARACTER_NAME_SP < SET_PLAYER_HEALTH_RECHARGE_MULTIPLIER; "
+  },
+  "0x04319582B1596E77": {
+   "name": "_0x04319582B1596E77",
+   "confidence": "unnamed",
+   "rva": "0x04508200",
+   "arg_cells": 2,
+   "return_cells": 0,
+   "calls": 5,
+   "estimate": "PLAYER::_SET_PLAYER_LOCAL_ACCURACY_FLOOR_MODIFIER",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among SET_PLAYER_HEALTH_RECHARGE_MULTIPLIER < SET_PLAYER_INVINCIBLE < SET_PLAYER_NOISE_MULTIPLIER < SET_PLAYER_PARACHUTE_SMOKE_TRAIL_COLOR < SET_PLAYER_LOCAL_ACCURACY_FLOOR_MODIFIER < SET_PLAYER_SIMULATE_AIMING < SET_PLAYER_TARGETING_MODE < SET_PLAYER_VEHICLE_DEFENSE_MODIFIER < SET_SPECIAL_ABILITY_MULTIPLIER; "
+  },
+  "0x4C0C8FDC23977D64": {
+   "name": "_0x4C0C8FDC23977D64",
+   "confidence": "unnamed",
+   "rva": "0x04508AF0",
+   "arg_cells": 2,
+   "return_cells": 0,
+   "calls": 8,
+   "estimate": "PLAYER::_SET_SHOW_INFO_CARD",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among SET_PLAYER_SIMULATE_AIMING < SET_PLAYER_TARGETING_MODE < SET_PLAYER_VEHICLE_DEFENSE_MODIFIER < SET_SPECIAL_ABILITY_MULTIPLIER < SET_SHOW_INFO_CARD < SET_SPECIAL_ABILITY_TYPE < SET_WANTED_LEVEL_DIFFICULTY < SIMULATE_PLAYER_INPUT_GAIT < SPECIAL_ABILITY_SET_ACTIVATE; "
+  },
+  "0x4A7480D7F2FF1220": {
+   "name": "_0x4A7480D7F2FF1220",
+   "confidence": "unnamed",
+   "rva": "0x0450B0A0",
+   "arg_cells": 1,
+   "return_cells": 1,
+   "calls": 5,
+   "estimate": "HUD::_UI_PROMPT_IS_ENABLED",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among UI_PROMPT_REGISTER_END < UI_PROMPT_HAS_HOLD_MODE_COMPLETED < UI_PROMPT_IS_JUST_PRESSED < UI_PROMPT_IS_PRESSED < UI_PROMPT_IS_ENABLED < UI_PROMPT_IS_VALID < UI_PROMPT_SET_ALLOWED_ACTION < UI_PROMPT_SET_ATTRIBUTE < UI_PROMPT_SET_CONTROL_ACTION; "
+  },
+  "0x3CED96829F482E23": {
+   "name": "_0x3CED96829F482E23",
+   "confidence": "unnamed",
+   "rva": "0x04A80060",
+   "arg_cells": 2,
+   "return_cells": 1,
+   "calls": 10,
+   "estimate": "VEHICLE::_GET_TRAIN_CARRIAGE_TRAILER_NUMBER",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among CLEAR_PED_LAST_WEAPON_DAMAGE < CLEAR_VEHICLE_GENERATOR_AREA_OF_INTEREST < CLEAR_VEHICLE_ROUTE_HISTORY < CONTROL_LANDING_GEAR < GET_TRAIN_CARRIAGE_TRAILER_NUMBER < CREATE_ANTI_GRIEF_VOLUME < CREATE_SPEED_VOLUME < CREATE_VOLUME_AGGREGATE < CREATE_VOLUME_BY_HASH; "
+  },
+  "0xDE0AE69BB7DC0EC5": {
+   "name": "_0xDE0AE69BB7DC0EC5",
+   "confidence": "unnamed",
+   "rva": "0x04A81C40",
+   "arg_cells": 3,
+   "return_cells": 1,
+   "calls": 25,
+   "estimate": "WEAPON::_GET_AMMO_IN_PED_WEAPON_FROM_GUID",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among SET_DISABLE_VEHICLE_PETROL_TANK_FIRES < DOES_VEHICLE_HAVE_ROOF < DOES_VOLUME_EXIST < EXPLODE_VEHICLE < GET_AMMO_IN_PED_WEAPON_FROM_GUID < GET_AMMO_IN_CLIP_BY_INVENTORY_UID < GET_BEST_PED_SHORTARM_GUID < GET_BEST_PED_WEAPON_IN_GROUP < GET_BEST_PED_WEAPON_IN_INVENTORY; "
+  },
+  "0x767F0AE99870FF7A": {
+   "name": "_0x767F0AE99870FF7A",
+   "confidence": "unnamed",
+   "rva": "0x04A81CC0",
+   "arg_cells": 4,
+   "return_cells": 1,
+   "calls": 11,
+   "estimate": "WEAPON::_GET_AMMO_IN_CLIP_BY_INVENTORY_UID",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among DOES_VEHICLE_HAVE_ROOF < DOES_VOLUME_EXIST < EXPLODE_VEHICLE < GET_AMMO_IN_PED_WEAPON_FROM_GUID < GET_AMMO_IN_CLIP_BY_INVENTORY_UID < GET_BEST_PED_SHORTARM_GUID < GET_BEST_PED_WEAPON_IN_GROUP < GET_BEST_PED_WEAPON_IN_INVENTORY < GET_BEST_PED_WEAPON; "
+  },
+  "0x60660F2A720A095E": {
+   "name": "_0x60660F2A720A095E",
+   "confidence": "unnamed",
+   "rva": "0x04A82370",
+   "arg_cells": 2,
+   "return_cells": 1,
+   "calls": 4,
+   "estimate": "VEHICLE::_GET_TRAIN_MODEL_FROM_TRAIN_CONFIG_BY_CAR_INDEX",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among GET_BEST_PED_SHORTARM_GUID < GET_BEST_PED_WEAPON_IN_GROUP < GET_BEST_PED_WEAPON_IN_INVENTORY < GET_BEST_PED_WEAPON < GET_TRAIN_MODEL_FROM_TRAIN_CONFIG_BY_CAR_INDEX < GET_BREAKABLE_VEHICLE_LOCK_OBJECT < GET_CLOSEST_VEHICLE < GET_CURRENT_AMMO_TYPE_FROM_GUID < GET_CURRENT_PED_WEAPON_AMMO_TYPE; "
+  },
+  "0x70CEED7D1368EFE5": {
+   "name": "_0x70CEED7D1368EFE5",
+   "confidence": "unnamed",
+   "rva": "0x04A82C20",
+   "arg_cells": 1,
+   "return_cells": 1,
+   "calls": 42,
+   "estimate": "WEAPON::_GET_AMMO_RECOMMENDED_TYPE_FOR_WEAPON",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among GET_CURRENT_PED_WEAPON_AMMO_TYPE < GET_CURRENT_PED_VEHICLE_WEAPON < GET_CURRENT_PED_WEAPON_ENTITY_INDEX < GET_CURRENT_PED_WEAPON < GET_AMMO_RECOMMENDED_TYPE_FOR_WEAPON < GET_DEFAULT_UNARMED_WEAPON_HASH < GET_DISPLAY_NAME_FROM_VEHICLE_MODEL < GET_DRIVER_OF_VEHICLE < GET_ENTITY_ATTACHED_TO_TOW_TRUCK; "
+  },
+  "0xA8FED2547BDA3A0F": {
+   "name": "_0xA8FED2547BDA3A0F",
+   "confidence": "unnamed",
+   "rva": "0x04A85C40",
+   "arg_cells": 2,
+   "return_cells": 1,
+   "calls": 1,
+   "estimate": "WEAPON::_GET_PED_CURRENT_HELD_WEAPON",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among GET_PED_LAST_WEAPON_IMPACT_COORD < GET_PED_WAYPOINT_PROGRESS < GET_PED_WEAPON_GUID_AT_ATTACH_POINT < GET_PED_WEAPONTYPE_IN_SLOT < GET_PED_CURRENT_HELD_WEAPON < GET_TRAIN_CAR < GET_TRAIN_CARRIAGE < GET_VEHICLE_ATTACHED_TO_CARGOBOB < GET_VEHICLE_BODY_HEALTH; "
+  },
+  "0x21C39C1303337791": {
+   "name": "_0x21C39C1303337791",
+   "confidence": "unnamed",
+   "rva": "0x04A885A0",
+   "arg_cells": 4,
+   "return_cells": 0,
+   "calls": 1397,
+   "estimate": "WEAPON::_HIDE_PED_WEAPONS",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among HAS_PED_GOT_WEAPON < HAS_TRAIN_LOADED < HAS_VEHICLE_ASSET_LOADED < HAS_VEHICLE_GOT_PROJECTILE_ATTACHED < HIDE_PED_WEAPONS < HIDE_PED_WEAPON_FOR_SCRIPTED_CUTSCENE < INSTANTLY_FILL_VEHICLE_POPULATION < IS_AMMO_VALID < IS_BIG_VEHICLE; "
+  },
+  "0x594E7932095759AD": {
+   "name": "_0x594E7932095759AD",
+   "confidence": "unnamed",
+   "rva": "0x04A8AC30",
+   "arg_cells": 1,
+   "return_cells": 1,
+   "calls": 9,
+   "estimate": "VOLUME::_IS_VOLUME_LOCK_REQUEST_VALID_2",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among IS_VEHICLE_STUCK_TIMER_UP < IS_VEHICLE_TYRE_BURST < IS_VEHICLE_WHEEL_DESTROYED < IS_VEHICLE_WINDOW_INTACT < IS_VOLUME_LOCK_REQUEST_VALID_2 < IS_VEHICLE_WRECKED < IS_WAYPOINT_PLAYBACK_GOING_ON_FOR_PED < IS_WAYPOINT_PLAYBACK_GOING_ON_FOR_VEHICLE < IS_WEAPON_A_GUN; "
+  },
+  "0x57AB07049545284F": {
+   "name": "_0x57AB07049545284F",
+   "confidence": "unnamed",
+   "rva": "0x04A8B370",
+   "arg_cells": 1,
+   "return_cells": 1,
+   "calls": 19,
+   "estimate": "WEAPON::_IS_WEAPON_KIT",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among IS_WEAPON_A_LONGARM < IS_WEAPON_BINOCULARS < IS_WEAPON_KNIFE < IS_WEAPON_MELEE_WEAPON < IS_WEAPON_KIT < IS_WEAPON_KIT_2 < IS_WEAPON_ONE_HANDED < IS_WEAPON_PISTOL < IS_WEAPON_REPEATER; "
+  },
+  "0x6B750F9DB61BFB7C": {
+   "name": "_0x6B750F9DB61BFB7C",
+   "confidence": "unnamed",
+   "rva": "0x04A8B490",
+   "arg_cells": 1,
+   "return_cells": 1,
+   "calls": 23,
+   "estimate": "WEAPON::_IS_WEAPON_KIT_2",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among IS_WEAPON_BINOCULARS < IS_WEAPON_KNIFE < IS_WEAPON_MELEE_WEAPON < IS_WEAPON_KIT < IS_WEAPON_KIT_2 < IS_WEAPON_ONE_HANDED < IS_WEAPON_PISTOL < IS_WEAPON_REPEATER < IS_WEAPON_REVOLVER; "
+  },
+  "0x48F1C0CF13BC3D00": {
+   "name": "_0x48F1C0CF13BC3D00",
+   "confidence": "unnamed",
+   "rva": "0x04A8BEE0",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 1,
+   "estimate": "VOLUME::_MODIFY_VOLUME_LOCK_LOCATION",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among MAKE_PED_DROP_WEAPON < MAKE_PED_RELOAD < MODIFY_VEHICLE_TOP_SPEED < REMOVE_ALL_PED_WEAPONS < MODIFY_VOLUME_LOCK_LOCATION < REQUEST_WEAPON_HIGH_DETAIL_MODEL < SET_PED_DROPS_INVENTORY_WEAPON < SET_VEHICLE_LIVERY < REFILL_AMMO_IN_CURRENT_PED_WEAPON; "
+  },
+  "0x0F2D2B4ABDB00346": {
+   "name": "_0x0F2D2B4ABDB00346",
+   "confidence": "unnamed",
+   "rva": "0x04A8DEF0",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 194,
+   "estimate": "VEHICLE::_SET_ALL_VEHICLE_GENERATORS_DISABLED_FOR_VOLUME",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among ROLL_UP_WINDOW < SET_AIRCRAFT_PILOT_SKILL_NOISE_SCALAR < SET_ALL_VEHICLE_GENERATORS_ACTIVE_IN_AREA < SET_ALL_VEHICLE_GENERATORS_ACTIVE_IN_VOLUME < SET_ALL_VEHICLE_GENERATORS_DISABLED_FOR_VOLUME < SET_ALL_VEHICLE_GENERATORS_ACTIVE < SET_ALLOW_ANY_WEAPON_DROP < SET_ALLOW_VEHICLE_EXPLODES_ON_CONTACT < SET_AMBIENT_VEHICLE_RANGE_MULTIPLIER_THIS_FRAME; "
+  },
+  "0x9B34CD75B2EA1B68": {
+   "name": "_0x9B34CD75B2EA1B68",
+   "confidence": "unnamed",
+   "rva": "0x04A906D0",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 6,
+   "estimate": "VEHICLE::_SET_VEHICLE_MUD_LEVEL",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among SET_HELI_BLADES_SPEED < SET_HELI_RESIST_TO_EXPLOSION < SET_MISSION_TRAIN_AS_NO_LONGER_NEEDED < SET_MISSION_TRAIN_COORDS < SET_VEHICLE_MUD_LEVEL < SET_PARKED_VEHICLE_DENSITY_MULTIPLIER_THIS_FRAME < SET_PED_AMMO_BY_TYPE < SET_PED_CHANCE_OF_FIRING_BLANKS < SET_PED_CURRENT_WEAPON_VISIBLE; "
+  },
+  "0x900563B76B45FEF7": {
+   "name": "_0x900563B76B45FEF7",
+   "confidence": "unnamed",
+   "rva": "0x04A92890",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 97,
+   "estimate": "VEHICLE::SET_VEHICLE_CHEAT_POWER_INCREASE",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among SET_VEHICLE_CAN_ENGINE_MISSFIRE < SET_VEHICLE_CAN_LEAK_OIL < SET_VEHICLE_CAN_LEAK_PETROL < SET_VEHICLE_DAMAGE_SCALES < SET_VEHICLE_CHEAT_POWER_INCREASE < SET_VEHICLE_DENSITY_MULTIPLIER_THIS_FRAME < SET_VEHICLE_DIRT_LEVEL < SET_VEHICLE_DISABLE_HEIGHT_MAP_AVOIDANCE < SET_VEHICLE_DISABLE_TOWING; "
+  },
+  "0x88B978908781BCB8": {
+   "name": "_0x88B978908781BCB8",
+   "confidence": "unnamed",
+   "rva": "0x04A962D0",
+   "arg_cells": 2,
+   "return_cells": 0,
+   "calls": 2,
+   "estimate": "VEHICLE::_SET_TRAIN_LEAVE_STATION",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among TASK_VEHICLE_FOLLOW_WAYPOINT_RECORDING_ADVANCED < TASK_VEHICLE_FOLLOW_WAYPOINT_RECORDING_NO_DRIVER < TASK_VEHICLE_FOLLOW_WAYPOINT_RECORDING < TEST_VERTICAL_PROBE_AGAINST_ALL_WATER < SET_TRAIN_LEAVE_STATION < TRIGGER_TRAIN_WHISTLE < TRANSITION_SCENARIO_TO_CONDITIONAL_ANIM < USE_WAYPOINT_RECORDING_AS_ASSISTED_MOVEMENT_ROUTE < VEHICLE_WAYPOINT_PLAYBACK_GET_IS_PAU"
+  },
+  "0x9CA33D4D301EDD13": {
+   "name": "_0x9CA33D4D301EDD13",
+   "confidence": "unnamed",
+   "rva": "0x04A964D0",
+   "arg_cells": 5,
+   "return_cells": 0,
+   "calls": 1,
+   "estimate": "VEHICLE::_TRIGGER_TRAIN_WHISTLE",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among TASK_VEHICLE_FOLLOW_WAYPOINT_RECORDING_NO_DRIVER < TASK_VEHICLE_FOLLOW_WAYPOINT_RECORDING < TEST_VERTICAL_PROBE_AGAINST_ALL_WATER < SET_TRAIN_LEAVE_STATION < TRIGGER_TRAIN_WHISTLE < TRANSITION_SCENARIO_TO_CONDITIONAL_ANIM < USE_WAYPOINT_RECORDING_AS_ASSISTED_MOVEMENT_ROUTE < VEHICLE_WAYPOINT_PLAYBACK_GET_IS_PAUSED < VEHICLE_WAYPOINT_PLAYBACK_OVERRIDE_SPEED; "
+  },
+  "0x6C11AB8DA1BDF00D": {
+   "name": "_0x6C11AB8DA1BDF00D",
+   "confidence": "unnamed",
+   "rva": "0x04BC6AD0",
+   "arg_cells": 0,
+   "return_cells": 1,
+   "calls": 12,
+   "estimate": "PED::_ARE_ALL_AMBIENT_PED_RESERVATIONS_READY",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among ADD_RELATIONSHIP_GROUP < APPLY_PED_BLOOD_DAMAGE_BY_ZONE < APPLY_PED_DAMAGE_PACK < ARE_ALL_NAVMESH_REGIONS_LOADED < ARE_ALL_AMBIENT_PED_RESERVATIONS_READY < ATTACH_VOLUME_TO_ENTITY < CAN_PED_HEAR_TARGET_PED < CAN_PED_IN_COMBAT_SEE_TARGET < CAN_PED_SEE_PED_CACHED; "
+  },
+  "0x3F1794613C2B48AB": {
+   "name": "_0x3F1794613C2B48AB",
+   "confidence": "unnamed",
+   "rva": "0x04BC75B0",
+   "arg_cells": 3,
+   "return_cells": 1,
+   "calls": 25,
+   "estimate": "PED::_CHANGE_PED_STAMINA",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among CAN_PED_HEAR_TARGET_PED < CAN_PED_IN_COMBAT_SEE_TARGET < CAN_PED_SEE_PED_CACHED < CAN_PED_SEE_TARGET_ENTITY < CHANGE_PED_STAMINA < CHAL_MISSION_ADD_GOAL_PROGRESS_INT < CLEAR_FACIAL_IDLE_ANIM_OVERRIDE < CLEAR_FLOATING_HELP < CLEAR_PED_BLOOD_DAMAGE_BY_ZONE; "
+  },
+  "0x67CE305FCA5A9DD2": {
+   "name": "_0x67CE305FCA5A9DD2",
+   "confidence": "unnamed",
+   "rva": "0x04BC8360",
+   "arg_cells": 2,
+   "return_cells": 0,
+   "calls": 120,
+   "estimate": "PED::CLEAR_PED_LAST_DAMAGE_BONE",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among CLEAR_PED_DECORATIONS < CLEAR_PED_DESIRED_LOCO_MOTION_TYPE < CLEAR_PED_ENV_DIRT < CLEAR_PED_MAX_MOVE_BLEND_RATIO < CLEAR_PED_LAST_DAMAGE_BONE < CLEAR_PED_TARGET_ACTION_DISABLE_FLAG < CLEAR_PED_WETNESS < CLEAR_RAGDOLL_BLOCKING_FLAGS < GET_CONTROL_HOW_LONG_AGO; "
+  },
+  "0x093C2D7884DFB077": {
+   "name": "_0x093C2D7884DFB077",
+   "confidence": "unnamed",
+   "rva": "0x04BC9DC0",
+   "arg_cells": 2,
+   "return_cells": 0,
+   "calls": 657,
+   "estimate": "PERSCHAR::_FORCE_DESPAWN_PERSCHAR",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among ENABLE_CONTROL_ACTION < ENABLE_PERSISTENT_CHARACTER < FAKE_SET_PED_LOCO_INJURED < FIND_ALL_ATTACHED_CARRIABLE_ENTITIES < FORCE_DESPAWN_PERSCHAR < FORCE_ALL_HEADING_VALUES_TO_ALIGN < FORCE_INSTANT_LEG_IK_SETUP < FORCE_PED_AI_AND_ANIMATION_UPDATE < FORCE_PED_DEATH; "
+  },
+  "0x3720BA1186BBC2A9": {
+   "name": "_0x3720BA1186BBC2A9",
+   "confidence": "unnamed",
+   "rva": "0x04BCA7E0",
+   "arg_cells": 2,
+   "return_cells": 2,
+   "calls": 27,
+   "estimate": "PED::_GET_CARRIER_AS_HUMAN",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among GET_APPROX_FLOOR_FOR_POINT < GET_APPROX_HEIGHT_FOR_POINT < GET_BLOCKING_OF_NON_TEMPORARY_EVENTS < GET_CARRIER_AS_MOUNT < GET_CARRIER_AS_HUMAN < GET_CARRIER_AS_PED < GET_CLOSEST_PED < GET_CONTROL_NORMAL < GET_CONTROL_UNBOUND_NORMAL; "
+  },
+  "0xF0290C1C8AC4EA52": {
+   "name": "_0xF0290C1C8AC4EA52",
+   "confidence": "unnamed",
+   "rva": "0x04BCC700",
+   "arg_cells": 2,
+   "return_cells": 1,
+   "calls": 14,
+   "estimate": "PED::_GET_PED_GRAPPLE_STYLE",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among GET_PED_CAUSE_OF_DEATH < GET_PED_CONFIG_FLAG < GET_PED_CURRENT_MOVE_BLEND_RATIO < GET_PED_DAMAGE_CLEANLINESS < GET_PED_GRAPPLE_STYLE < GET_PED_GRAPPLE_STATE < GET_PED_GRAPPLER < GET_PED_GROUP_INDEX < GET_PED_HAS_INTERACTED_WITH_PLAYER; "
+  },
+  "0x625203BDE08EB185": {
+   "name": "_0x625203BDE08EB185",
+   "confidence": "unnamed",
+   "rva": "0x04BCD0D0",
+   "arg_cells": 2,
+   "return_cells": 2,
+   "calls": 4,
+   "estimate": "PED::_GET_PED_LAST_DROPPED_HAT",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among GET_PED_INTERACTION_PERSONALITY < GET_PED_IS_BEING_GRAPPLED < GET_PED_IS_DOING_COMBAT_ROLL < GET_PED_IS_GRAPPLING < GET_PED_LAST_DROPPED_HAT < GET_PED_LASSO_HOGTIE_FLAG < GET_PED_MAX_HEALTH < GET_PED_MAX_STAMINA < GET_PED_MONEY; "
+  },
+  "0xD96A260621C6FB4D": {
+   "name": "_0xD96A260621C6FB4D",
+   "confidence": "unnamed",
+   "rva": "0x04BCEDA0",
+   "arg_cells": 3,
+   "return_cells": 1,
+   "calls": 21,
+   "estimate": "PED::_HAS_PED_EMOTIONAL_PRESET_LOADED",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among GET_SEAT_PED_IS_TRYING_TO_ENTER < GET_STAMINA_DEPLETION_MULTIPLIER < GET_STAMINA_RECHARGE_MULTIPLIER < GIVE_PED_HASH_COMMAND < HAS_PED_EMOTIONAL_PRESET_LOADED < HAS_MOTION_TYPE_ASSET_LOADED < HAS_PED_BEEN_SHOVED_RECENTLY < HAS_PED_SHOT_RECENTLY < GET_PED_DRUNKNESS; "
+  },
+  "0xE63EAC6E775AA9B4": {
+   "name": "_0xE63EAC6E775AA9B4",
+   "confidence": "unnamed",
+   "rva": "0x04BCF4C0",
+   "arg_cells": 2,
+   "return_cells": 1,
+   "calls": 29,
+   "estimate": "PED::_IS_ANIMAL_SKINNED",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among GET_PED_DRUNKNESS < EXPLODE_PED_HEAD < INSTANTLY_FILL_PED_POPULATION < IS_ANY_HOSTILE_PED_NEAR_POINT < IS_ANIMAL_SKINNED < IS_CONTROL_JUST_PRESSED < IS_CONTROL_JUST_RELEASED < IS_CONTROL_PRESSED < IS_CONTROL_RELEASED; "
+  },
+  "0x10E774DDAF0EDB19": {
+   "name": "_0x10E774DDAF0EDB19",
+   "confidence": "unnamed",
+   "rva": "0x04BD02E0",
+   "arg_cells": 2,
+   "return_cells": 1,
+   "calls": 44,
+   "estimate": "PED::_IS_PED_DRUNK",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among IS_PED_DIVING < IS_PED_DOING_DRIVEBY < IS_PED_DUCKING < IS_PED_DYING < IS_PED_DRUNK < IS_PED_EVASIVE_DIVING < IS_PED_FACING_PED < IS_PED_FALLING_OVER < IS_PED_FALLING; "
+  },
+  "0x518ED3FC144DF729": {
+   "name": "_0x518ED3FC144DF729",
+   "confidence": "unnamed",
+   "rva": "0x04BD1DB0",
+   "arg_cells": 2,
+   "return_cells": 1,
+   "calls": 1,
+   "estimate": "PED::_IS_PED_USING_ACTION_MODE_2",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among IS_PED_TARGETTING_ENTITY < IS_PED_USING_ACTION_MODE < IS_PED_VAULTING < IS_PED_VISIBILITY_TRACKED < IS_PED_USING_ACTION_MODE_2 < IS_PERSISTENT_CHARACTER_DEAD < IS_PERSISTENT_CHARACTER_VALID < IS_GUARD_PED_INVESTIGATING < IS_USING_KEYBOARD_AND_MOUSE; "
+  },
+  "0xC0B8505228BC3BD6": {
+   "name": "_0xC0B8505228BC3BD6",
+   "confidence": "unnamed",
+   "rva": "0x04BD2150",
+   "arg_cells": 3,
+   "return_cells": 1,
+   "calls": 160,
+   "estimate": "LAW::_IS_GUARD_PED_INVESTIGATING",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among IS_PED_VISIBILITY_TRACKED < IS_PED_USING_ACTION_MODE_2 < IS_PERSISTENT_CHARACTER_DEAD < IS_PERSISTENT_CHARACTER_VALID < IS_GUARD_PED_INVESTIGATING < IS_USING_KEYBOARD_AND_MOUSE < IS_USING_SLIPSTREAM < KNOCK_OFF_PED_PROP < NAVMESH_CLEAR_REQUESTED_PATH; "
+  },
+  "0xB74A8687554FAF25": {
+   "name": "_0xB74A8687554FAF25",
+   "confidence": "unnamed",
+   "rva": "0x04BD2F40",
+   "arg_cells": 7,
+   "return_cells": 0,
+   "calls": 585,
+   "estimate": "PED::_PED_EMOTIONAL_PRESET_LOCO_MOTION",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among NAVMESH_ACTIVATE_SWAP < NAVMESH_DEACTIVATE_SWAP < NAVMESH_IS_SWAP_ACTIVE < PED_APPLY_SPEECH_RELATIONSHIP < PED_EMOTIONAL_PRESET_LOCO_MOTION < PED_CLEAR_LOCO_MOTION < COMPUTE_PED_MOVE_BLEND_RATIO_FOR_MAX_SPEED < PED_SET_INTERACTED_WITH_PLAYER < PED_SET_SIMPLE_PLAYER_MEMORY; "
+  },
+  "0x21F60CB9D4B31E8F": {
+   "name": "_0x21F60CB9D4B31E8F",
+   "confidence": "unnamed",
+   "rva": "0x04BD32E0",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 335,
+   "estimate": "PED::_PED_REMOVE_SPEECH_RELATIONSHIP",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among PED_CLEAR_LOCO_MOTION < COMPUTE_PED_MOVE_BLEND_RATIO_FOR_MAX_SPEED < PED_SET_INTERACTED_WITH_PLAYER < PED_SET_SIMPLE_PLAYER_MEMORY < PED_REMOVE_SPEECH_RELATIONSHIP < PED_WAS_KILLED_BY_HEADSHOT < PLAY_FACIAL_ANIM < QUERY_PERSCHAR_INDEX_FROM_HASH < REFRESH_CARRIED_PED_FOR_PED; "
+  },
+  "0xFE57DAA503C454E7": {
+   "name": "_0xFE57DAA503C454E7",
+   "confidence": "unnamed",
+   "rva": "0x04BD3D80",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 1,
+   "estimate": "PED::_REMOVE_PED_EMOTIONAL_PRESET",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among PLAY_FACIAL_ANIM < QUERY_PERSCHAR_INDEX_FROM_HASH < REFRESH_CARRIED_PED_FOR_PED < RELEASE_PERSCHAR_OWNERSHIP < REMOVE_PED_EMOTIONAL_PRESET < REMOVE_GROUP < REMOVE_MOTION_TYPE_ASSET < REMOVE_NAVMESH_BLOCKING_OBJECT < REMOVE_NAVMESH_BLOCKING_VOLUME; "
+  },
+  "0x656E61FC0815DAF4": {
+   "name": "_0x656E61FC0815DAF4",
+   "confidence": "unnamed",
+   "rva": "0x04BD4920",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 9,
+   "estimate": "PED::_REQUEST_MOTION_TYPE_ASSET",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among REMOVE_PED_STAY_OUT_VOLUME < REMOVE_RELATIONSHIP_GROUP < REQUEST_PED_EMOTIONAL_PRESET < REQUEST_PED_VEHICLE_VISIBILITY_TRACKING < REQUEST_MOTION_TYPE_ASSET < REQUEST_PED_VISIBILITY_TRACKING < REQUEST_RAGDOLL_FOR_PED < RESERVE_AMBIENT_PEDS < RESERVE_AMBIENT_PEDS_TOTAL; "
+  },
+  "0x2570FD4B126A7D4C": {
+   "name": "_0x2570FD4B126A7D4C",
+   "confidence": "unnamed",
+   "rva": "0x04BD4A60",
+   "arg_cells": 1,
+   "return_cells": 0,
+   "calls": 26,
+   "estimate": "PED::_RESERVE_AMBIENT_PEDS",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among REQUEST_PED_VEHICLE_VISIBILITY_TRACKING < REQUEST_MOTION_TYPE_ASSET < REQUEST_PED_VISIBILITY_TRACKING < REQUEST_RAGDOLL_FOR_PED < RESERVE_AMBIENT_PEDS < RESERVE_AMBIENT_PEDS_TOTAL < RESET_PED_STAMINA < RESET_PERSCHAR_SCHEDULE < RESTORE_PED_STAMINA; "
+  },
+  "0xE01E29BB0FF71F45": {
+   "name": "_0xE01E29BB0FF71F45",
+   "confidence": "unnamed",
+   "rva": "0x04BD4AB0",
+   "arg_cells": 1,
+   "return_cells": 0,
+   "calls": 11,
+   "estimate": "PED::_RESERVE_AMBIENT_PEDS_TOTAL",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among REQUEST_MOTION_TYPE_ASSET < REQUEST_PED_VISIBILITY_TRACKING < REQUEST_RAGDOLL_FOR_PED < RESERVE_AMBIENT_PEDS < RESERVE_AMBIENT_PEDS_TOTAL < RESET_PED_STAMINA < RESET_PERSCHAR_SCHEDULE < RESTORE_PED_STAMINA < RESURRECT_PED; "
+  },
+  "0x18E46995002AB260": {
+   "name": "_0x18E46995002AB260",
+   "confidence": "unnamed",
+   "rva": "0x04BD5A60",
+   "arg_cells": 9,
+   "return_cells": 0,
+   "calls": 6,
+   "estimate": "PED::_SET_PED_ACTIVATE_WOUND_EFFECT",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among RETASK_PERSISTENT_CHARACTER < REVIVE_INJURED_PED < REVIVE_PERSCHAR < SET_ACCURACY_AGAINST_LOCAL_PLAYER_MODIFIER < SET_PED_ACTIVATE_WOUND_EFFECT < SET_BLOCKING_OF_NON_TEMPORARY_EVENTS_FOR_AMBIENT_PEDS_THIS_FRAME < SET_BLOCKING_OF_NON_TEMPORARY_EVENTS < SET_BREAKOUT_ARCHETYPE < SET_CONTROL_VALUE_NEXT_FRAME; "
+  },
+  "0x378F4D204D7A52F1": {
+   "name": "_0x378F4D204D7A52F1",
+   "confidence": "unnamed",
+   "rva": "0x04BD7860",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 78,
+   "estimate": "PED::_SET_PED_ACTIVE_PLAYER_TYPE",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among SET_GROUP_SEPARATION_RANGE < SET_HEALTH_RECHARGE_MULTIPLIER < SET_IK_TARGET < SET_INPUT_EXCLUSIVE < SET_PED_ACTIVE_PLAYER_TYPE < SET_PED_ACCURACY < SET_PED_ALERTNESS < SET_PED_ARMOUR < SET_PED_AS_GROUP_LEADER; "
+  },
+  "0x307E45B8298490C4": {
+   "name": "_0x307E45B8298490C4",
+   "confidence": "unnamed",
+   "rva": "0x04BD8B40",
+   "arg_cells": 4,
+   "return_cells": 0,
+   "calls": 87,
+   "estimate": "PED::_SET_PED_INCAPACITATION_FLAGS",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among SET_PED_DENSITY_MULTIPLIER_THIS_FRAME < SET_PED_DESIRED_HEADING < SET_PED_DESIRED_LOCO_MOTION_TYPE < SET_PED_DIES_WHEN_INJURED < SET_PED_INCAPACITATION_FLAGS < SET_PED_DESIRES_GROUP < SET_PED_DRUNKNESS < SET_PED_FLEE_ATTRIBUTES < SET_PED_GRAVITY; "
+  },
+  "0x9985AF28452D5CEE": {
+   "name": "_0x9985AF28452D5CEE",
+   "confidence": "unnamed",
+   "rva": "0x04BD8BC0",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 6,
+   "estimate": "PED::_SET_PED_DESIRES_GROUP",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among SET_PED_DESIRED_HEADING < SET_PED_DESIRED_LOCO_MOTION_TYPE < SET_PED_DIES_WHEN_INJURED < SET_PED_INCAPACITATION_FLAGS < SET_PED_DESIRES_GROUP < SET_PED_DRUNKNESS < SET_PED_FLEE_ATTRIBUTES < SET_PED_GRAVITY < SET_PED_HEADSHOT_DAMAGE_MULTIPLIER; "
+  },
+  "0xF8EFA055DB37D109": {
+   "name": "_0xF8EFA055DB37D109",
+   "confidence": "unnamed",
+   "rva": "0x04BD94E0",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 19,
+   "estimate": "PED::_SET_PED_INTERACTION_PERSONALITY",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among SET_PED_GRAVITY < SET_PED_HEADSHOT_DAMAGE_MULTIPLIER < SET_PED_HEALTH_CONFIG < SET_PED_IS_IGNORED_BY_AUTO_OPEN_DOORS < SET_PED_INTERACTION_PERSONALITY < SET_PED_KEEP_TASK < SET_PED_LASSO_HOGTIE_FLAG < SET_PED_LEG_IK_MODE < SET_PED_MAX_HEALTH; "
+  },
+  "0x0AA5AD4EC65D03A5": {
+   "name": "_0x0AA5AD4EC65D03A5",
+   "confidence": "unnamed",
+   "rva": "0x04BDB460",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 231,
+   "estimate": "PED::_SET_REMOVE_PED_NETWORKED",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among SET_PLAYER_FACIAL_MOOD < SET_PLAYER_GREET_DISABLED_FOR_PED < SET_RAGDOLL_BLOCKING_FLAGS < SET_RELATIONSHIP_BETWEEN_GROUPS < SET_REMOVE_PED_NETWORKED < SET_RELATIONSHIP_GROUP_AFFECTS_WANTED_LEVEL < SET_SCENARIO_PED_DENSITY_MULTIPLIER_THIS_FRAME < SET_STAMINA_DEPLETION_MULTIPLIER < SET_STAMINA_RECHARGE_MULTIPLIER; "
+  },
+  "0x9DB8A12CF2B48817": {
+   "name": "_0x9DB8A12CF2B48817",
+   "confidence": "unnamed",
+   "rva": "0x04BDC6F0",
+   "arg_cells": 3,
+   "return_cells": 1,
+   "calls": 12,
+   "estimate": "LAW::_CREATE_GUARD_ZONE_FOR_ENTITY",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among STOP_PED_WEAPON_FIRING_WHEN_DROPPED < SUPPRESS_PED_EVENT_TYPE < TIME_SINCE_PED_LAST_SHOT < TOGGLE_PLAYER_PED_FLINCH < CREATE_GUARD_ZONE_FOR_ENTITY < TRY_TO_CLAIM_PERSCHAR_OWNERSHIP < UNRESERVE_AMBIENT_PEDS < UPDATE_PED_WOUND_EFFECT < UPDATE_NAVMESH_BLOCKING_OBJECT; "
+  },
+  "0x726EE0B6994E3488": {
+   "name": "_0x726EE0B6994E3488",
+   "confidence": "unnamed",
+   "rva": "0x04BDCA80",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 2,
+   "estimate": "PED::_UPDATE_PED_WOUND_EFFECT",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among TOGGLE_PLAYER_PED_FLINCH < CREATE_GUARD_ZONE_FOR_ENTITY < TRY_TO_CLAIM_PERSCHAR_OWNERSHIP < UNRESERVE_AMBIENT_PEDS < UPDATE_PED_WOUND_EFFECT < UPDATE_NAVMESH_BLOCKING_OBJECT < WAS_PED_KILLED_BY_STEALTH < WAS_PED_KILLED_BY_TAKEDOWN < WAS_PED_KNOCKED_OUT; "
+  },
+  "0xCADBD4B810AEDBD1": {
+   "name": "_0xCADBD4B810AEDBD1",
+   "confidence": "unnamed",
+   "rva": "0x04BF2940",
+   "arg_cells": 1,
+   "return_cells": 0,
+   "calls": 738,
+   "estimate": "AUDIO::_CLEAR_CONVERSATION_HISTORY_FOR_SCRIPTED_CONVERSATION",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among CANCEL_ALL_POLICE_REPORTS < CANCEL_MUSIC_EVENT < CLEAR_ALL_SEAT_PREFERENCE_SLOTS < CLEAR_CONVERSATION_HISTORY < CLEAR_CONVERSATION_HISTORY_FOR_SCRIPTED_CONVERSATION < CLEAR_DIALOGUE_HISTORY < FREEZE_MICROPHONE < PLAY_PAIN < PLAY_AMBIENT_SPEECH_FROM_POSITION_NATIVE; "
+  },
+  "0x0FE6A1905D353621": {
+   "name": "_0x0FE6A1905D353621",
+   "confidence": "unnamed",
+   "rva": "0x04BF5520",
+   "arg_cells": 1,
+   "return_cells": 1,
+   "calls": 2574,
+   "estimate": "AUDIO::_IS_ANY_CONVERSATION_PLAYING",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among GET_VEHICLE_PED_IS_USING < IS_AMBIENT_SPEECH_PLAYING < IS_ANY_POSITIONAL_SPEECH_PLAYING < IS_ANY_SCRIPTED_CONVERSATION_ONGOING < IS_ANY_CONVERSATION_PLAYING < IS_ANY_SPEECH_PLAYING < AUDIO_IS_MUSIC_PLAYING < IS_GAME_IN_CONTROL_OF_MUSIC < IS_MISSION_NEWS_STORY_UNLOCKED; "
+  },
+  "0xF5F5E1980FE3A8F1": {
+   "name": "_0xF5F5E1980FE3A8F1",
+   "confidence": "unnamed",
+   "rva": "0x04BF6970",
+   "arg_cells": 1,
+   "return_cells": 1,
+   "calls": 1318,
+   "estimate": "AUDIO::_IS_SCRIPTED_CONVERSION_ONGOING",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among IS_PED_TRYING_TO_ENTER_A_LOCKED_VEHICLE < IS_RADIO_RETUNING < IS_SCRIPTED_CONVERSATION_CREATED < IS_SCRIPTED_CONVERSATION_LOADED < IS_SCRIPTED_CONVERSION_ONGOING < IS_SCRIPTED_CONVERSATION_PLAYING < IS_SCRIPTED_SPEECH_PLAYING < IS_VEHICLE_RADIO_ON < IS_TRANSPORT_SEAT_OCCUPIED; "
+  },
+  "0x22214561CB1D710E": {
+   "name": "_0x22214561CB1D710E",
+   "confidence": "unnamed",
+   "rva": "0x04BF6B90",
+   "arg_cells": 2,
+   "return_cells": 1,
+   "calls": 14,
+   "estimate": "AUDIO::IS_VEHICLE_RADIO_ON",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among IS_SCRIPTED_CONVERSATION_LOADED < IS_SCRIPTED_CONVERSION_ONGOING < IS_SCRIPTED_CONVERSATION_PLAYING < IS_SCRIPTED_SPEECH_PLAYING < IS_VEHICLE_RADIO_ON < IS_TRANSPORT_SEAT_OCCUPIED < IS_VEHICLE_ON_FIRE < KNOCK_PED_OFF_VEHICLE < PAUSE_SCRIPTED_CONVERSATION; "
+  },
+  "0x7439640C669C97E5": {
+   "name": "_0x7439640C669C97E5",
+   "confidence": "unnamed",
+   "rva": "0x04BF86D0",
+   "arg_cells": 4,
+   "return_cells": 0,
+   "calls": 3,
+   "estimate": "AUDIO::_SET_WHISTLE_CONFIG_FOR_PED",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among SET_AMBIENT_ZONE_STATE < SET_ANIM_RATE < SET_ATTRIBUTE_BASE_RANK < SET_AUDIO_FLAG < SET_WHISTLE_CONFIG_FOR_PED < SET_CONVERSATION_SINGLE_LINE < SET_ENABLE_SPEED_RESTRAIN_FOR_WAYPOINT_RECORDING_LEADER < SET_ENTITY_FOR_NULL_CONV_PED < SET_GRASS_CULL_SPHERE; "
+  },
+  "0x8D7698A948F860B3": {
+   "name": "_0x8D7698A948F860B3",
+   "confidence": "unnamed",
+   "rva": "0x04BF9090",
+   "arg_cells": 7,
+   "return_cells": 0,
+   "calls": 293,
+   "estimate": "AITRANSPORT::_SET_PED_USE_TRANSPORT_SEAT_PREFERENCE",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among SET_PED_INTO_VEHICLE < SET_PED_IS_DRUNK < SET_PED_OFF_TRANSPORT_SEAT < SET_PLAYER_ANGRY < SET_PED_USE_TRANSPORT_SEAT_PREFERENCE < SET_PORTAL_SETTINGS_OVERRIDE < SET_POSITION_FOR_NULL_CONV_PED < SET_SIREN_BYPASS_MP_DRIVER_CHECK < SET_SIREN_WITH_NO_DRIVER; "
+  },
+  "0x4A5BE6D558397AB4": {
+   "name": "_0x4A5BE6D558397AB4",
+   "confidence": "unnamed",
+   "rva": "0x04BF9D30",
+   "arg_cells": 8,
+   "return_cells": 0,
+   "calls": 15,
+   "estimate": "TASK::_TASK_DISEMBARK_VEHICLE",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among STOP_CURRENT_PLAYING_SPEECH < STOP_SCRIPTED_PED_AMBIENT_SPEECH < TAKE_OWNERSHIP_OF_ANIM_SCENE < TASK_BOARD_VEHICLE < TASK_DISEMBARK_VEHICLE < TASK_COMBAT_PED_AT_COORDS < TASK_DRIVE_BY < TASK_ENTER_COVER < TASK_ENTER_TRANSPORT; "
+  },
+  "0xBC36A7C1593F878B": {
+   "name": "_0xBC36A7C1593F878B",
+   "confidence": "unnamed",
+   "rva": "0x04C14AC0",
+   "arg_cells": 2,
+   "return_cells": 1,
+   "calls": 27,
+   "estimate": "NETWORK::_NETWORK_GET_PLAYER_OWNER_OF_NETWORK_ID",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among NETWORK_ARE_HANDLES_THE_SAME < NETWORK_CAN_BAIL < NETWORK_CHECK_ACCESS_AND_ALERT_IF_FAIL < NETWORK_GET_ENTITY_IS_NETWORKED < NETWORK_GET_PLAYER_OWNER_OF_NETWORK_ID < NETWORK_GET_LOCAL_HANDLE < NETWORK_GET_PLAYER_FROM_GAMER_HANDLE < NETWORK_GET_PLAYER_INDEX_FROM_PED < NETWORK_GET_THIS_SCRIPT_IS_NETWORK_SCRIPT; "
+  },
+  "0x2324453AD86839CC": {
+   "name": "_0x2324453AD86839CC",
+   "confidence": "unnamed",
+   "rva": "0x04C16A80",
+   "arg_cells": 4,
+   "return_cells": 0,
+   "calls": 12,
+   "estimate": "OBJECT::_SET_OBJECT_BURN_LEVEL",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among REMOVE_ALL_STICKY_BOMBS_FROM_ENTITY < REMOVE_PICKUP < ROTATE_OBJECT < SET_ACTIVATE_OBJECT_PHYSICS_AS_SOON_AS_IT_IS_UNFROZEN < SET_OBJECT_BURN_LEVEL < SET_FORCE_OBJECT_THIS_FRAME < SET_CUTSCENES_WEAPON_FLASHLIGHT_ON_THIS_FRAME < SET_DISABLE_TURRET_MOVEMENT < SET_NETWORK_ID_EXISTS_ON_ALL_MACHINES; "
+  },
+  "0x010C80883550D433": {
+   "name": "_0x010C80883550D433",
+   "confidence": "unnamed",
+   "rva": "0x04C171F0",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 24,
+   "estimate": "OBJECT::_SET_OBJECT_INTERACTION_PRESET",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among SET_CUTSCENES_WEAPON_FLASHLIGHT_ON_THIS_FRAME < SET_DISABLE_TURRET_MOVEMENT < SET_NETWORK_ID_EXISTS_ON_ALL_MACHINES < SET_OBJECT_ALLOW_LOW_LOD_BUOYANCY < SET_OBJECT_INTERACTION_PRESET < SET_OBJECT_FORCE_VEHICLES_TO_AVOID < SET_OBJECT_BREAK_SCALE < SET_OBJECT_KICKABLE < SET_OBJECT_PHYSICS_PARAMS; "
+  },
+  "0xE809A77600466002": {
+   "name": "_0xE809A77600466002",
+   "confidence": "unnamed",
+   "rva": "0x04C172B0",
+   "arg_cells": 3,
+   "return_cells": 0,
+   "calls": 23,
+   "estimate": "OBJECT::_SET_OBJECT_BREAK_SCALE",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among SET_NETWORK_ID_EXISTS_ON_ALL_MACHINES < SET_OBJECT_ALLOW_LOW_LOD_BUOYANCY < SET_OBJECT_INTERACTION_PRESET < SET_OBJECT_FORCE_VEHICLES_TO_AVOID < SET_OBJECT_BREAK_SCALE < SET_OBJECT_KICKABLE < SET_OBJECT_PHYSICS_PARAMS < SET_OBJECT_TARGETTABLE_FOCUS < SET_OBJECT_TARGETTABLE; "
+  },
+  "0xDC3E99DC717BEE65": {
+   "name": "_0xDC3E99DC717BEE65",
+   "confidence": "unnamed",
+   "rva": "0x03C095F0",
+   "arg_cells": 3,
+   "return_cells": 1,
+   "calls": 179,
+   "estimate": "PLAYER::_GET_CONSTRUCTED_DISCOVERED_CHARACTER_NAME",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among GET_CURRENT_NUMBER_OF_LOCAL_PHOTOS < GET_DEADEYE_ABILITY_DEPLETION_DELAY < GET_DEFAULT_SCRIPT_RENDERTARGET_RENDER_ID < GET_DISCOVERABLE_NAME_HASH_AND_TYPE_FOR_ENTITY < GET_CONSTRUCTED_DISCOVERED_CHARACTER_NAME < GET_ENTITIES_NEAR_POINT < GET_ENTITY_ALBEDO < GET_ENTITY_ALPHA < GET_ENTITY_ANIM_CURRENT_TIME; "
+  },
+  "0x375442F85CEAD890": {
+   "name": "_0x375442F85CEAD890",
+   "confidence": "unnamed",
+   "rva": "0x03C1A390",
+   "arg_cells": 1,
+   "return_cells": 1,
+   "calls": 1160,
+   "estimate": "MISC::_DELETE_SCRIPT_AREA",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among HAS_MAP_STATE_PENDING_CHANGE < IS_ENTITY_IN_ELEVATOR < IS_GAMEMODE_CONTENT_ACTIVE < IS_POINT_IN_SCRIPT_AREA < DELETE_SCRIPT_AREA < REMOVE_MAP_STATE_REQUEST < SET_SCRIPT_AREA_COORDS < SUMMON_ELEVATOR_TO_FLOOR < SET_VEHICLE_IS_WANTED; no bracket; 0x141397590: obj=0x1413975d0(id), 0x145428ae0 detaches every component (types <0xd1) and removes the id from table 0x"
+  },
+  "0x14F139BAADCF40CB": {
+   "name": "_0x14F139BAADCF40CB",
+   "confidence": "unnamed",
+   "rva": "0x03CCE4E0",
+   "arg_cells": 1,
+   "return_cells": 0,
+   "calls": 2,
+   "estimate": "OBJECT::_DOOR_SYSTEM_CLEAR_FORCED_OPEN_PLAYER",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among CLEAR_DOOR_FLAGS_REQUEST < ASSISTED_MOVEMENT_FLUSH_ROUTE < CLEAR_PED_COMBAT_STYLE_MOD < CLEAR_PED_COMBAT_STYLE < DOOR_SYSTEM_CLEAR_FORCED_OPEN_PLAYER < CLOSE_DOOR < COLLECTABLE_CATEGORY_GET_NUM_COLLECTABLES < COLLECTABLE_CATEGORY_GET_NUM_FOUND < COLLECTABLE_CATEGORY_GET_NUM_TURNED_IN; "
+  },
+  "0xD884BE07200F2BE8": {
+   "name": "_0xD884BE07200F2BE8",
+   "confidence": "unnamed",
+   "rva": "0x044BC7A0",
+   "arg_cells": 0,
+   "return_cells": 0,
+   "calls": 2893,
+   "estimate": "UILOG::_UILOG_CLEAR_CACHED_OBJECTIVE",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among BLIP_ADD_MODIFIER < BLIP_ADD_STYLE < BLIP_REMOVE_MODIFIER < BLIP_SET_STYLE < UILOG_CLEAR_CACHED_OBJECTIVE < CLEAR_GPS_PLAYER_WAYPOINT < CLOSE_ALL_UIAPPS < MAP_ENABLE_REGION_BLIP < ADD_COVER_POINT; "
+  },
+  "0x5DD527460855D969": {
+   "name": "_0x5DD527460855D969",
+   "confidence": "unnamed",
+   "rva": "0x0450AED0",
+   "arg_cells": 1,
+   "return_cells": 0,
+   "calls": 1,
+   "estimate": "HUD::_UI_PROMPT_REGISTER_END",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among UI_PROMPT_CONTEXT_SET_VOLUME < UI_PROMPT_CONTEXT_SET_POINT < UI_PROMPT_CONTEXT_SET_RADIUS < UI_PROMPT_DELETE < UI_PROMPT_REGISTER_END < UI_PROMPT_HAS_HOLD_MODE_COMPLETED < UI_PROMPT_IS_JUST_PRESSED < UI_PROMPT_IS_PRESSED < UI_PROMPT_IS_VALID; "
+  },
+  "0xCAA011EC8184E65B": {
+   "name": "_0xCAA011EC8184E65B",
+   "confidence": "unnamed",
+   "rva": "0x04A82650",
+   "arg_cells": 4,
+   "return_cells": 1,
+   "calls": 4,
+   "estimate": "WEAPON::_GET_CURRENT_PED_WEAPON_AMMO_TYPE",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among GET_BEST_PED_WEAPON < GET_BREAKABLE_VEHICLE_LOCK_OBJECT < GET_CLOSEST_VEHICLE < GET_CURRENT_AMMO_TYPE_FROM_GUID < GET_CURRENT_PED_WEAPON_AMMO_TYPE < GET_CURRENT_PED_VEHICLE_WEAPON < GET_CURRENT_PED_WEAPON_ENTITY_INDEX < GET_CURRENT_PED_WEAPON < GET_DEFAULT_UNARMED_WEAPON_HASH; "
+  },
+  "0xB965429790489BBD": {
+   "name": "_0xB965429790489BBD",
+   "confidence": "unnamed",
+   "rva": "0x04BCF050",
+   "arg_cells": 2,
+   "return_cells": 1,
+   "calls": 56,
+   "estimate": "PED::_GET_PED_DRUNKNESS",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among GIVE_PED_HASH_COMMAND < HAS_MOTION_TYPE_ASSET_LOADED < HAS_PED_BEEN_SHOVED_RECENTLY < HAS_PED_SHOT_RECENTLY < GET_PED_DRUNKNESS < EXPLODE_PED_HEAD < INSTANTLY_FILL_PED_POPULATION < IS_ANY_HOSTILE_PED_NEAR_POINT < IS_CONTROL_JUST_PRESSED; "
+  },
+  "0xF9862919B940D57E": {
+   "name": "_0xF9862919B940D57E",
+   "confidence": "unnamed",
+   "rva": "0x04BD3050",
+   "arg_cells": 3,
+   "return_cells": 1,
+   "calls": 3,
+   "estimate": "PED::_COMPUTE_PED_MOVE_BLEND_RATIO_FOR_MAX_SPEED",
+   "estimate_confidence": "medium",
+   "estimate_evidence": "order-audit: local: odd one out among NAVMESH_DEACTIVATE_SWAP < NAVMESH_IS_SWAP_ACTIVE < PED_APPLY_SPEECH_RELATIONSHIP < PED_CLEAR_LOCO_MOTION < COMPUTE_PED_MOVE_BLEND_RATIO_FOR_MAX_SPEED < PED_SET_INTERACTED_WITH_PLAYER < PED_SET_SIMPLE_PLAYER_MEMORY < PED_WAS_KILLED_BY_HEADSHOT < PLAY_FACIAL_ANIM; "
   }
  },
  "TASK": {
@@ -43356,22 +44731,6 @@
    "return_cells": 0,
    "calls": 35
   },
-  "0x7283AAD6EBE439B3": {
-   "name": "_CLEAR_VEHICLE_TASKS",
-   "confidence": "listing-guess",
-   "rva": "0x044BD7D0",
-   "arg_cells": 2,
-   "return_cells": 0,
-   "calls": 665
-  },
-  "0xF5A0B2E8145DF7E1": {
-   "name": "_CLEAR_VEHICLE_TASKS_SECONDARY",
-   "confidence": "listing-guess",
-   "rva": "0x044BD830",
-   "arg_cells": 2,
-   "return_cells": 0,
-   "calls": 52
-  },
   "0x69182E8B867EFC85": {
    "name": "_CUFF_PED",
    "confidence": "listing-guess",
@@ -43404,14 +44763,6 @@
    "return_cells": 1,
    "calls": 2
   },
-  "0x58EB2497FA5FEFF1": {
-   "name": "_GET_ITEM_INTERACTION_ENTITY_FROM_PED",
-   "confidence": "listing-guess",
-   "rva": "0x044BEEB0",
-   "arg_cells": 3,
-   "return_cells": 2,
-   "calls": 39
-  },
   "0xAC964F1DA459A66A": {
    "name": "_GET_PED_USING_SCENARIO_POINT",
    "confidence": "listing-guess",
@@ -43419,30 +44770,6 @@
    "arg_cells": 2,
    "return_cells": 2,
    "calls": 84
-  },
-  "0xDE9F8FD657BAD22C": {
-   "name": "_GET_SCENARIO_POINT_COORDS",
-   "confidence": "listing-guess",
-   "rva": "0x04461E80",
-   "arg_cells": 3,
-   "return_cells": 2,
-   "calls": 220
-  },
-  "0x1682C3978B98E9A1": {
-   "name": "_GET_SCENARIO_POINT_ENTITY",
-   "confidence": "listing-guess",
-   "rva": "0x0445F020",
-   "arg_cells": 2,
-   "return_cells": 2,
-   "calls": 18
-  },
-  "0xB4557A3C46C158E7": {
-   "name": "_GET_SCENARIO_POINT_HEADING",
-   "confidence": "listing-guess",
-   "rva": "0x0445EFB0",
-   "arg_cells": 3,
-   "return_cells": 1,
-   "calls": 51
   },
   "0x90ADCA6520866CCA": {
    "name": "_GET_SCENARIO_POINT_PED_IS_USING",
@@ -43524,14 +44851,6 @@
    "return_cells": 1,
    "calls": 20
   },
-  "0x7648196AFD1444C6": {
-   "name": "_PED_IS_IN_SCENARIO_BASE",
-   "confidence": "listing-guess",
-   "rva": "0x0445FBB0",
-   "arg_cells": 2,
-   "return_cells": 1,
-   "calls": 9
-  },
   "0xB91E61D3008BA4FC": {
    "name": "_REQUEST_CARRIABLE_CONFIG",
    "confidence": "listing-guess",
@@ -43588,22 +44907,6 @@
    "return_cells": 0,
    "calls": 4
   },
-  "0x4A5BE6D558397AB4": {
-   "name": "_TASK_DISEMBARK_VEHICLE",
-   "confidence": "listing-guess",
-   "rva": "0x04BF9D30",
-   "arg_cells": 8,
-   "return_cells": 0,
-   "calls": 15
-  },
-  "0xCE08AD99DBE913D0": {
-   "name": "_TASK_FORCE_FIRE_AT_ENTITY_WHILE_AIMING",
-   "confidence": "listing-guess",
-   "rva": "0x044C5A50",
-   "arg_cells": 7,
-   "return_cells": 0,
-   "calls": 11
-  },
   "0x89453293E0364CC6": {
    "name": "_TASK_GUARD_DEFENSIVE_AREA",
    "confidence": "listing-guess",
@@ -43628,22 +44931,6 @@
    "return_cells": 0,
    "calls": 1
   },
-  "0x1E908484004ADF5C": {
-   "name": "_TASK_KNOCKED_OUT_SET_DURATION",
-   "confidence": "listing-guess",
-   "rva": "0x044C6FB0",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 29
-  },
-  "0x3CE6C12574E0209C": {
-   "name": "_TASK_KNOCKED_OUT_SET_TUNING",
-   "confidence": "listing-guess",
-   "rva": "0x044C6F50",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 26
-  },
   "0x6291CF62B03F5079": {
    "name": "_TASK_PERFORM_SEQUENCE_2",
    "confidence": "listing-guess",
@@ -43659,14 +44946,6 @@
    "arg_cells": 19,
    "return_cells": 0,
    "calls": 19
-  },
-  "0xD3102DEA56E81C60": {
-   "name": "_TASK_START_SCENARIO_IN_PLACE_2",
-   "confidence": "listing-guess",
-   "rva": "0x044C8680",
-   "arg_cells": 9,
-   "return_cells": 0,
-   "calls": 13
   },
   "0x9991D4F1CDD40215": {
    "name": "TASK_USE_NEAREST_SCENARIO_TO_COORD",
@@ -45379,15 +46658,6 @@
    "calls": 614,
    "evidence": "FUN_1444f7310(ped, taskType, bool): FUN_1444d1860 maps the script task number, FUN_141f7d210 finds that task on the ped, FUN_1444f73b0 aborts it at priority 0 then 1; called with the same numbers given to GET_SCRIPT_TASK_STATUS (78, 141, 199, 209); the only verb-first form between CLEAR_PED_TASKS and CLEAR_SEQUENCE_TASK"
   },
-  "0x6F9534D741E19A55": {
-   "name": "_EXIT_PED_SCENARIO_TOWARDS_COORD",
-   "confidence": "exe-behaviour-medium",
-   "rva": "0x044BDE00",
-   "arg_cells": 5,
-   "return_cells": 0,
-   "calls": 183,
-   "evidence": "FUN_145e536b0(ped, bool, vector): checks ped class bits (0xe8 & 0x380000) == 0x180000, optional coord (FLT_MAX = none), raises event 0xd with reason 0x1c/0x27 via FUN_141187220; called right after SET_PED_SHOULD_PLAY_IMMEDIATE_SCENARIO_EXIT with a facing coord"
-  },
   "0x43C713462465671F": {
    "name": "_IS_VEHICLE_RUNNING_SCRIPT_TASK",
    "confidence": "exe-behaviour-medium",
@@ -45673,14 +46943,6 @@
    "return_cells": 1,
    "calls": 140
   },
-  "0x6C11AB8DA1BDF00D": {
-   "name": "_ARE_ALL_AMBIENT_PED_RESERVATIONS_READY",
-   "confidence": "listing-guess",
-   "rva": "0x04BC6AD0",
-   "arg_cells": 0,
-   "return_cells": 1,
-   "calls": 12
-  },
   "0x7587D23F83FF303B": {
    "name": "_ATTACH_VOLUME_TO_ENTITY",
    "confidence": "listing-guess",
@@ -45696,14 +46958,6 @@
    "arg_cells": 4,
    "return_cells": 1,
    "calls": 145
-  },
-  "0x3F1794613C2B48AB": {
-   "name": "_CHANGE_PED_STAMINA",
-   "confidence": "listing-guess",
-   "rva": "0x04BC75B0",
-   "arg_cells": 3,
-   "return_cells": 1,
-   "calls": 25
   },
   "0xD7CD496F877EA03A": {
    "name": "_CLEAR_PED_COMBAT_STYLE",
@@ -45728,14 +46982,6 @@
    "arg_cells": 2,
    "return_cells": 0,
    "calls": 61
-  },
-  "0xF9862919B940D57E": {
-   "name": "_COMPUTE_PED_MOVE_BLEND_RATIO_FOR_MAX_SPEED",
-   "confidence": "listing-guess",
-   "rva": "0x04BD3050",
-   "arg_cells": 3,
-   "return_cells": 1,
-   "calls": 3
   },
   "0xE41AC3D7E6368A47": {
    "name": "_DETACH_VOLUME_FROM_ENTITY",
@@ -45776,14 +47022,6 @@
    "arg_cells": 2,
    "return_cells": 1,
    "calls": 113
-  },
-  "0x3720BA1186BBC2A9": {
-   "name": "_GET_CARRIER_AS_HUMAN",
-   "confidence": "listing-guess",
-   "rva": "0x04BCA7E0",
-   "arg_cells": 2,
-   "return_cells": 2,
-   "calls": 27
   },
   "0x21FFB32BF647C197": {
    "name": "_GET_CARRIER_AS_PED",
@@ -45897,22 +47135,6 @@
    "return_cells": 1,
    "calls": 42
   },
-  "0xB965429790489BBD": {
-   "name": "_GET_PED_DRUNKNESS",
-   "confidence": "listing-guess",
-   "rva": "0x04BCF050",
-   "arg_cells": 2,
-   "return_cells": 1,
-   "calls": 56
-  },
-  "0xF0290C1C8AC4EA52": {
-   "name": "_GET_PED_GRAPPLE_STYLE",
-   "confidence": "listing-guess",
-   "rva": "0x04BCC700",
-   "arg_cells": 2,
-   "return_cells": 1,
-   "calls": 14
-  },
   "0x9DD62CE82F48514A": {
    "name": "_GET_PED_GRAPPLER",
    "confidence": "listing-guess",
@@ -45952,14 +47174,6 @@
    "arg_cells": 2,
    "return_cells": 1,
    "calls": 15
-  },
-  "0x625203BDE08EB185": {
-   "name": "_GET_PED_LAST_DROPPED_HAT",
-   "confidence": "listing-guess",
-   "rva": "0x04BCD0D0",
-   "arg_cells": 2,
-   "return_cells": 2,
-   "calls": 4
   },
   "0x49EC11AA34BD501D": {
    "name": "_GET_PED_MAX_STAMINA",
@@ -46025,14 +47239,6 @@
    "return_cells": 1,
    "calls": 9
   },
-  "0xD96A260621C6FB4D": {
-   "name": "_HAS_PED_EMOTIONAL_PRESET_LOADED",
-   "confidence": "listing-guess",
-   "rva": "0x04BCEDA0",
-   "arg_cells": 3,
-   "return_cells": 1,
-   "calls": 21
-  },
   "0x94781DCF48244D67": {
    "name": "_HAS_PED_SHOT_RECENTLY",
    "confidence": "listing-guess",
@@ -46040,14 +47246,6 @@
    "arg_cells": 3,
    "return_cells": 1,
    "calls": 46
-  },
-  "0xE63EAC6E775AA9B4": {
-   "name": "_IS_ANIMAL_SKINNED",
-   "confidence": "listing-guess",
-   "rva": "0x04BCF4C0",
-   "arg_cells": 2,
-   "return_cells": 1,
-   "calls": 29
   },
   "0x4972AD4AA69BCBDB": {
    "name": "_IS_PED_CLIMBING_LADDER",
@@ -46064,14 +47262,6 @@
    "arg_cells": 2,
    "return_cells": 1,
    "calls": 37
-  },
-  "0x10E774DDAF0EDB19": {
-   "name": "_IS_PED_DRUNK",
-   "confidence": "listing-guess",
-   "rva": "0x04BD02E0",
-   "arg_cells": 2,
-   "return_cells": 1,
-   "calls": 44
   },
   "0xF3E3D5CA78749769": {
    "name": "_IS_PED_GROUP_LEADER",
@@ -46121,14 +47311,6 @@
    "return_cells": 1,
    "calls": 8
   },
-  "0x518ED3FC144DF729": {
-   "name": "_IS_PED_USING_ACTION_MODE_2",
-   "confidence": "listing-guess",
-   "rva": "0x04BD1DB0",
-   "arg_cells": 2,
-   "return_cells": 1,
-   "calls": 1
-  },
   "0x17786714AEFDCF83": {
    "name": "_IS_PED_VISIBILITY_TRACKED",
    "confidence": "listing-guess",
@@ -46160,22 +47342,6 @@
    "arg_cells": 2,
    "return_cells": 0,
    "calls": 322
-  },
-  "0xB74A8687554FAF25": {
-   "name": "_PED_EMOTIONAL_PRESET_LOCO_MOTION",
-   "confidence": "listing-guess",
-   "rva": "0x04BD2F40",
-   "arg_cells": 7,
-   "return_cells": 0,
-   "calls": 585
-  },
-  "0x21F60CB9D4B31E8F": {
-   "name": "_PED_REMOVE_SPEECH_RELATIONSHIP",
-   "confidence": "listing-guess",
-   "rva": "0x04BD32E0",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 335
   },
   "0xCBD9917D3B6B3895": {
    "name": "_PED_SET_SIMPLE_PLAYER_MEMORY",
@@ -46241,14 +47407,6 @@
    "return_cells": 0,
    "calls": 7
   },
-  "0xFE57DAA503C454E7": {
-   "name": "_REMOVE_PED_EMOTIONAL_PRESET",
-   "confidence": "listing-guess",
-   "rva": "0x04BD3D80",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 1
-  },
   "0x3AE77C56ACC848DE": {
    "name": "_REMOVE_PED_FROM_MOUNT",
    "confidence": "listing-guess",
@@ -46273,14 +47431,6 @@
    "return_cells": 0,
    "calls": 10
   },
-  "0x656E61FC0815DAF4": {
-   "name": "_REQUEST_MOTION_TYPE_ASSET",
-   "confidence": "listing-guess",
-   "rva": "0x04BD4920",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 9
-  },
   "0x52E66EA0A3C3AA15": {
    "name": "_REQUEST_PED_EMOTIONAL_PRESET",
    "confidence": "listing-guess",
@@ -46288,22 +47438,6 @@
    "arg_cells": 3,
    "return_cells": 0,
    "calls": 57
-  },
-  "0x2570FD4B126A7D4C": {
-   "name": "_RESERVE_AMBIENT_PEDS",
-   "confidence": "listing-guess",
-   "rva": "0x04BD4A60",
-   "arg_cells": 1,
-   "return_cells": 0,
-   "calls": 26
-  },
-  "0xE01E29BB0FF71F45": {
-   "name": "_RESERVE_AMBIENT_PEDS_TOTAL",
-   "confidence": "listing-guess",
-   "rva": "0x04BD4AB0",
-   "arg_cells": 1,
-   "return_cells": 0,
-   "calls": 11
   },
   "0x38FC39F2C9AEC500": {
    "name": "_RESET_PED_STAMINA",
@@ -46361,22 +47495,6 @@
    "return_cells": 0,
    "calls": 13
   },
-  "0x18E46995002AB260": {
-   "name": "_SET_PED_ACTIVATE_WOUND_EFFECT",
-   "confidence": "listing-guess",
-   "rva": "0x04BD5A60",
-   "arg_cells": 9,
-   "return_cells": 0,
-   "calls": 6
-  },
-  "0x378F4D204D7A52F1": {
-   "name": "_SET_PED_ACTIVE_PLAYER_TYPE",
-   "confidence": "listing-guess",
-   "rva": "0x04BD7860",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 78
-  },
   "0xE734F08A346BFE06": {
    "name": "_SET_PED_BLACKBOARD_BOOL",
    "confidence": "listing-guess",
@@ -46424,14 +47542,6 @@
    "arg_cells": 3,
    "return_cells": 0,
    "calls": 381
-  },
-  "0xBE1B8DA3428AAFFE": {
-   "name": "_SET_PED_COMBAT_ATTRIBUTE_HASH",
-   "confidence": "listing-guess",
-   "rva": "0x03CD7BC0",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 110
   },
   "0x8F444F566DC75C26": {
    "name": "_SET_PED_COMBAT_BEHAVIOUR",
@@ -46481,14 +47591,6 @@
    "return_cells": 0,
    "calls": 106
   },
-  "0x9985AF28452D5CEE": {
-   "name": "_SET_PED_DESIRES_GROUP",
-   "confidence": "listing-guess",
-   "rva": "0x04BD8BC0",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 6
-  },
   "0xA4FB052CBF9330AA": {
    "name": "_SET_PED_DRUNKNESS",
    "confidence": "listing-guess",
@@ -46512,22 +47614,6 @@
    "arg_cells": 3,
    "return_cells": 0,
    "calls": 58
-  },
-  "0x307E45B8298490C4": {
-   "name": "_SET_PED_INCAPACITATION_FLAGS",
-   "confidence": "listing-guess",
-   "rva": "0x04BD8B40",
-   "arg_cells": 4,
-   "return_cells": 0,
-   "calls": 87
-  },
-  "0xF8EFA055DB37D109": {
-   "name": "_SET_PED_INTERACTION_PERSONALITY",
-   "confidence": "listing-guess",
-   "rva": "0x04BD94E0",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 19
   },
   "0xC8E38BF83B750BDF": {
    "name": "_SET_PED_MELEE_ACTION",
@@ -46576,14 +47662,6 @@
    "arg_cells": 4,
    "return_cells": 0,
    "calls": 1
-  },
-  "0x0AA5AD4EC65D03A5": {
-   "name": "_SET_REMOVE_PED_NETWORKED",
-   "confidence": "listing-guess",
-   "rva": "0x04BDB460",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 231
   },
   "0x45F42D03FD7184C4": {
    "name": "_SET_STAGED_PED_FLAG",
@@ -46640,14 +47718,6 @@
    "arg_cells": 1,
    "return_cells": 0,
    "calls": 30
-  },
-  "0x726EE0B6994E3488": {
-   "name": "_UPDATE_PED_WOUND_EFFECT",
-   "confidence": "listing-guess",
-   "rva": "0x04BDCA80",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 2
   },
   "0x44C88ED01F49E127": {
    "name": "_WARP_PED_OUT_OF_VEHICLE",
@@ -48507,14 +49577,6 @@
    "return_cells": 0,
    "calls": 16
   },
-  "0x67CE305FCA5A9DD2": {
-   "name": "CLEAR_PED_LAST_DAMAGE_BONE",
-   "confidence": "model-verified-medium",
-   "rva": "0x04BC8360",
-   "arg_cells": 2,
-   "return_cells": 0,
-   "calls": 120
-  },
   "0xD694CD2B5ED980B4": {
    "name": "IS_PED_DUCKING",
    "confidence": "model-verified-medium",
@@ -48867,14 +49929,6 @@
    "arg_cells": 1,
    "return_cells": 1,
    "calls": 2
-  },
-  "0xCA4D7C2F8DB34762": {
-   "name": "_GET_HASH_OF_THREAD",
-   "confidence": "listing-guess",
-   "rva": "0x0445E410",
-   "arg_cells": 1,
-   "return_cells": 1,
-   "calls": 3
   },
   "0xA8529B93821B9BCE": {
    "name": "_REQUEST_THREAD_EXIT",
@@ -49418,14 +50472,6 @@
    "return_cells": 0,
    "calls": 1
   },
-  "0xCADBD4B810AEDBD1": {
-   "name": "_CLEAR_CONVERSATION_HISTORY_FOR_SCRIPTED_CONVERSATION",
-   "confidence": "listing-guess",
-   "rva": "0x04BF2940",
-   "arg_cells": 1,
-   "return_cells": 0,
-   "calls": 738
-  },
   "0x9C643B9A8D1B2E3B": {
    "name": "_CREATE_NEW_SCRIPTED_PED_AMBIENT_SPEECH",
    "confidence": "listing-guess",
@@ -49441,14 +50487,6 @@
    "arg_cells": 2,
    "return_cells": 1,
    "calls": 15
-  },
-  "0x0FE6A1905D353621": {
-   "name": "_IS_ANY_CONVERSATION_PLAYING",
-   "confidence": "listing-guess",
-   "rva": "0x04BF5520",
-   "arg_cells": 1,
-   "return_cells": 1,
-   "calls": 2574
   },
   "0xEE263907AB4E780E": {
    "name": "_IS_PED_IN_ANY_CONVERSATION",
@@ -49466,14 +50504,6 @@
    "return_cells": 1,
    "calls": 984
   },
-  "0xF5F5E1980FE3A8F1": {
-   "name": "_IS_SCRIPTED_CONVERSION_ONGOING",
-   "confidence": "listing-guess",
-   "rva": "0x04BF6970",
-   "arg_cells": 1,
-   "return_cells": 1,
-   "calls": 1318
-  },
   "0xC38393964E7013EC": {
    "name": "_PLAY_SOUND_FROM_SCRIPTED_PED_AMBIENT_SPEECH",
    "confidence": "listing-guess",
@@ -49481,14 +50511,6 @@
    "arg_cells": 1,
    "return_cells": 1,
    "calls": 241
-  },
-  "0x7439640C669C97E5": {
-   "name": "_SET_WHISTLE_CONFIG_FOR_PED",
-   "confidence": "listing-guess",
-   "rva": "0x04BF86D0",
-   "arg_cells": 4,
-   "return_cells": 0,
-   "calls": 3
   },
   "0x4877AC4CC9AA6EB7": {
    "name": "_STOP_ALL_SCRIPTED_CONVERSIONS",
@@ -49931,14 +50953,6 @@
    "arg_cells": 0,
    "return_cells": 1,
    "calls": 13
-  },
-  "0x22214561CB1D710E": {
-   "name": "IS_VEHICLE_RADIO_ON",
-   "confidence": "model-verified-medium",
-   "rva": "0x04BF6B90",
-   "arg_cells": 2,
-   "return_cells": 1,
-   "calls": 14
   },
   "0x572591FA22E2583C": {
    "name": "PREPARE_MUSIC_EVENT",
@@ -50459,22 +51473,6 @@
    "return_cells": 2,
    "calls": 1
   },
-  "0x3CED96829F482E23": {
-   "name": "_GET_TRAIN_CARRIAGE_TRAILER_NUMBER",
-   "confidence": "listing-guess",
-   "rva": "0x04A80060",
-   "arg_cells": 2,
-   "return_cells": 1,
-   "calls": 10
-  },
-  "0x60660F2A720A095E": {
-   "name": "_GET_TRAIN_MODEL_FROM_TRAIN_CONFIG_BY_CAR_INDEX",
-   "confidence": "listing-guess",
-   "rva": "0x04A82370",
-   "arg_cells": 2,
-   "return_cells": 1,
-   "calls": 4
-  },
   "0x2AF6DFA142C3B5D1": {
    "name": "_HAS_TRAIN_LOADED",
    "confidence": "listing-guess",
@@ -50507,14 +51505,6 @@
    "return_cells": 1,
    "calls": 99
   },
-  "0x0F2D2B4ABDB00346": {
-   "name": "_SET_ALL_VEHICLE_GENERATORS_DISABLED_FOR_VOLUME",
-   "confidence": "listing-guess",
-   "rva": "0x04A8DEF0",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 194
-  },
   "0x962F0852091C2C77": {
    "name": "_SET_CARGO_COMPARTMENT_OPEN",
    "confidence": "listing-guess",
@@ -50531,14 +51521,6 @@
    "return_cells": 0,
    "calls": 5
   },
-  "0x88B978908781BCB8": {
-   "name": "_SET_TRAIN_LEAVE_STATION",
-   "confidence": "listing-guess",
-   "rva": "0x04A962D0",
-   "arg_cells": 2,
-   "return_cells": 0,
-   "calls": 2
-  },
   "0x55E0FF6EBE7D3FC8": {
    "name": "_SET_TRAIN_STOPS_FOR_STATIONS",
    "confidence": "listing-guess",
@@ -50546,14 +51528,6 @@
    "arg_cells": 3,
    "return_cells": 0,
    "calls": 10
-  },
-  "0x9B34CD75B2EA1B68": {
-   "name": "_SET_VEHICLE_MUD_LEVEL",
-   "confidence": "listing-guess",
-   "rva": "0x04A906D0",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 6
   },
   "0x29FD7AC33D19D987": {
    "name": "_SET_VEHICLE_ROAD_LINK_FORCED",
@@ -50570,14 +51544,6 @@
    "arg_cells": 3,
    "return_cells": 0,
    "calls": 2
-  },
-  "0x9CA33D4D301EDD13": {
-   "name": "_TRIGGER_TRAIN_WHISTLE",
-   "confidence": "listing-guess",
-   "rva": "0x04A964D0",
-   "arg_cells": 5,
-   "return_cells": 0,
-   "calls": 1
   },
   "0xA5E49BD65F5BDBAF": {
    "name": "ARE_ANY_VEHICLE_SEATS_FREE",
@@ -52223,14 +53189,6 @@
    "return_cells": 0,
    "calls": 36
   },
-  "0x900563B76B45FEF7": {
-   "name": "SET_VEHICLE_CHEAT_POWER_INCREASE",
-   "confidence": "model-verified-medium",
-   "rva": "0x04A92890",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 97
-  },
   "0x588ADBCC60B33179": {
    "name": "SET_VEHICLE_GRAVITY",
    "confidence": "model-verified-medium",
@@ -52560,46 +53518,6 @@
    "return_cells": 1,
    "calls": 5
   },
-  "0x651F95D81107C58A": {
-   "name": "_ANIMPOSTFX_IS_STACKHASH_PLAYING",
-   "confidence": "listing-guess",
-   "rva": "0x03C0D5F0",
-   "arg_cells": 1,
-   "return_cells": 1,
-   "calls": 294
-  },
-  "0x4750A74C6472A2B3": {
-   "name": "_ANIMPOSTFX_PLAY_TAG",
-   "confidence": "listing-guess",
-   "rva": "0x03C0FC80",
-   "arg_cells": 1,
-   "return_cells": 0,
-   "calls": 402
-  },
-  "0xD4042B270C1FC6CD": {
-   "name": "_ANIMPOSTFX_PRELOAD_POSTFX_BY_STACKHASH",
-   "confidence": "listing-guess",
-   "rva": "0x03C0FD20",
-   "arg_cells": 1,
-   "return_cells": 0,
-   "calls": 35
-  },
-  "0xE923AD9F068D0F54": {
-   "name": "_ANIMPOSTFX_SET_POTENCY",
-   "confidence": "listing-guess",
-   "rva": "0x03C12660",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 5
-  },
-  "0xA4D48DB9354B22D2": {
-   "name": "_ANIMPOSTFX_SET_STRENGTH",
-   "confidence": "listing-guess",
-   "rva": "0x03C12590",
-   "arg_cells": 2,
-   "return_cells": 0,
-   "calls": 146
-  },
   "0x0A91EC79125A3413": {
    "name": "_ANIMPOSTFX_STOP_STACKHASH_POSTFX",
    "confidence": "listing-guess",
@@ -52623,14 +53541,6 @@
    "arg_cells": 3,
    "return_cells": 0,
    "calls": 5
-  },
-  "0x953D811632D7B1D0": {
-   "name": "_DISABLE_FAR_ARTIFICIAL_LIGHTS",
-   "confidence": "listing-guess",
-   "rva": "0x03C07380",
-   "arg_cells": 1,
-   "return_cells": 0,
-   "calls": 2
   },
   "0x84E2FFF3873A9475": {
    "name": "_GET_CURRENT_NUMBER_OF_LOCAL_PHOTOS",
@@ -53253,14 +54163,6 @@
    "return_cells": 0,
    "calls": 5
   },
-  "0x3C0878C4D64CF2F8": {
-   "name": "_GET_WAYPOINT_COORDS",
-   "confidence": "listing-guess",
-   "rva": "0x044BE440",
-   "arg_cells": 0,
-   "return_cells": 2,
-   "calls": 28
-  },
   "0x7072A1E116098987": {
    "name": "_IS_BLIP_ATTACHED_TO_ANY_ENTITY",
    "confidence": "listing-guess",
@@ -53284,14 +54186,6 @@
    "arg_cells": 2,
    "return_cells": 0,
    "calls": 12
-  },
-  "0x439336FF59A81362": {
-   "name": "_SET_MINIMAP_ZONE",
-   "confidence": "listing-guess",
-   "rva": "0x044C2C00",
-   "arg_cells": 1,
-   "return_cells": 0,
-   "calls": 21
   },
   "0xB8D738A41F77B3E7": {
    "name": "_SET_PAUSEMAP_COORDS_WITH_RADIUS",
@@ -53437,14 +54331,6 @@
    "return_cells": 0,
    "calls": 1
   },
-  "0xDDBB343E2839E45E": {
-   "name": "SET_BLIP_NAME_FROM_TEXT_FILE",
-   "confidence": "model-verified-medium",
-   "rva": "0x044BC690",
-   "arg_cells": 2,
-   "return_cells": 0,
-   "calls": 461
-  },
   "0xACE77ABDA781F87A": {
    "name": "CLEAR_GPS_PLAYER_WAYPOINT",
    "confidence": "model-verified-medium",
@@ -53531,14 +54417,6 @@
    "return_cells": 0,
    "calls": 12
   },
-  "0xCDE1A593D6456087": {
-   "name": "_CREATE_FOOTPATH_TRAIL",
-   "confidence": "listing-guess",
-   "rva": "0x03C06D60",
-   "arg_cells": 13,
-   "return_cells": 1,
-   "calls": 6
-  },
   "0x50E65678F2F24D49": {
    "name": "_DELETE_CARRIABLE",
    "confidence": "listing-guess",
@@ -53570,14 +54448,6 @@
    "arg_cells": 2,
    "return_cells": 1,
    "calls": 63
-  },
-  "0xD0BFF476779E8E5E": {
-   "name": "_GET_ENTITIES_IN_VOLUME",
-   "confidence": "listing-guess",
-   "rva": "0x03C09780",
-   "arg_cells": 3,
-   "return_cells": 1,
-   "calls": 120
   },
   "0xF9ACE1E1A64A83B4": {
    "name": "_GET_ENTITIES_NEAR_POINT",
@@ -53613,14 +54483,6 @@
    "return_cells": 1,
    "calls": 33
   },
-  "0x7704EFEB6CA5CF55": {
-   "name": "_GET_ENTITY_FORWARD_VECTOR_YX",
-   "confidence": "listing-guess",
-   "rva": "0x03C0A6D0",
-   "arg_cells": 2,
-   "return_cells": 2,
-   "calls": 156
-  },
   "0x05EF7715930F2528": {
    "name": "GET_ENTITY_PROOFS",
    "confidence": "listing-official",
@@ -53638,14 +54500,6 @@
    "return_cells": 0,
    "calls": 20
   },
-  "0x8D09B8C0C54C5889": {
-   "name": "_GET_HEADING_OF_ENTITY_BONE",
-   "confidence": "listing-guess",
-   "rva": "0x03C0CD60",
-   "arg_cells": 5,
-   "return_cells": 2,
-   "calls": 13
-  },
   "0x9ED3B6563CB95AB9": {
    "name": "_GET_IS_BIRD",
    "confidence": "listing-guess",
@@ -53653,14 +54507,6 @@
    "arg_cells": 2,
    "return_cells": 1,
    "calls": 8
-  },
-  "0x1B73B694CB0FF758": {
-   "name": "_GET_OPTIMAL_CARRY_CONFIG",
-   "confidence": "listing-guess",
-   "rva": "0x03C09480",
-   "arg_cells": 3,
-   "return_cells": 1,
-   "calls": 1
   },
   "0x447C2625B8CA1D5B": {
    "name": "_GET_PINNED_MAP_ENTITY",
@@ -53693,14 +54539,6 @@
    "arg_cells": 2,
    "return_cells": 1,
    "calls": 11
-  },
-  "0xD043456D3733248E": {
-   "name": "_IS_TRACKED_ENTITY_VISIBLE",
-   "confidence": "listing-guess",
-   "rva": "0x03C0F330",
-   "arg_cells": 2,
-   "return_cells": 1,
-   "calls": 381
   },
   "0xBD3E412C555348BB": {
    "name": "_PIN_MAP_ENTITY",
@@ -53750,14 +54588,6 @@
    "return_cells": 0,
    "calls": 429
   },
-  "0x9D8C4DD8A91F8CA2": {
-   "name": "_SET_ENTITY_DISABLE_FIRE",
-   "confidence": "listing-guess",
-   "rva": "0x03C13800",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 8
-  },
   "0xBBFB173656E19306": {
    "name": "_SET_ENTITY_FADE_IN",
    "confidence": "listing-guess",
@@ -53782,14 +54612,6 @@
    "return_cells": 0,
    "calls": 207
   },
-  "0x46014ACA5080CF66": {
-   "name": "_SET_ENTITY_LOCKON_POINT_OFFSET",
-   "confidence": "listing-guess",
-   "rva": "0x03C15740",
-   "arg_cells": 4,
-   "return_cells": 0,
-   "calls": 4
-  },
   "0xAC03F3022BA44764": {
    "name": "_SET_ENTITY_ROTATION_PARALLEL_TO_LINE",
    "confidence": "listing-guess",
@@ -53797,14 +54619,6 @@
    "arg_cells": 7,
    "return_cells": 0,
    "calls": 3
-  },
-  "0x734164F8B4BC9453": {
-   "name": "_SET_ENTITY_THREAT_TIER",
-   "confidence": "listing-guess",
-   "rva": "0x03C14E30",
-   "arg_cells": 4,
-   "return_cells": 0,
-   "calls": 196
   },
   "0x4D610E569969AA00": {
    "name": "_SET_MATERIAL_FILL_LEVEL_FOR_ENTITY",
@@ -55259,14 +56073,6 @@
    "return_cells": 2,
    "calls": 23
   },
-  "0x25B9A814D864F969": {
-   "name": "_QUEUE_SAVEGAME_OPERATION",
-   "confidence": "listing-guess",
-   "rva": "0x03E8EB30",
-   "arg_cells": 1,
-   "return_cells": 1,
-   "calls": 183
-  },
   "0x247EEB5028B53208": {
    "name": "_SET_WEATHER_TYPE_FROZEN",
    "confidence": "listing-guess",
@@ -56140,15 +56946,6 @@
    "calls": 3483,
    "evidence": "no bracket; helper 0x143c1e2f0: obj=id lookup 0x144f1f810 (=0x1413975d0, table 0x14ab5d228), shape obj+0x18, vfunc +0x40(point) -> bool; 3483 calls as (_0x2C024B662D58A645 VI_GET_SCRIPT_AREA_BY_NAME(h), GET_ENTITY_COORDS(...))"
   },
-  "0x375442F85CEAD890": {
-   "name": "_DELETE_SCRIPT_AREA",
-   "confidence": "exe-behaviour-medium",
-   "rva": "0x03C1A390",
-   "arg_cells": 1,
-   "return_cells": 1,
-   "calls": 1160,
-   "evidence": "no bracket; 0x141397590: obj=0x1413975d0(id), 0x145428ae0 detaches every component (types <0xd1) and removes the id from table 0x14ab5d228, 0x141397680 destroys it (deferred when flag 1); returns 0; areas are created by _0x3B648C6FCA9BB8DD and found by VI_GET_SCRIPT_AREA_BY_NAME"
-  },
   "0xBB4A9EAB2204A5D7": {
    "name": "_SET_SCRIPT_AREA_COORDS",
    "confidence": "exe-behaviour-medium",
@@ -56157,24 +56954,6 @@
    "return_cells": 0,
    "calls": 177,
    "evidence": "no bracket; 0x143c1cb30: area=0x1413975d0(id), shape area+0x18 vfunc +0x28(vector), then 0x140f139d0 refresh; same shape object as 0x0EC7 (point test); called (GET_SCRIPT_AREA_BY_NAME(h), GET_ENTITY_COORDS(PLAYER_PED_ID))"
-  },
-  "0x8077C1877E7F2923": {
-   "name": "_ADD_SCRIPT_AREA_TAG",
-   "confidence": "exe-behaviour-medium",
-   "rva": "0x03C1A810",
-   "arg_cells": 2,
-   "return_cells": 0,
-   "calls": 2076,
-   "evidence": "no bracket; 0x143c1c990: area=0x1413975d0(id), finds or creates component type 0x9c (vtable 0x146536ac0) and adds the hash to its list unless present; tag literals include 0x7748019A restrictedarea; _0x09E3FC0CC35714E5(area, tag) is the removal in the same scripts"
-  },
-  "0xC663AE0D5D968A80": {
-   "name": "_CLEAR_LOCATION_FLAG",
-   "confidence": "exe-behaviour-medium",
-   "rva": "0x03CCE580",
-   "arg_cells": 2,
-   "return_cells": 0,
-   "calls": 394,
-   "evidence": "unordered (between ASSISTED_MOVEMENT_FLUSH_ROUTE and COUNT_PEDS_IN_COMBAT_WITH_TARGET_WITHIN_RADIUS); 0x143cea6e0(hash, flag): flags 0-6 call dedicated clear helpers with 0, others 0x141fe8500(obj, flag, 2) on obj from table 0x149e25070 (same table as 0x8292); scripts guard it with _0x1F246A04BDDA99AE(hash,flag) (is set) and pair it with _0xF7049FB4CE6EA969(hash,flag) (set); hashes resolve to plac"
   },
   "0x279EBA5C6B88DD2F": {
    "name": "_GET_ELEMENTS_OF_OUTFIT",
@@ -56322,14 +57101,6 @@
    "return_cells": 1,
    "calls": 7
   },
-  "0xA827E8BD9BAD4E2C": {
-   "name": "_GET_DEFAULT_ITEM_SLOT_INFO",
-   "confidence": "listing-guess",
-   "rva": "0x03E8D4C0",
-   "arg_cells": 3,
-   "return_cells": 1,
-   "calls": 28
-  },
   "0xF130826A5222E183": {
    "name": "_GET_ITEM_ROLE_MAX_LEVEL_COUNT",
    "confidence": "listing-guess",
@@ -56410,14 +57181,6 @@
    "return_cells": 1,
    "calls": 10
   },
-  "0x4DA0A53541FEDA8E": {
-   "name": "_INVENTORY_GET_INVENTORY_ITEM_EQUIPPED_IN_SLOT",
-   "confidence": "listing-guess",
-   "rva": "0x03E8A130",
-   "arg_cells": 5,
-   "return_cells": 1,
-   "calls": 6
-  },
   "0x90507B02466E01E9": {
    "name": "_INVENTORY_GET_INVENTORY_ITEM_FIT_SLOT",
    "confidence": "listing-guess",
@@ -56497,14 +57260,6 @@
    "arg_cells": 4,
    "return_cells": 1,
    "calls": 29
-  },
-  "0x97EF00AE2929FDB1": {
-   "name": "INVENTORY_FITS_SLOT_ID",
-   "confidence": "model-verified-medium",
-   "rva": "0x03E89700",
-   "arg_cells": 2,
-   "return_cells": 1,
-   "calls": 9
   },
   "0x816B3FF0E9A2B799": {
    "name": "INVENTORY_IS_INVENTORY_ITEM_EQUIPPED",
@@ -56900,14 +57655,6 @@
    "return_cells": 0,
    "calls": 2131
   },
-  "0xDC3E99DC717BEE65": {
-   "name": "_GET_CONSTRUCTED_DISCOVERED_CHARACTER_NAME",
-   "confidence": "listing-guess",
-   "rva": "0x03C095F0",
-   "arg_cells": 3,
-   "return_cells": 1,
-   "calls": 179
-  },
   "0x84F88E65F88D0782": {
    "name": "_GET_HAS_PLAYER_DISCOVERED_CHARACTER_NAME_SP",
    "confidence": "listing-guess",
@@ -56915,22 +57662,6 @@
    "arg_cells": 3,
    "return_cells": 1,
    "calls": 61
-  },
-  "0x13EB5E998516C3BA": {
-   "name": "_GET_PLAYER_FREE_AIM_CLOSEST_ENTITY",
-   "confidence": "listing-guess",
-   "rva": "0x045012C0",
-   "arg_cells": 2,
-   "return_cells": 1,
-   "calls": 27
-  },
-  "0xF8F71B7DE5AE4019": {
-   "name": "_IS_PLAYER_FREE_FOCUSING",
-   "confidence": "listing-guess",
-   "rva": "0x045032B0",
-   "arg_cells": 1,
-   "return_cells": 1,
-   "calls": 25
   },
   "0x82569A0F4E9DDC34": {
    "name": "IS_SPECIAL_ABILITY_ACTIVE",
@@ -56990,14 +57721,6 @@
    "return_cells": 0,
    "calls": 65
   },
-  "0xEA51341D15921F32": {
-   "name": "_SET_MAX_WANTED_LEVEL_2",
-   "confidence": "listing-guess",
-   "rva": "0x03E90BC0",
-   "arg_cells": 1,
-   "return_cells": 0,
-   "calls": 3
-  },
   "0x109F8E3B535BA223": {
    "name": "_SET_PLAYER_CAN_PICKUP_HAT",
    "confidence": "listing-guess",
@@ -57006,22 +57729,6 @@
    "return_cells": 0,
    "calls": 20
   },
-  "0xD7A5B49889717E51": {
-   "name": "_SET_PLAYER_DEAD_EYE_AURA_BY_HASH",
-   "confidence": "listing-guess",
-   "rva": "0x04504290",
-   "arg_cells": 4,
-   "return_cells": 0,
-   "calls": 5
-  },
-  "0x1AC032FA6C0B6635": {
-   "name": "_SET_PLAYER_DEFENSE_TYPE_MODIFIER",
-   "confidence": "listing-guess",
-   "rva": "0x04507DB0",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 34
-  },
   "0x920468BD6B92B932": {
    "name": "_SET_PLAYER_HAS_DISCOVERED_CHARACTER_NAME_SP",
    "confidence": "listing-guess",
@@ -57029,22 +57736,6 @@
    "arg_cells": 5,
    "return_cells": 0,
    "calls": 287
-  },
-  "0x04319582B1596E77": {
-   "name": "_SET_PLAYER_LOCAL_ACCURACY_FLOOR_MODIFIER",
-   "confidence": "listing-guess",
-   "rva": "0x04508200",
-   "arg_cells": 2,
-   "return_cells": 0,
-   "calls": 5
-  },
-  "0x4C0C8FDC23977D64": {
-   "name": "_SET_SHOW_INFO_CARD",
-   "confidence": "listing-guess",
-   "rva": "0x04508AF0",
-   "arg_cells": 2,
-   "return_cells": 0,
-   "calls": 8
   },
   "0x5FA523DCFF45CCC2": {
    "name": "_SET_SPECIAL_ABILITY_TYPE",
@@ -57534,14 +58225,6 @@
    "return_cells": 0,
    "calls": 7
   },
-  "0x54A7A9BEF9C3D1B2": {
-   "name": "SET_PLAYER_FORCE_SKIP_AIM_INTRO",
-   "confidence": "model-verified-medium",
-   "rva": "0x04507C70",
-   "arg_cells": 2,
-   "return_cells": 0,
-   "calls": 53
-  },
   "0x7C0C547C04BDE545": {
    "name": "SET_PLAYER_CAN_LEAVE_PARACHUTE_SMOKE_TRAIL",
    "confidence": "model-verified-medium",
@@ -57816,30 +58499,6 @@
    "return_cells": 0,
    "calls": 12
   },
-  "0x767F0AE99870FF7A": {
-   "name": "_GET_AMMO_IN_CLIP_BY_INVENTORY_UID",
-   "confidence": "listing-guess",
-   "rva": "0x04A81CC0",
-   "arg_cells": 4,
-   "return_cells": 1,
-   "calls": 11
-  },
-  "0xDE0AE69BB7DC0EC5": {
-   "name": "_GET_AMMO_IN_PED_WEAPON_FROM_GUID",
-   "confidence": "listing-guess",
-   "rva": "0x04A81C40",
-   "arg_cells": 3,
-   "return_cells": 1,
-   "calls": 25
-  },
-  "0x70CEED7D1368EFE5": {
-   "name": "_GET_AMMO_RECOMMENDED_TYPE_FOR_WEAPON",
-   "confidence": "listing-guess",
-   "rva": "0x04A82C20",
-   "arg_cells": 1,
-   "return_cells": 1,
-   "calls": 42
-  },
   "0x6718391760986D62": {
    "name": "_GET_BEST_PED_WEAPON_IN_GROUP",
    "confidence": "listing-guess",
@@ -57864,14 +58523,6 @@
    "return_cells": 1,
    "calls": 13
   },
-  "0xCAA011EC8184E65B": {
-   "name": "_GET_CURRENT_PED_WEAPON_AMMO_TYPE",
-   "confidence": "listing-guess",
-   "rva": "0x04A82650",
-   "arg_cells": 4,
-   "return_cells": 1,
-   "calls": 4
-  },
   "0x12D191DEF700EF66": {
    "name": "_GET_DEFAULT_UNARMED_WEAPON_HASH",
    "confidence": "listing-guess",
@@ -57879,14 +58530,6 @@
    "arg_cells": 2,
    "return_cells": 1,
    "calls": 53
-  },
-  "0xA8FED2547BDA3A0F": {
-   "name": "_GET_PED_CURRENT_HELD_WEAPON",
-   "confidence": "listing-guess",
-   "rva": "0x04A85C40",
-   "arg_cells": 2,
-   "return_cells": 1,
-   "calls": 1
   },
   "0x4BFA2EE339598764": {
    "name": "GET_WEAPON_OBJECT_FROM_PED",
@@ -57905,14 +58548,6 @@
    "return_cells": 0,
    "calls": 610
   },
-  "0x21C39C1303337791": {
-   "name": "_HIDE_PED_WEAPONS",
-   "confidence": "listing-guess",
-   "rva": "0x04A885A0",
-   "arg_cells": 4,
-   "return_cells": 0,
-   "calls": 1397
-  },
   "0x272EFAD142263DCA": {
    "name": "_IS_PED_CURRENT_WEAPON_HOLSTERED",
    "confidence": "listing-guess",
@@ -57928,22 +58563,6 @@
    "arg_cells": 1,
    "return_cells": 1,
    "calls": 36
-  },
-  "0x57AB07049545284F": {
-   "name": "_IS_WEAPON_KIT",
-   "confidence": "listing-guess",
-   "rva": "0x04A8B370",
-   "arg_cells": 1,
-   "return_cells": 1,
-   "calls": 19
-  },
-  "0x6B750F9DB61BFB7C": {
-   "name": "_IS_WEAPON_KIT_2",
-   "confidence": "listing-guess",
-   "rva": "0x04A8B490",
-   "arg_cells": 1,
-   "return_cells": 1,
-   "calls": 23
   },
   "0x936EE6A686D1C108": {
    "name": "_IS_WEAPON_KNIFE",
@@ -58426,14 +59045,6 @@
    "return_cells": 0,
    "calls": 3
   },
-  "0x1A708DE222F483A5": {
-   "name": "_IS_CAM_DATA_DICT_LOADED",
-   "confidence": "listing-guess",
-   "rva": "0x03CD3C60",
-   "arg_cells": 1,
-   "return_cells": 1,
-   "calls": 239
-  },
   "0x389BC6BE95B2DDB0": {
    "name": "_LOAD_CAMERA_DATA_DICT",
    "confidence": "listing-guess",
@@ -58441,22 +59052,6 @@
    "arg_cells": 1,
    "return_cells": 0,
    "calls": 135
-  },
-  "0x11C1E06D679085AE": {
-   "name": "_REACTIVATE_PED_HEADSHOT_EXECUTE_SLOWCAM",
-   "confidence": "listing-guess",
-   "rva": "0x03CD58A0",
-   "arg_cells": 4,
-   "return_cells": 0,
-   "calls": 105
-  },
-  "0x0B0E404D1B486BA1": {
-   "name": "_SET_CAM_DOF_PARAMS",
-   "confidence": "listing-guess",
-   "rva": "0x03CD6B10",
-   "arg_cells": 2,
-   "return_cells": 0,
-   "calls": 17
   },
   "0xE48A98CDEE0CD449": {
    "name": "_SET_CAM_FOCUS_DISTANCE",
@@ -59251,22 +59846,6 @@
    "return_cells": 1,
    "calls": 36
   },
-  "0x2BB9115365FC0DD5": {
-   "name": "_COLLECTABLE_GET_NUM_TURNED_IN",
-   "confidence": "listing-guess",
-   "rva": "0x03CCF440",
-   "arg_cells": 1,
-   "return_cells": 1,
-   "calls": 1
-  },
-  "0x99A897B09FAD4B21": {
-   "name": "_COLLECTABLE_GET_SUBCATEGORY",
-   "confidence": "listing-guess",
-   "rva": "0x03CCF390",
-   "arg_cells": 1,
-   "return_cells": 1,
-   "calls": 6
-  },
   "0x0C793668C159D1A9": {
    "name": "_COLLECTABLE_INCREMENT_NUM_FOUND",
    "confidence": "listing-guess",
@@ -59325,22 +59904,6 @@
    "arg_cells": 3,
    "return_cells": 0,
    "calls": 4
-  },
-  "0x594E7932095759AD": {
-   "name": "_IS_VOLUME_LOCK_REQUEST_VALID_2",
-   "confidence": "listing-guess",
-   "rva": "0x04A8AC30",
-   "arg_cells": 1,
-   "return_cells": 1,
-   "calls": 9
-  },
-  "0x48F1C0CF13BC3D00": {
-   "name": "_MODIFY_VOLUME_LOCK_LOCATION",
-   "confidence": "listing-guess",
-   "rva": "0x04A8BEE0",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 1
   },
   "0x1BB6E1EE02013391": {
    "name": "_RELEASE_LOCK_VOLUME",
@@ -59576,46 +60139,6 @@
    "arg_cells": 3,
    "return_cells": 0,
    "calls": 4
-  },
-  "0x4F3FC8D791D557F4": {
-   "name": "_DOOR_SYSTEM_CHECK_ACTION_FLAG",
-   "confidence": "listing-guess",
-   "rva": "0x03CD1970",
-   "arg_cells": 2,
-   "return_cells": 1,
-   "calls": 19
-  },
-  "0x14F139BAADCF40CB": {
-   "name": "_DOOR_SYSTEM_CLEAR_FORCED_OPEN_PLAYER",
-   "confidence": "listing-guess",
-   "rva": "0x03CCE4E0",
-   "arg_cells": 1,
-   "return_cells": 0,
-   "calls": 2
-  },
-  "0xE809A77600466002": {
-   "name": "_SET_OBJECT_BREAK_SCALE",
-   "confidence": "listing-guess",
-   "rva": "0x04C172B0",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 23
-  },
-  "0x2324453AD86839CC": {
-   "name": "_SET_OBJECT_BURN_LEVEL",
-   "confidence": "listing-guess",
-   "rva": "0x04C16A80",
-   "arg_cells": 4,
-   "return_cells": 0,
-   "calls": 12
-  },
-  "0x010C80883550D433": {
-   "name": "_SET_OBJECT_INTERACTION_PRESET",
-   "confidence": "listing-guess",
-   "rva": "0x04C171F0",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 24
   },
   "0x2B67D96048FE825B": {
    "name": "_SET_OBJECT_KICKABLE",
@@ -59944,15 +60467,6 @@
    "calls": 257,
    "evidence": "door lookup then (flags+0x34 & 1) && (flags & 0x280000) != 0x80000; script lock helper: if lock && this(door) return, else 395(door,1,{mask|=1,value|=1}); unlock path sends mask 1 value 0 only when this() != 0, so it reads the locked bit; bracket IS_INTERPOLATING..IS_PED_D forbids IS_DOOR_LOCKED, word order forced"
   },
-  "0x395269F19E3F424E": {
-   "name": "_REQUEST_DOOR_FLAGS",
-   "confidence": "exe-behaviour-medium",
-   "rva": "0x03CD5FF0",
-   "arg_cells": 5,
-   "return_cells": 0,
-   "calls": 3174,
-   "evidence": "door id + bool + 3 ints: FUN_1417ca540 -> FUN_1417ca700 -> FUN_141360120(door, 7+bool, {mask,values,third}, 1) door command queue; scripts build mask f_8 and values f_C (lock = mask|1 value|1, unlock = mask 1 value 0); same field encoding as E7B4/CFF9 (FUN_1430aa990); verb chosen to sort after RENDER_SCRIPT_CAMS (REQUEST_META_PED_COMPONENT just before it at 0x3CD5F60 is a misplaced name)"
-  },
   "0xE7B4FE10ADC1E3B8": {
    "name": "_SET_DOOR_FLAG",
    "confidence": "exe-behaviour-medium",
@@ -60162,14 +60676,6 @@
    "arg_cells": 3,
    "return_cells": 1,
    "calls": 2
-  },
-  "0x8D7698A948F860B3": {
-   "name": "_SET_PED_USE_TRANSPORT_SEAT_PREFERENCE",
-   "confidence": "listing-guess",
-   "rva": "0x04BF9090",
-   "arg_cells": 7,
-   "return_cells": 0,
-   "calls": 293
   },
   "0x33E332430C7D36D3": {
    "name": "GET_TRANSPORT_CONFIG_FLAG",
@@ -60942,14 +61448,6 @@
   }
  },
  "FLOCK": {
-  "0x320C3FF45146827B": {
-   "name": "_SET_ANIMAL_IS_WILD",
-   "confidence": "listing-guess",
-   "rva": "0x03C05330",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 4
-  },
   "0xB5C699FCE3E66C7D": {
    "name": "GET_ANIMAL_TUNING_BOOL_PARAM",
    "confidence": "listing",
@@ -61040,14 +61538,6 @@
    "return_cells": 1,
    "calls": 6
   },
-  "0x4A7480D7F2FF1220": {
-   "name": "_UI_PROMPT_IS_ENABLED",
-   "confidence": "listing-guess",
-   "rva": "0x0450B0A0",
-   "arg_cells": 1,
-   "return_cells": 1,
-   "calls": 5
-  },
   "0xE2C0533AD878339E": {
    "name": "_UI_PROMPT_IS_JUST_PRESSED",
    "confidence": "listing-guess",
@@ -61078,14 +61568,6 @@
    "rva": "0x044FBAD0",
    "arg_cells": 0,
    "return_cells": 1,
-   "calls": 1
-  },
-  "0x5DD527460855D969": {
-   "name": "_UI_PROMPT_REGISTER_END",
-   "confidence": "listing-guess",
-   "rva": "0x0450AED0",
-   "arg_cells": 1,
-   "return_cells": 0,
    "calls": 1
   },
   "0x7C34F150A9A3E31E": {
@@ -61420,14 +61902,6 @@
    "arg_cells": 3,
    "return_cells": 0,
    "calls": 73
-  },
-  "0x0449C28DF1540E7D": {
-   "name": "_INVERSE_KINEMATICS_SET_DISABLED_FOR_PED",
-   "confidence": "listing-guess",
-   "rva": "0x03E93330",
-   "arg_cells": 4,
-   "return_cells": 0,
-   "calls": 4
   }
  },
  "INTERIOR": {
@@ -61713,22 +62187,6 @@
    "return_cells": 1,
    "calls": 46
   },
-  "0x5C7B18AA17E2FC87": {
-   "name": "_ITEMDATABASE_GET_AWARD_COST_MODIFIERS",
-   "confidence": "listing-guess",
-   "rva": "0x03E8D220",
-   "arg_cells": 3,
-   "return_cells": 1,
-   "calls": 1
-  },
-  "0x86A6E89EC0556D75": {
-   "name": "_ITEMDATABASE_GET_AWARD_ITEM_COUNT",
-   "confidence": "listing-guess",
-   "rva": "0x03E8D0A0",
-   "arg_cells": 2,
-   "return_cells": 1,
-   "calls": 6
-  },
   "0x386C7DC8B7DD631F": {
    "name": "_ITEMDATABASE_GET_AWARD_UNLOCK_FLAG_COUNT",
    "confidence": "listing-guess",
@@ -62013,14 +62471,6 @@
    "return_cells": 1,
    "calls": 1
   },
-  "0x9DB8A12CF2B48817": {
-   "name": "_CREATE_GUARD_ZONE_FOR_ENTITY",
-   "confidence": "listing-guess",
-   "rva": "0x04BDC6F0",
-   "arg_cells": 3,
-   "return_cells": 1,
-   "calls": 12
-  },
   "0x5B81B0768A340DF4": {
    "name": "_CREATE_LAW_DISPATCH_RESPONSE_FOR_COORDS",
    "confidence": "listing-guess",
@@ -62061,22 +62511,6 @@
    "return_cells": 1,
    "calls": 11
   },
-  "0xAD75FD1766BA5C1D": {
-   "name": "_HAS_PLAYER_BEEN_FOUND_BY_LAW_ACTIVE_SEARCH",
-   "confidence": "listing-guess",
-   "rva": "0x03E88D40",
-   "arg_cells": 4,
-   "return_cells": 1,
-   "calls": 25
-  },
-  "0xC0B8505228BC3BD6": {
-   "name": "_IS_GUARD_PED_INVESTIGATING",
-   "confidence": "listing-guess",
-   "rva": "0x04BD2150",
-   "arg_cells": 3,
-   "return_cells": 1,
-   "calls": 160
-  },
   "0xF787567009FC7988": {
    "name": "REPORT_CRIME",
    "confidence": "listing-official",
@@ -62093,14 +62527,6 @@
    "arg_cells": 4,
    "return_cells": 0,
    "calls": 252
-  },
-  "0x0E8BD0B87E6522A1": {
-   "name": "_SET_PED_LAW_BEHAVIOUR",
-   "confidence": "listing-guess",
-   "rva": "0x03E90CC0",
-   "arg_cells": 3,
-   "return_cells": 0,
-   "calls": 33
   },
   "0xD7790B74961E7E88": {
    "name": "ARE_WITNESSES_ACTIVE",
@@ -62190,14 +62616,6 @@
   }
  },
  "NETWORK": {
-  "0xBC36A7C1593F878B": {
-   "name": "_NETWORK_GET_PLAYER_OWNER_OF_NETWORK_ID",
-   "confidence": "listing-guess",
-   "rva": "0x04C14AC0",
-   "arg_cells": 2,
-   "return_cells": 1,
-   "calls": 27
-  },
   "0x38A1A230BEAB4827": {
    "name": "_NETWORK_RESURRECT_LOCAL_PLAYER_2",
    "confidence": "listing-guess",
@@ -62716,14 +63134,6 @@
    "arg_cells": 2,
    "return_cells": 0,
    "calls": 25
-  },
-  "0x093C2D7884DFB077": {
-   "name": "_FORCE_DESPAWN_PERSCHAR",
-   "confidence": "listing-guess",
-   "rva": "0x04BC9DC0",
-   "arg_cells": 2,
-   "return_cells": 0,
-   "calls": 657
   },
   "0x88668B8DF3523C56": {
    "name": "_FORCE_SPAWN_PERSCHAR",
@@ -63437,14 +63847,6 @@
    "return_cells": 0,
    "calls": 2
   },
-  "0x576D3C5F2CD8CAE0": {
-   "name": "SET_GAME_PAUSES_FOR_STREAMING",
-   "confidence": "model-verified-medium",
-   "rva": "0x04462080",
-   "arg_cells": 1,
-   "return_cells": 0,
-   "calls": 2
-  },
   "0x9F92467B100B1FDC": {
    "name": "SET_PLAYER_SHORT_SWITCH_STYLE",
    "confidence": "model-verified-medium",
@@ -63485,24 +63887,6 @@
    "return_cells": 1,
    "calls": 242,
    "evidence": "no bracket (block 0x3c18650-0x3c1aba0 holds no named handler); helper 0x143c1e3a0: bool arg -> 0x14130f520 state map, else entry=0x141580b20(pack,item) (table 0x14ab5d190, +0x28 pack, +0x40 item) and +0x1b8!=0 && +0x148!=0; scripts test it before 0x7191 with (0x54C15720 americasstory000, 0x0D79596B general_optimization_csc_eco_whale_stealtruckwhalein, 0)"
-  },
-  "0x7191C011FD1040FD": {
-   "name": "_ACTIVATE_GAMEMODE_CONTENT",
-   "confidence": "exe-behaviour-medium",
-   "rva": "0x03C1A050",
-   "arg_cells": 3,
-   "return_cells": 1,
-   "calls": 657,
-   "evidence": "no bracket; 0x143c1e150 -> 0x1413c6ad0: entry=0x141580b20(pack,item), queues command {1,pack,item,requester} via 0x141fc2860 (requester default 0xE7A8CDF1 = script); called only after 0x7A6B returned 0; items are general_optimization_*, postfx_drug_cokegood, club_deal, script_taxi under pack americasstory000"
-  },
-  "0xB0584804833510A0": {
-   "name": "_DEACTIVATE_GAMEMODE_CONTENT",
-   "confidence": "exe-behaviour-medium",
-   "rva": "0x03C1A920",
-   "arg_cells": 3,
-   "return_cells": 1,
-   "calls": 578,
-   "evidence": "no bracket; 0x143c1c340 -> 0x1413c69d0: entry=0x141580b20(pack,item), queues command {2,pack,item,requester} via 0x141fc2860 (the 0x7191 path queues 1); same (0x54C15720, item, 0) arguments as 0x7191/0x7A6B"
   }
  },
  "TXD": {
@@ -63603,14 +63987,6 @@
   }
  },
  "UILOG": {
-  "0xD884BE07200F2BE8": {
-   "name": "_UILOG_CLEAR_CACHED_OBJECTIVE",
-   "confidence": "listing-guess",
-   "rva": "0x044BC7A0",
-   "arg_cells": 0,
-   "return_cells": 0,
-   "calls": 2893
-  },
   "0x2138E9FF1666FAAD": {
    "name": "_UILOG_PRINT_CACHED_OBJECTIVE",
    "confidence": "listing-guess",
@@ -63680,14 +64056,6 @@
    "arg_cells": 1,
    "return_cells": 0,
    "calls": 5
-  },
-  "0x2538D1A96F333EA8": {
-   "name": "TIMERA",
-   "confidence": "model-verified-medium",
-   "rva": "0x044CAAA0",
-   "arg_cells": 0,
-   "return_cells": 1,
-   "calls": 183
   }
  },
  "ANIMSCRIPT": {

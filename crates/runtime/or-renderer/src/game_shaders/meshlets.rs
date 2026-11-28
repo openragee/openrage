@@ -170,6 +170,19 @@ pub enum Feed {
     Textures(Vec<Option<Arc<Image>>>),
     /// What the frame writes of the light it is lit by, each time that light moves.
     Frame(FrameFeed),
+    /// A volume texture, bound where the stage declares a three-dimensional one.
+    Volume(Arc<Volume>),
+}
+
+/// A volume texture's texels: slice after slice, each row after row, of one level.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Volume {
+    pub width: u32,
+    pub height: u32,
+    pub depth: u32,
+    /// Whether a texel is four half floats, as the file stores them; else four bytes of linear colour.
+    pub half: bool,
+    pub texels: Vec<u8>,
 }
 
 /// One geometry with the two stages that shade it.
@@ -625,10 +638,15 @@ fn bind(
                     _ => [0; 4],
                 };
                 let first = textures.len();
-                use wgpu::TextureViewDimension as D;
-                let sliced = count.is_none() && matches!(*dimension, D::D2Array | D::D3);
-                if let (true, Some(view)) = (sliced, made.slices(device, queue, images, *dimension))
+                if let (Some(Feed::Volume(volume)), wgpu::TextureViewDimension::D3) =
+                    (feed, dimension)
                 {
+                    textures.push(made.volume(device, queue, volume));
+                    bound.push((*binding, Bound::View(first)));
+                    continue;
+                }
+                let sliced = count.is_none() && *dimension == wgpu::TextureViewDimension::D2Array;
+                if let (true, Some(view)) = (sliced, made.slices(device, queue, images)) {
                     textures.push(view);
                     bound.push((*binding, Bound::View(first)));
                     continue;
@@ -949,6 +967,24 @@ fn stages_drawn(
     Ok((vertex, fragment))
 }
 
+/// The faces a pass culls: a forward pass's own; a pass into the targets the back faces, as the
+/// game's draw lists do, unless its pixel stage reads which face it is on.
+// ⚠ A model's card seen from both sides is two coincident faces wound apart: drawn with neither
+// culled, under `GreaterEqual` the face turned away wins the tie and is lit from behind.
+// ponytail: a placement that mirrors (negative determinant) winds its faces the other way; such an
+// instance would need the front face turned per draw.
+fn culled(fragment: &naga::Module, forward: Option<&Forward>) -> Option<wgpu::Face> {
+    let facing = naga::Binding::BuiltIn(naga::BuiltIn::FrontFacing);
+    let reads_facing = (fragment.entry_points.iter())
+        .flat_map(|entry| &entry.function.arguments)
+        .any(|argument| argument.binding.as_ref() == Some(&facing));
+    match forward {
+        Some(forward) => forward.cull,
+        None if reads_facing => None,
+        None => Some(wgpu::Face::Back),
+    }
+}
+
 /// The pass of the two `stages` built for `device`: into the targets, or with `forward` over the
 /// lit frame, tested against the targets' depth and not writing it.
 fn build(
@@ -1013,7 +1049,7 @@ fn build(
         },
         primitive: wgpu::PrimitiveState {
             front_face: forward::FRONT,
-            cull_mode: forward.and_then(|forward| forward.cull),
+            cull_mode: culled(&fragment, forward.as_ref()),
             ..Default::default()
         },
         depth_stencil: Some(wgpu::DepthStencilState {

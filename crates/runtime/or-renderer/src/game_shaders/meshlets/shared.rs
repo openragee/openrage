@@ -7,8 +7,27 @@ use std::sync::Arc;
 
 use wgpu::util::DeviceExt;
 
-use super::{bind, view_of, Feed, MeshletScene, MeshletSurface, ViewWrite};
+use super::{bind, view_of, Feed, MeshletScene, MeshletSurface, ViewWrite, Volume};
 use crate::game_shaders::mesh::Image;
+
+/// The format a volume is uploaded as: its own half floats where the device filters them, else
+/// four bytes of linear colour, to which [`narrowed`] brings half floats.
+pub(super) fn volume_format(half: bool, filters_half: bool) -> wgpu::TextureFormat {
+    match half && filters_half {
+        true => wgpu::TextureFormat::Rgba16Float,
+        false => wgpu::TextureFormat::Rgba8Unorm,
+    }
+}
+
+/// Texels of four half floats as four bytes each, every channel clamped to nought and one.
+fn narrowed(texels: &[u8]) -> Vec<u8> {
+    let (halves, _) = texels.as_chunks::<2>();
+    let byte = |h: &[u8; 2]| {
+        let value = or_io::half::half_to_f32(u16::from_le_bytes(*h));
+        (value.clamp(0.0, 1.0) * 255.0).round() as u8
+    };
+    halves.iter().map(byte).collect()
+}
 
 /// What a scene has made on the device since it was prepared, counted where each is made.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -48,6 +67,8 @@ pub(super) struct Made {
     /// Array textures by the places of their slices' images, which are kept with them.
     sliced: HashMap<Vec<usize>, (Vec<Arc<Image>>, wgpu::TextureView)>,
     samplers: HashMap<bool, wgpu::Sampler>,
+    /// Volume textures by the place of their texels, which are kept with them.
+    volumes: HashMap<usize, (Arc<Volume>, wgpu::TextureView)>,
     pub(super) uploads: Uploads,
     /// What the forward surfaces are handed of the frame's light, written each time it moves.
     pub(super) frame: super::forward_frame::FrameHeld,
@@ -115,17 +136,14 @@ impl Made {
         view
     }
 
-    /// One array texture whose slice `i` is `images[i]`, with its levels, or a volume whose slice
-    /// `i` it is, of one level, as `dimension` says; made once a scene. `None` unless there are
-    /// two or more images, all of one size and colour space.
+    /// One array texture whose slice `i` is `images[i]`, with its levels, made once a scene;
+    /// `None` unless there are two or more images, all of one size and colour space.
     pub(super) fn slices(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         images: &[Option<Arc<Image>>],
-        dimension: wgpu::TextureViewDimension,
     ) -> Option<wgpu::TextureView> {
-        let volume = dimension == wgpu::TextureViewDimension::D3;
         let images: Vec<&Arc<Image>> = images.iter().flatten().collect();
         let first = images.first()?;
         let alike = |i: &&Arc<Image>| {
@@ -135,20 +153,14 @@ impl Made {
         if images.len() < 2 || !images.iter().all(alike) {
             return None;
         }
-        let places = images.iter().map(|i| Arc::as_ptr(i) as usize);
-        let key: Vec<usize> = places.chain([usize::from(volume)]).collect();
+        let key: Vec<usize> = images.iter().map(|i| Arc::as_ptr(i) as usize).collect();
         if let Some((_, view)) = self.sliced.get(&key) {
             return Some(view.clone());
         }
-        // ⚠ A volume's lower levels halve its depth too, which a level made of each slice does not.
         let (mut texels, mut levels) = (Vec::new(), 1);
         for image in &images {
-            let (own, count) = match volume {
-                true => (image.rgba.clone(), 1),
-                false => {
-                    super::with_levels(image.width, image.height, &image.rgba, image.srgb, true)
-                }
-            };
+            let (own, count) =
+                super::with_levels(image.width, image.height, &image.rgba, image.srgb, true);
             texels.extend_from_slice(&own);
             levels = count;
         }
@@ -163,10 +175,7 @@ impl Made {
                 },
                 mip_level_count: levels,
                 sample_count: 1,
-                dimension: match volume {
-                    true => wgpu::TextureDimension::D3,
-                    false => wgpu::TextureDimension::D2,
-                },
+                dimension: wgpu::TextureDimension::D2,
                 format: match first.srgb {
                     true => wgpu::TextureFormat::Rgba8UnormSrgb,
                     false => wgpu::TextureFormat::Rgba8Unorm,
@@ -178,7 +187,7 @@ impl Made {
             &texels,
         );
         let view = texture.create_view(&wgpu::TextureViewDescriptor {
-            dimension: Some(dimension),
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()
         });
         self.uploads.textures += 1;
@@ -186,6 +195,54 @@ impl Made {
         let kept = images.iter().map(|i| Arc::clone(i)).collect();
         self.sliced.insert(key, (kept, view.clone()));
         Some(view)
+    }
+
+    /// The volume texture of `volume`, of one level, made once a scene, in the format
+    /// [`volume_format`] picks for the device.
+    pub(super) fn volume(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        volume: &Arc<Volume>,
+    ) -> wgpu::TextureView {
+        let place = Arc::as_ptr(volume) as usize;
+        if let Some((_, view)) = self.volumes.get(&place) {
+            return view.clone();
+        }
+        let half = wgpu::TextureFormat::Rgba16Float.guaranteed_format_features(device.features());
+        let filters = half
+            .flags
+            .contains(wgpu::TextureFormatFeatureFlags::FILTERABLE);
+        let format = volume_format(volume.half, filters);
+        let texels = match (volume.half, format) {
+            (true, wgpu::TextureFormat::Rgba8Unorm) => narrowed(&volume.texels),
+            _ => volume.texels.clone(),
+        };
+        let texture = device.create_texture_with_data(
+            queue,
+            &wgpu::TextureDescriptor {
+                label: None,
+                size: wgpu::Extent3d {
+                    width: volume.width,
+                    height: volume.height,
+                    depth_or_array_layers: volume.depth,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D3,
+                format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            &texels,
+        );
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.uploads.textures += 1;
+        self.uploads.image_bytes += texels.len() as u64;
+        self.volumes
+            .insert(place, (Arc::clone(volume), view.clone()));
+        view
     }
 
     /// The scene's sampler, of a comparison or not.
@@ -219,6 +276,7 @@ pub(super) fn digest(feeds: &BTreeMap<(u32, u32), Feed>, group: u32) -> u64 {
             Feed::Bytes(bytes) => (0u8, bytes).hash(&mut digest),
             Feed::View { bytes, view_proj } => (1u8, bytes, view_proj).hash(&mut digest),
             Feed::Frame(frame) => (3u8, frame).hash(&mut digest),
+            Feed::Volume(volume) => (4u8, Arc::as_ptr(volume) as usize).hash(&mut digest),
             Feed::Textures(images) => {
                 2u8.hash(&mut digest);
                 for image in images {

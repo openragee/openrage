@@ -214,3 +214,38 @@ fn a_map_that_comes_in_late_binds_the_group_that_reads_it_and_builds_no_pass() {
     let refused = pollster::block_on(validation.pop()).map(|e| e.to_string());
     assert_eq!(refused, None);
 }
+
+#[test]
+fn a_volume_of_half_floats_is_uploaded_as_them_where_the_device_filters_them() {
+    use wgpu::TextureFormat as F;
+    assert_eq!(volume_format(true, true), F::Rgba16Float);
+    assert_eq!(volume_format(true, false), F::Rgba8Unorm);
+    assert_eq!(volume_format(false, true), F::Rgba8Unorm);
+    // The fallback narrows each half float to a byte, clamped, with no curve on the way.
+    let halves = [0.5f32, 1.5, -0.25, 1.0];
+    let texel: Vec<u8> = (halves.iter())
+        .flat_map(|v| or_io::half::f32_to_half(*v).to_le_bytes())
+        .collect();
+    assert_eq!(narrowed(&texel), [128, 255, 0, 255]);
+}
+
+#[test]
+fn a_volume_is_made_once_on_the_device_in_its_own_size() {
+    let Some((device, queue)) = gpu("a_volume_is_made_once_on_the_device_in_its_own_size") else {
+        return;
+    };
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let volume = Arc::new(Volume {
+        width: 4,
+        height: 2,
+        depth: 3,
+        half: true,
+        texels: vec![0; 4 * 2 * 3 * 8],
+    });
+    let mut made = Made::default();
+    made.volume(&device, &queue, &volume);
+    made.volume(&device, &queue, &volume);
+    assert_eq!(made.uploads.textures, 1, "made once");
+    let refused = pollster::block_on(validation.pop()).map(|e| e.to_string());
+    assert_eq!(refused, None);
+}

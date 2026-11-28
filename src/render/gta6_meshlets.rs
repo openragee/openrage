@@ -560,8 +560,8 @@ pub(crate) struct Sources<'s> {
 type GameSlices = crate::state::gta6_shaders::global_textures::Slices;
 
 /// Feed each binding of `pass` the game binds a texture of its own dictionaries to with that
-/// texture from `found`, whose slices make a volume; one still read sets `decoding`, and one no
-/// dictionary holds is left at nought.
+/// texture from `found`, a volume; one still read sets `decoding`, and one no dictionary holds is
+/// left at nought.
 fn game_textures(
     pass: &Gta6ShadingPass,
     found: &dyn Fn(u32) -> Result<Option<GameSlices>, ()>,
@@ -573,8 +573,8 @@ fn game_textures(
             continue;
         };
         match found(name) {
-            Ok(Some(slices)) => {
-                feeds.insert((fed.group, fed.binding), Feed::Textures(slices.to_vec()));
+            Ok(Some(volume)) => {
+                feeds.insert((fed.group, fed.binding), Feed::Volume(volume));
             }
             Ok(None) => {}
             Err(()) => decoding.set(true),
@@ -1030,26 +1030,23 @@ mod tests {
             feed: Filled::GameTexture(NAME),
             header: None,
         }];
-        let slice = |red: u8| {
-            Some(Arc::new(Image {
-                width: 1,
-                height: 1,
-                rgba: vec![red, 0, 0, 255],
-                srgb: false,
-            }))
-        };
-        let slices: GameSlices = Arc::new(vec![slice(10), slice(20)]);
+        let slices: GameSlices = Arc::new(or_renderer::game_shaders::meshlets::Volume {
+            width: 1,
+            height: 1,
+            depth: 2,
+            half: false,
+            texels: vec![10, 0, 0, 255, 20, 0, 0, 255],
+        });
         let fill = |found: &dyn Fn(u32) -> Result<Option<GameSlices>, ()>| {
             let (decoding, mut feeds) = (std::cell::Cell::new(false), BTreeMap::new());
             game_textures(&pass, found, &decoding, &mut feeds);
             (decoding.get(), feeds.remove(&(1, 30)))
         };
         let (decoding, fed) = fill(&|name| Ok((name == NAME).then(|| Arc::clone(&slices))));
-        let Some(Feed::Textures(images)) = fed else {
-            panic!("the texture is not fed");
+        let Some(Feed::Volume(volume)) = fed else {
+            panic!("the texture is not fed as a volume");
         };
-        let reds: Vec<u8> = images.iter().flatten().map(|i| i.rgba[0]).collect();
-        assert_eq!((decoding, reds), (false, vec![10, 20]));
+        assert_eq!((decoding, volume.depth, volume.texels[4]), (false, 2, 20));
         // While it is read the frame is told so, and where no dictionary holds it, nothing binds.
         assert!(matches!(fill(&|_| Err(())), (true, None)));
         assert!(matches!(fill(&|_| Ok(None)), (false, None)));

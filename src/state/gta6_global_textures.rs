@@ -6,10 +6,12 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use or_io::codec::texture::DxgiFormat;
 use or_io::container::rpf::rpf9_scan::Rpf9BodyReader;
 use or_io::container::rpf::{Rpf9BodyKind, Rpf9Role, Rpf9Scan, Rpf9ZlibRun};
 use or_io::gta6::headerless::{read_dictionary, Entry};
-use or_renderer::game_shaders::mesh::Image;
+use or_io::gta6::ttpf::Texture;
+use or_renderer::game_shaders::meshlets::Volume;
 
 /// The install's texture archive, whose dictionaries the game holds whatever is drawn.
 const ARCHIVE: &str = "textures.rpf";
@@ -18,8 +20,8 @@ const DICTIONARY_HEAD: usize = 1 << 20;
 /// The most the body of the dictionary that holds a texture inflates to.
 const BODY_LIMIT: u64 = 1 << 30;
 
-/// A texture's slices, the first level of each: one for a plain texture, a volume's depth of them.
-pub(crate) type Slices = Arc<Vec<Option<Arc<Image>>>>;
+/// A texture read: the first level of each of its slices, as a volume.
+pub(crate) type Slices = Arc<Volume>;
 
 type Slot = Arc<Mutex<Option<Option<Slices>>>>;
 
@@ -42,11 +44,12 @@ pub(crate) fn under(root: &Path, name: u32) -> Result<Option<Slices>, ()> {
     let archive = root.join(ARCHIVE);
     // On the maps' workers: the count of maps in moves once it is read, so the scene binds it.
     crate::render::gta6_maps::decode(move || {
-        let found = slices_in(&archive, name);
-        if let Some(slices) = &found {
+        let found = volume_in(&archive, name);
+        if let Some(volume) = &found {
             tracing::info!(
                 name = format!("0x{name:08X}"),
-                slices = slices.len(),
+                slices = volume.depth,
+                half = volume.half,
                 "read the texture the game binds by this name from {}",
                 archive.display()
             );
@@ -71,8 +74,8 @@ pub(crate) fn worn(state: &crate::state::AppState, name: u32) -> Result<Option<S
     }
 }
 
-/// The slices of the texture named `name` in the first dictionary of `archive` that holds it.
-fn slices_in(archive: &Path, name: u32) -> Option<Vec<Option<Arc<Image>>>> {
+/// The texture named `name` in the first dictionary of `archive` that holds it, as a volume.
+fn volume_in(archive: &Path, name: u32) -> Option<Volume> {
     let file = File::open(archive).ok()?;
     let len = file.metadata().ok()?.len();
     let mut scan = Rpf9Scan::new(&file, 0..len).ok()?.keeping(DICTIONARY_HEAD);
@@ -110,7 +113,60 @@ fn slices_in(archive: &Path, name: u32) -> Option<Vec<Option<Arc<Image>>>> {
         Ok(Entry::Texture(t)) if code == name => t.texture.ok(),
         _ => None,
     })?;
-    let first_level = or_renderer::game_shaders::drawable::first_level;
-    let slices = (0..texture.faces).map(|face| texture.face(face).and_then(|f| first_level(&f)));
-    Some(slices.map(|slice| slice.map(Arc::new)).collect())
+    volume_of(&texture)
+}
+
+/// The first level of each slice of `texture` as one volume: the half floats as they are stored,
+/// else each slice decoded to bytes; `None` where a slice will not read.
+fn volume_of(texture: &Texture) -> Option<Volume> {
+    let (width, height, depth) = (texture.width, texture.height, texture.faces);
+    let half = texture.format.dxgi() == DxgiFormat::R16G16B16A16Float;
+    let mut texels = Vec::new();
+    for slice in 0..depth {
+        let slice = texture.face(slice)?;
+        match half {
+            true => texels.extend_from_slice(slice.pixels.get(..(width * height * 8) as usize)?),
+            false => {
+                let image = or_renderer::game_shaders::drawable::first_level(&slice)?;
+                texels.extend_from_slice(&image.rgba);
+            }
+        }
+    }
+    Some(Volume {
+        width,
+        height,
+        depth,
+        half,
+        texels,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use or_io::gta6::ttpf::Format;
+
+    use super::*;
+
+    #[test]
+    fn a_volume_of_half_floats_keeps_them_as_stored_slice_after_slice() {
+        // Two slices of 2 by 1 texels, eight bytes a texel, each byte its own place.
+        let texture = Texture {
+            width: 2,
+            height: 1,
+            format: Format::of_dxgi(10).expect("16-bit float RGBA"),
+            levels: 1,
+            faces: 2,
+            pixels: (0u8..32).collect(),
+        };
+        let volume = volume_of(&texture).expect("it reads");
+        assert_eq!((volume.width, volume.height, volume.depth), (2, 1, 2));
+        assert!(volume.half);
+        assert_eq!(volume.texels, (0u8..32).collect::<Vec<_>>());
+        // A slice short of its first level does not read.
+        let short = Texture {
+            pixels: vec![0; 24],
+            ..texture
+        };
+        assert_eq!(volume_of(&short), None);
+    }
 }

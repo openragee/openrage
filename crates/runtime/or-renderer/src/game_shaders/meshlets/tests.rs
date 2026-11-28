@@ -728,3 +728,16 @@ fn an_image_of_colour_carries_the_levels_below_its_first_and_another_does_not() 
         "an image of numbers keeps one level"
     );
 }
+
+#[test]
+fn a_pass_into_the_targets_culls_back_faces_unless_its_pixel_stage_reads_the_facing() {
+    let one_sided =
+        wgsl("@fragment fn main() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }");
+    let two_sided = wgsl(
+        "@fragment fn main(@builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+            return select(vec4<f32>(0.0), vec4<f32>(1.0), front);
+        }",
+    );
+    assert_eq!(culled(&one_sided, None), Some(wgpu::Face::Back));
+    assert_eq!(culled(&two_sided, None), None);
+}

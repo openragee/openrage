@@ -115,6 +115,7 @@ pub fn of_function_read(project: &mut Project, f: &cfg::Function, first: FirstRe
     // A compiled program's table has said the cells already; a listing says them here.
     let stated = project.signatures.remove(&key).map(|held| held.returns);
     if head.params > MAX_PARAMS {
+        unread(project, f, &first.taken);
         return;
     }
     let mut open = Open::default();
@@ -124,6 +125,7 @@ pub fn of_function_read(project: &mut Project, f: &cfg::Function, first: FirstRe
         Returns::Cells => stated.or_else(|| several(f, &mut open)),
     };
     let Some(returns) = returns else {
+        unread(project, f, &first.taken);
         return;
     };
     let names = Names::default();
@@ -232,6 +234,9 @@ pub fn of_function_read(project: &mut Project, f: &cfg::Function, first: FirstRe
         result,
     };
     if open != Open::default() && !park(&mut signature, &open) {
+        // What its calls said is lost with what it waited on.
+        let taken = std::mem::take(&mut open.taken);
+        unread(project, f, &taken);
         if open.wide {
             return;
         }
@@ -331,6 +336,44 @@ pub fn unseen_calls(project: &mut Project, calls: Option<(BTreeSet<u32>, BTreeSe
             project.blind_natives = true;
         }
     }
+}
+
+/// Notes what `f` calls and refers to, and the functions `taken` says its code as first read refers to, as code no part read: a function whose signature is not kept has its calls read by nothing.
+// ⚠ How it reads a result and what it hands a parameter are then not counted, so every function,
+// slot and native it names is read as anything. A reference a pass took off as dead was still
+// taken by the code as it is.
+fn unread(project: &mut Project, f: &cfg::Function, taken: &[FunctionKey]) {
+    let program = f.head.program;
+    let mut functions: BTreeSet<FunctionKey> = BTreeSet::new();
+    let mut slots: BTreeSet<u32> = BTreeSet::new();
+    let mut natives: BTreeSet<u64> = BTreeSet::new();
+    let mut note = |e: &Expr| match e {
+        Expr::Call { callee, .. } => {
+            functions.extend(key_of(program, callee));
+            if let Callee::Virtual { slot, .. } = callee {
+                slots.insert(*slot);
+            }
+            natives.extend(native_key(callee));
+        }
+        Expr::FunctionRef { program, at } => {
+            functions.insert(FunctionKey::new(*program, *at));
+        }
+        Expr::VirtualFunctionRef { slot, .. } => {
+            slots.insert(*slot);
+        }
+        _ => {}
+    };
+    for block in &f.cfg.blocks {
+        for stmt in &block.stmts {
+            stmt.each_expr(&mut |top| top.walk(&mut note));
+        }
+        if let Some(e) = block.term.expr() {
+            e.walk(&mut note);
+        }
+    }
+    project.unseen.extend(functions);
+    project.unseen.extend(taken.iter().copied());
+    unseen_calls(project, Some((slots, natives)));
 }
 
 /// The function a call reaches, where it is a function of a program: this one's, or another's by its hash and offset.

@@ -8,7 +8,7 @@ use super::{
     holds, number, param_at, resolved, settled, Back, Found, Open, Slot, Usage, ANY, MAX_PARAMS,
     ROUNDS,
 };
-use crate::gta6::script::ir::{FunctionKey, Kind};
+use crate::gta6::script::ir::{FunctionKey, Kind, TypeKey};
 use crate::gta6::script::project::{Param, Project, Signature};
 
 /// What is gathered over the whole project before any signature takes a kind from another.
@@ -74,8 +74,8 @@ impl Shared {
         opaque.extend(reached.filter(|key| anywhere.contains(&key.program())));
         let mut blind: BTreeSet<FunctionKey> = members.into_iter().collect();
         blind.extend(opaque.iter().copied());
-        let reads = slot_reads(project, open, &roots, &opaque);
-        let uses = uses(open, &opaque, &roots, &reads);
+        let (mut reads, handing) = slot_reads(project, open, &roots, &opaque);
+        let uses = uses(open, &opaque, &roots, &mut reads, &handing);
         // A function of a line may be called by name or through the slot.
         let mut line_uses = reads;
         for (member, root) in &roots {
@@ -437,14 +437,15 @@ fn join(lines: &mut BTreeMap<FunctionKey, FunctionKey>, a: FunctionKey, b: Funct
     }
 }
 
-/// How each function's result is read: by the calls that name it, and as the result of each function that hands it on is.
+/// How each function's result is read: by the calls that name it, and as the result of each function that hands it on is; and each line in `reads` as the result of each function that hands on a call through its slot is, by `handing`.
 // ⚠ What a function hands on is read wherever the function is: through its slot, by `reads`, and
 // as anything where a delegate or code no part read may reach it.
 fn uses(
     open: &BTreeMap<FunctionKey, Open>,
     opaque: &BTreeSet<FunctionKey>,
     roots: &BTreeMap<FunctionKey, FunctionKey>,
-    reads: &BTreeMap<FunctionKey, Usage>,
+    reads: &mut BTreeMap<FunctionKey, Usage>,
+    handing: &Handing,
 ) -> BTreeMap<FunctionKey, Usage> {
     let mut uses: BTreeMap<FunctionKey, Usage> = BTreeMap::new();
     for waits in open.values() {
@@ -472,6 +473,12 @@ fn uses(
                 moving |= joined != *held;
                 *held = joined;
             }
+            for root in handing.get(key).into_iter().flatten() {
+                let held = reads.entry(*root).or_default();
+                let joined = held.join(theirs);
+                moving |= joined != *held;
+                *held = joined;
+            }
         }
         if !moving {
             break;
@@ -485,22 +492,32 @@ fn uses(
             std::iter::once(key).chain(&waits.handed).chain(called)
         });
         uses = all.map(|key| (*key, Usage::Mixed)).collect();
+        // So is each line a call through whose slot is handed on.
+        for root in handing.values().flatten() {
+            reads.insert(*root, Usage::Mixed);
+        }
     }
     uses
 }
 
-/// How the calls through each line's slot read its result, by the least function of the line; `Mixed` where a delegate or code no part read may reach a function of it.
+/// The lines, by their least function, a call through a slot that each function hands back as its own result may reach.
+type Handing = BTreeMap<FunctionKey, BTreeSet<FunctionKey>>;
+
+/// How the calls through each line's slot read its result, by the least function of the line, `Mixed` where a delegate or code no part read may reach a function of it; and for each function that hands on a call through a slot, the lines that call may reach.
 // A call through a type reaches the function the type's slot holds or one that overrides it, all
-// of one line, or one of the functions that implement the slot of an interface. ⚠ A call through
-// a type no table resolves may reach any line of its slot, and a result handed on through a slot
-// is read where the function that hands it is: as anything here.
+// of one line, or one of the functions that implement the slot of an interface, or, through a
+// class whose line leaves the slot empty, a function a type under it holds there. ⚠ A call
+// through a type no table resolves may reach any line of its slot, and a result handed on
+// through a slot is read where the function that hands it is: by `uses`, and as anything here
+// where the lines the call may reach are not all known.
 fn slot_reads(
     project: &Project,
     open: &BTreeMap<FunctionKey, Open>,
     roots: &BTreeMap<FunctionKey, FunctionKey>,
     opaque: &BTreeSet<FunctionKey>,
-) -> BTreeMap<FunctionKey, Usage> {
+) -> (BTreeMap<FunctionKey, Usage>, Handing) {
     let mut lines: BTreeMap<FunctionKey, Usage> = BTreeMap::new();
+    let mut handing = Handing::new();
     // Code no part read may call through these slots, `ANY` through every one.
     let mut unresolved: BTreeSet<u32> = project.unseen_slots.clone();
     let read = |lines: &mut BTreeMap<FunctionKey, Usage>, root: FunctionKey, usage: Usage| {
@@ -512,7 +529,9 @@ fn slot_reads(
             read(&mut lines, *root, Usage::Mixed);
         }
     }
-    let reached = |(ty, slot): &Slot| -> Vec<FunctionKey> {
+    let children = children(project);
+    let mut below_held: BTreeMap<(TypeKey, u32), Vec<FunctionKey>> = BTreeMap::new();
+    let mut reached = |(ty, slot): &Slot| -> Vec<FunctionKey> {
         let Some(ty) = ty else {
             return Vec::new();
         };
@@ -521,16 +540,27 @@ fn slot_reads(
             .implemented
             .get(ty)
             .and_then(|slots| slots.get(slot));
+        let under = match held {
+            Some(_) => Vec::new(),
+            None => below_held
+                .entry((*ty, *slot))
+                .or_insert_with(|| below(project, &children, *ty, *slot))
+                .clone(),
+        };
         held.into_iter()
             .chain(implemented.into_iter().flatten().copied())
+            .chain(under)
             .collect()
     };
     // Each slot's lines and whether any function it reaches is of no line, worked out once: the
     // same slots are called by many functions.
     let mut known: BTreeMap<Slot, (Vec<FunctionKey>, bool)> = BTreeMap::new();
-    for waits in open.values() {
-        let called = waits.slot_uses.iter().map(|(slot, usage)| (slot, *usage));
-        let handed_on = waits.handed_slots.iter().map(|slot| (slot, Usage::Mixed));
+    for (key, waits) in open {
+        let called = waits
+            .slot_uses
+            .iter()
+            .map(|(slot, usage)| (slot, Some(*usage)));
+        let handed_on = waits.handed_slots.iter().map(|slot| (slot, None));
         for (slot, usage) in called.chain(handed_on) {
             let (rooted, open_ended) = known.entry(*slot).or_insert_with(|| {
                 let targets = reached(slot);
@@ -544,8 +574,20 @@ fn slot_reads(
             if *open_ended {
                 unresolved.insert(slot.1);
             }
-            for root in rooted.iter() {
-                read(&mut lines, *root, usage);
+            match usage {
+                Some(usage) => {
+                    for root in rooted.iter() {
+                        read(&mut lines, *root, usage);
+                    }
+                }
+                None if !*open_ended => {
+                    handing.entry(*key).or_default().extend(rooted.iter().copied());
+                }
+                None => {
+                    for root in rooted.iter() {
+                        read(&mut lines, *root, Usage::Mixed);
+                    }
+                }
             }
         }
     }
@@ -568,7 +610,48 @@ fn slot_reads(
             }
         }
     }
-    lines
+    (lines, handing)
+}
+
+/// The types each type is the base of.
+fn children(project: &Project) -> BTreeMap<TypeKey, Vec<TypeKey>> {
+    let mut children: BTreeMap<TypeKey, Vec<TypeKey>> = BTreeMap::new();
+    for (key, facts) in &project.types {
+        if let Some(base) = facts.base {
+            children.entry(base).or_default().push(*key);
+        }
+    }
+    children
+}
+
+/// The functions the types under the class `ty` hold in `slot`, where neither `ty` nor a base of it holds one there: what a call through its empty slot may reach.
+// ⚠ Never for an interface, which states no base: its slots are numbered apart from the tables of
+// the types that implement it. Each type is visited once, so a ring of bases ends.
+fn below(
+    project: &Project,
+    children: &BTreeMap<TypeKey, Vec<TypeKey>>,
+    ty: TypeKey,
+    slot: u32,
+) -> Vec<FunctionKey> {
+    let class = (project.types.get(&ty)).is_some_and(|facts| facts.base.is_some());
+    if !class || project.slot(ty, slot).is_some() {
+        return Vec::new();
+    }
+    let mut found: BTreeSet<FunctionKey> = BTreeSet::new();
+    let mut seen: BTreeSet<TypeKey> = BTreeSet::new();
+    let mut pending = vec![ty];
+    while let Some(at) = pending.pop() {
+        if !seen.insert(at) {
+            continue;
+        }
+        let held = project
+            .types
+            .get(&at)
+            .and_then(|facts| facts.slots.get(&slot));
+        found.extend(held.copied());
+        pending.extend(children.get(&at).into_iter().flatten().copied());
+    }
+    found.into_iter().collect()
 }
 
 /// Gives each function of a line whose result is constants alone the kind the rest of the line states, where the whole line agrees.

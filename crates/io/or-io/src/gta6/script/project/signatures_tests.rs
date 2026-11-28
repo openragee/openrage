@@ -1312,3 +1312,129 @@ fn a_slot_or_a_native_code_no_part_read_calls_is_read_as_anything_there() {
     assert_eq!(result(&blind, 0x10), Kind::Unknown);
     assert!(blind.native_truths.is_empty());
 }
+
+#[test]
+fn a_line_a_call_through_whose_slot_is_handed_on_is_read_as_the_function_that_hands_it_on() {
+    let line = |read: &str| {
+        let functions = [
+            function("VmValue", 0x10, 2, FLAG),
+            function(
+                "VmValue",
+                0x20,
+                2,
+                "return Virtual.type_00000001000000C1.Method_3(p0, p1);",
+            ),
+            function("void", 0x30, 2, &format!("{read} return;")),
+        ];
+        let mut project = parts_of(&[listing(1, &functions)]);
+        project.types.insert(invented(0xC1), fills(None, 0x10));
+        settle(&mut project);
+        project
+    };
+    // Every call of the function that hands the slot's result on tests it.
+    let project = line("if (((as_u32(func_000020(p0, p1)) == 0))) { return; }");
+    assert_eq!(result(&project, 0x10), Kind::Bool);
+    assert_eq!(project.slot_result(invented(0xC1), 3), Some(&Kind::Bool));
+    assert_eq!(result(&project, 0x20), Kind::Bool);
+    // One counts with it: the number stands for the line too.
+    let counted = "Native.DEMO.USE(((as_i32(func_000020(p0, p1)) + as_i32(1))));";
+    assert_eq!(result(&line(counted), 0x10), Kind::I32);
+    // Handed whole to a call, it is read as anything, and so is the line.
+    let handed = "Native.DEMO.USE(func_000020(p0, p1));";
+    assert_eq!(result(&line(handed), 0x10), Kind::Unknown);
+}
+
+#[test]
+fn a_call_through_a_class_whose_line_leaves_the_slot_empty_reaches_what_the_types_under_it_hold() {
+    let tests_c1 = "if (((as_u32(Virtual.type_00000001000000C1.Method_3(p0, p1)) != 0))) { Native.DEMO.USE(1); }";
+    let line = |base: Option<TypeKey>, also: &str| {
+        let functions = [
+            function("VmValue", 0x10, 2, FLAG),
+            function("void", 0x30, 2, &format!("{tests_c1} {also} return;")),
+        ];
+        let mut project = parts_of(&[listing(1, &functions)]);
+        // D1 holds nothing in slot 3, and C1, under it, fills it.
+        let empty = TypeFacts {
+            base,
+            ..TypeFacts::default()
+        };
+        project.types.insert(invented(0xD1), empty);
+        project
+            .types
+            .insert(invented(0xC1), fills(Some(invented(0xD1)), 0x10));
+        settle(&mut project);
+        project
+    };
+    let class = Some(invented(0xB1));
+    let tested = "if (((as_u32(Virtual.type_00000001000000D1.Method_3(p0, p1)) == 0))) { return; }";
+    let project = line(class, tested);
+    assert_eq!(result(&project, 0x10), Kind::Bool);
+    assert_eq!(project.slot_result(invented(0xC1), 3), Some(&Kind::Bool));
+    // The call through the empty slot is a call of no one line, and states nothing itself.
+    assert_eq!(project.slot_result(invented(0xD1), 3), None);
+    let counted =
+        "Native.DEMO.USE(((as_i32(Virtual.type_00000001000000D1.Method_3(p0, p1)) + as_i32(1))));";
+    assert_eq!(result(&line(class, counted), 0x10), Kind::I32);
+    // A type of no base is taken for an interface, whose slots the tables under it number apart:
+    // the call may reach any line of the slot.
+    assert_eq!(result(&line(None, tested), 0x10), Kind::Unknown);
+}
+
+#[test]
+fn what_a_function_whose_signature_is_not_kept_calls_is_read_as_anything() {
+    let tests = "if (((as_u32(func_000010(p0, p1)) == 0))) { return; } if (((as_u32(Native.DEMO.ASK(p0)) != 0))) { return; } return;";
+    let reads = "Native.DEMO.USE(((as_i32(func_000010(p0, p1)) + as_i32(1)))); Native.DEMO.USE(Native.DEMO.ASK(p0));";
+    let with = |returns: &str| {
+        let functions = [
+            function("VmValue", 0x10, 2, FLAG),
+            function("void", 0x30, 2, tests),
+            function("VmValues", 0x40, 2, &format!("{reads} {returns}")),
+        ];
+        project_of(&[listing(1, &functions)])
+    };
+    // Its returns state its cells: what it reads is counted.
+    let counted = with("return new VmValues(1, 2);");
+    assert_eq!(result(&counted, 0x10), Kind::I32);
+    assert!(!counted.native_truths.contains(&5));
+    // They state two counts, so it keeps no signature, and no read of it is counted.
+    let lost = with(
+        "if (((as_u32(p0) == 0))) { return new VmValues(1, 2); } return new VmValues(1, 2, 3);",
+    );
+    assert!(!lost.signatures.contains_key(&key(0x40)));
+    assert_eq!(result(&lost, 0x10), Kind::Unknown);
+    assert!(!lost.native_truths.contains(&5));
+}
+
+#[test]
+fn a_reference_a_function_whose_signature_is_not_kept_took_before_the_passes_is_counted() {
+    let tests = "if (((as_u32(func_000010(p0, p1)) == 0))) { return; } return;";
+    // A reference the code takes and nothing reads: the passes take it off as dead.
+    let taken = "v_000001_0 = Vm.Function(0x00000001U, 0x000010);";
+    let with = |returns: &str| {
+        let functions = [
+            function("VmValue", 0x10, 2, FLAG),
+            function("void", 0x30, 2, tests),
+            function("VmValues", 0x40, 2, &format!("{taken} {returns}")),
+        ];
+        project_of(&[listing(1, &functions)])
+    };
+    // Its signature kept, or lost because its returns state two counts: the reference is counted either way.
+    let kept = with("return new VmValues(1, 2);");
+    assert!(kept.signatures.contains_key(&key(0x40)));
+    let lost = with(
+        "if (((as_u32(p0) == 0))) { return new VmValues(1, 2); } return new VmValues(1, 2, 3);",
+    );
+    assert!(!lost.signatures.contains_key(&key(0x40)));
+    for project in [&kept, &lost] {
+        assert_eq!(result(project, 0x10), Kind::Unknown);
+    }
+    // Without the reference, the one test of it says a truth.
+    let functions = [
+        function("VmValue", 0x10, 2, FLAG),
+        function("void", 0x30, 2, tests),
+    ];
+    assert_eq!(
+        result(&project_of(&[listing(1, &functions)]), 0x10),
+        Kind::Bool
+    );
+}

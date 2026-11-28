@@ -577,11 +577,13 @@ fn a_constant_set_after_an_if_is_set_before_it_and_the_jumps_run_off_its_arms() 
 #[test]
 fn a_constant_stays_behind_a_construct_a_way_out_of_which_does_not_set_it() {
     let head = head_of(&[(T, Width::Cell, false)]);
-    // A jump past it that sets nothing: `t` keeps what it held before.
+    // A jump past it that sets nothing: `t` keeps what it held before. (`s1` keeps the loop's
+    // test from being tested again after it.)
     let unset = vec![
         Stmt::While {
             cond: p(1),
             body: vec![
+                s(1),
                 only(p(2), vec![give(T, p(3)), goes(L)]),
                 only(p(5), vec![goes(L)]),
             ],
@@ -596,7 +598,11 @@ fn a_constant_stays_behind_a_construct_a_way_out_of_which_does_not_set_it() {
     let runs_on = vec![
         Stmt::While {
             cond: p(1),
-            body: vec![give(T, p(6)), only(p(2), vec![give(T, p(3)), goes(L)])],
+            body: vec![
+                s(1),
+                give(T, p(6)),
+                only(p(2), vec![give(T, p(3)), goes(L)]),
+            ],
         },
         give(T, k(-1)),
         Stmt::Label(L),
@@ -621,7 +627,8 @@ fn a_constant_stays_behind_a_construct_a_way_out_of_which_does_not_set_it() {
 #[test]
 fn a_constant_stays_behind_a_construct_entered_or_left_another_way() {
     let head = head_of(&[(T, Width::Cell, false)]);
-    // A `break` of the loop around the `if` leaves past the constant to where it is not set.
+    // A `break` of the loop around the `if` leaves past the constant to where it is not set: the
+    // constant is not set in front of the `if`, but written at the end of each of its arms.
     let arm = vec![
         only(p(2), vec![give(T, p(3)), goes(L)]),
         only(p(5), vec![Stmt::Break]),
@@ -633,7 +640,16 @@ fn a_constant_stays_behind_a_construct_entered_or_left_another_way() {
         },
         returns(),
     ];
-    assert_eq!(moved(left.clone(), &head), left);
+    let unset = vec![only(p(5), vec![Stmt::Break]), give(T, k(-1))];
+    let arm = vec![when(p(2), vec![give(T, p(3))], unset)];
+    let kept = vec![
+        Stmt::While {
+            cond: p(0),
+            body: vec![when(p(1), arm, vec![give(T, k(-1))]), s(4)],
+        },
+        returns(),
+    ];
+    assert_eq!(moved(left, &head), kept);
     // A jump from before the loop enters it at `M`, and may then run off it to the constant.
     let entered = vec![
         only(p(2), vec![goes(M)]),
@@ -1100,4 +1116,245 @@ fn a_loops_last_if_stays_where_its_else_runs_on_or_nothing_makes_a_for_of_the_lo
     let mut apart = counting(below(), vec![when(p(1), vec![step()], leaving())]);
     apart.insert(1, Stmt::Label(L));
     unchanged(apart);
+}
+
+// ---- a run of constants, a loop's test again, and what an if runs on into ---------------------
+
+/// A second `stack_` variable, one cell.
+const W: Var = Var::Stack { at: 0x4C, index: 0 };
+
+#[test]
+fn a_run_of_constants_after_a_loop_whose_jumps_set_each_first_is_set_before_the_loop() {
+    // `while (p1) { s1; if (p2) { t = p3; w = p4; goto L; } } t = -1; w = 0; L: s4; return;`
+    let lp = |way: Stmt| Stmt::While {
+        cond: p(1),
+        body: vec![s(1), only(p(2), vec![give(T, p(3)), give(W, p(4)), way])],
+    };
+    let head = head_of(&[(T, Width::Cell, false), (W, Width::Cell, false)]);
+    let body = vec![
+        lp(goes(L)),
+        give(T, k(-1)),
+        give(W, k(0)),
+        Stmt::Label(L),
+        s(4),
+        returns(),
+    ];
+    let out = moved(body, &head);
+    assert_eq!(
+        out,
+        [
+            give(T, k(-1)),
+            give(W, k(0)),
+            lp(Stmt::Break),
+            s(4),
+            returns()
+        ]
+    );
+    assert_eq!(gotos(&out), 0);
+    // A jump that sets `t` alone: `t = -1` still goes in front, `w = 0` stays where it was. The
+    // loop's test calls, so it is not tested again after the loop either.
+    let partly = |way: Stmt| Stmt::While {
+        cond: called(),
+        body: vec![only(p(2), vec![give(T, p(3)), way])],
+    };
+    let body = vec![
+        partly(goes(L)),
+        give(T, k(-1)),
+        give(W, k(0)),
+        Stmt::Label(L),
+        s(4),
+        returns(),
+    ];
+    let out = moved(body, &head);
+    assert_eq!(
+        out,
+        [
+            give(T, k(-1)),
+            partly(goes(L)),
+            give(W, k(0)),
+            Stmt::Label(L),
+            s(4),
+            returns()
+        ]
+    );
+}
+
+/// `*(int*)p1`, a test that reads memory.
+fn loaded() -> Expr {
+    Expr::Load {
+        ty: ir::Scalar::I32,
+        addr: Box::new(p(1)),
+        offset: 0,
+    }
+}
+
+/// `while (<cond>) { <body> } s3; L: s5; return;`.
+fn searching(cond: Expr, body: Vec<Stmt>) -> Vec<Stmt> {
+    vec![
+        Stmt::While { cond, body },
+        s(3),
+        Stmt::Label(L),
+        s(5),
+        returns(),
+    ]
+}
+
+#[test]
+fn a_loop_whose_jumps_pass_over_what_follows_it_breaks_and_tests_itself_again_after() {
+    let head = head_of(&[(T, Width::Cell, false)]);
+    // `while (p1) { t = 1; if (p2) goto L; s2; } s3; L:` is
+    // `while (p1) { t = 1; if (p2) break; s2; } if (!p1) { s3 }`.
+    let body = |way: Stmt| vec![give(T, k(1)), only(p(2), vec![way]), s(2)];
+    let out = moved(searching(p(1), body(goes(L))), &head);
+    let ran_out = only(not(p(1)), vec![s(3)]);
+    let lp = Stmt::While {
+        cond: p(1),
+        body: body(Stmt::Break),
+    };
+    assert_eq!(out, [lp, ran_out.clone(), s(5), returns()]);
+    assert_eq!(gotos(&out), 0);
+    // What the other arm of an `if` does is not on the way to the jump.
+    let arms = |way: Stmt| {
+        let set = give(Var::Param(1), k(0));
+        vec![when(p(4), vec![set], vec![only(p(2), vec![way])])]
+    };
+    let out = moved(searching(p(1), arms(goes(L))), &head);
+    let lp = Stmt::While {
+        cond: p(1),
+        body: arms(Stmt::Break),
+    };
+    assert_eq!(out, [lp, ran_out, s(5), returns()]);
+    // A test that reads memory, with a call only after the jump.
+    let late = |way: Stmt| {
+        vec![
+            only(p(2), vec![way]),
+            Stmt::Simple(ir::Stmt::Eval(called())),
+        ]
+    };
+    let out = moved(searching(loaded(), late(goes(L))), &head);
+    let lp = Stmt::While {
+        cond: loaded(),
+        body: late(Stmt::Break),
+    };
+    assert_eq!(out, [lp, only(not(loaded()), vec![s(3)]), s(5), returns()]);
+}
+
+#[test]
+fn a_loop_is_not_tested_again_where_its_test_may_read_otherwise_or_a_way_in_passes_it() {
+    let head = head_of(&[(T, Width::Cell, false)]);
+    let unchanged = |body: Vec<Stmt>| assert_eq!(moved(body.clone(), &head), body);
+    let jump = || only(p(2), vec![goes(L)]);
+    // The way to the jump sets what the test reads.
+    unchanged(searching(p(1), vec![give(Var::Param(1), k(0)), jump()]));
+    // A local no proof keeps from the test's variable.
+    unchanged(searching(p(1), vec![s(6), jump()]));
+    // The test calls.
+    unchanged(searching(called(), vec![jump()]));
+    // The test reads memory and a call comes before the jump.
+    let call = Stmt::Simple(ir::Stmt::Eval(called()));
+    unchanged(searching(loaded(), vec![call, jump()]));
+    // A `break` leaves the loop to what follows it too.
+    unchanged(searching(p(1), vec![only(p(4), vec![Stmt::Break]), jump()]));
+    // A label in the loop lets a way in pass its test by.
+    let mut entered = searching(p(1), vec![Stmt::Label(M), jump()]);
+    entered.insert(0, only(p(6), vec![goes(M)]));
+    unchanged(entered);
+}
+
+#[test]
+fn a_loop_left_at_its_top_by_a_jump_and_by_breaks_further_on_tests_itself_again_after() {
+    let head = head_of(&[(T, Width::Cell, false)]);
+    // `while (true) { if (p1) goto L; t = 1; if (p2) break; if (p3) break; s2; } s3; L:` is
+    // `while (!p1) { t = 1; if (p2) break; if (p3) break; s2; } if (!p1) { s3 }`: with two
+    // `break`s the loop cannot take `s3` in.
+    let rest = vec![
+        give(T, k(1)),
+        only(p(2), vec![Stmt::Break]),
+        only(p(3), vec![Stmt::Break]),
+        s(2),
+    ];
+    let mut body = vec![only(p(1), vec![goes(L)])];
+    body.extend(rest.clone());
+    let out = moved(searching(forever(), body), &head);
+    let lp = Stmt::While {
+        cond: not(p(1)),
+        body: rest.clone(),
+    };
+    assert_eq!(out, [lp, only(not(p(1)), vec![s(3)]), s(5), returns()]);
+    assert_eq!(gotos(&out), 0);
+    // The way to a `break` sets what the test reads.
+    let mut set = vec![only(p(1), vec![goes(L)]), give(Var::Param(1), k(0))];
+    set.extend(rest);
+    let body = searching(forever(), set);
+    assert_eq!(moved(body.clone(), &head), body);
+}
+
+#[test]
+fn what_an_if_runs_on_into_is_written_at_the_end_of_its_arms_where_their_jumps_then_go() {
+    // `if (p0) { if (p1) { t = 1; goto L; } s2; if (p3) goto L; } w = 0; L: s5; return;`
+    let arm = vec![
+        only(p(1), vec![give(T, k(1)), goes(L)]),
+        s(2),
+        only(p(3), vec![goes(L)]),
+    ];
+    let body = vec![
+        only(p(0), arm),
+        give(W, k(0)),
+        Stmt::Label(L),
+        s(5),
+        returns(),
+    ];
+    let out = swept(body);
+    let inner = when(
+        p(1),
+        vec![give(T, k(1))],
+        vec![s(2), only(not(p(3)), vec![give(W, k(0))])],
+    );
+    assert_eq!(
+        out,
+        [
+            when(p(0), vec![inner], vec![give(W, k(0))]),
+            s(5),
+            returns()
+        ]
+    );
+    assert_eq!(gotos(&out), 0);
+    // An arm that never runs off takes nothing, so what follows may call: it goes once, to the else.
+    let arm = vec![only(p(1), vec![goes(L)]), s(2), returns()];
+    let body = vec![
+        only(p(0), arm),
+        give(W, called()),
+        s(6),
+        Stmt::Label(L),
+        s(5),
+        returns(),
+    ];
+    let out = swept(body);
+    let then = vec![only(not(p(1)), vec![s(2), returns()])];
+    assert_eq!(
+        out,
+        [
+            when(p(0), then, vec![give(W, called()), s(6)]),
+            s(5),
+            returns()
+        ]
+    );
+}
+
+#[test]
+fn what_an_if_runs_on_into_stays_where_it_calls_is_long_or_a_jump_would_stay() {
+    let unchanged = |body: Vec<Stmt>| assert_eq!(swept(body.clone()), body);
+    let with = |arm: Vec<Stmt>, passed: Vec<Stmt>| {
+        let mut body = vec![only(p(0), arm)];
+        body.extend(passed);
+        body.extend([Stmt::Label(L), s(5), returns()]);
+        body
+    };
+    let arm = || vec![only(p(1), vec![goes(L)]), s(2)];
+    // Both arms run off, so it would be written twice: not where it calls, nor past two.
+    unchanged(with(arm(), vec![give(W, called())]));
+    unchanged(with(arm(), vec![give(W, k(0)), s(6), s(7)]));
+    // A jump nested deeper than the rules that follow read.
+    let deep = vec![only(p(1), vec![only(p(4), vec![goes(L)])]), s(2)];
+    unchanged(with(deep, vec![give(W, k(0))]));
 }

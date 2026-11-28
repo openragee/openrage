@@ -7,9 +7,13 @@
 //! `return` of a small value with no call, a `break` or a `continue`, in front of the arm it
 //! followed. Two write a statement that says where running off already went: a `continue` at the
 //! end of an arm that ran off the end of a loop's body, and a `break` at the end of a switch's
-//! last body. No simple statement is copied and none is dropped. ⚠ One rule moves one: the
-//! assignment of a constant to a variable no address reaches, from behind a construct whose
-//! jumps past it each assign that variable first, to in front of the construct.
+//! last body. ⚠ One rule moves one: the assignment of a constant to a variable no address
+//! reaches, from behind a construct whose jumps past it each assign that variable first, to in
+//! front of the construct. ⚠ One copies at most [`PUSHED`] assignments with no call: those an
+//! `if` both arms of which run off runs on into, written at the end of each arm. No other simple
+//! statement is copied and none is dropped. ⚠ One evaluates a test a second time: a loop's test,
+//! written after the loop over what its jumps passed over, where it has no effect and nothing run
+//! since it was evaluated in the loop may change what it reads.
 //!
 //! Two rules run once over the finished statements, apart from the rounds: [`fallen`] writes the
 //! body a `switch` body runs into at its end where that body is a few assignments with no call
@@ -217,6 +221,224 @@ fn leaves_to(list: &[Stmt], end: &[Label]) -> bool {
     false
 }
 
+/// The constant assignments a run [`Exits::hoist`] reads past may hold, and the assignments in front of a `goto` it reads back over.
+const HOIST: usize = 8;
+
+/// The assignments with no call [`Exits::pushed`] may write at the end of both arms of an `if`.
+const PUSHED: usize = 2;
+
+/// The nodes a test [`Exits::searched`] evaluates a second time may hold.
+const RETEST: usize = 32;
+
+/// Whether the assignments right in front of `list[at]` hold one of `var`.
+fn assigned_before(list: &[Stmt], at: usize, var: Var) -> bool {
+    list[..at]
+        .iter()
+        .rev()
+        .take(HOIST)
+        .take_while(|stmt| matches!(stmt, Stmt::Simple(ir::Stmt::Assign { .. })))
+        .any(|stmt| matches!(stmt, Stmt::Simple(ir::Stmt::Assign { target, .. }) if *target == var))
+}
+
+/// Whether the assignments right after `list[at]` end in a `goto` to one of `end`.
+fn jumps_after(list: &[Stmt], at: usize, end: &[Label]) -> bool {
+    let next = list.get(at + 1..).and_then(|rest| {
+        rest.iter()
+            .take(HOIST)
+            .find(|stmt| !matches!(stmt, Stmt::Simple(ir::Stmt::Assign { .. })))
+    });
+    matches!(next, Some(Stmt::Goto(label)) if end.contains(label))
+}
+
+/// Whether a label stands anywhere in `list`, or a construct this cannot see into.
+fn labelled(list: &[Stmt]) -> bool {
+    let mut work = vec![list];
+    while let Some(list) = work.pop() {
+        for stmt in list {
+            match stmt {
+                Stmt::Label(_) | Stmt::Sugar(_) => return true,
+                Stmt::If { then, els, .. } => {
+                    work.push(then.as_slice());
+                    work.push(els.as_slice());
+                }
+                Stmt::While { body, .. } | Stmt::DoWhile { body, .. } | Stmt::For { body, .. } => {
+                    work.push(body.as_slice());
+                }
+                Stmt::Switch { cases, .. } => {
+                    work.extend(cases.iter().map(|case| case.body.as_slice()));
+                }
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
+/// How many `goto`s of `list`, at every depth, name one of `labels`; `None` where a construct this cannot see into stands in the way.
+fn jumps_in(list: &[Stmt], labels: &[Label]) -> Option<u32> {
+    let mut found = 0u32;
+    let mut work = vec![list];
+    while let Some(list) = work.pop() {
+        for stmt in list {
+            match stmt {
+                Stmt::Goto(label) if labels.contains(label) => found += 1,
+                Stmt::If { then, els, .. } => {
+                    work.push(then.as_slice());
+                    work.push(els.as_slice());
+                }
+                Stmt::While { body, .. } | Stmt::DoWhile { body, .. } | Stmt::For { body, .. } => {
+                    work.push(body.as_slice());
+                }
+                Stmt::Switch { cases, .. } => {
+                    work.extend(cases.iter().map(|case| case.body.as_slice()));
+                }
+                Stmt::Sugar(_) => return None,
+                _ => {}
+            }
+        }
+    }
+    Some(found)
+}
+
+/// The `goto`s of `arm` to `labels`, where each goes once what the `if` of `arm` runs on into is written at its end: it ends `arm`, or ends the then arm of an `if` of `arm` that no label follows and whose else runs off; `None` where another does not.
+// The first is where the `if` runs on to, and [`Exits::nest`] reads the second as the test in
+// front of what follows it in `arm`, which then runs on to the end of `arm` as the jump did.
+fn freed(arm: &[Stmt], labels: &[Label]) -> Option<u32> {
+    let names =
+        |stmt: Option<&Stmt>| matches!(stmt, Some(Stmt::Goto(label)) if labels.contains(label));
+    let open = arm
+        .iter()
+        .rposition(|stmt| matches!(stmt, Stmt::Label(_)))
+        .map_or(0, |at| at + 1);
+    let mut found = u32::from(names(arm.last()));
+    for stmt in &arm[open..] {
+        if let Stmt::If { then, els, .. } = stmt {
+            if names(then.last()) && runs_off(els) {
+                found += 1;
+            }
+        }
+    }
+    (jumps_in(arm, labels)? == found).then_some(found)
+}
+
+/// Whether `e` is a call or makes an object or an array: what may write memory or a frame cell an address reaches.
+fn makes(e: &Expr) -> bool {
+    matches!(
+        e,
+        Expr::Call { .. } | Expr::NewObject(_) | Expr::NewArray { .. }
+    )
+}
+
+/// What a test reads where it may be evaluated a second time: the frame variables it names, and whether it reads memory.
+struct Reads {
+    vars: Vec<Var>,
+    memory: bool,
+}
+
+impl Reads {
+    /// What `test` reads, where it calls nothing, makes nothing and takes no address; `None` otherwise or past [`RETEST`] nodes.
+    // A load has no effect, and reads what it read before while nothing wrote in between.
+    fn of(test: &Expr) -> Option<Reads> {
+        let mut reads = Reads {
+            vars: Vec::new(),
+            memory: false,
+        };
+        let mut plain = true;
+        let mut nodes = 0usize;
+        test.walk(&mut |e| {
+            nodes += 1;
+            match e {
+                Expr::Var(Var::Global { .. }) | Expr::Load { .. } | Expr::LoadBytes { .. } => {
+                    reads.memory = true;
+                }
+                Expr::Var(var) => reads.vars.push(*var),
+                Expr::Const(_)
+                | Expr::Cast { .. }
+                | Expr::Truth(_)
+                | Expr::Unary { .. }
+                | Expr::Binary { .. }
+                | Expr::Select { .. }
+                | Expr::Cell { .. }
+                | Expr::ExtractBytes { .. }
+                | Expr::ByteOffset { .. } => {}
+                _ => plain = false,
+            }
+        });
+        (plain && nodes <= RETEST).then_some(reads)
+    }
+
+    fn private(var: Var, private: Option<&Private>) -> bool {
+        private.is_some_and(|held| held.vars.contains(&var))
+    }
+
+    /// Whether a call or a store may change what the test reads: it reads memory, or a variable an address may reach.
+    fn exposed(&self, private: Option<&Private>) -> bool {
+        self.memory || self.vars.iter().any(|var| !Reads::private(*var, private))
+    }
+
+    /// Whether an assignment of `target` may change what the test reads.
+    // A variable an address may reach may run across another such variable, and a load may read
+    // it through an address.
+    fn assigned(&self, target: Var, private: Option<&Private>) -> bool {
+        self.vars.contains(&target) || (!Reads::private(target, private) && self.exposed(private))
+    }
+
+    /// Whether running `body` may change what the test reads.
+    fn changed_by(&self, body: &[Stmt], private: Option<&Private>) -> bool {
+        let mut changed = false;
+        tree::each_simple(body, &mut |simple| {
+            changed |= match simple {
+                ir::Stmt::Assign { target, .. } => self.assigned(*target, private),
+                ir::Stmt::AssignMany { targets, .. } => {
+                    targets.iter().any(|target| self.assigned(*target, private))
+                }
+                _ => self.exposed(private),
+            };
+        });
+        if !changed && self.exposed(private) {
+            tree::each_expr(body, &mut |top| top.walk(&mut |e| changed |= makes(e)));
+        }
+        changed
+    }
+
+    /// Whether evaluating `e` may change what the test reads.
+    fn changed_by_expr(&self, e: &Expr, private: Option<&Private>) -> bool {
+        let mut calls = false;
+        e.walk(&mut |inner| calls |= makes(inner));
+        calls && self.exposed(private)
+    }
+}
+
+/// Whether nothing run from the top of `body` to each statement `target` picks may change what `reads` names, the ways to it followed through `if`s alone.
+// A list's statements after a pick are reached by nothing: no label stands in `body`.
+fn kept_to(
+    body: &[Stmt],
+    reads: &Reads,
+    private: Option<&Private>,
+    target: &dyn Fn(&Stmt) -> bool,
+) -> bool {
+    // A list, and whether what ran before it may have changed what the test reads.
+    let mut work: Vec<(&[Stmt], bool)> = vec![(body, false)];
+    while let Some((list, before)) = work.pop() {
+        let mut changed = before;
+        for stmt in list {
+            if target(stmt) {
+                if changed {
+                    return false;
+                }
+                continue;
+            }
+            if let Stmt::If { cond, then, els } = stmt {
+                changed = changed || reads.changed_by_expr(cond, private);
+                work.push((then.as_slice(), changed));
+                work.push((els.as_slice(), changed));
+            }
+            changed = changed || reads.changed_by(std::slice::from_ref(stmt), private);
+        }
+    }
+    true
+}
+
 /// Writes `tail` in front of the one `break` of `body` that leaves its loop, found through `if`s; gives `tail` back where there is none.
 fn place(body: &mut Vec<Stmt>, tail: Vec<Stmt>) -> Option<Vec<Stmt>> {
     let mut work: Vec<&mut Vec<Stmt>> = vec![body];
@@ -325,8 +547,9 @@ fn push_nested<'a>(
 }
 
 /// Whether an assignment of `var` that follows `stmt`, with the labels `end` after it, may stand in front of `stmt` instead.
-// Every `goto` of `stmt` to `end` comes right after an assignment of `var`, every assignment of
-// `var` in it right before such a `goto`, and nothing of it reads `var`: on a path that runs off
+// Every `goto` of `stmt` to `end` comes right after assignments one of which is of `var`, every
+// assignment of `var` in it is followed by assignments alone up to such a `goto`, and nothing
+// of it reads `var`: on a path that runs off
 // its end it neither reads nor assigns `var`, and on one that jumps it assigns `var` the value
 // `var` then has at `end`. Nothing enters `stmt` but at its head and nothing leaves it but by
 // running off, by `return` or by those jumps: any other way out would meet the moved value.
@@ -345,9 +568,6 @@ fn moves_over(named: &HashMap<Label, u32>, stmt: &Stmt, var: Var, end: &[Label])
             .filter(|target| **target == var)
             .count();
     });
-    let assigns = |at: Option<&Stmt>| matches!(at, Some(Stmt::Simple(ir::Stmt::Assign { target, .. })) if *target == var);
-    let jumps_out =
-        |at: Option<&Stmt>| matches!(at, Some(Stmt::Goto(label)) if end.contains(label));
     let mut pairs = 0usize;
     let mut inside: HashMap<Label, u32> = HashMap::new();
     let mut defined: HashSet<Label> = HashSet::new();
@@ -361,12 +581,12 @@ fn moves_over(named: &HashMap<Label, u32>, stmt: &Stmt, var: Var, end: &[Label])
                     *inside.entry(*label).or_insert(0) += 1;
                     if !end.contains(label) {
                         elsewhere.push(*label);
-                    } else if !assigns(k.checked_sub(1).and_then(|before| list.get(before))) {
+                    } else if !assigned_before(list, k, var) {
                         return false;
                     }
                 }
                 Stmt::Simple(ir::Stmt::Assign { target, .. }) if *target == var => {
-                    if !jumps_out(list.get(k + 1)) {
+                    if !jumps_after(list, k, end) {
                         return false;
                     }
                     pairs += 1;
@@ -427,7 +647,9 @@ impl Exits<'_> {
                 i += 1;
                 continue;
             }
+            self.pushed(list, i, ways, depth);
             self.tail(list, i, ways, depth);
+            self.searched(list, i, ways, depth);
             self.tested(&mut list[i]);
             i += 1;
         }
@@ -514,7 +736,7 @@ impl Exits<'_> {
         false
     }
 
-    /// `C; v = k; L:` is `v = k; C; L:` where [`moves_over`] holds for the construct `C`; `true` when it was written so.
+    /// `C; v = k; L:` is `v = k; C; L:` where [`moves_over`] holds for the construct `C`, and so is the first of a run of constants in front of `L`; `true` when it was written so.
     // `for (..) { if (found) { v = i; goto L; } } v = -1; L:`: with the constant set first, each
     // jump of the loop is to where the loop runs on to, which the rules here then read as such.
     fn hoist(&mut self, list: &mut Vec<Stmt>, i: usize, ways: &Ways) -> bool {
@@ -537,7 +759,21 @@ impl Exits<'_> {
             ) if private.vars.contains(target) => *target,
             _ => return false,
         };
-        let end = landing(list, i + 2, ways);
+        // `C; v = k; w = j; L:` moves `v = k` first and `w = j` next: constants read nothing.
+        let run = list[i + 1..]
+            .iter()
+            .take(HOIST)
+            .take_while(|stmt| {
+                matches!(
+                    stmt,
+                    Stmt::Simple(ir::Stmt::Assign {
+                        value: Expr::Const(_),
+                        ..
+                    })
+                )
+            })
+            .count();
+        let end = landing(list, i + 1 + run, ways);
         if end.is_empty() || !moves_over(&*self.named, &list[i], var, &end) {
             return false;
         }
@@ -731,6 +967,163 @@ impl Exits<'_> {
             *cond = cond::negate(test);
             self.changed = true;
         }
+    }
+
+    /// `if (c) { A } else { E } X; L:` is `if (c) { A; X } else { E; X } L:` where each `goto L` of the arms then goes by [`freed`]; `true` when it was written so.
+    // `X` runs where an arm runs off and nowhere else: only labels stand between it and `L`, and
+    // the first label ends it. At the end of each arm that runs off it still runs there, and a
+    // jump of the arm to `L` still passes over it. ⚠ Where both arms run off, `X` is written
+    // twice: only a few assignments with no call. An arm that never runs off takes no copy.
+    fn pushed(&mut self, list: &mut Vec<Stmt>, i: usize, ways: &Ways, depth: usize) -> bool {
+        let Some(Stmt::If { then, els, .. }) = list.get(i) else {
+            return false;
+        };
+        // Only an arm that ends in a jump, or holds an `if` that does, has one [`freed`] counts.
+        let ends = |arm: &[Stmt]| {
+            let jumps = |stmt: Option<&Stmt>| matches!(stmt, Some(Stmt::Goto(_)));
+            jumps(arm.last())
+                || arm
+                    .iter()
+                    .any(|stmt| matches!(stmt, Stmt::If { then, .. } if jumps(then.last())))
+        };
+        if !ends(then.as_slice()) && !ends(els.as_slice()) {
+            return false;
+        }
+        let Some(end) = first_label(list, i + 1) else {
+            return false;
+        };
+        if end == i + 1 {
+            return false;
+        }
+        let labels = labels_at(list, end, &ways.after);
+        // A jump to where a `break` or a `continue` lands is that, with nothing written twice.
+        let lands = |at: &Option<Vec<Label>>| {
+            at.as_ref()
+                .is_some_and(|at| labels.iter().any(|label| at.contains(label)))
+        };
+        if labels.is_empty() || lands(&ways.brk) || lands(&ways.cont) {
+            return false;
+        }
+        let (Some(from_then), Some(from_els)) = (freed(then, &labels), freed(els, &labels)) else {
+            return false;
+        };
+        let passed = &list[i + 1..end];
+        let into = (runs_off(then), runs_off(els));
+        let fits = match into {
+            (true, true) => {
+                passed.len() <= PUSHED
+                    && passed.iter().all(|stmt| match stmt {
+                        Stmt::Simple(ir::Stmt::Assign { value, .. }) => cond::cheap(Some(value)),
+                        _ => false,
+                    })
+            }
+            (true, false) | (false, true) => true,
+            (false, false) => false,
+        };
+        // The rule that then reads each jump looks no further than [`SCAN`] statements for a label.
+        let near = then.len() + els.len() + passed.len() < SCAN;
+        let deep = depth + 3 + deepest(then).max(deepest(els)) + deepest(passed);
+        if from_then + from_els == 0 || !fits || !near || deep > MAX_NEST {
+            return false;
+        }
+        let passed: Vec<Stmt> = list.drain(i + 1..end).collect();
+        if let Stmt::If { then, els, .. } = &mut list[i] {
+            match into {
+                (true, true) => {
+                    then.extend(passed.iter().cloned());
+                    els.extend(passed);
+                }
+                (true, false) => then.extend(passed),
+                _ => els.extend(passed),
+            }
+        }
+        self.changed = true;
+        true
+    }
+
+    /// A loop its jumps leave past `rest` and its own test leaves into `rest`, `rest` ending at the label they name, is the loop with `break`s and `rest` under the test that it ran out; `true` when it was written so.
+    // `while (c) { ..; if (e) goto L; .. } rest; L:` is
+    // `while (c) { ..; if (e) break; .. } if (!c) { rest } L:`, and
+    // `while (true) { if (c) goto L; ..; if (e) break; .. } rest; L:` is
+    // `while (true) { if (c) break; ..; if (e) break; .. } if (!c) { rest } L:`.
+    // ⚠ `c` is evaluated once more after the loop: only a test with no effect, which nothing run
+    // between its evaluation in the loop and the way out may change, reads there what it read in
+    // the loop. No label stands in the loop: a way in other than at its top would pass the test by.
+    fn searched(&mut self, list: &mut Vec<Stmt>, i: usize, ways: &Ways, depth: usize) -> bool {
+        let Some(Stmt::While { cond, body }) = list.get(i) else {
+            return false;
+        };
+        let Some(end) = first_label(list, i + 1) else {
+            return false;
+        };
+        if end == i + 1 {
+            return false;
+        }
+        let labels = labels_at(list, end, &ways.after);
+        let deep = depth + 2 + deepest(&list[i + 1..end]) > MAX_NEST;
+        if labels.is_empty() || deep || labelled(body) {
+            return false;
+        }
+        let private = self.private;
+        let jumps = |stmt: &Stmt| matches!(stmt, Stmt::Goto(label) if labels.contains(label));
+        let ring = forever(cond);
+        let test = match ring {
+            // Every jump is a way out where `c` held, and running out the one where it did not.
+            false => {
+                let held = free(body, &labels);
+                let kept =
+                    Reads::of(cond).is_some_and(|reads| kept_to(body, &reads, private, &jumps));
+                if held.breaks != 0 || held.jumps == 0 || held.opaque || !kept {
+                    return false;
+                }
+                cond.clone()
+            }
+            // The jump is the way out where `c` held, and every `break` one where it did not.
+            true => {
+                let Some((
+                    Stmt::If {
+                        cond: test,
+                        then,
+                        els,
+                    },
+                    rest,
+                )) = body.split_first()
+                else {
+                    return false;
+                };
+                let leads = els.is_empty() && matches!(then.as_slice(), [way] if jumps(way));
+                let breaks = |stmt: &Stmt| matches!(stmt, Stmt::Break);
+                let held = free(rest, &labels);
+                let kept =
+                    Reads::of(test).is_some_and(|reads| kept_to(rest, &reads, private, &breaks));
+                if !leads || held.breaks == 0 || held.opaque || !kept {
+                    return false;
+                }
+                test.clone()
+            }
+        };
+        let rest: Vec<Stmt> = list.drain(i + 1..end).collect();
+        if let Stmt::While { body, .. } = &mut list[i] {
+            match ring {
+                false => self.breaks_for(body, &labels),
+                true => {
+                    if let Some(Stmt::If { then, .. }) = body.first_mut() {
+                        if let Some(Stmt::Goto(label)) = then.pop() {
+                            self.gone(label);
+                        }
+                        then.push(Stmt::Break);
+                    }
+                }
+            }
+        }
+        let ran_out = Stmt::If {
+            cond: cond::negate(test),
+            then: rest,
+            els: Vec::new(),
+        };
+        list.insert(i + 1, ran_out);
+        self.changed = true;
+        true
     }
 
     /// `if (c) { T } else { E; L: R }` that ends a loop's `body` is `if (c) { T; continue; } else { E } L: R` where `T` jumps to `L`: that jump then runs off the `if`.

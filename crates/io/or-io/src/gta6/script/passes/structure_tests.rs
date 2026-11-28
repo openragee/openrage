@@ -1323,12 +1323,32 @@ fn the_one_place_a_then_arm_leaves_to_makes_what_is_in_between_its_else() {
 }
 
 #[test]
-fn a_then_arm_that_leaves_to_two_places_takes_no_else() {
-    // Blocks 1 and 2 leave to 5 and to 6: an else that ends at either leaves the other a jump into an arm.
+fn a_then_arm_that_leaves_to_two_places_takes_what_runs_on_to_the_first_as_its_else() {
+    // Blocks 1 and 2 leave to 5 and to 6: an else that ends at either leaves the other a jump into
+    // an arm. The arm never runs off, so `s4`, which only the else runs, is its else, and the
+    // jump to 5 then goes; the one to 6 stays.
     let blocks = arm_that_leaves_to(5, 6, &[6, 7, 8]);
     let plain = structured(blocks.clone());
     assert_eq!(gotos(&plain), 2);
-    assert_eq!(untangled(blocks), plain);
+    let six = Label::Block(6);
+    let inner = when(not(p(2)), vec![Stmt::Goto(six)], Vec::new());
+    let then = vec![
+        s(1),
+        when(not(p(1)), vec![s(2), inner, s(3), returns()], Vec::new()),
+    ];
+    assert_eq!(
+        untangled(blocks),
+        [
+            s(0),
+            when(p(0), then, vec![s(4)]),
+            s(5),
+            Stmt::Label(six),
+            s(6),
+            s(7),
+            s(8),
+            returns()
+        ]
+    );
 }
 
 /// `s1; switch (p1) { 0 -> 2, 1 -> 3, default -> 4 }`, as block 1.
@@ -1601,27 +1621,16 @@ fn a_tail_that_breaks_is_copied_only_inside_what_it_leaves() {
 #[test]
 fn a_tail_that_code_runs_into_stays_where_it_is() {
     // Blocks 1 and 2 leave to 5 and to 6; `s6; return;` at 6 is short, and `s5` runs into it.
+    // `s4`, which only the else runs, is the else, so the jump to 5 goes.
     let body = untangled(arm_that_leaves_to(5, 6, &[6]));
-    let five = Label::Block(5);
+    let inner = when(not(p(2)), vec![s(6), returns()], Vec::new());
     let then = vec![
         s(1),
-        when(p(1), vec![Stmt::Goto(five)], Vec::new()),
-        s(2),
-        when(not(p(2)), vec![s(6), returns()], Vec::new()),
-        s(3),
-        returns(),
+        when(not(p(1)), vec![s(2), inner, s(3), returns()], Vec::new()),
     ];
     assert_eq!(
         body,
-        [
-            s(0),
-            when(p(0), then, Vec::new()),
-            s(4),
-            Stmt::Label(five),
-            s(5),
-            s(6),
-            returns()
-        ]
+        [s(0), when(p(0), then, vec![s(4)]), s(5), s(6), returns()]
     );
 }
 

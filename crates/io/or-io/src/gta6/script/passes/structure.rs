@@ -12,7 +12,10 @@
 //! and the rewrites of the finished statements in `exits` and `tails`. ⚠ With it on, a tail of a
 //! few statements that leaves is written at each `goto` to it, so a statement may come out more
 //! than once, which `Stats::statements_out` then counts. So may a `switch` body of a few
-//! assignments and a statement that leaves, written again at the end of a body that runs into it.
+//! assignments and a statement that leaves, written again at the end of a body that runs into it,
+//! and one or two assignments with no call that an `if` runs on into, written at the end of each
+//! of its arms. ⚠ A loop's test with no effect may be evaluated once more after the loop, to
+//! tell a jump out of it from running out.
 //!
 //! With the pass `for` on, a loop whose last `if` steps its counter in one arm and leaves in the
 //! other puts the arm that leaves first, so that the source level reads the loop as a `for`.

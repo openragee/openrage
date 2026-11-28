@@ -8,7 +8,7 @@ use or_io::container::rpf::gta6_container_write::{build, Rpf9IndexKey, Rpf9NewBo
 use or_io::container::rpf::{
     write_rpf9_resource, Gta6Context, NameResolver, Rpf9Form, Rpf9Sections,
 };
-use or_io::container::{NoOpCryptoProvider, RpfArchive};
+use or_io::container::RpfArchive;
 use or_io::gta6::hash::name_hash64;
 
 use super::*;
@@ -24,26 +24,19 @@ const DOC: DocumentId = 9_400;
 const FIRST: &str = "a/model.ydr";
 const SECOND: &str = "b/model.ydr";
 
-/// Archives opened while this is held are read with the keys and names it was made with.
-struct Reading(Option<Arc<Gta6Context>>);
+use crate::state::rpf_archive_open::gta6_session::{self, Reading};
 
-impl Drop for Reading {
-    fn drop(&mut self) {
-        Gta6Context::swap_given(self.0.take());
-    }
-}
-
+/// Archives opened through [`showing`] while this is held are read with the synthetic keys and names.
 fn reading() -> Reading {
     let mut names = NameResolver::new();
     for name in [FIRST, SECOND] {
         names.insert(name_hash64(name.as_bytes()), name);
     }
     let keys = synthetic_keys().expect("the synthetic snapshot parses");
-    let context = Gta6Context {
+    gta6_session::hold(Gta6Context {
         keys,
         names: Arc::new(names),
-    };
-    Reading(Gta6Context::swap_given(Some(Arc::new(context))))
+    })
 }
 
 /// A headerless resource's entry, which opens by a scan of its body and so needs no key to read.
@@ -79,7 +72,7 @@ fn source(dir: &Path) -> PathBuf {
 }
 
 fn showing(path: &Path) -> AppState {
-    let crypto = Arc::new(NoOpCryptoProvider::new());
+    let crypto = gta6_session::crypto();
     let archive = RpfArchive::open_with(path, crypto).expect("the archive opens as a tree");
     let tree = RpfDocument::new(archive).expect("the tree lists");
     let mut state = AppState::new();
@@ -116,6 +109,65 @@ fn opened(state: &AppState, node: RpfNodeId) -> (DocumentId, PathBuf) {
     let found = (state.documents.iter()).find(|d| row(d).map(|r| r.entry_id) == Some(node));
     let doc = found.unwrap_or_else(|| panic!("row {node} opened no document"));
     (doc.id, doc.path.clone().expect("a path"))
+}
+
+/// Two builds stand in for the Xbox and the PlayStation 5 build: two archives opened at once, each
+/// with its own key-and-name session carried into the open, neither set in any global. The one entry
+/// hash resolves to a different name in each session, which the tree shows, and a provider with no
+/// session is refused — so each archive reads with its own keys, not a shared one. (R72f: the
+/// process-wide key context is gone.)
+#[test]
+fn two_builds_open_at_once_each_reading_with_its_own_session() {
+    use or_io::container::{NoOpCryptoProvider, RpfCryptoProvider};
+
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let bytes = {
+        let key = Rpf9IndexKey {
+            key_id: 0xDEAD_BEEF,
+            iv: [0x33; 16],
+        };
+        let keys = synthetic_keys().expect("the synthetic snapshot parses");
+        let plan = build(&[resource(FIRST)], &key, &keys).expect("the archive builds");
+        let mut bytes = Vec::new();
+        (plan.write_to(&mut Cursor::new(Vec::<u8>::new()), &mut bytes))
+            .expect("the archive is laid out");
+        bytes
+    };
+    let xbox = dir.path().join("xbox.rpf");
+    let ps5 = dir.path().join("ps5.rpf");
+    std::fs::write(&xbox, &bytes).expect("the xbox archive is written");
+    std::fs::write(&ps5, &bytes).expect("the ps5 archive is written");
+
+    // A session carrying the synthetic keys that resolves the one entry's hash to `shown`.
+    let session = |shown: &str| -> Arc<dyn RpfCryptoProvider> {
+        let mut names = NameResolver::new();
+        names.insert(name_hash64(FIRST.as_bytes()), shown);
+        Arc::new(Gta6Context {
+            keys: synthetic_keys().expect("the synthetic snapshot parses"),
+            names: Arc::new(names),
+        })
+    };
+
+    // Opened back-to-back, each with its own session; no hold, no global.
+    let a =
+        RpfArchive::open_with(&xbox, session("xbox/model.ydr")).expect("the xbox archive opens");
+    let b = RpfArchive::open_with(&ps5, session("ps5/model.ydr")).expect("the ps5 archive opens");
+
+    let path_of = |archive: &RpfArchive| -> String {
+        (archive.nodes.iter().find(|n| !n.is_dir()))
+            .map(|n| n.path().to_owned())
+            .expect("one file row")
+    };
+    // Each archive reads with the names of the session it was opened with, the other's never set.
+    assert_eq!(path_of(&a), "xbox/model.ydr");
+    assert_eq!(path_of(&b), "ps5/model.ydr");
+
+    // The keys are the open's, not a global's: with no session the same archive is refused.
+    let refused = RpfArchive::open_with(&xbox, Arc::new(NoOpCryptoProvider::new()));
+    assert!(
+        refused.is_err(),
+        "an archive opened with no session is refused"
+    );
 }
 
 #[test]
@@ -211,8 +263,7 @@ fn rows_of_a_real_archive_opened_from_the_tree_are_named_by_their_rows() {
     };
     let _serial = crate::ui::theme::serial();
     let names = crate::state::rpf9_scan::rpf9_table::resolver();
-    let context = Gta6Context { keys, names };
-    let _reading = Reading(Gta6Context::swap_given(Some(Arc::new(context))));
+    let _reading = gta6_session::hold(Gta6Context { keys, names });
     let mut archives: Vec<(u64, PathBuf)> = (std::fs::read_dir(&build).into_iter().flatten())
         .flatten()
         .map(|e| e.path())
@@ -221,7 +272,7 @@ fn rows_of_a_real_archive_opened_from_the_tree_are_named_by_their_rows() {
         .collect();
     archives.sort();
     for (_, path) in &archives {
-        let crypto = Arc::new(NoOpCryptoProvider::new());
+        let crypto = gta6_session::crypto();
         let Ok(tree) = (RpfArchive::open_with(path, crypto).map_err(|e| e.to_string()))
             .and_then(RpfDocument::new)
         else {

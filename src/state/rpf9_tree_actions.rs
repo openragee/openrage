@@ -120,7 +120,7 @@ mod tests {
         write_rpf9_resource, Gta6Context, Gta6Mount, GtaViKeys, NameResolver, Rpf9Form,
         Rpf9Sections,
     };
-    use or_io::container::{NoOpCryptoProvider, RpfArchive};
+    use or_io::container::RpfArchive;
     use or_io::gta6::hash::name_hash64;
 
     use super::*;
@@ -143,21 +143,14 @@ mod tests {
     const INNER: &str = "inner/a.bin";
     const RESOURCE: &str = "data/model.ydr";
 
-    /// Archives opened while this is held are read with the keys and names it was made with.
-    struct Reading(Option<Arc<Gta6Context>>);
+    use crate::state::rpf_archive_open::gta6_session::{self, Reading};
 
-    impl Drop for Reading {
-        fn drop(&mut self) {
-            Gta6Context::swap_given(self.0.take());
-        }
-    }
-
+    /// Archives opened through [`showing`] while this is held are read with `keys` and `names`.
     fn reading_with(keys: Arc<GtaViKeys>, names: NameResolver) -> Reading {
-        let context = Gta6Context {
+        gta6_session::hold(Gta6Context {
             keys,
             names: Arc::new(names),
-        };
-        Reading(Gta6Context::swap_given(Some(Arc::new(context))))
+        })
     }
 
     /// Names for the archive's named row and its nested archive only.
@@ -217,7 +210,7 @@ mod tests {
     }
 
     fn showing(path: &Path) -> AppState {
-        let crypto = Arc::new(NoOpCryptoProvider::new());
+        let crypto = gta6_session::crypto();
         let archive = RpfArchive::open_with(path, crypto).expect("the archive opens as a tree");
         let tree = RpfDocument::new(archive).expect("the tree lists");
         let mut state = AppState::new();
@@ -467,7 +460,7 @@ mod tests {
         // Names are game-derived, so a row that differs is reported by its archive's file and index.
         let (mut compared, mut named, mut differ) = (0usize, 0usize, Vec::new());
         for (_, path) in archives.iter().take(ARCHIVES) {
-            let crypto = Arc::new(NoOpCryptoProvider::new());
+            let crypto = gta6_session::crypto();
             let Ok(tree) = (RpfArchive::open_with(path, crypto).map_err(|e| e.to_string()))
                 .and_then(RpfDocument::new)
             else {

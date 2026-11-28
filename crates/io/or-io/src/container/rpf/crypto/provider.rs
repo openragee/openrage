@@ -61,6 +61,13 @@ pub trait RpfCryptoProvider: Send + Sync {
         Vec::new()
     }
 
+    /// The GTA VI key-and-name session an RPF9 open reads its enciphered table with, where this
+    /// provider carries one; `None` for a provider holding no session, so the archive opens by scan.
+    #[cfg(feature = "gta6")]
+    fn gta6_session(&self) -> Option<std::sync::Arc<crate::container::rpf::Gta6Context>> {
+        None
+    }
+
     // Decrypt the name heap under the key the TOC decrypted with. The default
     // ignores `toc_outcome`, which is correct for AES, OPEN and NoOp, where
     // there is only one nominal key.
@@ -80,6 +87,11 @@ pub trait RpfCryptoProvider: Send + Sync {
 impl<T: RpfCryptoProvider + ?Sized> RpfCryptoProvider for std::sync::Arc<T> {
     fn missing_keys(&self) -> Vec<u32> {
         (**self).missing_keys()
+    }
+
+    #[cfg(feature = "gta6")]
+    fn gta6_session(&self) -> Option<std::sync::Arc<crate::container::rpf::Gta6Context>> {
+        (**self).gta6_session()
     }
 
     fn supports(&self, encryption: RpfEncryption) -> bool {

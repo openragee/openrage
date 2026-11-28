@@ -9,10 +9,10 @@ use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fs::File;
 use std::io::{self, Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock};
 
-use super::archive::{RpfArchive, RpfSource};
-use super::crypto::TocDecryptOutcome;
+use super::archive::{RpfArchive, RpfBackend, RpfSource};
+use super::crypto::{CryptoTarget, RpfCryptoProvider, TocDecryptOutcome};
 use super::entry::{Compressor, RpfBinaryEntry, RpfDirectoryEntry, RpfEntry};
 use super::gta6_archive::{Gta6Class, Gta6Entry, NameResolver};
 use super::gta6_mount::{open_at, Gta6Mount};
@@ -59,58 +59,45 @@ pub fn default_names_dir() -> Option<std::path::PathBuf> {
 const MAX_NAME_BYTES: usize = 255;
 
 /// What reading a GTA VI archive needs beyond its bytes: the keys, and the names its hashes stand for.
+///
+/// It is the [`RpfCryptoProvider`] an RPF9 open is handed, so the keys travel with the archive
+/// rather than a process-wide global: [`RpfArchive::open_with`] carries it, and [`read`] takes the
+/// session back out of it. Its cipher methods are a no-op — RPF9's table cipher is this module's
+/// own and asks no provider — so it answers like `NoOpCryptoProvider` for AES.
 pub struct Gta6Context {
     pub keys: Arc<GtaViKeys>,
     pub names: Arc<NameResolver>,
 }
 
-/// The context a caller gave the process, which archives opened after it are read with.
-static GIVEN: RwLock<Option<Arc<Gta6Context>>> = RwLock::new(None);
-
 impl Gta6Context {
-    /// Give the process the keys and names GTA VI archives are read with, in place of the environment's.
-    pub fn give(context: Gta6Context) {
-        *GIVEN.write().unwrap_or_else(|held| held.into_inner()) = Some(Arc::new(context));
-    }
-
-    /// Put `next` in place of the context a caller gave, `None` leaving the environment's, and return the one it held.
-    pub fn swap_given(next: Option<Arc<Gta6Context>>) -> Option<Arc<Gta6Context>> {
-        let mut given = GIVEN.write().unwrap_or_else(|held| held.into_inner());
-        std::mem::replace(&mut *given, next)
-    }
-
-    /// The context a caller gave, else the environment's; `None` with no keys.
-    pub fn current() -> Result<Option<Arc<Self>>> {
-        let given = GIVEN
-            .read()
-            .unwrap_or_else(|held| held.into_inner())
-            .clone();
-        match given {
-            Some(context) => Ok(Some(context)),
-            None => Self::from_environment(),
+    fn refuse_aes(&self, encryption: RpfEncryption) -> Result<()> {
+        match encryption.needs_crypto() {
+            true => Err(IoError::RpfEncryptionUnsupported {
+                key_id: encryption.to_raw(),
+            }),
+            false => Ok(()),
         }
     }
+}
 
-    /// The keys and names the environment gives, read once for the process; `None` with no keys.
-    pub fn from_environment() -> Result<Option<Arc<Self>>> {
-        static CONTEXT: OnceLock<std::result::Result<Option<Arc<Gta6Context>>, String>> =
-            OnceLock::new();
-        CONTEXT
-            .get_or_init(|| {
-                let keys = GtaViKeys::for_install(None).map_err(|e| e.to_string())?;
-                Ok(keys.map(|keys| {
-                    let names = NameResolver::load_with_defaults(None);
-                    Arc::new(Gta6Context {
-                        keys: Arc::new(keys),
-                        names: Arc::new(names),
-                    })
-                }))
-            })
-            .clone()
-            .map_err(|why| IoError::Invalid {
-                what: "the GTA VI key snapshot".into(),
-                why,
-            })
+impl RpfCryptoProvider for Gta6Context {
+    fn supports(&self, encryption: RpfEncryption) -> bool {
+        !encryption.needs_crypto()
+    }
+
+    fn decrypt(&self, encryption: RpfEncryption, _: CryptoTarget<'_>, _: &mut [u8]) -> Result<()> {
+        self.refuse_aes(encryption)
+    }
+
+    fn encrypt(&self, encryption: RpfEncryption, _: CryptoTarget<'_>, _: &mut [u8]) -> Result<()> {
+        self.refuse_aes(encryption)
+    }
+
+    fn gta6_session(&self) -> Option<Arc<Gta6Context>> {
+        Some(Arc::new(Gta6Context {
+            keys: Arc::clone(&self.keys),
+            names: Arc::clone(&self.names),
+        }))
     }
 }
 
@@ -288,7 +275,11 @@ pub(super) struct Rpf9State {
 
 /// Read an RPF9's table into a tree of entries, with the state its bodies are read through.
 pub(super) fn read(input: &Input) -> Result<(Toc, Rpf9State)> {
-    let context = Gta6Context::current()?.ok_or(IoError::Rpf9TocEncrypted)?;
+    // The keys and names travel with the open: the provider carries the session, or there is none.
+    let context = input
+        .crypto
+        .gta6_session()
+        .ok_or(IoError::Rpf9TocEncrypted)?;
     let mut src = bytes_of(input.source)?;
     let mut archive = open_at(&mut src, input.start, &context.keys)?;
     archive.resolve_names(&context.names);
@@ -491,9 +482,17 @@ fn no_body(entry_index: u32) -> IoError {
 }
 
 impl RpfArchive {
+    /// The RPF9 state this archive reads through, where its backend is RPF9; `None` for any other.
+    fn rpf9_state(&self) -> Option<&Rpf9State> {
+        match &self.backend {
+            RpfBackend::Rpf9(state) => Some(state),
+            RpfBackend::Flat => None,
+        }
+    }
+
     /// The leaf an RPF9's entry stands for, with its row and the state it is read through.
     fn rpf9_leaf(&self, entry_index: u32) -> Result<(&Rpf9State, &Leaf, &Gta6Entry)> {
-        let state = self.rpf9.as_deref().ok_or_else(|| no_body(entry_index))?;
+        let state = self.rpf9_state().ok_or_else(|| no_body(entry_index))?;
         let at = (state.entry_of.get(entry_index as usize).copied())
             .filter(|at| *at != u32::MAX)
             .ok_or_else(|| no_body(entry_index))? as usize;
@@ -581,7 +580,7 @@ impl RpfArchive {
     /// What entry `entry_index` of an RPF9 is, as its row names it; `None` for a folder, a row no table names or any other generation.
     pub fn rpf9_kind(&self, entry_index: u32) -> Option<Rpf9Kind> {
         // ⚠ Asked of every row a tree draws, so a GTA V row costs no error built and dropped.
-        let state = self.rpf9.as_deref()?;
+        let state = self.rpf9_state()?;
         let at = *state.entry_of.get(entry_index as usize)?;
         state.leaves.get(at as usize)?.kind
     }

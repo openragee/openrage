@@ -213,7 +213,7 @@ pub(super) fn parse_payload_from_path(
     // ⚠ Before the whole read: a GTA VI archive can be tens of gigabytes, and is scanned instead, as is the tab of one read again.
     if matches!(kind, DocumentKind::Rpf | DocumentKind::Rpf9) {
         // Where a key opens its table it is the tree every archive opens as, and no scan runs.
-        if let Some(tree) = super::rpf_archive_open::gta6_tree(path, &crypto) {
+        if let Some(tree) = super::rpf_archive_open::gta6_tree(path) {
             return Ok((tree, None));
         }
         // Else its scan lists it, and a toast says why.

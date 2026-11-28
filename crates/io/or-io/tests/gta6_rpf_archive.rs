@@ -15,9 +15,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use or_io::container::rpf::{
-    read_rpf9_body, Gta6Entry, Gta6Mount, GtaViKeys, RpfArchive, RpfVersion, GTA6_EXE_ENV,
-    GTA6_SNAPSHOT_ENV, RPF9_SLOT,
+    read_rpf9_body, Gta6Context, Gta6Entry, Gta6Mount, GtaViKeys, NameResolver, RpfArchive,
+    RpfVersion, GTA6_EXE_ENV, GTA6_SNAPSHOT_ENV, RPF9_SLOT,
 };
+use or_io::container::RpfCryptoProvider;
 use or_test_support::skip_install;
 
 const BUILD_ENV: &str = "OPENRAGE_GTA6_BUILD";
@@ -176,11 +177,17 @@ fn every_archive_of_the_build_opens_as_a_tree_and_reads_as_the_gta_vi_reader_doe
     let archives = build_archives(&build);
     assert!(!archives.is_empty(), "no .rpf under {}", build.display());
 
+    let keys = Arc::new(keys);
+    // The keys travel into every open through the provider; names are not needed to compare bodies.
+    let crypto: Arc<dyn RpfCryptoProvider> = Arc::new(Gta6Context {
+        keys: Arc::clone(&keys),
+        names: Arc::new(NameResolver::new()),
+    });
     let mut t = Tally::default();
     for path in &archives {
         let mut file = File::open(path).expect("open the archive");
         let mount = Gta6Mount::open_root(&mut file, &keys).expect("the GTA VI reader mounts it");
-        let archive = match RpfArchive::open(path) {
+        let archive = match RpfArchive::open_with(path, Arc::clone(&crypto)) {
             Ok(archive) => Arc::new(archive),
             Err(e) => {
                 t.failures.push(format!("{}: {e}", path.display()));

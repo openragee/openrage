@@ -332,11 +332,12 @@ fn files_tree_resolves_shared_words_and_cached_paths_without_a_scan() {
         ]),
     )
     .expect("synthetic archive");
-    Gta6Context::give(Gta6Context {
+    // The session rides in the provider the open is handed, in place of the deleted global.
+    let crypto: Arc<dyn or_io::container::RpfCryptoProvider> = Arc::new(Gta6Context {
         keys: Arc::new(synthetic_keys()),
         names: Arc::new(names),
     });
-    let opened = RpfArchive::open(&path).expect("Files archive reader");
+    let opened = RpfArchive::open_with(&path, crypto).expect("Files archive reader");
     assert_eq!(opened.file_count(), 3);
     assert!(opened
         .nodes

@@ -463,13 +463,15 @@ mod tests {
         };
         let given = given.to_string_lossy().into_owned();
         let (archive, vocabulary) = given.split_once(SEPARATOR).expect("two paths");
-        Gta6Context::give(Gta6Context {
+        // The keys and names ride in the provider the open is handed, in place of the deleted global.
+        let crypto: Arc<dyn or_io::container::RpfCryptoProvider> = Arc::new(Gta6Context {
             keys: Arc::new(fixture::keys()),
             names: Arc::new(NameResolver::from_vocabulary(Vocabulary::load(Path::new(
                 vocabulary,
             )))),
         });
-        let archive = Arc::new(RpfArchive::open(archive).expect("the built pack opens"));
+        let archive =
+            Arc::new(RpfArchive::open_with(archive, crypto).expect("the built pack opens"));
         let read = |path: &str| {
             (archive.read(path)).unwrap_or_else(|e| panic!("{path} is in the tree and reads: {e}"))
         };

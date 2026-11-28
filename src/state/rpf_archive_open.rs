@@ -7,17 +7,12 @@ pub fn open_archive_from_disk(
     path: &Path,
     crypto: Arc<dyn RpfCryptoProvider>,
 ) -> Result<Arc<RpfArchive>, String> {
-    use std::io::Read;
-    let mut magic = [0; 4];
-    // A GTA VI archive is read with the keys and names this app holds, given before the open: keys
-    // the environment names would open it too, with names that lack the local ones.
-    if std::fs::File::open(path)
-        .and_then(|mut file| file.read_exact(&mut magic))
-        .is_ok()
-        && u32::from_le_bytes(magic) == or_io::container::rpf::RPF9_MAGIC
-    {
-        give_gta6_keys();
-    }
+    // A GTA VI archive is read with the keys and names this app holds, carried into the open; any
+    // other archive keeps the crypto it was handed.
+    let crypto = match is_rpf9(path) {
+        true => gta6_crypto().unwrap_or(crypto),
+        false => crypto,
+    };
     let opened = RpfArchive::open_with(path, crypto);
     opened.map(Arc::new).map_err(|e| {
         super::gta_vi::rpf9_unopened_at(path, &e)
@@ -26,19 +21,12 @@ pub fn open_archive_from_disk(
 }
 
 /// A GTA VI archive on disk as the tree every archive opens as, read entry by entry from its file; `None` for any other file, with no key, and, said in a toast, where it does not open.
-pub(super) fn gta6_tree(
-    path: &Path,
-    crypto: &Arc<dyn RpfCryptoProvider>,
-) -> Option<super::DocPayload> {
-    use std::io::Read;
-    let mut magic = [0u8; 4];
-    (std::fs::File::open(path).ok()?)
-        .read_exact(&mut magic)
-        .ok()?;
-    if magic != or_io::container::rpf::RPF9_MAGIC.to_le_bytes() || !give_gta6_keys() {
+pub(super) fn gta6_tree(path: &Path) -> Option<super::DocPayload> {
+    if !is_rpf9(path) {
         return None;
     }
-    let opened = RpfArchive::open_with(path, Arc::clone(crypto))
+    let crypto = gta6_crypto()?;
+    let opened = RpfArchive::open_with(path, crypto)
         .map_err(|e| super::gta_vi::rpf9_unopened_at(path, &e).unwrap_or_else(|| e.to_string()))
         .and_then(super::rpf_session::RpfDocument::new);
     match opened {
@@ -50,19 +38,70 @@ pub(super) fn gta6_tree(
     }
 }
 
-/// Hands the archive reader the GTA VI keys and names the app holds; `false` when it holds no keys.
+/// Whether the file at `path` begins with the RPF9 magic, so it is read with the GTA VI session.
+fn is_rpf9(path: &Path) -> bool {
+    use std::io::Read;
+    let mut magic = [0u8; 4];
+    std::fs::File::open(path)
+        .and_then(|mut file| file.read_exact(&mut magic))
+        .is_ok()
+        && u32::from_le_bytes(magic) == or_io::container::rpf::RPF9_MAGIC
+}
+
+/// The GTA VI key-and-name session this app reads RPF9 archives with, as the provider the open is
+/// handed; `None` when the app holds no keys, so the archive is refused rather than read.
 // ⚠ Waits until the names are built, so it is reached only from a load's or a tree row's worker,
 // whose loading row shows meanwhile.
-fn give_gta6_keys() -> bool {
+fn gta6_crypto() -> Option<Arc<dyn RpfCryptoProvider>> {
     use or_io::container::rpf::Gta6Context;
-    let Ok(keys) = super::rpf9_scan::rpf9_table::keys() else {
-        return false;
-    };
-    Gta6Context::give(Gta6Context {
+    let keys = super::rpf9_scan::rpf9_table::keys().ok()?;
+    Some(Arc::new(Gta6Context {
         keys,
         names: super::rpf9_scan::rpf9_table::resolver(),
-    });
-    true
+    }))
+}
+
+/// The GTA VI key session a test opens RPF9 archives with, held per thread while its guard lives.
+///
+/// The production path carries the session in the provider [`open_archive_from_disk`] is handed, so
+/// nothing here is reached outside tests. Tests, though, set up their keys apart from the open they
+/// drive through the real app, so this test-only thread-local stands in for that provider: it is no
+/// process-wide global (gone with R72f), it is per-thread so parallel tests do not collide, and a
+/// guard restores the prior session on drop.
+#[cfg(test)]
+pub(crate) mod gta6_session {
+    use std::cell::RefCell;
+    use std::sync::Arc;
+
+    use or_io::container::rpf::Gta6Context;
+    use or_io::container::{NoOpCryptoProvider, RpfCryptoProvider};
+
+    thread_local! {
+        static HELD: RefCell<Option<Arc<Gta6Context>>> = const { RefCell::new(None) };
+    }
+
+    /// Restores the session held before it on drop.
+    pub(crate) struct Reading(Option<Arc<Gta6Context>>);
+
+    impl Drop for Reading {
+        fn drop(&mut self) {
+            HELD.with(|held| *held.borrow_mut() = self.0.take());
+        }
+    }
+
+    /// Hold `context` as this thread's session until the returned guard drops.
+    pub(crate) fn hold(context: Gta6Context) -> Reading {
+        Reading(HELD.with(|held| held.borrow_mut().replace(Arc::new(context))))
+    }
+
+    /// The provider an RPF9 open is handed on this thread: the held session, else a no-op that
+    /// refuses an RPF9 table as it would with no keys.
+    pub(crate) fn crypto() -> Arc<dyn RpfCryptoProvider> {
+        match HELD.with(|held| held.borrow().clone()) {
+            Some(session) => session,
+            None => Arc::new(NoOpCryptoProvider::new()),
+        }
+    }
 }
 
 #[path = "rpf9_tree_open.rs"]

@@ -451,15 +451,10 @@ pub(crate) mod tests {
         assert_eq!(shown.size, Some(0x200));
     }
 
-    /// What `headerless_override` keeps alive: the archive's folder and the context it was read under.
+    /// What `headerless_override` keeps alive: the archive's folder and the session it was read under.
     pub(crate) struct Held {
-        given: Option<Arc<or_io::container::rpf::Gta6Context>>,
+        _reading: crate::state::rpf_archive_open::gta6_session::Reading,
         _dir: tempfile::TempDir,
-    }
-    impl Drop for Held {
-        fn drop(&mut self) {
-            or_io::container::rpf::Gta6Context::swap_given(self.given.take());
-        }
     }
 
     /// A synthetic GTA VI archive's headerless row `model.ydr` holding a loose form shorter than its 0x200 bytes of sections.
@@ -470,9 +465,10 @@ pub(crate) mod tests {
         use or_io::container::rpf::{
             write_rpf9_resource, Gta6Context, NameResolver, Rpf9Form, Rpf9Sections,
         };
-        use or_io::container::{NoOpCryptoProvider, RpfArchive};
+        use or_io::container::RpfArchive;
         use or_io::gta6::hash::name_hash64;
 
+        use crate::state::rpf_archive_open::gta6_session;
         use crate::state::rpf_archive_open::tree_verbs::tests::{rbm_section, synthetic_keys};
 
         let loose = |virtual_section: Vec<u8>| {
@@ -486,11 +482,10 @@ pub(crate) mod tests {
 
         let mut names = NameResolver::new();
         names.insert(name_hash64(b"data/model.ydr"), "data/model.ydr");
-        let context = Gta6Context {
+        let reading = gta6_session::hold(Gta6Context {
             keys: synthetic_keys().expect("the synthetic snapshot parses"),
             names: Arc::new(names),
-        };
-        let given = Gta6Context::swap_given(Some(Arc::new(context)));
+        });
         let entries = [(
             "data/model.ydr".to_owned(),
             Rpf9NewBody::Resource {
@@ -510,8 +505,8 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().expect("a scratch directory");
         let path = dir.path().join("source.rpf");
         std::fs::write(&path, bytes).expect("the archive is written");
-        let archive = RpfArchive::open_with(&path, Arc::new(NoOpCryptoProvider::new()))
-            .expect("the archive opens");
+        let archive =
+            RpfArchive::open_with(&path, gta6_session::crypto()).expect("the archive opens");
         let mut session = RpfEditSession::from_archive(archive).expect("the tree lists");
         let model = (session.all_nodes().into_iter())
             .find(|&id| session.node(id).is_some_and(|n| n.name == "model.ydr"))
@@ -525,7 +520,14 @@ pub(crate) mod tests {
             "the loose form is shorter than its sections"
         );
         session.set_bytes_for(model, held).expect("held");
-        (session, model, Held { given, _dir: dir })
+        (
+            session,
+            model,
+            Held {
+                _reading: reading,
+                _dir: dir,
+            },
+        )
     }
 
     /// Selecting a drawable in the tree previews it as a picture made off the

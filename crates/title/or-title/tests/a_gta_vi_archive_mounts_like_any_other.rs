@@ -17,7 +17,9 @@ use std::time::Instant;
 use or_io::container::rpf::crypto::{
     extract_keys, Gta5RetailCryptoProvider, NoOpCryptoProvider, RpfCryptoProvider,
 };
-use or_io::container::rpf::{GtaViKeys, RpfArchive, RpfBuilder, GTA6_EXE_ENV, GTA6_SNAPSHOT_ENV};
+use or_io::container::rpf::{
+    Gta6Context, GtaViKeys, NameResolver, RpfArchive, RpfBuilder, GTA6_EXE_ENV, GTA6_SNAPSHOT_ENV,
+};
 use or_test_support::skip_install;
 use or_title::vfs::{
     build_mounted_game, ArchiveDevice, ArchiveEntry, ArchiveEntryKind, DlcCutoff, FileDevice,
@@ -58,7 +60,7 @@ fn a_nested_archive_lists_as_a_folder_and_a_file_in_it_opens_by_its_path() {
     let build = std::env::var_os(BUILD_ENV)
         .map(PathBuf::from)
         .filter(|p| p.is_dir());
-    let (Some(build), Ok(Some(_))) = (build, GtaViKeys::for_install(None)) else {
+    let (Some(build), Ok(Some(keys))) = (build, GtaViKeys::for_install(None)) else {
         skip_install(
             what,
             format_args!("set {BUILD_ENV} and {GTA6_SNAPSHOT_ENV} (or {GTA6_EXE_ENV})"),
@@ -72,9 +74,15 @@ fn a_nested_archive_lists_as_a_folder_and_a_file_in_it_opens_by_its_path() {
     archives.sort();
     assert!(!archives.is_empty(), "no .rpf under {}", build.display());
 
+    // The keys travel into the open through the provider, as the mount hands one to every archive.
+    let crypto: Arc<dyn RpfCryptoProvider> = Arc::new(Gta6Context {
+        keys: Arc::new(keys),
+        names: Arc::new(NameResolver::new()),
+    });
     let (mut listed, mut nested_listed, mut opened) = (0, 0, 0);
     for path in &archives {
-        let archive = RpfArchive::open(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let archive = RpfArchive::open_with(path, Arc::clone(&crypto))
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         let device = ArchiveDevice::new(Arc::new(archive));
         let started = Instant::now();
         let root = device.entries("").expect("the root lists");

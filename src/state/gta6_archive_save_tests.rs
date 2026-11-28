@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use or_io::container::rpf::{
     read_rpf9_body, Gta6Context, Gta6Mount, NameResolver, Rpf9Sections, RPF9_SLOT,
 };
-use or_io::container::{NoOpCryptoProvider, RpfArchive};
+use or_io::container::RpfArchive;
 use or_io::gta6::hash::name_hash64;
 use or_io::meta::Value;
 
@@ -205,17 +205,9 @@ fn a_document_with_nothing_edited_is_refused_before_any_dialog_is_asked() {
     assert!(!out.exists(), "nothing is written");
 }
 
-/// Archives opened while this is held are read with the keys and names it was made with.
-struct Reading(Option<Arc<Gta6Context>>);
-
-impl Drop for Reading {
-    fn drop(&mut self) {
-        Gta6Context::swap_given(self.0.take());
-    }
-}
-
 #[test]
 fn a_document_opened_from_a_tree_row_names_its_archive_and_row_and_a_scanned_one_does_not() {
+    use crate::state::rpf_archive_open::gta6_session;
     const TREE: crate::state::document::DocumentId = 9_001;
     let _serial = crate::ui::theme::serial();
     let keys = synthetic_keys().expect("the synthetic snapshot parses");
@@ -223,11 +215,10 @@ fn a_document_opened_from_a_tree_row_names_its_archive_and_row_and_a_scanned_one
     for name in [PSO, RESOURCE] {
         names.insert(name_hash64(name.as_bytes()), name);
     }
-    let context = Gta6Context {
+    let _reading = gta6_session::hold(Gta6Context {
         keys,
         names: Arc::new(names),
-    };
-    let _reading = Reading(Gta6Context::swap_given(Some(Arc::new(context))));
+    });
     let dir = tempfile::tempdir().expect("a scratch directory");
     let source = source(dir.path());
     let (_, start) = start_of(&std::fs::read(&source).expect("the source"), PSO);
@@ -240,7 +231,7 @@ fn a_document_opened_from_a_tree_row_names_its_archive_and_row_and_a_scanned_one
         "a scan's body has no row"
     );
 
-    let crypto = Arc::new(NoOpCryptoProvider::new());
+    let crypto = gta6_session::crypto();
     let archive = RpfArchive::open_with(&source, crypto).expect("the archive opens as a tree");
     let tree = RpfDocument::new(archive).expect("the tree lists");
     let node = (tree.session.all_nodes().into_iter())

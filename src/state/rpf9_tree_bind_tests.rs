@@ -38,25 +38,18 @@ fn notes() -> Vec<u8> {
     text
 }
 
-/// Archives opened while this is held are read with the keys and names it was made with.
-struct Reading(Option<Arc<Gta6Context>>);
+use crate::state::rpf_archive_open::gta6_session::{self, Reading};
 
-impl Drop for Reading {
-    fn drop(&mut self) {
-        Gta6Context::swap_given(self.0.take());
-    }
-}
-
+/// Archives opened through [`showing`] while this is held are read with `keys` and the given names.
 fn reading(keys: Arc<GtaViKeys>, named: &[&str]) -> Reading {
     let mut names = NameResolver::new();
     for name in named {
         names.insert(name_hash64(name.as_bytes()), *name);
     }
-    let context = Gta6Context {
+    gta6_session::hold(Gta6Context {
         keys,
         names: Arc::new(names),
-    };
-    Reading(Gta6Context::swap_given(Some(Arc::new(context))))
+    })
 }
 
 /// An archive of the text body and the PSO body, each under a 24-byte row, as `dir/source.rpf`.
@@ -81,7 +74,7 @@ fn source(dir: &Path) -> PathBuf {
 
 /// An app showing the archive at `path` as the tree every archive opens as.
 fn showing(path: &Path) -> AppState {
-    let crypto = Arc::new(NoOpCryptoProvider::new());
+    let crypto = gta6_session::crypto();
     let archive = RpfArchive::open_with(path, crypto).expect("the archive opens as a tree");
     let tree = RpfDocument::new(archive).expect("the tree lists");
     let mut state = AppState::new();
@@ -450,7 +443,7 @@ fn a_text_row_of_the_build_saved_from_its_document_reads_back_from_a_patched_cop
     archives.sort();
     let mut opens = 0usize;
     for (_, disk) in archives.iter().take(ARCHIVES) {
-        let crypto = Arc::new(NoOpCryptoProvider::new());
+        let crypto = gta6_session::crypto();
         let Ok(tree) = (RpfArchive::open_with(disk, crypto).map_err(|e| e.to_string()))
             .and_then(RpfDocument::new)
         else {

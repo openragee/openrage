@@ -20,7 +20,7 @@ use std::process::ExitCode;
 
 use or_io::gta6::script::ir::{FunctionKey, TypeKey};
 use or_io::gta6::script::opcode::{self, Act};
-use or_io::gta6::script::program::{FunctionRow, Program};
+use or_io::gta6::script::program::{FunctionRow, MethodRow, Program, TypeRow};
 use or_io::gta6::script::project::index;
 use or_io::gta6::script::{decode, lift, Context, Level, Names, Options, Pass, Project, Stats};
 use serde_json::{json, Value};
@@ -67,6 +67,9 @@ const AUTO_BYTES: u64 = 4 << 30;
 
 /// The words a type opens with at the margin of a source.
 const TYPE_WORDS: [&str; 4] = ["class ", "struct ", "enum ", "interface "];
+
+/// The longest line of base types a method's name is looked for down: a ring of bases must end.
+const MAX_BASES: usize = 64;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Verb {
@@ -118,6 +121,10 @@ struct Asked {
     what: What,
     json: bool,
     functions: Vec<String>,
+    /// `--class`: the classes whose methods are written, beside the functions asked for.
+    classes: Vec<String>,
+    /// `--changed-since`: the folder of an earlier export an export compares its sources with.
+    since: Option<PathBuf>,
     /// `--with-classes`: the types that hold no code of the functions asked for are written too.
     with_classes: bool,
     /// `--offset` and `--limit`.
@@ -166,8 +173,10 @@ pub struct Decompile<'a> {
     /// What the header's `project` line says.
     pub project_said: &'a str,
     pub options: Options,
-    /// The functions written; every one where none is named.
+    /// The functions written; every one where none is named here or in `classes`.
     pub only: &'a [String],
+    /// The classes whose methods are written beside `only`.
+    pub classes: &'a [String],
     /// Whether the types that hold no code of `only` are written beside it.
     pub with_classes: bool,
     /// More lines for the header, each without its `// `.
@@ -294,8 +303,8 @@ fn asked(args: &[String]) -> Asked {
                 wrong.get_or_insert(STATICS.to_owned());
             }
             "--natives-db" | "--names" | "--labels" | "--keys" | "--exe" | "--entry"
-            | "--function" | "--level" | "--no" | "--project" | "--threads" | "--offset"
-            | "--limit" | "-o" => {
+            | "--function" | "--class" | "--changed-since" | "--level" | "--no" | "--project"
+            | "--threads" | "--offset" | "--limit" | "-o" => {
                 let Some(value) = iter.next() else {
                     wrong.get_or_insert(format!("{arg} needs a value"));
                     continue;
@@ -320,6 +329,8 @@ fn asked(args: &[String]) -> Asked {
                     "--exe" => asked.exe = Some(PathBuf::from(value)),
                     "--entry" => asked.entry = Some(value.clone()),
                     "--function" => asked.functions.push(value.clone()),
+                    "--class" => asked.classes.push(value.clone()),
+                    "--changed-since" => asked.since = Some(PathBuf::from(value)),
                     // The last of `--project auto` and `--project <file>` is the one taken.
                     "--project" => match value.as_str() {
                         AUTO => (asked.auto, asked.project) = (true, None),
@@ -376,6 +387,11 @@ fn unused(verb: Verb, asked: &Asked) -> Vec<&'static str> {
             "--natives, --strings or --functions",
         ),
         (!asked.functions.is_empty() && !reads_code, "--function"),
+        (!asked.classes.is_empty() && !reads_code, "--class"),
+        (
+            asked.since.is_some() && verb != Verb::Export,
+            "--changed-since",
+        ),
         (
             asked.with_classes && verb != Verb::Decompile,
             "--with-classes",
@@ -508,7 +524,7 @@ fn one(verb: Verb, asked: &Asked) -> Result<String, String> {
                 Some(project) => lift::read(&src.bytes, project).map_err(|e| e.to_string())?,
                 None => program,
             };
-            listing(&program, names, &asked.functions)
+            listing(&program, names, &asked.functions, &asked.classes)
         }
         Verb::Decompile => {
             let held = match built {
@@ -525,6 +541,7 @@ fn one(verb: Verb, asked: &Asked) -> Result<String, String> {
                 project_said: &held.said,
                 options: options(asked),
                 only: &asked.functions,
+                classes: &asked.classes,
                 with_classes: asked.with_classes,
                 said: &said,
             };
@@ -723,7 +740,11 @@ fn auto_project(asked: &Asked, names: &mut Names) -> Result<Held, String> {
         "{} program(s) read from {read}; building their project on {threads} thread(s)",
         found.bodies.len()
     ));
-    let (project, none) = export::in_memory(&found.bodies, names, threads, &say);
+    let (mut project, none) = export::in_memory(&found.bodies, names, threads, &say);
+    // ⚠ A program that did not read may reach any other, so nothing is proved unreached.
+    if found.unread > 0 {
+        or_io::gta6::script::project::index::left_unread(&mut project);
+    }
     say(format!(
         "project built in {} s",
         started.elapsed().as_secs()
@@ -783,13 +804,14 @@ pub fn function_name(program: &Program, names: &Names, row: &FunctionRow) -> Str
     }
 }
 
-/// The functions `asked` names, by rising offset: `0x` or `func_` and an offset, a name as `--functions` prints it, or an offset as a listing prints it.
+/// The functions `asked` names, by rising offset: `0x` or `func_` and an offset, a name as `--functions` prints it or a list gives it, with its class before it or not, or an offset as a listing prints it.
 fn selected(
     program: &Program,
     names: &Names,
     asked: &[String],
 ) -> Result<Vec<FunctionRow>, String> {
     let mut rows = Vec::new();
+    let records = method_records(program);
     for name in asked {
         let digits = name
             .strip_prefix("0x")
@@ -798,7 +820,10 @@ fn selected(
         let found: Vec<&FunctionRow> = match at {
             Some(at) => program.function(at).into_iter().collect(),
             None => {
-                let named = |row: &&FunctionRow| function_name(program, names, row) == *name;
+                let named = |row: &&FunctionRow| {
+                    function_name(program, names, row) == *name
+                        || listed_names(program, names, &records, row).contains(name)
+                };
                 let by_name: Vec<&FunctionRow> = program.functions.iter().filter(named).collect();
                 // A name comes first: hex digits alone are an offset only where no function is called so.
                 let digits = name.bytes().all(|b| b.is_ascii_hexdigit());
@@ -833,6 +858,138 @@ fn selected(
     }
     rows.sort_by_key(|row| row.at);
     rows.dedup();
+    Ok(rows)
+}
+
+/// The functions `functions` names and those of the methods of each class `classes` names, by rising offset, each once.
+fn chosen(
+    program: &Program,
+    names: &Names,
+    functions: &[String],
+    classes: &[String],
+) -> Result<Vec<FunctionRow>, String> {
+    let mut rows = selected(program, names, functions)?;
+    for class in classes {
+        rows.extend(class_rows(program, names, class)?);
+    }
+    rows.sort_by_key(|row| row.at);
+    rows.dedup();
+    Ok(rows)
+}
+
+/// The method records that place a function of the program, by its offset.
+fn method_records(program: &Program) -> BTreeMap<u32, Vec<&MethodRow>> {
+    let mut records: BTreeMap<u32, Vec<&MethodRow>> = BTreeMap::new();
+    for method in &program.methods {
+        if let Some(at) = method.at {
+            records.entry(at).or_default().push(method);
+        }
+    }
+    records
+}
+
+/// Each name a list gives the function at `row`, bare and after each name of its class: the user's name for the function, else the name a list gives the slot a method record puts it in.
+// ⚠ In the order the printer takes them: a slot's name only where no list names the function.
+fn listed_names(
+    program: &Program,
+    names: &Names,
+    records: &BTreeMap<u32, Vec<&MethodRow>>,
+    row: &FunctionRow,
+) -> Vec<String> {
+    let methods = records.get(&row.at).map_or(&[][..], Vec::as_slice);
+    let mut bare: Vec<String> = Vec::new();
+    match names.function(FunctionKey::new(program.program, row.at)) {
+        Some(name) => bare.push(name.to_owned()),
+        None => {
+            for method in methods {
+                let slot =
+                    (method.slot).and_then(|slot| slot_name(program, names, method.owner, slot));
+                if let Some(name) = slot.filter(|name| !bare.iter().any(|held| held == name)) {
+                    bare.push(name.to_owned());
+                }
+            }
+        }
+    }
+    let mut all = bare.clone();
+    for method in methods {
+        let Some(owner) = program.types.get(method.owner as usize) else {
+            continue;
+        };
+        for class in type_labels(names, owner) {
+            all.extend(bare.iter().map(|name| format!("{class}.{name}")));
+        }
+    }
+    all
+}
+
+/// The name a list gives virtual slot `slot` of the type `owner` of the program, or of the nearest of its bases that a list names it on.
+fn slot_name<'n>(program: &Program, names: &'n Names, owner: u32, slot: u32) -> Option<&'n str> {
+    let mut ty = program.types.get(owner as usize);
+    for _ in 0..MAX_BASES {
+        let held = ty?;
+        if let Some(name) = names.method(TypeKey(held.name), slot) {
+            return Some(name);
+        }
+        ty = held.base.and_then(|base| program.types.get(base as usize));
+    }
+    None
+}
+
+/// The names a type is asked for by: the one a list gives it, and the `type_` hash a source writes where none does.
+fn type_labels(names: &Names, ty: &TypeRow) -> Vec<String> {
+    let key = TypeKey(ty.name);
+    let listed = names.type_name(ty.name).map(str::to_owned);
+    listed.into_iter().chain([key.to_string()]).collect()
+}
+
+/// Whether type `id` of the program is its own, and none of a program it imports.
+fn own_type(program: &Program, id: u32) -> bool {
+    !(program.imports.iter()).any(|import| import.types.contains(&id))
+}
+
+/// The functions of the methods of the one type of the program's own that `class` names, as a list names it or by its `type_` hash; a name of no such type, or of several, or of one with no function of its code, is refused.
+fn class_rows(program: &Program, names: &Names, class: &str) -> Result<Vec<FunctionRow>, String> {
+    let hashed = TypeKey::of_name(class);
+    let mut found = Vec::new();
+    for (id, ty) in (0u32..).zip(&program.types) {
+        let named = names.type_name(ty.name) == Some(class) || hashed == Some(TypeKey(ty.name));
+        if named && own_type(program, id) {
+            found.push((id, ty));
+        }
+    }
+    let (id, ty) = match found.as_slice() {
+        [one] => *one,
+        [] => {
+            return Err(format!(
+                "no class `{class}` in program {}: a class is named as a list names its type, or \
+                 by the `type_` hash a source writes",
+                hex(program.program)
+            ))
+        }
+        // A name two types carry chooses neither.
+        several => {
+            let hashes: Vec<String> = several
+                .iter()
+                .map(|(_, ty)| TypeKey(ty.name).to_string())
+                .collect();
+            return Err(format!(
+                "`{class}` names {} types, {}: name one by its hash",
+                several.len(),
+                hashes.join(", ")
+            ));
+        }
+    };
+    let methods = program.methods.iter().filter(|method| method.owner == id);
+    let ats = methods.filter_map(|method| method.at);
+    let rows: Vec<FunctionRow> = ats.filter_map(|at| program.function(at)).copied().collect();
+    if rows.is_empty() {
+        return Err(format!(
+            "class `{class}` ({}) of program {} holds no function of its code: a decompile of \
+             the whole program writes its declaration",
+            TypeKey(ty.name),
+            hex(program.program)
+        ));
+    }
     Ok(rows)
 }
 
@@ -1127,10 +1284,15 @@ fn functions(program: &Program, names: &Names, json: bool, page: Page) -> (Strin
     (out, said)
 }
 
-/// The instruction listing of `program` under its two first lines; only the functions `only` names where it names any.
-pub fn listing(program: &Program, names: &Names, only: &[String]) -> Result<String, String> {
-    let rows = selected(program, names, only)?;
-    let rows = match only.is_empty() {
+/// The instruction listing of `program` under its two first lines; only the functions `only` names and those of the methods of `classes` where they name any.
+pub fn listing(
+    program: &Program,
+    names: &Names,
+    only: &[String],
+    classes: &[String],
+) -> Result<String, String> {
+    let rows = chosen(program, names, only, classes)?;
+    let rows = match rows.is_empty() {
         true => program.functions.as_slice(),
         false => rows.as_slice(),
     };
@@ -1165,7 +1327,15 @@ fn header(program: &Program, ask: &Decompile<'_>, only: &[FunctionRow]) -> Strin
             .iter()
             .map(|row| function_name(program, ask.names, row))
             .collect();
-        lines.push(format!("only: {}", only.join(", ")));
+        let mut line = format!("only: {}", only.join(", "));
+        if !ask.classes.is_empty() {
+            let _ = write!(
+                line,
+                "; among them the methods of {}",
+                ask.classes.join(", ")
+            );
+        }
+        lines.push(line);
     }
     if let Some((at, name)) = decode::first_unseen(&program.code) {
         lines.push(format!(
@@ -1301,7 +1471,7 @@ pub fn decompiled(bytes: &[u8], ask: &Decompile<'_>) -> Result<(String, Stats), 
 /// The source of `program` as `ask` asks it, under one header: the printer's, then this command's lines.
 fn written(program: &Program, ask: &Decompile<'_>) -> Result<(String, Stats), String> {
     let held = ask.project.unwrap_or(Project::empty());
-    let rows = selected(program, ask.names, ask.only)?;
+    let rows = chosen(program, ask.names, ask.only, ask.classes)?;
     let cx = Context::new(ask.names, held, ask.options);
     let asked = match rows.is_empty() {
         true => program.functions.as_slice(),

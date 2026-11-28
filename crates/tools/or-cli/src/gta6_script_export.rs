@@ -6,7 +6,7 @@
 //! path or a machine's name.
 
 use std::cmp::Reverse;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
@@ -16,6 +16,7 @@ use or_io::gta6::script::program::Program;
 use or_io::gta6::script::project::index;
 use or_io::gta6::script::{Names, Options, Project, Stats, CONSTRUCTS};
 use serde::Serialize;
+use serde_json::Value;
 
 use super::super::lifted::{over, THREADS};
 use super::source::{self, Body};
@@ -72,6 +73,9 @@ struct Row {
     not_lifted: Vec<String>,
     imports: Vec<String>,
     status: String,
+    /// How its source compares with the earlier export `--changed-since` names, where it names one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    since: Option<&'static str>,
 }
 
 /// What one program's source holds beside what decompiling it counted.
@@ -79,6 +83,68 @@ struct Wrote {
     stats: Stats,
     classes: usize,
     unlifted: Vec<String>,
+    /// How the source compares with the earlier export's, where `--changed-since` names one.
+    change: Option<Change>,
+}
+
+/// How a source compares with the one an earlier export wrote of its program.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Change {
+    Same,
+    /// Only the comments it opens with differ: the lists, counts and passes its header names.
+    Header,
+    /// The code differs from line `line` on, of `before` lines then and `now` lines now.
+    Body {
+        line: usize,
+        before: usize,
+        now: usize,
+    },
+    /// The earlier export wrote no source of the program.
+    New,
+    /// The earlier export's source of the program did not read, for this reason.
+    Unread(String),
+}
+
+impl Change {
+    /// The word `scripts.json` gives a source for it.
+    fn key(&self) -> &'static str {
+        match self {
+            Change::Same => "same",
+            Change::Header => "first lines",
+            Change::Body { .. } => "changed",
+            Change::New => "new",
+            Change::Unread(_) => "not compared",
+        }
+    }
+
+    /// What a row of the index says of a source written for it.
+    fn said(&self) -> &'static str {
+        match self {
+            Change::Same => "the same",
+            Change::Header => "changed in its first lines only",
+            Change::Body { .. } => "changed",
+            Change::New => "new",
+            Change::Unread(_) => "not compared",
+        }
+    }
+}
+
+/// One source an earlier export wrote: the hash of its program where its row states one, and its file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Earlier {
+    program: Option<String>,
+    file: String,
+}
+
+/// What a program's source is compared with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Against<'a> {
+    /// Nothing: no `--changed-since` was given.
+    Nothing,
+    /// No source of the earlier export is this program's.
+    Unpaired,
+    /// The file of the earlier export's folder that is this program's source.
+    File(&'a str),
 }
 
 /// What the first pass keeps of one program.
@@ -110,6 +176,8 @@ pub(super) fn run(asked: &Asked) -> Result<(String, bool), String> {
         threads: asked.threads.unwrap_or(THREADS),
         said: &said,
         summary: asked.summary,
+        since: asked.since.as_deref(),
+        unread: found.unread > 0,
     };
     let out = asked.out.as_deref();
     let (mut lines, failed) = exported(&found.bodies, read, lists.names, asks, out)?;
@@ -136,6 +204,10 @@ pub struct Asks<'a> {
     pub said: &'a [String],
     /// `--summary`: the programs that failed and a table of the totals, in place of a line a program.
     pub summary: bool,
+    /// `--changed-since`: the folder of an earlier export; only a source that differs from its is written, and each is said.
+    pub since: Option<&'a Path>,
+    /// Whether some entry or archive of the source could not be read: no function or type is then proved out of reach of every other program.
+    pub unread: bool,
 }
 
 /// Decompiles every body with the project of them all, and writes that project, a source each, what was read and an index into `out` where one is given; a line a body and a total, and how many bodies failed.
@@ -148,6 +220,11 @@ pub fn exported(
     out: Option<&Path>,
 ) -> Result<(Vec<String>, usize), String> {
     let (options, threads) = (asks.options, asks.threads);
+    // Read before anything is written: the earlier export may be the folder written to.
+    let before = match asks.since {
+        Some(folder) => Some(earlier(folder)?),
+        None => None,
+    };
     let write = |file: &str, bytes: &[u8]| match out {
         Some(dir) => {
             let to = dir.join(file);
@@ -159,7 +236,10 @@ pub fn exported(
         std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     }
 
-    let (project, stated) = built(bodies, &mut names, threads, &|_| {});
+    let (mut project, stated) = built(bodies, &mut names, threads, &|_| {});
+    if asks.unread {
+        index::left_unread(&mut project);
+    }
     write(
         PROJECT_FILE,
         &index::save(&project).map_err(|e| e.to_string())?,
@@ -184,9 +264,34 @@ pub fn exported(
         Some(_) => format!("`{PROJECT_FILE}`"),
         None => "that of the programs read with it, kept in no file".to_owned(),
     };
-    let jobs: Vec<Job<'_>> = bodies.iter().zip(&stated).zip(&files).collect();
-    let outcomes = largest_first(&jobs, job_bytes, threads, |((body, stated), file)| {
-        if let Err(why) = stated {
+    let now: Vec<(Option<String>, Option<&str>)> = (stated.iter().zip(&files))
+        .map(|(stated, file)| {
+            let program = stated.as_ref().ok().map(|s| super::hex(s.program.program));
+            (program, file.as_deref())
+        })
+        .collect();
+    let (pairs, gone) = match &before {
+        Some(before) => paired(before, &now),
+        None => (vec![None; now.len()], Vec::new()),
+    };
+    let against = pairs.iter().map(|pair| match (&before, pair) {
+        (None, _) => Against::Nothing,
+        (Some(_), None) => Against::Unpaired,
+        (Some(before), Some(place)) => match before.get(*place) {
+            Some(then) => Against::File(then.file.as_str()),
+            None => Against::Unpaired,
+        },
+    });
+    let jobs: Vec<Job<'_>> = (bodies.iter().zip(&stated).zip(&files).zip(against))
+        .map(|(((body, stated), file), against)| Job {
+            body,
+            stated,
+            file,
+            against,
+        })
+        .collect();
+    let outcomes = largest_first(&jobs, job_bytes, threads, |job| {
+        if let Err(why) = job.stated {
             return Err(why.clone());
         }
         guarded(|| {
@@ -196,17 +301,21 @@ pub fn exported(
                 project_said: &phrase,
                 options,
                 only: &[],
+                classes: &[],
                 with_classes: false,
                 said: asks.said,
             };
-            let (text, stats) = super::decompiled(&body.bytes, &ask)?;
-            if let Some(file) = file {
+            let (text, stats) = super::decompiled(&job.body.bytes, &ask)?;
+            let change = compared(asks.since, job.against, &text);
+            // A source the earlier export wrote alike is not written again.
+            if let (Some(file), false) = (job.file.as_deref(), change == Some(Change::Same)) {
                 write(file, text.as_bytes())?;
             }
             Ok(Wrote {
                 stats,
                 classes: classes_in(&text),
                 unlifted: unlifted_in(&text),
+                change,
             })
         })
     });
@@ -215,8 +324,10 @@ pub fn exported(
     let (mut failed, mut alone, mut classes) = (0, 0, 0);
     let mut rows = Vec::with_capacity(bodies.len());
     let mut indexed = Vec::with_capacity(bodies.len());
-    for (((body, stated), file), outcome) in jobs.iter().zip(&outcomes) {
-        let stated: Option<&Stated> = Result::as_ref(stated).ok();
+    let mut changes: Vec<(&str, &Change)> = Vec::new();
+    for (job, outcome) in jobs.iter().zip(&outcomes) {
+        let (body, file) = (job.body, job.file);
+        let stated: Option<&Stated> = job.stated.as_ref().ok();
         let note = match stated.and_then(|stated| stated.left_out.as_ref()) {
             Some(why) => {
                 alone += 1;
@@ -245,8 +356,12 @@ pub fn exported(
             imports.map(|import| super::hex(import.program)).collect()
         };
         let wrote = outcome.as_ref().ok();
+        let change = wrote.and_then(|wrote| wrote.change.as_ref());
+        if let (Some(file), Some(change)) = (file.as_deref(), change) {
+            changes.push((file, change));
+        }
         rows.push(Row {
-            file: (*file).clone().filter(|_| outcome.is_ok()),
+            file: file.clone().filter(|_| outcome.is_ok()),
             program: program.map(|p| super::hex(p.program)),
             name: program
                 .and_then(|p| names.program(u64::from(p.program)))
@@ -259,6 +374,7 @@ pub fn exported(
             not_lifted: wrote.map_or_else(Vec::new, |wrote| wrote.unlifted.clone()),
             imports: program.map_or_else(Vec::new, imports),
             status,
+            since: change.map(Change::key),
         });
         if let Some(row) = rows.last() {
             indexed.push(index_row(row, outcome));
@@ -269,6 +385,17 @@ pub fn exported(
         bodies.len(),
         counts(&total)
     );
+    let gone: Vec<&str> = match &before {
+        Some(before) => (gone.iter().filter_map(|place| before.get(*place)))
+            .map(|then| then.file.as_str())
+            .collect(),
+        None => Vec::new(),
+    };
+    // The earlier export by its path where a person reads it, and by none in a file the export writes.
+    let compared_said = asks.since.map(|_| since_counts(&changes, gone.len()));
+    if let Some(folder) = asks.since {
+        lines.extend(since_lines(&folder.display().to_string(), &changes, &gone));
+    }
     match asks.summary {
         true => lines.extend(table(bodies.len(), failed, alone, classes, &total)),
         false => lines.push(last.clone()),
@@ -288,15 +415,28 @@ pub fn exported(
     text.push(b'\n');
     write(SCRIPTS_FILE, &text)?;
     let names_said = super::names_sentence(&names);
+    let said = Said {
+        names: &names_said,
+        compared: compared_said.as_deref(),
+    };
     write(
         INDEX_FILE,
-        index(&scripts, &names_said, &indexed, &last).as_bytes(),
+        index(&scripts, said, &indexed, &last).as_bytes(),
     )?;
     Ok((lines, failed))
 }
 
+/// What the head of `index.md` says beside the export's own facts.
+#[derive(Clone, Copy)]
+struct Said<'a> {
+    /// Which lists named things.
+    names: &'a str,
+    /// How the sources compare with the earlier export `--changed-since` names, where it names one.
+    compared: Option<&'a str>,
+}
+
 /// What `index.md` holds: how the sources were written, a row a program, and the export's last line.
-fn index(scripts: &Scripts<'_>, names: &str, rows: &[String], last: &str) -> String {
+fn index(scripts: &Scripts<'_>, said: Said<'_>, rows: &[String], last: &str) -> String {
     let off = match scripts.off.is_empty() {
         true => "none".to_owned(),
         false => scripts.off.join(", "),
@@ -312,7 +452,14 @@ fn index(scripts: &Scripts<'_>, names: &str, rows: &[String], last: &str) -> Str
         scripts.level,
         scripts.project
     );
-    let _ = writeln!(out, "Names: {names}.\n");
+    let _ = writeln!(out, "Names: {}.\n", said.names);
+    if let Some(compared) = said.compared {
+        let _ = writeln!(
+            out,
+            "Compared with the earlier export `--changed-since` named: {compared}. A source the \
+             same as there is not written again.\n"
+        );
+    }
     let _ = writeln!(
         out,
         "| Source | Program | Name | Functions | Classes | Not lifted |"
@@ -329,7 +476,17 @@ fn index(scripts: &Scripts<'_>, names: &str, rows: &[String], last: &str) -> Str
 fn index_row(row: &Row, outcome: &Result<Wrote, String>) -> String {
     let none = || "-".to_owned();
     let linked = |file: &str| format!("[{}]({file})", code(file));
-    let source = row.file.as_deref().map_or_else(none, linked);
+    let change = outcome
+        .as_ref()
+        .ok()
+        .and_then(|wrote| wrote.change.as_ref());
+    // A source the same as the earlier export's is not written, so it links to nothing.
+    let source = match (row.file.as_deref(), change) {
+        (None, _) => none(),
+        (Some(file), None) => linked(file),
+        (Some(file), Some(Change::Same)) => format!("{} (the same)", code(file)),
+        (Some(file), Some(change)) => format!("{} ({})", linked(file), change.said()),
+    };
     let program = row.program.clone().unwrap_or_else(none);
     let name = row.name.as_deref().map_or_else(none, code);
     let (functions, classes, missing) = match outcome {
@@ -502,11 +659,198 @@ fn first(bytes: &[u8], tables: &index::Tables) -> Result<(Stated, Option<Project
     Ok((Stated { program, left_out }, part))
 }
 
-/// One program of the second pass: its body, what the first pass kept of it, and the file its source goes to.
-type Job<'a> = ((&'a Body, &'a Result<Stated, String>), &'a Option<String>);
+/// One program of the second pass: its body, what the first pass kept of it, the file its source goes to, and what that source is compared with.
+struct Job<'a> {
+    body: &'a Body,
+    stated: &'a Result<Stated, String>,
+    file: &'a Option<String>,
+    against: Against<'a>,
+}
 
 fn job_bytes(job: &Job<'_>) -> usize {
-    job.0 .0.bytes.len()
+    job.body.bytes.len()
+}
+
+/// The sources the export in `folder` wrote, as its `scripts.json` states them.
+fn earlier(folder: &Path) -> Result<Vec<Earlier>, String> {
+    let refused = |why: String| {
+        format!(
+            "--changed-since {}: {why}; it takes a folder `script export -o` wrote",
+            folder.display()
+        )
+    };
+    let at = folder.join(SCRIPTS_FILE);
+    let bytes = std::fs::read(&at).map_err(|e| refused(format!("read {SCRIPTS_FILE}: {e}")))?;
+    earlier_in(&bytes).map_err(|why| refused(format!("{SCRIPTS_FILE}: {why}")))
+}
+
+/// The sources a `scripts.json` states, each a file of its own folder; the row of a program that failed states none.
+fn earlier_in(bytes: &[u8]) -> Result<Vec<Earlier>, String> {
+    let scripts: Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    if scripts["format"].as_u64() != Some(1) {
+        return Err("it is of no format this export reads".to_owned());
+    }
+    let rows = scripts["programs"]
+        .as_array()
+        .ok_or("it lists no programs")?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let Some(file) = row["file"].as_str() else {
+            continue;
+        };
+        // ⚠ The file is read: a name that leaves the folder or opens a stream of a file is refused.
+        if !plain_file(file) {
+            return Err(format!("`{file}` is no file of its folder"));
+        }
+        out.push(Earlier {
+            program: row["program"].as_str().map(str::to_owned),
+            file: file.to_owned(),
+        });
+    }
+    Ok(out)
+}
+
+/// Whether `file` is a file of the folder itself, of the characters [`stem_of`] writes.
+fn plain_file(file: &str) -> bool {
+    let kept = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.');
+    !matches!(file, "" | "." | "..") && file.chars().all(kept)
+}
+
+/// The place in `before` of the source each program of `now` is compared with, and the places no program takes: a program stated once in each export is paired by its hash, any other by the name of its file.
+// ⚠ Every pairing by hash is made before any by file, so that a file name never takes the
+// source a hash pairs with another program.
+fn paired(
+    before: &[Earlier],
+    now: &[(Option<String>, Option<&str>)],
+) -> (Vec<Option<usize>>, Vec<usize>) {
+    let mut then: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+    for (place, row) in before.iter().enumerate() {
+        if let Some(program) = row.program.as_deref() {
+            then.entry(program).or_insert((0, place)).0 += 1;
+        }
+    }
+    let mut counted: BTreeMap<&str, usize> = BTreeMap::new();
+    for program in now.iter().filter_map(|(program, _)| program.as_deref()) {
+        *counted.entry(program).or_default() += 1;
+    }
+    let mut taken = vec![false; before.len()];
+    let mut pairs: Vec<Option<usize>> = vec![None; now.len()];
+    for (pair, (program, _)) in pairs.iter_mut().zip(now) {
+        let Some(program) = program.as_deref() else {
+            continue;
+        };
+        if let (Some(&(1, place)), Some(1)) = (then.get(program), counted.get(program).copied()) {
+            *pair = Some(place);
+            if let Some(took) = taken.get_mut(place) {
+                *took = true;
+            }
+        }
+    }
+    let by_file: BTreeMap<&str, usize> = (before.iter().enumerate())
+        .map(|(place, row)| (row.file.as_str(), place))
+        .collect();
+    for (pair, (_, file)) in pairs.iter_mut().zip(now) {
+        if pair.is_some() {
+            continue;
+        }
+        let Some(place) = file.and_then(|file| by_file.get(file).copied()) else {
+            continue;
+        };
+        if let Some(took) = taken.get_mut(place).filter(|took| !**took) {
+            *took = true;
+            *pair = Some(place);
+        }
+    }
+    let gone = (taken.iter().enumerate())
+        .filter(|(_, took)| !**took)
+        .map(|(place, _)| place)
+        .collect();
+    (pairs, gone)
+}
+
+/// How `text` compares with the source `against` names in the earlier export's `folder`; `None` where none is compared.
+fn compared(folder: Option<&Path>, against: Against<'_>, text: &str) -> Option<Change> {
+    let folder = folder?;
+    match against {
+        Against::Nothing => None,
+        Against::Unpaired => Some(Change::New),
+        Against::File(file) => Some(match std::fs::read(folder.join(file)) {
+            Ok(bytes) => change(&String::from_utf8_lossy(&bytes), text),
+            Err(e) => Change::Unread(e.to_string()),
+        }),
+    }
+}
+
+/// How the source `now` compares with the one `before` an earlier export wrote, as text.
+fn change(before: &str, now: &str) -> Change {
+    if before == now {
+        return Change::Same;
+    }
+    if past_header(before) == past_header(now) {
+        return Change::Header;
+    }
+    let alike = before.lines().zip(now.lines()).take_while(|(a, b)| a == b);
+    Change::Body {
+        line: alike.count() + 1,
+        before: before.lines().count(),
+        now: now.lines().count(),
+    }
+}
+
+/// `text` past the comment lines it opens with, which are a source's header.
+fn past_header(text: &str) -> &str {
+    let mut at = 0;
+    for line in text.split_inclusive('\n') {
+        if !line.starts_with("//") {
+            break;
+        }
+        at += line.len();
+    }
+    text.get(at..).unwrap_or_default()
+}
+
+/// The lines `--changed-since` adds to an export's: a line each source whose code changed, that is new, that was not compared or that this export writes none of, then the counts, each line saying `folder`.
+// A source changed in its first lines only is counted and not named: a list or a pass that
+// changes changes every header.
+fn since_lines(folder: &str, changes: &[(&str, &Change)], gone: &[&str]) -> Vec<String> {
+    let mut lines = Vec::new();
+    for (file, change) in changes {
+        match change {
+            Change::Body { line, before, now } => lines.push(format!(
+                "changed since {folder}: {file}, from line {line} ({before} -> {now} line(s))"
+            )),
+            Change::New => lines.push(format!("new since {folder}: {file}")),
+            Change::Unread(why) => lines.push(format!("not compared with {folder}: {file}: {why}")),
+            Change::Same | Change::Header => {}
+        }
+    }
+    for file in gone {
+        lines.push(format!(
+            "gone since {folder}: {file}: this export writes no source of its program"
+        ));
+    }
+    lines.push(format!(
+        "since {folder}: {}",
+        since_counts(changes, gone.len())
+    ));
+    lines
+}
+
+/// How many sources compare each way with the earlier export's, and how many of its are gone.
+fn since_counts(changes: &[(&str, &Change)], gone: usize) -> String {
+    let count = |key: &str| (changes.iter()).filter(|(_, c)| c.key() == key).count();
+    let mut said = format!(
+        "{} changed, {} changed in their first lines only, {} new, {} the same, {gone} gone",
+        count("changed"),
+        count("first lines"),
+        count("new"),
+        count("same")
+    );
+    let unread = count("not compared");
+    if unread > 0 {
+        let _ = write!(said, ", {unread} not compared");
+    }
+    said
 }
 
 /// The project of `bodies` as an export builds it, and what the first pass kept of each body or why it read as no program; every program's records are named in `names` first, in the order of the bodies.

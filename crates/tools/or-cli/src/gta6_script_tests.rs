@@ -2,7 +2,7 @@ use std::io::Read;
 
 use or_io::container::rpf::RPF9_MAGIC;
 use or_io::gta5::script::natives::NativeDb;
-use or_io::gta6::script::program::{FieldRow, MethodRow, TypeRow};
+use or_io::gta6::script::program::{FieldRow, ImportRow, MethodRow, TypeRow};
 
 use super::*;
 
@@ -63,6 +63,7 @@ fn ask<'a>(names: &'a Names, options: Options, only: &'a [String]) -> Decompile<
         project_said: "none",
         options,
         only,
+        classes: &[],
         with_classes: false,
         said: &[],
     }
@@ -377,11 +378,149 @@ fn a_function_is_named_by_its_offset_or_its_name_and_a_name_two_carry_names_neit
 }
 
 #[test]
+fn a_method_is_asked_for_by_the_name_a_list_gives_its_slot_alone_or_after_its_class() {
+    let mut program = program();
+    let second = program.functions[1];
+    let (base, derived) = (
+        TypeKey(0x1111_2222_3333_4444),
+        TypeKey(0x5555_6666_7777_8888),
+    );
+    program.types = vec![
+        TypeRow {
+            name: base.0,
+            ..TypeRow::default()
+        },
+        TypeRow {
+            name: derived.0,
+            base: Some(0),
+            ..TypeRow::default()
+        },
+    ];
+    // The derived type's method fills slot 4, which a list names on the base.
+    program.methods = vec![MethodRow {
+        at: Some(second.at),
+        slot: Some(4),
+        owner: 1,
+        ..MethodRow::default()
+    }];
+    let mut names = Names::default();
+    let by = |name: &str, names: &Names| selected(&program, names, &[name.to_owned()]);
+    let none = by("DemoTick", &names).err().unwrap_or_default();
+    assert!(none.starts_with("no function `DemoTick`"), "{none}");
+
+    names.methods.insert((base, 4), "DemoTick".to_owned());
+    names.types.insert(derived.0, "DemoDerived".to_owned());
+    assert_eq!(by("DemoTick", &names), Ok(vec![second]));
+    assert_eq!(by("DemoDerived.DemoTick", &names), Ok(vec![second]));
+    assert_eq!(
+        by(format!("{derived}.DemoTick").as_str(), &names),
+        Ok(vec![second])
+    );
+    assert!(by("DemoOther.DemoTick", &names).is_err());
+
+    // The type's own name for the slot goes before its base's; a name of hex digits is a name first.
+    names.methods.insert((derived, 4), "Facade".to_owned());
+    assert_eq!(by("Facade", &names), Ok(vec![second]));
+    assert!(by("DemoTick", &names).is_err());
+
+    // The user's name for the function stands in place of its slot's, as the printer writes it.
+    let key = FunctionKey::new(PROGRAM, second.at);
+    names.functions.insert(key, "DemoStep".to_owned());
+    assert!(by("Facade", &names).is_err());
+    assert_eq!(by("DemoDerived.DemoStep", &names), Ok(vec![second]));
+}
+
+#[test]
+fn a_class_is_asked_for_by_the_name_a_list_gives_it_or_its_hash_and_its_methods_are_written() {
+    let mut program = program();
+    let [first, second] = [program.functions[0], program.functions[1]];
+    let holder = TypeKey(0x1234_5678_9ABC_DEF0);
+    let (other, imported) = (
+        TypeKey(0x0FED_CBA9_8765_4321),
+        TypeKey(0x1111_2222_3333_4444),
+    );
+    let ty = |key: TypeKey| TypeRow {
+        name: key.0,
+        ..TypeRow::default()
+    };
+    program.types = vec![ty(holder), ty(other), ty(imported)];
+    program.imports = vec![ImportRow {
+        program: 0x0102_0304,
+        types: 2..3,
+    }];
+    let method = |at: Option<u32>| MethodRow {
+        at,
+        owner: 0,
+        ..MethodRow::default()
+    };
+    program.methods = vec![method(Some(second.at)), method(None)];
+    let mut names = Names::default();
+    names.types.insert(holder.0, "DemoHolder".to_owned());
+    names.types.insert(other.0, "DemoOther".to_owned());
+    names.types.insert(imported.0, "DemoBase".to_owned());
+    let class = |class: &str, names: &Names| chosen(&program, names, &[], &[class.to_owned()]);
+
+    assert_eq!(class("DemoHolder", &names), Ok(vec![second]));
+    assert_eq!(class(holder.to_string().as_str(), &names), Ok(vec![second]));
+    // A function asked for twice, by itself and by its class, is written once, in its place.
+    let both = chosen(
+        &program,
+        &names,
+        &["main".to_owned(), format!("0x{:X}", second.at)],
+        &["DemoHolder".to_owned()],
+    );
+    assert_eq!(both, Ok(vec![first, second]));
+
+    let empty = class("DemoOther", &names).err().unwrap_or_default();
+    assert!(empty.contains("holds no function of its code"), "{empty}");
+    // A type of a program imported is no class of this one.
+    let elsewhere = class("DemoBase", &names).err().unwrap_or_default();
+    assert!(elsewhere.starts_with("no class `DemoBase`"), "{elsewhere}");
+
+    let classes = ["DemoHolder".to_owned()];
+    let ask = Decompile {
+        classes: &classes,
+        ..ask(&names, Options::default(), &[])
+    };
+    let (text, stats) = written(&program, &ask).expect("the method decompiles");
+    assert_eq!(stats.functions, 1);
+    let only = format!(
+        "// only: func_{:06X}; among them the methods of DemoHolder",
+        second.at
+    );
+    assert!(text.lines().any(|line| line == only), "{text}");
+    assert!(!text.contains("func_000000"), "{text}");
+
+    // A name two types carry chooses neither.
+    names.types.insert(other.0, "DemoHolder".to_owned());
+    let twice = class("DemoHolder", &names).err().unwrap_or_default();
+    assert!(twice.contains("names 2 types"), "{twice}");
+}
+
+#[test]
+fn a_class_and_an_earlier_export_are_read_and_said_unused_where_a_verb_takes_neither() {
+    let given = asked(&words(&[
+        "x",
+        "--class",
+        "DemoHolder",
+        "--changed-since",
+        "earlier",
+    ]));
+    assert!(given.wrong.is_none(), "{:?}", given.wrong);
+    assert_eq!(given.classes, ["DemoHolder"]);
+    assert_eq!(given.since.as_deref(), Some(Path::new("earlier")));
+    assert_eq!(unused(Verb::Decompile, &given), ["--changed-since"]);
+    assert_eq!(unused(Verb::Disasm, &given), ["--changed-since"]);
+    assert_eq!(unused(Verb::Export, &given), ["--class"]);
+    assert!(asked(&words(&["x", "--class"])).wrong.is_some());
+}
+
+#[test]
 fn a_listing_is_cut_to_the_functions_asked_for() {
     let (program, names) = (program(), Names::default());
     let second = format!("func_{:06X}", program.functions[1].at);
 
-    let whole = listing(&program, &names, &[]).expect("the program decodes");
+    let whole = listing(&program, &names, &[], &[]).expect("the program decodes");
     let first_line = "; program 0x0A0B0C0D: 28 byte(s) of code; 7 instruction(s) in 2 function(s) \
                       listed\n";
     assert!(whole.starts_with(first_line), "{whole}");
@@ -392,7 +531,7 @@ fn a_listing_is_cut_to_the_functions_asked_for() {
     );
 
     let one =
-        listing(&program, &names, std::slice::from_ref(&second)).expect("the program decodes");
+        listing(&program, &names, std::slice::from_ref(&second), &[]).expect("the program decodes");
     assert!(
         one.contains("; 3 instruction(s) in 1 function(s) listed\n"),
         "{one}"

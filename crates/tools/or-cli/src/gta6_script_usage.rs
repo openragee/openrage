@@ -13,9 +13,10 @@ Inspect, disassemble or decompile a compiled script: a GTA V .ysc, or a GTA VI p
 
 Usage: openrage-cli script <src> [--natives|--strings|--statics|--functions] [--json]
                                  [--offset <n>] [--limit <n>]
-       openrage-cli script disasm <src> [--function <f>]... [--no-bytes]
+       openrage-cli script disasm <src> [--function <f>]... [--class <c>]... [--no-bytes]
                                         [--project <file>|auto] [-o <file>]
-       openrage-cli script decompile <src> [--function <f>]... [--with-classes]
+       openrage-cli script decompile <src> [--function <f>]... [--class <c>]...
+                                           [--with-classes]
                                            [--level <name>] [--no <pass>]...
                                            [--project <file>|auto | --alone]
                                            [--labels <file>]... [-o <file>]
@@ -24,6 +25,7 @@ Usage: openrage-cli script <src> [--natives|--strings|--statics|--functions] [--
        openrage-cli script export <build-folder|archive.rpf|folder> [-o <folder>]
                                   [--level <name>] [--no <pass>]... [--threads <n>]
                                   [--labels <file>]... [--summary]
+                                  [--changed-since <folder>]
        openrage-cli script passes
        openrage-cli script names-search <program|folder>... [--words <file>]... [-o <file>]
        openrage-cli script natives --unnamed <program|folder>... [--project <file>]
@@ -77,6 +79,11 @@ Usage: openrage-cli script <src> [--natives|--strings|--statics|--functions] [--
               classes, and what was not lifted. A program that fails is reported and the
               export goes on; it exits non-zero if any did. --summary prints, in place of
               a line a program, the programs that failed and the totals as a table.
+              --changed-since <folder> compares each source, as text, with the one the
+              export in that folder wrote of its program, and writes only those that differ:
+              it prints a line for each source whose code changed, that is new, or that the
+              folder holds and this export writes no more, then how many compare each way; a
+              source that differs only in its first lines of comments is counted, not named.
   passes      The passes and the level each belongs to, one per line, as --no and --level
               take them. A name no pass reads yet is marked `rebuilds nothing yet`.
   names-search  A names list of what a word search proves of the programs' types, fields
@@ -100,9 +107,12 @@ Usage: openrage-cli script <src> [--natives|--strings|--statics|--functions] [--
               name. --offset <n> leaves the first n out and --limit <n> prints n at most,
               and stderr says where the page stands. With --json, one function a line.
   --function <f>   Only this function: 0x<offset>, func_<offset>, the offset as a listing
-                   prints it, or its name as --functions prints it. Repeat for several. A
-                   source is then written without the types that hold no code of it, and
-                   says how many; --with-classes writes them too. (GTA VI)
+                   prints it, its name as --functions prints it, or the name a list gives
+                   the method it is, alone or after its class's (Class.Method). Repeat for
+                   several. A source is then written without the types that hold no code of
+                   it, and says how many; --with-classes writes them too. (GTA VI)
+  --class <c>      The methods of this class too: its name as a list gives it, or the
+                   type_ hash a source writes. Repeat for several. (GTA VI)
   --no-bytes       Leave the column of bytes out of a GTA V listing; a GTA VI listing has
                    none.
   --level <name>   How far the source is taken from the bytecode: {levels}.

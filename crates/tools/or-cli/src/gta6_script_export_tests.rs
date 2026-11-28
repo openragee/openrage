@@ -24,6 +24,8 @@ fn a_body_that_is_no_program_is_a_line_and_a_row_and_never_the_end() {
             threads: 2,
             said: &[],
             summary: false,
+            since: None,
+            unread: false,
         };
         exported(&bodies, read, Names::default(), asks, out)
     };
@@ -93,6 +95,8 @@ fn a_summary_prints_the_failures_and_the_totals_as_a_table_in_place_of_a_line_a_
         threads: 1,
         said: &[],
         summary: true,
+        since: None,
+        unread: false,
     };
     let (lines, failed) = exported(&bodies, "a folder", Names::default(), asks, None).unwrap();
     assert_eq!(failed, 1);
@@ -190,6 +194,7 @@ var x = new class
         },
         classes: 0,
         unlifted,
+        change: None,
     };
     assert_eq!(unlifted(&wrote(0, Vec::new())), "none");
     assert_eq!(unlifted(&wrote(1, Vec::new())), "1");
@@ -290,4 +295,173 @@ fn a_project_built_in_memory_says_how_far_each_pass_is_and_counts_what_gave_no_p
             "second reading with the project: 2 of 2 program(s) done",
         ]
     );
+}
+
+#[test]
+fn a_source_is_compared_with_the_earlier_exports_whole_then_past_its_header() {
+    assert_eq!(change("// a\nx\n", "// a\nx\n"), Change::Same);
+    assert_eq!(change("// a\n// b\nx\n", "// a\n// c\nx\n"), Change::Header);
+    // A header of another length is still a header.
+    assert_eq!(change("// a\nx\n", "// a\n// more\nx\n"), Change::Header);
+    assert_eq!(
+        change("// a\nx\ny\n", "// a\nx\nz\nw\n"),
+        Change::Body {
+            line: 3,
+            before: 3,
+            now: 4
+        }
+    );
+    assert_eq!(past_header("// only\n// comments\n"), "");
+    assert_eq!(past_header("x\n// y\n"), "x\n// y\n");
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("demo_kept.cs"), "// a\nx\n").unwrap();
+    let folder = Some(dir.path());
+    assert_eq!(compared(None, Against::Unpaired, "x"), None);
+    assert_eq!(compared(folder, Against::Nothing, "x"), None);
+    assert_eq!(compared(folder, Against::Unpaired, "x"), Some(Change::New));
+    assert_eq!(
+        compared(folder, Against::File("demo_kept.cs"), "// a\nx\n"),
+        Some(Change::Same)
+    );
+    let missing = compared(folder, Against::File("demo_gone.cs"), "x");
+    assert!(matches!(missing, Some(Change::Unread(_))), "{missing:?}");
+}
+
+#[test]
+fn a_program_is_paired_by_its_hash_where_each_export_states_it_once_and_else_by_its_file() {
+    let earlier = |program: Option<&str>, file: &str| Earlier {
+        program: program.map(str::to_owned),
+        file: file.to_owned(),
+    };
+    let before = [
+        earlier(Some("0x00000001"), "a.cs"),
+        earlier(Some("0x00000002"), "b.cs"),
+        earlier(Some("0x00000002"), "c.cs"),
+        earlier(None, "e.cs"),
+    ];
+    let now = |program: &str, file: &'static str| (Some(program.to_owned()), Some(file));
+    let now = [
+        // Its file's name is the source a hash pairs with another program, which goes first.
+        now("0x00000005", "a.cs"),
+        now("0x00000001", "renamed.cs"),
+        // Stated twice before: paired by its file.
+        now("0x00000002", "b.cs"),
+        now("0x00000003", "c.cs"),
+        (None, None),
+    ];
+    let (pairs, gone) = paired(&before, &now);
+    assert_eq!(pairs, [None, Some(0), Some(1), Some(2), None]);
+    assert_eq!(gone, [3]);
+    assert_eq!(paired(&[], &now).1, Vec::<usize>::new());
+}
+
+#[test]
+fn an_earlier_export_is_read_from_its_scripts_and_a_file_that_leaves_its_folder_is_refused() {
+    let scripts = r#"{"format": 1, "programs": [
+        {"file": "demo_kept.cs", "program": "0x00000001"},
+        {"file": null, "program": "0x00000002"},
+        {"file": "demo_new.cs", "program": null}
+    ]}"#;
+    let read = earlier_in(scripts.as_bytes()).expect("the scripts read");
+    let files: Vec<&str> = read.iter().map(|row| row.file.as_str()).collect();
+    assert_eq!(files, ["demo_kept.cs", "demo_new.cs"]);
+    assert_eq!(read[0].program.as_deref(), Some("0x00000001"));
+    assert_eq!(read[1].program, None);
+
+    for file in ["../up.cs", "a/b.cs", "a\\\\b.cs", "c:d.cs", "..", ""] {
+        let scripts = format!(r#"{{"format": 1, "programs": [{{"file": "{file}"}}]}}"#);
+        let refused = earlier_in(scripts.as_bytes()).err().unwrap_or_default();
+        assert!(
+            refused.ends_with("is no file of its folder"),
+            "{file}: {refused}"
+        );
+    }
+    assert!(earlier_in(br#"{"format": 2, "programs": []}"#).is_err());
+    assert!(earlier_in(b"not json").is_err());
+}
+
+#[test]
+fn what_changed_since_an_earlier_export_is_a_line_a_source_and_a_line_of_counts() {
+    let body = Change::Body {
+        line: 12,
+        before: 40,
+        now: 41,
+    };
+    let unread = Change::Unread("a reason".to_owned());
+    let changes = [
+        ("a.cs", &body),
+        ("b.cs", &Change::New),
+        ("c.cs", &Change::Same),
+        ("d.cs", &Change::Header),
+        ("e.cs", &unread),
+    ];
+    assert_eq!(
+        since_lines("then", &changes, &["f.cs"]),
+        [
+            "changed since then: a.cs, from line 12 (40 -> 41 line(s))",
+            "new since then: b.cs",
+            "not compared with then: e.cs: a reason",
+            "gone since then: f.cs: this export writes no source of its program",
+            "since then: 1 changed, 1 changed in their first lines only, 1 new, 1 the same, 1 \
+             gone, 1 not compared",
+        ]
+    );
+    assert_eq!(
+        since_counts(&[], 0),
+        "0 changed, 0 changed in their first lines only, 0 new, 0 the same, 0 gone"
+    );
+}
+
+#[test]
+fn an_export_compared_with_an_earlier_one_says_what_is_gone_and_needs_its_scripts() {
+    let zeros = [vec![0u8; 8], vec![0x11; 56]].concat();
+    let bodies = [body("a", zeros)];
+    let earlier = tempfile::tempdir().unwrap();
+    let run = |since: &Path, out: Option<&Path>| {
+        let asks = Asks {
+            options: Options::default(),
+            threads: 1,
+            said: &[],
+            summary: false,
+            since: Some(since),
+            unread: false,
+        };
+        exported(&bodies, "a folder", Names::default(), asks, out)
+    };
+    let refused = run(earlier.path(), None).err().unwrap_or_default();
+    assert!(refused.starts_with("--changed-since "), "{refused}");
+    assert!(
+        refused.ends_with("it takes a folder `script export -o` wrote"),
+        "{refused}"
+    );
+
+    let scripts = r#"{"format": 1, "programs": [
+        {"file": "demo_gone.cs", "program": "0x00000001"}
+    ]}"#;
+    std::fs::write(earlier.path().join(SCRIPTS_FILE), scripts).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let (lines, failed) = run(earlier.path(), Some(out.path())).expect("the export goes on");
+    assert_eq!(failed, 1);
+    let shown = earlier.path().display().to_string();
+    assert!(lines[0].starts_with("a: failed: "), "{lines:?}");
+    assert_eq!(
+        lines[1],
+        format!("gone since {shown}: demo_gone.cs: this export writes no source of its program")
+    );
+    assert_eq!(
+        lines[2],
+        format!(
+            "since {shown}: 0 changed, 0 changed in their first lines only, 0 new, 0 the same, 1 \
+             gone"
+        )
+    );
+    assert!(lines[3].starts_with("total: "), "{lines:?}");
+    // The files an export writes name no folder of the machine.
+    let index = std::fs::read_to_string(out.path().join(INDEX_FILE)).unwrap();
+    assert!(
+        index.contains("Compared with the earlier export `--changed-since` named: 0 changed, "),
+        "{index}"
+    );
+    assert!(!index.contains(&shown), "{index}");
 }

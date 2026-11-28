@@ -218,8 +218,9 @@ impl Reader {
         for entry in &mount.archive.entries {
             if entry.cipher.is_some() {
                 to.enciphered += 1;
-                match mount.read_entry_decrypted(&mut *file, entry, &self.keys) {
-                    Ok(bytes) if bytes.starts_with(&[0; 8]) && Program::read(&bytes).is_ok() => {
+                let read = mount.read_entry_decrypted(&mut *file, entry, &self.keys);
+                match read.map(|bytes| (kept(&bytes), bytes)) {
+                    Ok((Kept::Program, bytes)) => {
                         to.bodies.push(Body {
                             archive: Some(label.to_owned()),
                             entry: Some(entry.clone()),
@@ -227,8 +228,8 @@ impl Reader {
                             bytes,
                         });
                     }
-                    Ok(_) => {}
-                    Err(_) => to.unread += 1,
+                    Ok((Kept::Other, _)) => {}
+                    Ok((Kept::Unread, _)) | Err(_) => to.unread += 1,
                 }
             } else if depth > 0 && mount.entry_begins_archive(file, entry).unwrap_or(false) {
                 match mount.open_nested(file, entry, &self.keys) {
@@ -241,6 +242,23 @@ impl Reader {
                 }
             }
         }
+    }
+}
+
+/// What a deciphered entry is to the walk.
+#[derive(Debug, PartialEq, Eq)]
+enum Kept {
+    Program,
+    /// It starts as a program does and does not read as one: what its code names is not known.
+    Unread,
+    Other,
+}
+
+fn kept(bytes: &[u8]) -> Kept {
+    match (bytes.starts_with(&[0; 8]), Program::read(bytes).is_ok()) {
+        (true, true) => Kept::Program,
+        (true, false) => Kept::Unread,
+        (false, _) => Kept::Other,
     }
 }
 
@@ -334,3 +352,7 @@ fn relative(root: &Path, path: &Path) -> String {
     let from_root = path.strip_prefix(root).unwrap_or(path);
     from_root.to_string_lossy().replace('\\', "/")
 }
+
+#[cfg(test)]
+#[path = "gta6_script_source_tests.rs"]
+mod tests;

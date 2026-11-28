@@ -2761,6 +2761,37 @@ fn the_bits_of_a_round_float_in_a_constant_of_no_proved_kind_are_said_beside_it(
 }
 
 #[test]
+fn a_number_whose_bits_are_a_likely_float_is_written_as_the_float_where_it_stands_alone() {
+    let (head, names) = (head(), Names::default());
+    let value_in = |cx: &Context<'_>, e: &Expr| {
+        let mut out = String::new();
+        Writer::in_context(&mut out, cx, &head).value(e)
+    };
+    let cx = at(&names, Level::Source);
+    let value = |e: &Expr| value_in(&cx, e);
+    assert_eq!(value(&int(0x420C_0000)), "35.0f");
+    assert_eq!(value(&int(0x3E99_999A)), "0.3f");
+    assert_eq!(value(&int(0xBF80_0000u32 as i32)), "-1.0f");
+    // A small number, bits no few digits write, a hash and a float of its own are what they were.
+    assert_eq!(value(&int(7)), "7");
+    assert!(!value(&int(0x4212_3457)).ends_with('f'));
+    assert!(!value(&constant_of(0x3F80_0000, Kind::Hash)).ends_with('f'));
+    assert_eq!(value(&constant_of(0x3F80_0000, Kind::F32)), "1.0f");
+    // An operand keeps its bits, with the float said beside them: C# would compare floats.
+    let compared = Expr::binary(BinOp::Eq, Expr::Var(Var::Local(0)), int(0x3F80_0000));
+    let mut out = String::new();
+    let text = Writer::in_context(&mut out, &cx, &head).expr(&compared, 0);
+    assert!(text.contains("0x3F800000 /* 1.0f */"), "{text}");
+    // With `floats` off the number stands as it did.
+    let options = Options::at(Level::Source).without(Pass::Floats);
+    let off = Context::new(&names, Project::empty(), options);
+    assert_eq!(value_in(&off, &int(0x420C_0000)), "0x420C0000 /* 35.0f */");
+    let said = words(&Options::at(Level::Source)).replace("\n//   ", " ");
+    assert!(said.contains(LIKELY), "{said}");
+    assert!(!words(&options).replace("\n//   ", " ").contains(LIKELY));
+}
+
+#[test]
 fn two_whole_variables_compared_byte_by_byte_are_compared_with_equals_signs() {
     let mut head = head();
     for (n, kind) in [
@@ -3381,8 +3412,10 @@ fn a_switch_on_a_field_of_an_enum_whose_every_value_a_list_names_is_labelled_by_
 fn the_words_of_a_header_say_what_a_dot_and_an_arrow_are_where_fields_is_on() {
     let said = words(&Options::default()).replace("\n//   ", " ");
     assert!(said.contains(MEMBER), "{said}");
+    assert!(said.contains(UNKINDED), "{said}");
     let off = words(&Options::default().without(Pass::Fields)).replace("\n//   ", " ");
     assert!(!off.contains(MEMBER), "{off}");
+    assert!(!off.contains(UNKINDED), "{off}");
 }
 
 #[test]

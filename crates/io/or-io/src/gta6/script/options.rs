@@ -82,10 +82,12 @@ pub enum Pass {
     Boxing,
     Conditions,
     Runtime,
+    Floats,
+    InPlace,
 }
 
 impl Pass {
-    pub const ALL: [Pass; 48] = [
+    pub const ALL: [Pass; 50] = [
         Pass::Values,
         Pass::Escape,
         Pass::Forward,
@@ -134,6 +136,8 @@ impl Pass {
         Pass::Boxing,
         Pass::Conditions,
         Pass::Runtime,
+        Pass::Floats,
+        Pass::InPlace,
     ];
 
     /// The four passes `decompile` has always run.
@@ -190,6 +194,8 @@ impl Pass {
             Pass::Boxing => "boxing",
             Pass::Conditions => "conditions",
             Pass::Runtime => "runtime",
+            Pass::Floats => "floats",
+            Pass::InPlace => "in-place",
         }
     }
 

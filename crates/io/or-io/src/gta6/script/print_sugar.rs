@@ -4,9 +4,12 @@
 //! ⚠ The printer reads the parts and adds nothing. A form is refused at the first part that is
 //! not what it takes, and what is refused is written as the statements the tree holds.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
-use crate::gta6::script::ir::{BinOp, Callee, Expr, ExprSugar, Kind, Scalar, Stmt, TypeKey, Var};
+use crate::gta6::script::ir::{
+    BinOp, Callee, Expr, ExprSugar, Head, Kind, Scalar, Stmt, StoreKind, TypeKey, Var, Width,
+};
 use crate::gta6::script::passes::closures::{self, Inline};
 use crate::gta6::script::tree::{self, Group};
 use crate::gta6::script::{Context, Pass};
@@ -15,6 +18,193 @@ use super::{
     assigned_receiver, bits, bound_lambda, falls, is_zero, receiver, spell, takes, underneath,
     unread, wrap, Labels, Work, Writer, POSTFIX,
 };
+
+/// How often a body assigns and reads each variable, and which have their address taken.
+#[derive(Clone, Debug, Default)]
+pub(in crate::gta6::script) struct Tally {
+    writes: BTreeMap<Var, u32>,
+    reads: BTreeMap<Var, u32>,
+    addressed: BTreeSet<Var>,
+    /// The cells of the locals an address is taken of, by their number in the frame.
+    addresses: BTreeSet<u32>,
+}
+
+impl Tally {
+    pub(in crate::gta6::script) fn of(body: &[tree::Stmt]) -> Tally {
+        let mut tally = Tally::default();
+        tree::each_simple(body, &mut |stmt| {
+            for target in stmt.targets() {
+                *tally.writes.entry(*target).or_default() += 1;
+            }
+        });
+        tree::each_expr(body, &mut |top| {
+            top.walk(&mut |e| match e {
+                Expr::Var(var) => *tally.reads.entry(*var).or_default() += 1,
+                Expr::AddrOf { var, cell } => {
+                    tally.addressed.insert(*var);
+                    if let Var::Local(n) = var {
+                        tally.addresses.insert(n.saturating_add(*cell));
+                    }
+                }
+                _ => {}
+            });
+        });
+        tally
+    }
+
+    /// Whether an address the body takes of a local may reach the cells of `var`: one at or below it, with no local proved one cell wide between the two.
+    // ⚠ The reach `escape` gives an address handed out. A local in it is memory a callee may
+    // read, so the statement that assigns it is never left unwritten.
+    fn reached(&self, head: &Head, var: Var) -> bool {
+        let Var::Local(n) = var else {
+            return false;
+        };
+        let single = |cell: u32| {
+            let info = head.vars.get(&Var::Local(cell));
+            info.is_some_and(|info| info.single && info.width == Width::Cell)
+        };
+        self.addresses
+            .range(..=n)
+            .any(|from| !(from.saturating_add(1)..=n).any(single))
+    }
+}
+
+/// How often the statements `parts` read `var`.
+fn reads_in(parts: &[Stmt], var: Var) -> u32 {
+    let mut reads = 0u32;
+    for part in parts {
+        part.each_expr(&mut |top| {
+            top.walk(&mut |e| reads += u32::from(*e == Expr::Var(var)));
+        });
+    }
+    reads
+}
+
+/// Whether `e` calls a function: an intrinsic is none, it runs no code of a script's or the engine's.
+fn runs_code(e: &Expr) -> bool {
+    let mut found = false;
+    e.walk(&mut |node| {
+        found |= matches!(node, Expr::Call { callee, .. } if !matches!(callee, Callee::Intrinsic { .. }));
+    });
+    found
+}
+
+/// Whether `e` reads memory through an address.
+fn loads(e: &Expr) -> bool {
+    let mut found = false;
+    e.walk(&mut |node| found |= matches!(node, Expr::Load { .. } | Expr::LoadBytes { .. }));
+    found
+}
+
+/// The variable the group `made` makes, where the statement `next` is its one reader and takes it whole, so that what is made can be written where it is read: `this.f_10 = new T { .. };`, `M(x.Name, 1);`, `return new T();`.
+// ⚠ The text then works the reader's other operands out before what is made, where the code made
+// it first. So what is made must run no call unless nothing of the reader is worked out at all
+// (a variable assigned, a return, a field of a variable stored), and where it is an argument no
+// argument before it may call: a call could change what the making reads.
+// ⚠ A delegate bound to a body written in place is left to its own form.
+pub(in crate::gta6::script) fn made_in_place(
+    made: &tree::Stmt,
+    next: &tree::Stmt,
+    tally: &Tally,
+    head: &Head,
+) -> Option<Var> {
+    // A group that makes an object, an array or a delegate, or the one assignment of a bare one.
+    let (kind, parts) = match made {
+        tree::Stmt::Sugar(sugar) => match &**sugar {
+            tree::Sugar::Group { kind, parts } => (*kind, parts.as_slice()),
+            _ => return None,
+        },
+        tree::Stmt::Simple(alone @ Stmt::Assign { value, .. }) => match underneath(value) {
+            Expr::NewObject(_) => (Group::Construct, std::slice::from_ref(alone)),
+            Expr::NewArray { len, .. } if matches!(underneath(len), Expr::Const(_)) => {
+                (Group::Collection, std::slice::from_ref(alone))
+            }
+            _ => return None,
+        },
+        _ => return None,
+    };
+    if !matches!(kind, Group::Construct | Group::Collection | Group::Delegate) {
+        return None;
+    }
+    let Some(Stmt::Assign { target, .. }) = parts.first() else {
+        return None;
+    };
+    let var = *target;
+    if !(var.is_temporary() || matches!(var, Var::Local(_))) || tally.reached(head, var) {
+        return None;
+    }
+    if matches!(kind, Group::Delegate) && bound_lambda(parts, head.program).is_some() {
+        return None;
+    }
+    let count = |held: &BTreeMap<Var, u32>| held.get(&var).copied().unwrap_or_default();
+    let once = count(&tally.writes) == 1
+        && count(&tally.reads) == reads_in(parts, var).saturating_add(1)
+        && !tally.addressed.contains(&var);
+    if !once {
+        return None;
+    }
+    let mut quiet = true;
+    for part in parts {
+        part.each_expr(&mut |top| quiet &= !runs_code(top));
+    }
+    // A delegate's own binding is the one call its group holds, and runs no code.
+    let quiet = quiet || matches!(kind, Group::Delegate);
+    let is = |e: &Expr| *underneath(e) == Expr::Var(var);
+    let user = match next {
+        tree::Stmt::Simple(user) => user,
+        tree::Stmt::Return(Some(value)) => return is(value).then_some(var),
+        tree::Stmt::Sugar(sugar) => match &**sugar {
+            tree::Sugar::Group {
+                kind: Group::Field { .. },
+                parts,
+            } => match parts.as_slice() {
+                [user] => user,
+                _ => return None,
+            },
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let (addr, value) = match user {
+        Stmt::Assign { target, value } if *target != var => (None, value),
+        Stmt::Store { addr, value, .. } => (Some(addr), value),
+        Stmt::Eval(value) => (None, value),
+        _ => return None,
+    };
+    if addr.is_some_and(|addr| runs_code(addr) || (!quiet && loads(addr))) {
+        return None;
+    }
+    if is(value) {
+        return Some(var);
+    }
+    let Expr::Call { args, .. } = underneath(value) else {
+        return None;
+    };
+    let at = args.iter().position(is)?;
+    (quiet && !args[..at].iter().any(runs_code)).then_some(var)
+}
+
+/// `user` with `value` in the place of the one mention of `name`, where that mention stands as a whole value: after `= `, `(`, `, ` or `return `, and before `,`, `)` or the end.
+fn put_in(user: &str, name: &str, value: &str) -> Option<String> {
+    let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let mut found = None;
+    for (at, _) in user.match_indices(name) {
+        let (before, after) = (&user[..at], &user[at + name.len()..]);
+        if before.chars().next_back().is_some_and(word) || after.chars().next().is_some_and(word) {
+            continue;
+        }
+        if found.replace(at).is_some() {
+            return None;
+        }
+    }
+    let at = found?;
+    let (before, after) = (&user[..at], &user[at + name.len()..]);
+    let opens = ["= ", "(", ", ", "return "]
+        .iter()
+        .any(|open| before.ends_with(open));
+    let closes = after.is_empty() || after.starts_with(',') || after.starts_with(')');
+    (opens && closes && !value.contains('\n')).then(|| format!("{before}{value}{after}"))
+}
 
 /// The most elements a collection is written in one statement with.
 const ELEMENTS: u64 = 4096;
@@ -99,6 +289,49 @@ fn fills(call: &Stmt, var: Var) -> bool {
 }
 
 impl Writer<'_> {
+    /// The one statement a group and the statement after it are, where that statement is the one reader of what the group makes and `in-place` is on: without its semicolon.
+    pub(super) fn made_into(
+        &mut self,
+        made: &tree::Stmt,
+        next: Option<&tree::Stmt>,
+    ) -> Option<String> {
+        let next = next?;
+        let var = made_in_place(made, next, self.tally.as_ref()?, self.head)?;
+        let (text, name) = match made {
+            tree::Stmt::Simple(alone) => (self.statement(alone), self.target(alone, var)),
+            tree::Stmt::Sugar(sugar) => {
+                let tree::Sugar::Group { kind, parts } = &**sugar else {
+                    return None;
+                };
+                let (text, held) = match kind {
+                    Group::Construct => self.construction(parts),
+                    Group::Collection => self.collection(parts),
+                    Group::Delegate => self.delegate(parts),
+                    _ => None,
+                }?;
+                if held != parts.len() {
+                    return None;
+                }
+                (text, self.target(parts.first()?, var))
+            }
+            _ => return None,
+        };
+        let value = text.strip_prefix(&format!("{name} = "))?.to_owned();
+        let user = match next {
+            tree::Stmt::Simple(user) => self.statement(user),
+            tree::Stmt::Return(Some(value)) => format!("return {}", self.handed_back(value)),
+            tree::Stmt::Sugar(sugar) => match &**sugar {
+                tree::Sugar::Group {
+                    kind: Group::Field { owner },
+                    parts,
+                } => self.field_store(*owner, parts)?.0,
+                _ => return None,
+            },
+            _ => return None,
+        };
+        put_in(&user, &self.var(var), &value).map(|text| format!("{text};"))
+    }
+
     /// Writes a group as the one statement it reads as, then whatever of it that statement does not hold.
     pub(super) fn group(&mut self, kind: Group, parts: &[Stmt], indent: usize) {
         if matches!(kind, Group::Delegate) && self.lambda(parts, indent) {
@@ -599,12 +832,35 @@ impl Writer<'_> {
             _ => return None,
         };
         let text = self.simple(store);
-        let value = match self.constant_for(Some(owner), store) {
-            Some(value) => value,
-            None => assigned(&text, &base, *offset)?.to_owned(),
+        let value = match (
+            self.constant_for(Some(owner), store),
+            self.left_whole(owner, store),
+        ) {
+            (Some(value), _) => value,
+            // The statement is still one the plain form writes as this store.
+            (None, Some(value)) => assigned(&text, &base, *offset).map(|_| value)?,
+            (None, None) => assigned(&text, &base, *offset)?.to_owned(),
         };
         let name = self.field_name(Some(owner), *offset);
         Some((format!("{base}.{name} = {value}"), 1))
+    }
+
+    /// The value a store of four bytes gives a field declared four bytes of no proved kind, with no word on the narrowing: the field's width says what is kept.
+    // ⚠ Never a constant, whose own spelling the plain form settles.
+    fn left_whole(&mut self, owner: TypeKey, store: &Stmt) -> Option<String> {
+        let Stmt::Store {
+            kind: StoreKind::I32,
+            offset,
+            value,
+            ..
+        } = store
+        else {
+            return None;
+        };
+        let field = self.project.field(owner, *offset)?;
+        let plain = field.kind == Kind::Unknown && field.bytes == 4;
+        let constant = matches!(bare(bits(value)), Expr::Const(_));
+        (self.sharp && plain && !constant).then(|| self.expr(bits(value), 0))
     }
 
     /// A constant a store writes to a field the project gives a kind as wide as the store, as that kind's literal: `0` to a `byte`, `false` to a `bool`.

@@ -437,7 +437,11 @@ fn an_object_made_then_constructed_apart_reads_as_the_two_statements_at_the_sour
             simple(Stmt::Eval(builtin(&ctor, vec![local(1), p(0)]))),
         ]
     };
-    let apart = "    local_1 = new type_0123456789ABCDEF();\n    type_0123456789ABCDEF.Ctor(local_1, p0);\n";
+    // The object is read by the call alone, so it is written where the call takes it.
+    let (text, read) = round_trip(&function(pair()));
+    let apart = "    type_0123456789ABCDEF.Ctor(new type_0123456789ABCDEF(), p0);\n";
+    assert!(text.contains(apart), "{text}");
+    assert_eq!(read, Ok(()), "{text}");
     assert_eq!(source_says(pair(), apart), Ok(true));
     let one = "    local_1 = new type_0123456789ABCDEF(p0);\n";
     assert_eq!(source_says(pair(), one), Ok(false));
@@ -1362,4 +1366,114 @@ fn a_field_of_an_element_held_in_place_reads_as_the_field_of_the_element() {
     let at = "    DEMO.USE((&local_1[p1])->f_0);\n";
     assert_eq!(declared_says(read(0), &values, at), Ok(true));
     assert_eq!(declared_says(read(0), &ints, first), Ok(false));
+}
+
+#[test]
+fn what_a_group_makes_is_written_where_the_next_statement_reads_it_alone() {
+    let own = 0x1122_3344;
+    let made = |extra: Vec<Stmt>| {
+        let mut parts = vec![set(Var::Local(1), Expr::NewObject(a_type()))];
+        parts.extend(extra);
+        construct(Sugar::Group {
+            kind: Group::Construct,
+            parts,
+        })
+    };
+    let bound = || {
+        let ctor = format!("{}.Ctor", a_type().name);
+        let function = Expr::FunctionRef {
+            program: own,
+            at: 0x80,
+        };
+        construct(Sugar::Group {
+            kind: Group::Delegate,
+            parts: vec![
+                set(Var::Local(1), Expr::NewObject(a_type())),
+                Stmt::Eval(builtin(&ctor, vec![local(1), p(0), function])),
+            ],
+        })
+    };
+    let stored = |addr: Expr| {
+        simple(Stmt::Store {
+            kind: StoreKind::U64,
+            addr,
+            offset: 0x38,
+            value: local(1),
+        })
+    };
+    let field = Stmt::Store {
+        kind: StoreKind::U64,
+        addr: local(1),
+        offset: 8,
+        value: p(1),
+    };
+    // An object made and filled, stored to a field of a variable by the statement after it.
+    let filled = function(vec![made(vec![field.clone()]), stored(p(0))]);
+    let line = "p0.f_38 = new type_0123456789ABCDEF { f_8 = p1 };";
+    reads_back_alone(
+        &filled,
+        line,
+        "p0.f_38 = new type_0123456789ABCDEF { f_8 = p0 };",
+    );
+    reads_back_alone(
+        &filled,
+        line,
+        "p0.f_40 = new type_0123456789ABCDEF { f_8 = p1 };",
+    );
+    // Returned, and handed to a call after an argument that calls nothing.
+    let bare = || simple(set(Var::Local(1), Expr::NewObject(a_type())));
+    let returned = function(vec![bare(), tree::Stmt::Return(Some(local(1)))]);
+    reads_back_alone(
+        &returned,
+        "return new type_0123456789ABCDEF();",
+        "return p0;",
+    );
+    let handed = function(vec![bound(), used(local(1))]);
+    reads_back_alone(
+        &handed,
+        "DEMO.USE(p0.func_000080);",
+        "DEMO.USE(p1.func_000080);",
+    );
+    // Read again further on, the variable keeps its statement.
+    let twice = function(vec![bare(), stored(p(0)), used(local(1))]);
+    let (text, read) = round_trip(&twice);
+    assert!(
+        text.contains("local_1 = new type_0123456789ABCDEF();"),
+        "{text}"
+    );
+    assert!(text.contains("p0.f_38 = local_1;"), "{text}");
+    assert_eq!(read, Ok(()), "{text}");
+    // An argument before it that calls could change what the making reads: the two stay apart.
+    let after_call = function(vec![
+        bound(),
+        simple(Stmt::Eval(native(
+            "USE",
+            vec![native("GET", vec![p(1)]), local(1)],
+        ))),
+    ]);
+    let (text, read) = round_trip(&after_call);
+    assert!(text.contains("DEMO.USE(DEMO.GET(p1), local_1);"), "{text}");
+    assert_eq!(read, Ok(()), "{text}");
+    // With the name off every statement stands as it did.
+    let options = Options::default().without(Pass::InPlace);
+    let names = Names::default();
+    let project = crate::gta6::script::Project::empty();
+    let cx = crate::gta6::script::Context::new(&names, project, options);
+    let mut text = String::new();
+    print::function_in(&mut text, &filled, &cx);
+    assert!(text.contains("p0.f_38 = local_1;"), "{text}");
+    assert_eq!(
+        agrees_source(&filled, &text, options, false),
+        Ok(()),
+        "{text}"
+    );
+    // A local an address handed out below it may reach keeps the statement that assigns it.
+    let seen = function(vec![
+        simple(Stmt::Eval(native("FILL", vec![address(0)]))),
+        bare(),
+        stored(p(0)),
+    ]);
+    let (text, read) = round_trip(&seen);
+    assert!(text.contains("p0.f_38 = local_1;"), "{text}");
+    assert_eq!(read, Ok(()), "{text}");
 }

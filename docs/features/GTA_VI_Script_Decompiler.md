@@ -85,6 +85,16 @@ was.
   functions that every call names, passes an `int` widened by its sign is read as an `int`. A
   constant of no proved kind whose bits are those of a round float keeps its bits and has the
   float written beside it as a comment, `0x3F800000 /* 1.0f */`: the bits alone prove no kind.
+  `floats` writes such a constant as the float itself, `35.0f` or `0.3f`, where it is assigned,
+  stored, passed or returned and is a round float or one that four decimal digits write: a
+  reading of the bits and no proof, which the header says and `--no floats` takes back. An
+  operand of a comparison or of arithmetic keeps its bits and the comment, since C# would
+  compare floats there, and a hash is never read so.
+  `in-place` writes an object, an array or a delegate where the statement after it reads it,
+  `this.f_10 = new T { f_8 = x };`, `M(x.Name, 1);`, `return new T();`, where that statement
+  is its one reader and takes it whole. The text then works that statement's other operands out
+  before what is made, so what is made runs no call unless nothing else is worked out, and no
+  argument before it calls; a local an address handed out may reach keeps its own statement.
 - **Statements**: `structure`, `gotos`, `switch-on`, `for`, `conditions`. `conditions` writes a
   truth chosen by an `if` as one condition, `x = a && b`, and an `if` alone inside another as
   `if (a && b)`.
@@ -102,7 +112,10 @@ was.
 - **Classes**: `fields`, `classes`, `receivers`, `constructors`, `operators`. An access through a
   variable the kinds pass proves holds an object of a script type is a field of that type, where
   the bytes lie in the type and no field the layouts state overlaps them; such a field is
-  declared in its class with the width every access of it takes and no proved kind. A
+  declared in its class with the width every access of it takes and no proved kind. One of
+  four bytes, `Bytes4`, is read bare where the read widens its bytes by their sign, as an int's
+  are, and under `(uint)` where it widens them with zeroes, and a value stored to it is written
+  with no cast: the declaration states the width, and the header says the rule. A
   reference field is of the script type of the objects stored in it, where they all lie on one
   line of types. `script
   export` reads every program's code a second time once the project is settled, so that the

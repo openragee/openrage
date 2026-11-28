@@ -19,8 +19,8 @@ use super::passes::closures::Inline;
 use super::passes::sugar_statements::enumerated;
 use super::passes::{async_await, closures};
 use super::print::{
-    bits_equal, callee_name, cells_of, declared_at, fits_int, reads_through, script_enum,
-    true_csharp,
+    bits_equal, callee_name, cells_of, declared_at, fits_int, made_in_place, reads_through,
+    script_enum, true_csharp, Tally,
 };
 use super::tree;
 use super::{Level, Options, Pass, Project};
@@ -86,6 +86,7 @@ pub fn agrees_within(f: &tree::Function, text: &str, limit: usize) -> Result<(),
                 limit,
                 sharp: None,
                 sites: HashSet::new(),
+                tally: Tally::default(),
                 this: None,
                 project: None,
                 lambdas: None,
@@ -164,6 +165,7 @@ fn agrees_written(
         sharp: Some(options),
         this: receiver.then_some(Var::Param(0)),
         sites: declared_at(&f.body, &f.head),
+        tally: Tally::of(&f.body),
         project,
         lambdas: bound.map(|(lambdas, _)| lambdas),
         sited: bound.map(|(_, sited)| sited.clone()).unwrap_or_default(),
@@ -328,6 +330,24 @@ fn none() -> Sk {
 /// A source form the reader does not hold against the function yet, by what it is.
 fn unread(form: &str) -> Sk {
     Sk::Op(UNREAD, vec![Sk::Name(form.to_owned())])
+}
+
+/// Puts `value` in the place of each mention of the variable `name` in `sk`, and says how many there were.
+// An explicit stack: a chain of operators nests as deep as the text is long.
+fn put_in(sk: &mut Sk, name: &str, value: &Sk) -> usize {
+    let mut put = 0;
+    let mut open = vec![sk];
+    while let Some(sk) = open.pop() {
+        match sk {
+            Sk::Name(held) if held == name => {
+                *sk = value.clone();
+                put += 1;
+            }
+            Sk::Op(_, items) | Sk::Call { args: items, .. } => open.extend(items.iter_mut()),
+            Sk::Num(..) | Sk::Name(_) => {}
+        }
+    }
+    put
 }
 
 /// The mark of [`unread`].
@@ -2608,6 +2628,8 @@ struct Held<'a> {
     // ⚠ The printer's own placement, read from the same function: what is held against the
     // text is the loop a `foreach` is, never where its item is declared.
     sites: HashSet<*const Stmt>,
+    /// How often the function assigns and reads each variable: what `in-place` asks.
+    tally: Tally,
     /// The project the printer had, where the text was written with one: without it what the project decides is a form not read.
     project: Option<&'a Project>,
     /// The bodies of the lambdas written where they are bound, by offset, where the text is written with them.
@@ -3985,9 +4007,64 @@ impl Held<'_> {
                 n += 1;
                 continue;
             }
+            if let Some(user) = self.made_into(stmt, stmts.get(n), d)? {
+                out.push(user);
+                n += 1;
+                continue;
+            }
             self.node(stmt, &mut out, d)?;
         }
         Ok(out)
+    }
+
+    /// The statement after a group with what the group makes in the place of its one mention there, where the printer writes the two as one.
+    // ⚠ Whether it does is the printer's own decision ([`made_in_place`]): what is held against
+    // the text is the statement and what is made.
+    fn made_into(
+        &self,
+        made: &tree::Stmt,
+        next: Option<&tree::Stmt>,
+        d: u32,
+    ) -> Result<Option<Node>, ReparseError> {
+        let (true, Some(next)) = (self.on(Pass::InPlace), next) else {
+            return Ok(None);
+        };
+        let Some(var) = made_in_place(made, next, &self.tally, self.head) else {
+            return Ok(None);
+        };
+        let stated = match made {
+            tree::Stmt::Simple(alone) => Some(self.simple(alone, d)?),
+            tree::Stmt::Sugar(sugar) => match &**sugar {
+                tree::Sugar::Group { kind, parts } => match kind {
+                    tree::Group::Construct => (self.construction(parts, d)?)
+                        .filter(|(_, held)| *held == parts.len())
+                        .map(|(stated, _)| stated),
+                    tree::Group::Collection => self.collection(parts, d)?,
+                    tree::Group::Delegate => self.delegate(parts, d)?,
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(Sk::Op("=", mut pair)) = stated else {
+            return Ok(None);
+        };
+        if pair.len() != 2 {
+            return Ok(None);
+        }
+        let value = pair.remove(1);
+        let mut user = Vec::new();
+        self.node(next, &mut user, d)?;
+        let (Some(mut user), true) = (user.pop(), user.is_empty()) else {
+            return Ok(None);
+        };
+        let name = self.var(var);
+        let mut put = 0usize;
+        for sk in &mut user.head {
+            put += put_in(sk, &name, &value);
+        }
+        Ok((put == 1).then_some(user))
     }
 
     fn node(&self, stmt: &tree::Stmt, out: &mut Vec<Node>, d: u32) -> Result<(), ReparseError> {
@@ -4527,6 +4604,7 @@ impl Held<'_> {
             sharp: self.sharp,
             this: None,
             sites: declared_at(stmts, &body.head),
+            tally: Tally::of(stmts),
             project: self.project,
             lambdas: None,
             sited: BTreeSet::new(),

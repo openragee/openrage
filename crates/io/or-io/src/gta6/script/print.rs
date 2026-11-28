@@ -45,10 +45,12 @@ use super::passes::types::yielded_shape;
 use super::passes::{async_await, classes, closures};
 use super::project::layouts;
 use super::project::signatures::native_key;
+use super::project::FieldFacts;
 use super::project::{Param, TypeFacts};
 use super::tree;
 use super::{Context, Level, Options, Pass, Project, Stats};
 
+pub(super) use constructs::{made_in_place, Tally};
 use lambda::*;
 pub(super) use lambda::{
     bound_in_place, kind_types, method_hiding, method_in, types_of, unimported, Hidden, Lambdas,
@@ -75,6 +77,23 @@ const MEMBER: &str = "p.f_10 is the field at byte 0x10 of what p points at where
                       one cell, and byte 0x10 of the cells of p where p holds several; (&x)->f_10 is \
                       byte 0x10 from where x stands, and e->f_10 byte 0x10 of what any other e \
                       points at";
+
+/// What a header says of a field of four bytes of no proved kind, where `fields` is on.
+const UNKINDED: &str = "a field declared Bytes4 is four bytes of no proved kind: read bare it is those \
+                        bytes widened by their sign, as an int's are, (uint) widens them with zeroes, \
+                        and a value stored to it leaves its low four bytes there";
+
+/// Whether a read as `ty` is the one a field of four bytes of no proved kind is written bare for: its bytes widened by their sign.
+// ⚠ The declaration states the width and no kind: nothing here says the bytes are an int's.
+pub(super) fn unkinded(field: &FieldFacts, ty: Scalar) -> bool {
+    field.kind == Kind::Unknown && field.bytes == 4 && ty == Scalar::I32
+}
+
+/// What a header says of a float written for a number of no proved kind, where `floats` is on.
+const LIKELY: &str =
+    "35.0f where a number of no proved kind is assigned, stored, passed or returned \
+                      is the number whose bits are that float's, read as the float it most likely \
+                      is: a reading of the bits and no proof";
 
 /// What a header says of a constant written without the cast C# would ask for, where `signs` is on.
 const NARROW: &str = "0x89ABCDEF alone, as an argument of a native or where an int is taken, is \
@@ -117,6 +136,10 @@ fn words(options: &Options) -> String {
     let mut said: Vec<&str> = WORDS.to_vec();
     if options.on(Pass::Fields) {
         said.push(MEMBER);
+        said.push(UNKINDED);
+    }
+    if options.on(Pass::Floats) {
+        said.push(LIKELY);
     }
     if options.on(Pass::Signs) {
         said.push(NARROW);
@@ -608,6 +631,8 @@ struct Writer<'a> {
     /// The assignments the readable form declares their target at, by where the tree holds them.
     // ⚠ Asked only whether a statement is in it: nothing is ever written in its order.
     sites: HashSet<*const Stmt>,
+    /// How often the body being written assigns and reads each variable, where `in-place` is on.
+    tally: Option<Tally>,
     /// What the programs of the install state: the text of a string, the type a field is declared with.
     project: &'a Project,
     /// The passes whose constructs are written as source, and the level.
@@ -647,6 +672,7 @@ impl<'a> Writer<'a> {
             head,
             declared: None,
             sites: HashSet::new(),
+            tally: None,
             project: Project::empty(),
             options: Options::baseline(),
             sharp: false,
@@ -842,10 +868,23 @@ impl<'a> Writer<'a> {
         written.join(", ")
     }
 
+    /// What a `return` hands back, as it is written after the word.
+    fn handed_back(&mut self, value: &Expr) -> String {
+        let narrow = match self.yields_narrow() {
+            true => self.narrow(value, true),
+            false => None,
+        };
+        let narrow = narrow.or_else(|| self.returned_whole(value));
+        let narrow = narrow.or_else(|| self.returned_zero(value));
+        narrow.unwrap_or_else(|| self.value(value))
+    }
+
     /// Writes a body `indent` levels in, under the variables it declares at its top.
     fn block(&mut self, body: &[tree::Stmt], indent: usize) {
         let placement = placement(body, self.old, self.sharp.then_some(self.head));
         self.sites = placement.sites;
+        let folds = self.sharp && self.options.on(Pass::InPlace);
+        self.tally = folds.then(|| Tally::of(body));
         let mut hoisted: Vec<(String, Vec<String>)> = Vec::new();
         for var in &placement.hoisted {
             let (ty, name) = (self.declared_type(*var), self.var(*var));
@@ -882,6 +921,7 @@ impl<'a> Writer<'a> {
                             true => None,
                             false => self.constructed(first, rest.first()),
                         };
+                        let pair = pair.or_else(|| self.made_into(first, rest.first()));
                         match pair {
                             Some(text) => {
                                 self.line(indent, &text);
@@ -1047,13 +1087,7 @@ impl<'a> Writer<'a> {
                 self.line(indent, "return;");
             }
             tree::Stmt::Return(Some(value)) => {
-                let narrow = match self.yields_narrow() {
-                    true => self.narrow(value, true),
-                    false => None,
-                };
-                let narrow = narrow.or_else(|| self.returned_whole(value));
-                let narrow = narrow.or_else(|| self.returned_zero(value));
-                let value = narrow.unwrap_or_else(|| self.value(value));
+                let value = self.handed_back(value);
                 self.line(indent, &format!("return {value};"));
             }
             tree::Stmt::Goto(label) => self.line(indent, &format!("goto {label};")),
@@ -1406,6 +1440,7 @@ impl<'a> Writer<'a> {
                 // as anything else is said here, as it is of any place.
                 let declared = self.project.field(owner, *offset);
                 let own = declared.is_some_and(|field| field.kind == ty.kind());
+                let own = own || declared.is_some_and(|field| unkinded(field, *ty));
                 let own = own || self.truth_field(owner, e);
                 return match own {
                     true => (place, POSTFIX),
@@ -2010,6 +2045,9 @@ impl<'a> Writer<'a> {
 
     /// `e` where only its bits count: a value assigned, passed or returned.
     fn value(&mut self, e: &Expr) -> String {
+        if let Some(float) = self.likely(e).filter(|_| !self.plain) {
+            return float;
+        }
         match self.plain {
             true => self.expr(e, 0),
             false => self.expr(bits(e), 0),
@@ -2656,6 +2694,9 @@ impl<'a> Writer<'a> {
 
     /// `value` as the low `to.bytes()` bytes a narrow store writes: under a cast unless its kind has that width.
     fn stored(&mut self, to: Scalar, value: &Expr) -> String {
+        if let Some(float) = self.likely(value).filter(|_| to.bytes() == 4) {
+            return float;
+        }
         // Four bytes are written whatever sign widened the constant they are of.
         if let Some(text) = self.narrow(value, true).filter(|_| to.bytes() == 4) {
             return text;

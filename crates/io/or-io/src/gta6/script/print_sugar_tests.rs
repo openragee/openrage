@@ -70,11 +70,11 @@ fn lines_in(head: Head, names: &Names, options: Options, body: Vec<tree::Stmt>) 
     text[open..close].to_owned()
 }
 
-/// The lines of `body` at `Source`, with the passes of `off` switched off.
+/// The lines of `body` at `Source`, with the passes of `off` switched off, each group written as the statement it is.
+// `in-place` is off: these tests read a group's own statement, which that name would write into the next.
 fn lines(off: &[Pass], body: Vec<tree::Stmt>) -> String {
-    let options = off
-        .iter()
-        .fold(Options::default(), |o, pass| o.without(*pass));
+    let apart = Options::default().without(Pass::InPlace);
+    let options = off.iter().fold(apart, |o, pass| o.without(*pass));
     lines_in(head(), &Names::default(), options, body)
 }
 
@@ -1231,6 +1231,47 @@ fn a_field_the_project_proves_a_bool_is_read_and_tested_as_one() {
     // A byte of no proved kind is read as the byte it is.
     let text = written_in(&function_of(head(), body), &at(&names, Level::Source));
     assert!(text.contains("(byte)p0.f_10 != 0"), "{text}");
+}
+
+#[test]
+fn a_field_declared_four_bytes_of_no_kind_is_read_and_stored_with_no_word_on_its_width() {
+    let owner = TypeKey(0xAB);
+    let mut project = Project::default();
+    let plain = |offset: u32, kind: Kind| FieldFacts {
+        offset,
+        bytes: 4,
+        kind,
+    };
+    project.fields.insert(
+        owner,
+        vec![plain(0x10, Kind::Unknown), plain(0x14, Kind::I32)],
+    );
+    let read = |ty: Scalar, offset: u32| {
+        Expr::sugar(ExprSugar::Field { owner }, load(ty, param(0), offset))
+    };
+    let set = |offset: u32, value: Expr| {
+        let stored = store(StoreKind::I32, param(0), offset, value);
+        group(Group::Field { owner }, vec![stored])
+    };
+    let body = vec![
+        used(vec![read(Scalar::I32, 0x10), read(Scalar::U32, 0x10)]),
+        set(0x10, param(1)),
+        set(0x10, int(7)),
+        set(0x14, param(1)),
+    ];
+    let names = Names::default();
+    let cx = Context::new(&names, &project, Options::default());
+    let text = written_in(&function_of(head(), body.clone()), &cx);
+    // Its bytes widened by their sign are the field itself, and widened with zeroes say so.
+    assert!(text.contains("USE(p0.f_10, (uint)p0.f_10)"), "{text}");
+    assert!(text.contains("    p0.f_10 = p1;\n"), "{text}");
+    assert!(text.contains("    p0.f_10 = 7;\n"), "{text}");
+    // A field proved an int still takes the cast C# asks of a cell.
+    assert!(text.contains("    p0.f_14 = (int)p1;\n"), "{text}");
+    // A field no project declares keeps the cast that is all there is to say its width.
+    let text = written_in(&function_of(head(), body), &at(&names, Level::Source));
+    assert!(text.contains("USE((int)p0.f_10, (uint)p0.f_10)"), "{text}");
+    assert!(text.contains("    p0.f_10 = (int)p1;\n"), "{text}");
 }
 
 #[test]

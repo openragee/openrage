@@ -131,6 +131,35 @@ pub(super) fn round_float(c: &Const) -> Option<f32> {
         .filter(|_| widened && round)
 }
 
+/// The float a 32-bit constant of no proved kind most likely is: a round one, or one a few decimal digits write.
+// ⚠ A reading of the bits and no proof: a number may be such a float by accident. Written in the
+// constant's place only where `floats` is on and the constant stands alone, and never for a hash.
+pub(super) fn likely_float(c: &Const) -> Option<f32> {
+    if c.kind == Kind::Hash {
+        return None;
+    }
+    if let Some(float) = round_float(c) {
+        return Some(float);
+    }
+    let low = c.bits as u32;
+    let half = c.bits >> 32;
+    let widened = half == 0 || (half == 0xFFFF_FFFF && low >> 31 == 1);
+    let own = c.kind.is_integer() || c.kind == Kind::Unknown;
+    let sized = (100..=150).contains(&((low >> 23) & 0xFF));
+    if !(own && widened && sized) {
+        return None;
+    }
+    let float = f32::from_bits(low);
+    // The shortest digits that give the float back: `0.3`, `1.91`, never a tail of noise.
+    let written = format!("{:?}", float.abs());
+    let digits = written.trim_start_matches(['0', '.']).replace('.', "");
+    let short = !written.contains('e') && digits.trim_end_matches('0').len() <= FLOAT_DIGITS;
+    short.then_some(float)
+}
+
+/// The decimal digits a float of no proved kind is written by at most, to be read as one.
+const FLOAT_DIGITS: usize = 4;
+
 /// The literal of the float a float parameter reads the bits of `c` as, where `c` is a constant of no float kind of its own whose 32 bits are a float of a size a script states.
 // ⚠ Only for a constant a float parameter takes: what takes it says the kind, never the bits.
 fn taken_float(c: &Const) -> Option<String> {
@@ -251,6 +280,24 @@ impl Writer<'_> {
         (text, binds)
     }
 
+    /// The float literal a constant of no proved kind is written as where it stands alone and `floats` is on: `35.0f` for the number whose bits are that float's.
+    pub(super) fn likely(&self, e: &Expr) -> Option<String> {
+        if !(self.sharp && self.options.on(Pass::Floats)) {
+            return None;
+        }
+        let mut inner = bits(e);
+        while let Expr::Cast { to, e: under } = inner {
+            if to.bytes() < 4 || to.kind().is_float() {
+                return None;
+            }
+            inner = &**under;
+        }
+        let Expr::Const(c) = inner else {
+            return None;
+        };
+        likely_float(c).map(|float| literal(&Const::f32(float)))
+    }
+
     /// `e` where it stands alone in a place that takes 32 bits: an `int` constant without its cast, and a float under a 32-bit reading as the float; `None` for anything else.
     // ⚠ Never for an operand: `x < 0x9A3B5C7D` compares with a `uint` in C#, and `x + 1.0f` adds floats.
     // `exact` says the place holds 32 bits and no more; an argument of a native is taken as 32
@@ -258,6 +305,9 @@ impl Writer<'_> {
     pub(super) fn narrow(&mut self, e: &Expr, exact: bool) -> Option<String> {
         if !self.sharp {
             return None;
+        }
+        if let Some(float) = self.likely(e) {
+            return Some(float);
         }
         let e = bits(e);
         // Either arm of a choice stands where the choice does.

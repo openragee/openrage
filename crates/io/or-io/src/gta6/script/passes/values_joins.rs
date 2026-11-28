@@ -97,8 +97,10 @@ enum Root {
     Own,
 }
 
-/// Whether `value` is a constant, or one cell of a variable that only an assignment naming it can change.
-fn atom(facts: &Facts, head: &Head, value: &Expr) -> bool {
+/// Whether `value` is a constant, or one cell of a variable that only an assignment naming it can change; with `addresses`, also the address of a frame variable.
+// A frame variable's address is one cell for the whole run of the function, whatever the
+// variable is given meanwhile: no assignment between the stack variable's and its read changes it.
+fn atom(facts: &Facts, head: &Head, value: &Expr, addresses: bool) -> bool {
     match value {
         Expr::Const(_) => true,
         Expr::Var(var) => {
@@ -109,6 +111,10 @@ fn atom(facts: &Facts, head: &Head, value: &Expr) -> bool {
                     .is_some_and(|info| info.width == Width::Cells);
             !many && facts.named_only(*var)
         }
+        Expr::AddrOf {
+            var: Var::Local(_) | Var::Param(_),
+            ..
+        } => addresses,
         _ => false,
     }
 }
@@ -216,8 +222,8 @@ fn settle(sources: &BTreeMap<Var, Vec<Expr>>) -> Option<HashMap<Var, Root>> {
     None
 }
 
-/// Replaces each stack variable that only ever carries one constant or one variable by that, and removes its assignments.
-pub(super) fn roots(f: &mut cfg::Function) -> bool {
+/// Replaces each stack variable that only ever carries one constant or one variable, or with `addresses` one frame variable's address, by that, and removes its assignments.
+pub(super) fn roots(f: &mut cfg::Function, addresses: bool) -> bool {
     let facts = Facts::of(f);
     let mut sources: BTreeMap<Var, Vec<Expr>> = BTreeMap::new();
     let mut varied: HashSet<Var> = HashSet::new();
@@ -225,7 +231,8 @@ pub(super) fn roots(f: &mut cfg::Function) -> bool {
         for stmt in &block.stmts {
             match stmt {
                 Stmt::Assign { target, value }
-                    if matches!(target, Var::Stack { .. }) && atom(&facts, &f.head, value) =>
+                    if matches!(target, Var::Stack { .. })
+                        && atom(&facts, &f.head, value, addresses) =>
                 {
                     sources.entry(*target).or_default().push(value.clone());
                 }
@@ -1568,6 +1575,20 @@ fn only_tested(facts: &Facts, join: &Block, var: Var) -> bool {
     threaded && (alone || copies)
 }
 
+/// The value a choice between `yes` and `no` on `cond` always gives, where one arm reads the variable the test pins and the other gives the constant the test proves it holds there.
+// `if (x != 0) { y = x; } else { y = 0; }` is `y = x;`: where the test fails `x` is the zero the
+// other arm gives. No test is left, and the variable is read once, where the arm read it; nothing
+// ran between the test and that read. ⚠ The test reads every bit of one cell, and the constant
+// is the same cell, not the same number at another width.
+fn kept(facts: &Facts, head: &Head, cond: &Expr, yes: &Expr, no: &Expr) -> Option<Expr> {
+    let (var, cell, on_then) = super::pinned(cond)?;
+    let (held, value) = if on_then { (yes, no) } else { (no, yes) };
+    let narrow = one_cell(head, &Expr::Var(var)) && !facts.widths.contains_key(&var);
+    let same = matches!(held, Expr::Const(c) if c.bits == cell);
+    let read = matches!(super::whole_cell(value), Expr::Var(read) if *read == var);
+    (narrow && same && read).then(|| value.clone())
+}
+
 /// The variable block `b` chooses a value for, the choice, and the block its two arms meet in, where `b` branches to two arms that each only assign that variable.
 fn choice(
     facts: &Facts,
@@ -1596,6 +1617,9 @@ fn choice(
     let apart = join != then && join != els;
     if target != other || join != meet || !one || !apart {
         return None;
+    }
+    if let Some(value) = kept(facts, head, cond, yes, no) {
+        return Some((target, value, join));
     }
     let carried = matches!(target, Var::Stack { .. });
     let values = chosen(facts, head, yes, carried) && chosen(facts, head, no, carried);

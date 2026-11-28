@@ -36,11 +36,14 @@ pub fn run(f: &mut cfg::Function, names: &Names, stats: &mut Stats) {
 /// [`run`] as the pipeline calls it: `escape`, `constants`, `coalesce`, `wide-joins`, `repeats` and `aggregates` each switch on a finer rule of this pass.
 // `escape`: two accesses are told apart by the variables their addresses are in, and an allocation
 // may change places with a call. `constants`: a test of constants is decided at every kind it is
-// taken at, and so is a test of the variable the statement straight before it gave a constant.
+// taken at, and so is a test of the variable the statement straight before it gave a constant;
+// an arm that gives the tested variable the constant its test proved it holds leaves it as it is.
 // `coalesce`: a local that copies a temporary keeps its name, a stack variable copied into or from
 // a local is that local where their values never need to differ, and two arms that only choose a
 // value for one variable are the one assignment of the choice, a stack slot's arms even where
-// they call or choose. `aggregates`: a temporary of
+// they call or choose; a choice between a variable and the constant its test proved it holds is
+// the variable, and a stack variable that only ever carries one frame variable's address is that
+// address. `aggregates`: a temporary of
 // several cells that only ever holds one, its address handed out or not, is a temporary of one
 // cell. `wide-joins`: temporaries of one
 // cell each that only ever carry a value of several cells whole are one variable of its cells,
@@ -72,12 +75,13 @@ pub fn run_in(f: &mut cfg::Function, cx: &Context<'_>, _stats: &mut Stats) {
             changed |= fold::mirror(f);
             changed |= fold::fold(f, finer);
             changed |= fold::copies(f, keep);
-            changed |= joins::roots(f);
+            changed |= joins::roots(f, keep);
             changed |= joins::merge(f);
             changed |= keep && joins::unite(f);
             changed |= wide && joins::wholes(f);
             changed |= cells::gather(f, single);
             changed |= again && repeats(&mut f.cfg);
+            changed |= ordered && proved(f);
             changed |= tidy(&f.head, &mut f.cfg, ordered);
             if !changed {
                 settled = true;
@@ -465,6 +469,130 @@ fn repeats(cfg: &mut Cfg) -> bool {
     let changed = !decided.is_empty();
     for (b, to) in decided {
         cfg.blocks[b].term = Terminator::Jump(to);
+    }
+    changed
+}
+
+/// Whether an operator of equality at `at` compares every bit of its two cells.
+fn whole_compare(at: &Kind) -> bool {
+    matches!(
+        at,
+        Kind::I64
+            | Kind::U64
+            | Kind::Unknown
+            | Kind::Pointer
+            | Kind::Object(_)
+            | Kind::String
+            | Kind::Array(_)
+    )
+}
+
+/// `e` under the readings that keep every bit of its cell.
+fn whole_cell(e: &Expr) -> &Expr {
+    let mut e = e;
+    for _ in 0..TRUTHS {
+        match e {
+            Expr::Cast {
+                to: Scalar::I64 | Scalar::U64,
+                e: inner,
+            } => e = &**inner,
+            _ => break,
+        }
+    }
+    e
+}
+
+/// The variable a branch on `cond` tests whole against a constant, that constant's cell, and whether the variable holds it where the branch goes to `then` (else where it goes to `els`).
+// `x != 0`, `x == c`, `!x` and a branch on `x` itself each say what all of `x` holds on one way
+// out. ⚠ Only a test of every bit: `(int)x != 0` leaves the upper half unknown. The caller
+// checks that the variable is one cell wide.
+fn pinned(cond: &Expr) -> Option<(Var, u64, bool)> {
+    let mut e = cond;
+    let mut negated = false;
+    for _ in 0..TRUTHS {
+        match e {
+            Expr::Truth(inner) => e = &**inner,
+            Expr::Unary {
+                op: UnOp::Not,
+                e: inner,
+            } => {
+                e = &**inner;
+                negated = !negated;
+            }
+            Expr::Binary {
+                op: op @ (BinOp::Eq | BinOp::Ne),
+                at,
+                l,
+                r,
+            } => {
+                if !whole_compare(at) {
+                    return None;
+                }
+                let (var, cell) = match (whole_cell(l), whole_cell(r)) {
+                    (Expr::Var(var), Expr::Const(c)) | (Expr::Const(c), Expr::Var(var)) => {
+                        (*var, c.bits)
+                    }
+                    _ => return None,
+                };
+                let named = !matches!(var, Var::Global { .. });
+                return named.then_some((var, cell, (*op == BinOp::Eq) != negated));
+            }
+            // A branch on a value goes to `then` where any bit of it is set.
+            other => {
+                let Expr::Var(var) = whole_cell(other) else {
+                    return None;
+                };
+                let named = !matches!(var, Var::Global { .. });
+                return named.then_some((*var, 0, negated));
+            }
+        }
+    }
+    None
+}
+
+/// Removes the assignment an arm starts with where the test that alone leads into it proved the variable already holds that constant: `if (x != 0) { .. } else { x = 0; .. }`.
+// Nothing runs between the test and the arm's first statement, so the cell is the one the test
+// read. ⚠ One cell, read by its name: a variable of several cells is more than the test read.
+fn proved(f: &mut cfg::Function) -> bool {
+    let facts = effects::Facts::of(f);
+    let preds = f.cfg.predecessors();
+    let mut gone: Vec<BlockId> = Vec::new();
+    for (b, block) in f.cfg.blocks.iter().enumerate() {
+        let Terminator::Branch { cond, then, els } = &block.term else {
+            continue;
+        };
+        if then == els {
+            continue;
+        }
+        let Some((var, cell, on_then)) = pinned(cond) else {
+            continue;
+        };
+        let arm = if on_then { *then } else { *els };
+        let only = preds.get(arm).is_some_and(|from| from.as_slice() == [b]);
+        if arm == b || arm == ENTRY || !only {
+            continue;
+        }
+        let narrow =
+            effects::one_cell(&f.head, &Expr::Var(var)) && !facts.widths.contains_key(&var);
+        let first = f.cfg.blocks.get(arm).and_then(|arm| arm.stmts.first());
+        let again = matches!(
+            first,
+            Some(Stmt::Assign {
+                target,
+                value: Expr::Const(c),
+            }) if *target == var && c.bits == cell
+        );
+        if narrow && again {
+            gone.push(arm);
+        }
+    }
+    let changed = !gone.is_empty();
+    for arm in gone {
+        if let Some(block) = f.cfg.blocks.get_mut(arm) {
+            if !block.stmts.is_empty() {
+                block.stmts.remove(0);
+            }
+        }
     }
     changed
 }

@@ -1651,3 +1651,114 @@ fn two_stack_slots_a_group_of_exactly_them_reads_carry_one_value_of_two_cells() 
     // Without the name the slots stay.
     assert!(mentioned(&ran_with(&[], PAIR_SLOTS, &body), high));
 }
+
+/// A branch on `test` whose arms give the first stack variable `yes` and `no`, read twice where they meet.
+fn pinned_join(test: &str, yes: &str, no: &str) -> String {
+    format!(
+        "if ((({test}))) {{ stack_000040_0 = {yes}; }} else {{ stack_000040_0 = {no}; }} {READ_TWICE} return;"
+    )
+}
+
+/// What the first block ends by assigning `var`, where it ends so.
+fn last_given(f: &cfg::Function, var: Var) -> Option<Expr> {
+    match f.cfg.blocks.first()?.stmts.last()? {
+        Stmt::Assign { target, value } if *target == var => Some(value.clone()),
+        _ => None,
+    }
+}
+
+#[test]
+fn a_choice_between_a_variable_and_the_constant_its_test_proves_it_holds_is_the_variable() {
+    let chose = |body: &str| {
+        let mut f = read(STACK, body);
+        assert!(joins::selects(&mut f), "{:?}", f.cfg);
+        last_given(&f, JOIN)
+    };
+    let p1 = Some(Expr::Var(Var::Param(1)));
+    // Where `p1 != 0` fails, `p1` is the zero the other arm gives.
+    assert_eq!(chose(&pinned_join("as_u64(p1) != 0", "p1", "0")), p1);
+    // Where `p1 == 5` holds, `p1` is the five that arm gives.
+    assert_eq!(chose(&pinned_join("as_u64(p1) == 5", "5", "p1")), p1);
+    let choice = |value: Option<Expr>| matches!(value, Some(Expr::Select { .. }));
+    // A test of the low half says nothing of the upper half: the arms stay a choice.
+    assert!(choice(chose(&pinned_join("as_u32(p1) != 0", "p1", "0"))));
+    // Another constant than the one the test proves, or another variable: a choice.
+    assert!(choice(chose(&pinned_join("as_u64(p1) != 0", "p1", "7"))));
+    assert!(choice(chose(&pinned_join(
+        "as_u64(p1) != 0",
+        "local_3",
+        "0"
+    ))));
+    // A local the block the arms meet in only tests, which would keep its arms, is the variable.
+    let tested = "if (((as_u64(p1) != 0))) { local_1 = p1; } else { local_1 = 0; } if (((as_u64(local_1) != 0))) { Native.DEMO.USE(local_1); } else { } return;";
+    let mut f = read("", tested);
+    assert!(joins::selects(&mut f), "{:?}", f.cfg);
+    assert_eq!(last_given(&f, Var::Local(1)), p1, "{:?}", f.cfg);
+    // Through the whole pass with `coalesce` on, the slot is the variable and no test is left.
+    let body = pinned_join("as_u64(p1) != 0", "p1", "0");
+    becomes_with(
+        &[Pass::Coalesce],
+        STACK,
+        &body,
+        "Native.DEMO.USE2(p1, p1); return;",
+    );
+    // Without the name the branch stays.
+    assert!(branches(&ran_with(&[], STACK, &body)));
+}
+
+#[test]
+fn an_arm_that_gives_the_tested_variable_the_constant_its_test_proved_leaves_it_as_it_was() {
+    let body = |test: &str, value: &str| {
+        format!(
+            "local_1 = Native.DEMO.GET(p0); if ((({test}))) {{ Native.DEMO.USE(p1); }} else {{ local_1 = {value}; Native.DEMO.USE(p0); }} Native.DEMO.USE2(local_1, local_1); return;"
+        )
+    };
+    let constants = &[Pass::Constants];
+    let consts = |f: &cfg::Function| {
+        let values = given(f, Var::Local(1));
+        values
+            .iter()
+            .filter(|v| matches!(v, Expr::Const(_)))
+            .count()
+    };
+    // Where `local_1 != 0` failed, `local_1 = 0` gives it nothing it did not hold.
+    let zero = body("as_u64(local_1) != 0", "0");
+    assert_eq!(consts(&ran_with(constants, "", &zero)), 0);
+    // Without the name it stays.
+    assert_eq!(consts(&ran_with(&[], "", &zero)), 1);
+    // A test of the low half: the upper half may be set.
+    let low = body("as_u32(local_1) != 0", "0");
+    assert_eq!(consts(&ran_with(constants, "", &low)), 1);
+    // Another constant than the one proved.
+    let other = body("as_u64(local_1) != 0", "5");
+    assert_eq!(consts(&ran_with(constants, "", &other)), 1);
+    // `== 5` proves five on the way to the first arm.
+    let held = "local_1 = Native.DEMO.GET(p0); if (((as_u64(local_1) == 5))) { local_1 = 5; Native.DEMO.USE(p1); } else { Native.DEMO.USE(p0); } Native.DEMO.USE2(local_1, local_1); return;";
+    assert_eq!(consts(&ran_with(constants, "", held)), 0);
+    // Another variable than the one tested.
+    let apart = "local_1 = Native.DEMO.GET(p0); if (((as_u64(p1) != 0))) { Native.DEMO.USE(p1); } else { local_1 = 0; Native.DEMO.USE(p0); } Native.DEMO.USE2(local_1, local_1); return;";
+    assert_eq!(consts(&ran_with(constants, "", apart)), 1);
+}
+
+#[test]
+fn a_stack_variable_that_only_ever_carries_one_frame_variables_address_is_that_address() {
+    let address = |n: u32| format!("stack_000040_0 = Vm.Address(locals, {n});");
+    let body = |yes: u32, no: u32| {
+        let no = format!("Native.DEMO.USE(p1); {}", address(no));
+        two_arms(&address(yes), &no, READ_TWICE)
+    };
+    let made = ran_with(&[Pass::Coalesce], STACK, &body(2, 2));
+    assert!(!mentioned(&made, JOIN), "{:?}", made.cfg);
+    let at = Expr::AddrOf {
+        var: Var::Local(2),
+        cell: 0,
+    };
+    let all = made.cfg.blocks.iter().flat_map(|block| &block.stmts);
+    let handed = |stmt: &&Stmt| matches!(stmt, Stmt::Eval(Expr::Call { args, .. }) if args[..] == [at.clone(), at.clone()]);
+    assert_eq!(all.filter(handed).count(), 1, "{:?}", made.cfg);
+    // Without the name the slot stays.
+    assert!(mentioned(&ran_with(&[], STACK, &body(2, 2)), JOIN));
+    // Two addresses: the slot is the join that chooses between them.
+    let two = ran_with(&[Pass::Coalesce], STACK, &body(2, 3));
+    assert!(mentioned(&two, JOIN), "{:?}", two.cfg);
+}

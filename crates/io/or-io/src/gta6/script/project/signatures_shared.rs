@@ -581,7 +581,10 @@ fn slot_reads(
                     }
                 }
                 None if !*open_ended => {
-                    handing.entry(*key).or_default().extend(rooted.iter().copied());
+                    handing
+                        .entry(*key)
+                        .or_default()
+                        .extend(rooted.iter().copied());
                 }
                 None => {
                     for root in rooted.iter() {

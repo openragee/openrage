@@ -413,7 +413,7 @@ fn winners(ranked: &[(Rank, &str)]) -> HashMap<String, (usize, usize)> {
 }
 
 /// A metadata file as its value tree, read as the dependency tables read one.
-pub(crate) fn parse(bytes: &[u8]) -> Option<MetaInstance> {
+pub fn parse(bytes: &[u8]) -> Option<MetaInstance> {
     let mut diags = Diagnostics::new(ErrorMode::Lenient);
     parse_meta_binary_full(or_io::meta::default_library(), bytes, &mut diags)
         .ok()

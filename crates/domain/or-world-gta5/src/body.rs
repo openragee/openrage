@@ -1,19 +1,23 @@
 //! A map and an interior of GTA V as bodies of the contract: the nodes `or_depends` reads, a
-//! parent named by its map's row where the reader names it by the map's name, and beside each
-//! node what it places.
+//! parent named by its map's row where the reader names it by the map's name, beside each node
+//! what it places, and what the map states beside its entities.
 
 use std::any::Any;
 use std::sync::Arc;
 
 use or_depends::world_forest::read::{self, Placed, ReadMap, What};
-use or_depends::world_forest::{self, NoModel};
+use or_depends::world_forest::{self, NoModel, Unread};
+use or_depends::world_index::{self, Map};
+use or_depends::WorldSource;
 use or_world::contract::{MapBody, MapReader, Worker, WorldError};
 use or_world::model::{
     interior_key, signed_fade, AssetKey, Drawn, Draws, Index, Instance, Instances, InteriorPlaced,
     Light, MapId, Moment, Occluders,
 };
 use or_world::streaming::{Node, ParentRef};
+use or_world::MapData;
 
+use crate::beside::{beside, Beside};
 use crate::index::{linked, map_of};
 use crate::install::Gta5World;
 use crate::models::BOX;
@@ -35,13 +39,14 @@ pub struct Body {
     /// Entities that name a parent in a parent map the mount lacks.
     pub links_lost: u32,
     bytes: u64,
-    occluders: Occluders,
+    /// What the map states beside its entities; nothing for an interior.
+    pub beside: Beside,
 }
 
 impl Body {
     /// `read` as a body, each parent's key turned by `key_of` from the reader's to the forest's.
-    fn of(mut read: ReadMap, key_of: impl Fn(u64) -> Option<u64>) -> Self {
-        let bytes = read.bytes();
+    fn of(mut read: ReadMap, beside: Beside, key_of: impl Fn(u64) -> Option<u64>) -> Self {
+        let bytes = read.bytes() + beside.bytes();
         for node in &mut read.nodes {
             let Some(parent) = node.parent else { continue };
             node.parent = key_of(parent.map).map(|map| ParentRef { map, ..parent });
@@ -66,7 +71,7 @@ impl Body {
             unleveled: read.unleveled,
             links_lost: read.links_lost,
             bytes,
-            occluders: Occluders::default(),
+            beside,
         }
     }
 
@@ -96,11 +101,11 @@ impl MapBody for Body {
     }
 
     fn lights(&self) -> &[Light] {
-        &[]
+        &self.beside.lights
     }
 
     fn occluders(&self) -> &Occluders {
-        &self.occluders
+        &self.beside.occluders
     }
 
     fn interiors(&self) -> &[InteriorPlaced] {
@@ -167,14 +172,23 @@ impl MapReader for Gta5World {
         _worker: &mut Worker,
     ) -> Result<Arc<dyn MapBody>, WorldError> {
         let (linked, of) = map_of(index, map)?;
-        let read =
-            read::map(&linked.world, &self.source, of).map_err(|why| unread(&of.logical, why))?;
+        let refused = |why: Unread| unread(&of.logical, why);
+        let root = self.tree_of(of).map_err(refused)?;
+        let data = MapData::new(&root).ok_or_else(|| refused(Unread::NotAMap))?;
+        let read = read::entities_of(&linked.world, of, &data).map_err(refused)?;
+        // ⚠ Only a map that states far lights has its parent read with it, for where they stand.
+        let lit = data.lod_lights().is_some_and(|far| !far.is_empty());
+        let parent = (linked.world.parent_of(of).filter(|_| lit))
+            .filter(|parent| parent.hash != of.hash)
+            .and_then(|parent| self.tree_of(parent).ok());
+        let parent = parent.as_ref().and_then(MapData::new);
+        let beside = beside(&data, parent.as_ref());
         // The reader names a map by the hash of its name, and the forest by its row.
         let key_of = |key: u64| {
             let hash = u32::try_from(key).ok()?;
             Some(linked.row_of(hash)?.key())
         };
-        Ok(Arc::new(Body::of(read, key_of)))
+        Ok(Arc::new(Body::of(read, beside, key_of)))
     }
 
     fn interior(
@@ -220,7 +234,15 @@ impl MapReader for Gta5World {
             key if key == u64::from(of.hash) => Some(map.key()),
             _ => None,
         };
-        Ok(Arc::new(Body::of(read, key_of)))
+        Ok(Arc::new(Body::of(read, Beside::default(), key_of)))
+    }
+}
+
+impl Gta5World {
+    /// The file of `map` as its value tree, read from the archive that lists it.
+    fn tree_of(&self, map: &Map) -> Result<or_io::meta::MetaInstance, Unread> {
+        let bytes = (self.source.open(map.archive, &map.logical)).ok_or(Unread::Absent)?;
+        world_index::parse(&bytes).ok_or(Unread::NotAMap)
     }
 }
 

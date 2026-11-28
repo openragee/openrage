@@ -10,14 +10,16 @@ description = "GTA V's world behind the world contract: its title, its opened in
 
 [dependencies]
 glam.workspace = true
+thiserror.workspace = true
 tracing.workspace = true
 # The contract, the kept file and the driver this crate answers.
 or-world.workspace = true
 # ⚠ The world index, the forest's reader and the collision of a mount as they stand: this edge
 # turns round when their files move here.
 or-depends.workspace = true
-# The keys of an install, and a drawable as an owned value.
-or-io.workspace = true
+# The keys of an install, a model and a texture dictionary as owned values, and a relationship
+# file as a value tree.
+or-io = { workspace = true, features = ["meta"] }
 # The mount an opened world reads through.
 or-title.workspace = true
 # Cancellation and progress, which an opening is handed.

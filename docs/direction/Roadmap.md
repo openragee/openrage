@@ -10819,12 +10819,12 @@ and `openrage-cli world index`, `at`, `ground`, `find` and `select` for any regi
 
 **Where it stands.** Built, with no file moved: `crates/domain/or-world-gta5` answers the
 contract for both games and `crates/domain/or-worlds` lists it. The kit passes over an install
-built by hand; on each real install the selection through the core's driver is `WorldForest`'s at
+built by hand; on each install the selection through the core's driver is `WorldForest`'s at
 16 of 16 views (`the_adapter_selects_as_the_forest_does_at_fixed_cameras_of_a_real_install`,
-2026-11-27) and 11 of the kit's 20 rules are asked; the verbs answer with `--neutral`. Left:
-models beyond a Legacy drawable of its own file
-([R71e](#r71e-the-gta-v-world-drawn-in-the-fallback-pass)), the edit store
-([R71i](#r71i-one-edit-stack-for-every-title)), a body's lights and lists. The rest is under
+2026-11-28) and 13 of the kit's 20 rules are asked; the verbs answer with `--neutral`. A body
+states its map's far lights and occluders. Left: the edit store
+([R71i](#r71i-one-edit-stack-for-every-title)), a map's instance lists and an archetype's own
+lights. More under
 "or-world-gta5" in [Crate_Reference.md](../reference/Crate_Reference.md#domain-crates).
 
 **Depends on.** [R71a](#r71a-the-world-contract-the-conformance-kit-and-the-fake-title). It waits for no branch of R70.
@@ -10847,9 +10847,16 @@ for the asks it holds, a material's fallback surface by its sampler names, and t
 GTA V install, read only
 ([brief](Unified_World_Plan.md#the-gta-v-world-drawn-in-the-fallback-pass-r71e)).
 
-**Where it stands.** Not started. Nothing draws the GTA V world: its forest selects with no screen,
-and the game's passes draw one drawable. The cost of a frame over the city and the memory of its
-textures are unmeasured.
+**Where it stands.** The decode is built in `crates/domain/or-world-gta5`, with no screen: a model
+however its file holds it, for both targets, with its fallback surface, and textures through
+their dictionaries' chain, each file read once a batch. At eight fixed cameras every model a
+selection draws with reads on both installs, and so do 18247 of 18590 textures on Legacy and
+18249 of 18592 on Enhanced
+(`the_models_and_textures_a_selection_draws_with_read_at_fixed_cameras`, 2026-11-28); each that
+does not has a named reason, under "or-world-gta5" in
+[Crate_Reference.md](../reference/Crate_Reference.md#domain-crates). Left: the World room and
+every frame. Nothing draws the GTA V world yet, and the cost of a frame over the city and the
+memory of its textures are unmeasured.
 
 **Depends on.** [R71c](#r71c-one-world-session-one-frame-host-and-panels-by-capability) and [R71d](#r71d-the-gta-v-world-behind-the-contract-and-one-kept-file).
 

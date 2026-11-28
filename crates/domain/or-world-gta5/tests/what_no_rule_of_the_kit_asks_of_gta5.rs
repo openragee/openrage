@@ -203,30 +203,12 @@ fn corners(mesh: &Mesh) -> Vec<Vec3> {
 }
 
 #[test]
-fn the_box_is_a_closed_cube_of_side_one_and_what_no_file_of_its_own_draws_gives_no_model() {
-    let dictionary = Arch {
-        files: ("in_a_dictionary", "some_dictionary", ""),
-        ..arch("in_a_dictionary", 80.0)
-    };
-    let files: Files = vec![
-        types_file("props", &[dictionary, arch("no_file", 80.0)]),
-        (
-            "models/in_a_dictionary.ydr".to_owned(),
-            hand_built::drawable_bytes("in_a_dictionary", 1),
-        ),
-        ("models/broken.ydr".to_owned(), vec![7; 64]),
-    ];
+fn the_box_is_a_closed_cube_of_side_one() {
+    let files: Files = vec![types_file("props", &[arch("no_file", 80.0)])];
     let dir = install(&[("x64a.rpf", files)]);
     let scratch = tempfile::tempdir().expect("a scratch folder");
     let (world, index, _) = opened(dir.path(), scratch.path());
-    let asks = [
-        key("in_a_dictionary"),
-        key("no_file"),
-        key("nowhere_declared"),
-        AssetKey(BOX.0 + 1),
-        BOX,
-    ];
-    let read = models(&world, &index, &asks);
+    let read = models(&world, &index, &[key("no_file"), BOX]);
     let [(BOX, cube)] = &read[..] else {
         panic!("{:?}", read.iter().map(|(ask, _)| *ask).collect::<Vec<_>>());
     };

@@ -2,7 +2,7 @@
 //! its own, stamped by the file on disk that holds it as the mount found that file.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use or_depends::world_index::{Archive, Stamp};
 use or_depends::WorldSource;
@@ -82,6 +82,14 @@ impl WorldSource for Source {
 pub(crate) struct One<'a> {
     pub source: &'a Source,
     pub archive: usize,
+    /// The logical path of each file of the archive that may state which texture dictionary falls through to which, as a walk of its entries met them.
+    pub relationships: Mutex<Vec<String>>,
+}
+
+/// Whether the file whose leaf is `leaf` may state which texture dictionary falls through to which.
+fn may_relate(leaf: &str) -> bool {
+    let leaf = leaf.to_ascii_lowercase();
+    leaf.contains("gtxd") && (leaf.ends_with(".meta") || leaf.ends_with(".ymt"))
 }
 
 impl WorldSource for One<'_> {
@@ -98,7 +106,17 @@ impl WorldSource for One<'_> {
 
     fn entries(&self, archive: usize, visit: &mut dyn FnMut(&EntryFacts)) {
         if archive == 0 {
-            self.source.entries(self.archive, visit);
+            let mut met = Vec::new();
+            self.source.entries(self.archive, &mut |facts| {
+                if may_relate(&facts.leaf) {
+                    met.push(facts.logical.clone());
+                }
+                visit(facts)
+            });
+            // Each walk meets the same files, so the last one's list stands.
+            if let Ok(mut relationships) = self.relationships.lock() {
+                *relationships = met;
+            }
         }
     }
 

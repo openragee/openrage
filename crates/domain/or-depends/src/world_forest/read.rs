@@ -123,6 +123,11 @@ pub fn map(index: &WorldIndex, source: &dyn WorldSource, map: &Map) -> Result<Re
     let bytes = (source.open(map.archive, &map.logical)).ok_or(Unread::Absent)?;
     let root = world_index::parse(&bytes).ok_or(Unread::NotAMap)?;
     let data = MapData::new(&root).ok_or(Unread::NotAMap)?;
+    entities_of(index, map, &data)
+}
+
+/// The entities of `map` as `data`, its file read, states them.
+pub fn entities_of(index: &WorldIndex, map: &Map, data: &MapData<'_>) -> Result<ReadMap, Unread> {
     // ⚠ The read is lenient and a node's place is its entity's: past an entity that did not read,
     // every index would name the entity before the one it means.
     if !data.entities_are_whole() {

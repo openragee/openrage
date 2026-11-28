@@ -1,6 +1,7 @@
 //! Sugar for expressions and simple statements: tests of one value as a `switch`, the null
-//! operators, compound assignment, string concatenation, initialisers, one inside another,
-//! `ref` and `out`, and a box handed on whole as the conversion C# writes in its place.
+//! operators and the `is` of an `as` tested for null, compound assignment, string
+//! concatenation, initialisers, one inside another, `ref` and `out`, and a box handed on whole
+//! as the conversion C# writes in its place.
 //!
 //! Works on the structured form, last before `names`. An expression is read through an
 //! `ExprSugar` and statements through a `Group` or a `Sugar::SwitchOn`, and `tree::desugar` gives
@@ -105,6 +106,7 @@ pub fn run(f: &mut tree::Function, cx: &Context<'_>, _stats: &mut Stats) {
                     top.walk_mut(&mut |e| {
                         if nulls {
                             null_op(e, head, project);
+                            type_tested(e);
                         }
                         if joins {
                             joined(e, head, project);
@@ -141,7 +143,7 @@ pub fn run(f: &mut tree::Function, cx: &Context<'_>, _stats: &mut Stats) {
     }
     // Last, so that no reading above meets a box as anything but the call it is.
     if options.on(Pass::Boxing) {
-        boxes::run(body, head, project);
+        boxes::run(body, head, project, cx.names);
     }
 }
 
@@ -160,6 +162,8 @@ pub struct Made {
     pub coalesce: usize,
     /// `a?.b`.
     pub null_conditional: usize,
+    /// `x is T`.
+    pub type_tests: usize,
 }
 
 /// Counts the constructs of the kinds this file makes in `body`, at every depth.
@@ -211,6 +215,10 @@ pub fn made(body: &[Stmt]) -> Made {
                 kind: ExprSugar::NullConditional,
                 ..
             } => made.null_conditional += 1,
+            Expr::Sugar {
+                kind: ExprSugar::Is,
+                ..
+            } => made.type_tests += 1,
             _ => {}
         });
     });
@@ -488,9 +496,21 @@ fn reference(e: &Expr, head: &Head, project: &Project) -> bool {
     }
 }
 
+/// Whether `e` is a variable of one cell that nothing proves a number, a truth or a value of several cells: what it holds may be a reference.
+fn open(e: &Expr, head: &Head, project: &Project) -> bool {
+    let Expr::Var(var) = e else {
+        return false;
+    };
+    let one = (head.vars.get(var)).is_none_or(|info| info.width == Width::Cell);
+    let kind = stated_kind(e, head, project);
+    one && matches!(kind, None | Some(Kind::Unknown | Kind::Pointer))
+}
+
 /// What a choice reads as: `x != null ? x : e` as `x ?? e`, and `x != null ? x.f : null` as `x?.f`.
 // ⚠ Only over references: a number that is not zero is no `??`, and `x?.f` of a number would be
-// a nullable in C#. `x` is written twice and evaluated twice, so it holds no call.
+// a nullable in C#. `x` is written twice and evaluated twice, so it holds no call. A variable no
+// kind is proved for is a reference where what stands in for it is one: a choice is one value
+// of one type in C#, and neither a number nor a pointer becomes a reference without a box.
 fn null_reading(e: &Expr, head: &Head, project: &Project) -> Option<ExprSugar> {
     let Expr::Select { cond, then, els } = e else {
         return None;
@@ -499,8 +519,10 @@ fn null_reading(e: &Expr, head: &Head, project: &Project) -> Option<ExprSugar> {
     let then = whole(then);
     let of_tested =
         |field: &Expr| matches!(bare(field), Expr::Load { addr, .. } if same(whole(addr), tested));
+    let held = reference(tested, head, project)
+        || (open(tested, head, project) && reference(whole(els), head, project));
     // `x ?? null` is `x`: a statement nobody writes, so such a choice keeps its plain form.
-    let kind = if reference(tested, head, project) && same(then, tested) && !is_null(els) {
+    let kind = if held && same(then, tested) && !is_null(els) {
         ExprSugar::Coalesce
     } else if is_null(els) && reference(then, head, project) && of_tested(then) {
         ExprSugar::NullConditional
@@ -515,6 +537,52 @@ fn null_op(e: &mut Expr, head: &Head, project: &Project) {
     if let Some(kind) = null_reading(e, head, project) {
         let held = std::mem::replace(e, Expr::GuidEmpty);
         *e = Expr::sugar(kind, held);
+    }
+}
+
+/// The test `e` is of what `x as T` makes against null, compared whole: whether it holds where that is not null, the type cast to, and `x`.
+// ⚠ An `as` yields its value where the value is a `T` and null where it is not, so its test for
+// null is `is` exactly; a test of fewer bits than the cell would not be.
+pub(crate) fn type_test(e: &Expr) -> Option<(bool, &str, &Expr)> {
+    let Expr::Binary {
+        op,
+        at: Kind::I64 | Kind::U64 | Kind::Unknown,
+        l,
+        r,
+    } = e
+    else {
+        return None;
+    };
+    let holds = match op {
+        BinOp::Ne => true,
+        BinOp::Eq => false,
+        _ => return None,
+    };
+    let cast = match (is_null(l), is_null(r)) {
+        (false, true) => l,
+        (true, false) => r,
+        _ => return None,
+    };
+    let Expr::Call {
+        callee: Callee::Intrinsic { name, .. },
+        args,
+        ..
+    } = whole(cast)
+    else {
+        return None;
+    };
+    let ty = name.strip_prefix("try_cast<")?.strip_suffix('>')?;
+    match args.as_slice() {
+        [value] if !ty.is_empty() => Some((holds, ty, value)),
+        _ => None,
+    }
+}
+
+/// Reads a test of what an `as` makes against null as the `is` it is.
+fn type_tested(e: &mut Expr) {
+    if type_test(e).is_some() {
+        let held = std::mem::replace(e, Expr::GuidEmpty);
+        *e = Expr::sugar(ExprSugar::Is, held);
     }
 }
 

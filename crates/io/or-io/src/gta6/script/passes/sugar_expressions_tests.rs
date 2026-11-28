@@ -3,7 +3,7 @@ use crate::gta6::script::class::Role;
 use crate::gta6::script::ir::{
     Const, FunctionKey, Returns, StoreKind, TypeKey, VarInfo, VmType, Width,
 };
-use crate::gta6::script::project::{FieldFacts, Member};
+use crate::gta6::script::project::{FieldFacts, Member, ProgramInfo};
 use crate::gta6::script::{Level, Names, Options};
 
 const OBJECT: &str = "type_0123456789ABCDEF";
@@ -910,6 +910,132 @@ fn a_reference_or_its_stand_in_assigned_by_an_if_is_one_assignment() {
     assert_eq!(read(nothing.clone(), &vars), nothing);
 }
 
+#[test]
+fn a_variable_no_kind_is_proved_for_or_a_reference_that_stands_in_for_it_is_a_coalescing() {
+    let x = Var::Local(2);
+    let global = Expr::Var(Var::Global {
+        program: 1,
+        offset: 0x10,
+        statics: false,
+    });
+    // A global the container marks holds a reference, though its kind says no more than an address.
+    let mut project = Project::default();
+    let mut info = ProgramInfo::default();
+    info.globals.insert(0x10, Kind::Pointer);
+    project.programs.insert(1, info);
+
+    let read = select(not_zero(Kind::U64, local(2)), local(2), global);
+    let coalesced = Expr::sugar(ExprSugar::Coalesce, read.clone());
+    assert_eq!(nulled(&read, &[(x, Kind::Pointer)], &project), coalesced);
+    assert_eq!(nulled(&read, &[], &project), coalesced);
+    let local_in = select(not_zero(Kind::U64, local(2)), local(2), local(3));
+    let object = [
+        (x, Kind::Pointer),
+        (Var::Local(3), Kind::Object(OBJECT.to_owned())),
+    ];
+    assert_eq!(
+        nulled(&local_in, &object, &project),
+        Expr::sugar(ExprSugar::Coalesce, local_in.clone())
+    );
+
+    // ⚠ A number is no reference whatever stands in for it, and an address a local holds stands
+    // in for nothing proved.
+    assert_eq!(nulled(&read, &[(x, Kind::I64)], &project), read);
+    assert_eq!(nulled(&read, &[(x, Kind::Pointer)], Project::empty()), read);
+    let addresses = [(x, Kind::Pointer), (Var::Local(3), Kind::Pointer)];
+    assert_eq!(nulled(&local_in, &addresses, &project), local_in);
+}
+
+/// `x as T` of the type `OBJECT`.
+fn try_cast(value: Expr) -> Expr {
+    Expr::Call {
+        callee: Callee::Intrinsic {
+            name: format!("try_cast<{OBJECT}>"),
+            ty: None,
+            wrapper: None,
+        },
+        args: vec![value],
+        returns: Some(1),
+    }
+}
+
+#[test]
+fn an_as_compared_whole_with_null_is_an_is() {
+    let none = Project::empty();
+    let read = |value: &Expr| read_alone(value, &[], none, Pass::NullOps);
+    let holds = binary(
+        BinOp::Ne,
+        Kind::U64,
+        Expr::cast(Scalar::U64, try_cast(p(1))),
+        int(0),
+    );
+    let is = Expr::sugar(ExprSugar::Is, holds.clone());
+    assert_eq!(read(&holds), is);
+    let tested = p(1);
+    assert_eq!(type_test(&holds), Some((true, OBJECT, &tested)));
+    let mut back = is;
+    back.desugar();
+    assert_eq!(back, holds);
+
+    // Null on either side, and a test for null that is no `is`.
+    let fails = binary(BinOp::Eq, Kind::Unknown, int(0), try_cast(local(2)));
+    assert_eq!(read(&fails), Expr::sugar(ExprSugar::Is, fails.clone()));
+    let tested = local(2);
+    assert_eq!(type_test(&fails), Some((false, OBJECT, &tested)));
+
+    // A condition takes it too, and the name switches it off.
+    let body = vec![Stmt::If {
+        cond: holds.clone(),
+        then: vec![Stmt::Return(None)],
+        els: Vec::new(),
+    }];
+    let done = rewritten(body.clone(), &[], none, only(Pass::NullOps));
+    assert_eq!(made(&done).type_tests, 1);
+    assert_eq!(tree::desugar(done), body);
+    assert_eq!(
+        rewritten(body.clone(), &[], none, only(Pass::Compound)),
+        body
+    );
+
+    // ⚠ Only a whole cell against null, of an `as`: the low 32 bits of a reference may be zero,
+    // and a cast that must hold faults where `is` is false.
+    let must = Expr::Call {
+        callee: Callee::Intrinsic {
+            name: format!("cast<{OBJECT}>"),
+            ty: None,
+            wrapper: None,
+        },
+        args: vec![p(1)],
+        returns: Some(1),
+    };
+    let stays = [
+        (
+            "32 bits",
+            binary(BinOp::Ne, Kind::U32, try_cast(p(1)), int(0)),
+        ),
+        (
+            "another constant",
+            binary(BinOp::Ne, Kind::U64, try_cast(p(1)), int(1)),
+        ),
+        (
+            "an ordering",
+            binary(BinOp::Lt, Kind::U64, try_cast(p(1)), int(0)),
+        ),
+        (
+            "another value",
+            binary(BinOp::Ne, Kind::U64, try_cast(p(1)), p(0)),
+        ),
+        (
+            "a cast that must hold",
+            binary(BinOp::Ne, Kind::U64, must, int(0)),
+        ),
+    ];
+    for (why, value) in stays {
+        assert_eq!(read(&value), value, "{why}");
+        assert_eq!(type_test(&value), None, "{why}");
+    }
+}
+
 fn builtin(path: &str, args: Vec<Expr>) -> Expr {
     Expr::Call {
         callee: Callee::Builtin {
@@ -1287,6 +1413,7 @@ fn a_rewrite_runs_only_where_its_name_is_on() {
         switches: 1,
         coalesce: 1,
         null_conditional: 0,
+        type_tests: 0,
     };
     let every = Options::at(Level::Source);
     assert_eq!(found(every), all);

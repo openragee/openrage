@@ -12,13 +12,7 @@ use crate::gta6::script::ir::{
 use crate::gta6::script::print;
 use crate::gta6::script::project::{Param, TypeFacts};
 use crate::gta6::script::tree::{self, Stmt};
-use crate::gta6::script::Project;
-
-/// A type's flags: a struct.
-const STRUCT: u32 = 0x04;
-
-/// A type's flags: a type the compiler made.
-const GENERATED: u32 = 0x10_0000;
+use crate::gta6::script::{Names, Project};
 
 /// The method whose two boxes the printer reads as `a == b`.
 const OBJECT_EQUALS: &str = "System.Object.Equals";
@@ -43,23 +37,23 @@ const INTEGERS: [&str; 9] = [
 const BOOLEAN: &str = "System.Boolean";
 
 /// Reads each box handed on whole as the conversion C# writes in its place.
-pub(super) fn run(body: &mut [Stmt], head: &Head, project: &Project) {
+pub(super) fn run(body: &mut [Stmt], head: &Head, project: &Project, names: &Names) {
     let returned = returns_reference(head, project);
     // An explicit stack: a body nests as deep as its listing does.
     let mut work: Vec<&mut [Stmt]> = vec![body];
     while let Some(list) = work.pop() {
         for stmt in list {
             if let (Stmt::Return(Some(value)), true) = (&mut *stmt, returned) {
-                convert(value, head, project);
+                convert(value, head, project, names);
             }
             each_simple_mut(stmt, &mut |s| match s {
                 ir::Stmt::Store { kind, value, .. } if kind.bytes() == 8 => {
-                    convert(value, head, project);
+                    convert(value, head, project, names);
                 }
                 _ => {}
             });
             tree::own_exprs_mut(stmt, &mut |top| {
-                top.walk_mut(&mut |e| handed(e, head, project));
+                top.walk_mut(&mut |e| handed(e, head, project, names));
             });
             work.extend(tree::nested_mut(stmt).into_iter().map(Vec::as_mut_slice));
         }
@@ -102,8 +96,8 @@ fn boxed(e: &Expr) -> Option<(&str, &Expr)> {
 }
 
 /// Reads `e` as `(T)x` where it is a box of one value that `(T)` converts as the box copies it.
-fn convert(e: &mut Expr, head: &Head, project: &Project) {
-    let reads = boxed(e).is_some_and(|(ty, value)| copies(ty, value, head, project));
+fn convert(e: &mut Expr, head: &Head, project: &Project, names: &Names) {
+    let reads = boxed(e).is_some_and(|(ty, value)| copies(ty, value, head, project, names));
     if reads {
         let held = std::mem::replace(e, Expr::GuidEmpty);
         *e = Expr::sugar(ExprSugar::Convert, held);
@@ -116,22 +110,34 @@ fn script_value<'a>(ty: &str, project: &'a Project) -> Option<&'a TypeFacts> {
     project.types.get(&key).filter(|facts| facts.is_value())
 }
 
-/// Whether a value type is an enum: no struct, and nothing the compiler made.
+/// The name of the runtime's type a box names: a builtin by the name the user's list gives its index, any other as the listing spells it.
+// ⚠ A program names a builtin by its index alone, `type_` and eight digits: only a list says
+// which of the runtime's types that is, and where none does the box stays.
+fn runtime_name<'a>(ty: &'a str, names: &'a Names) -> Option<&'a str> {
+    match TypeKey::of_name(ty) {
+        Some(key) if key.builtin().is_some() => names.types.get(&key.0).map(String::as_str),
+        Some(_) => None,
+        None => Some(ty),
+    }
+}
+
+/// Whether a value type is an enum, as the printer decides it.
 fn enumeration(facts: &TypeFacts) -> bool {
-    facts.flags & (STRUCT | GENERATED) == 0
+    print::enum_flags(facts)
 }
 
 /// Whether `(T)value`, in C#, keeps what a box of `T` copies of `value`: an integer or an enum of the bits of an integer, a truth of a truth, a struct of a variable of that struct.
 // ⚠ C# converts a number by its value: `(float)` of an integer, or `(E)` of a float, is another
 // value than its bits. And a value written with a leading sign after `(E)` reads as `E - 1`.
-fn copies(ty: &str, value: &Expr, head: &Head, project: &Project) -> bool {
+fn copies(ty: &str, value: &Expr, head: &Head, project: &Project, names: &Names) -> bool {
     if signed_text(value) {
         return false;
     }
-    if INTEGERS.contains(&ty) {
+    let runtime = runtime_name(ty, names);
+    if runtime.is_some_and(|name| INTEGERS.contains(&name)) {
         return integral(value, head);
     }
-    if ty == BOOLEAN {
+    if runtime == Some(BOOLEAN) {
         return truth(value, head);
     }
     match script_value(ty, project) {
@@ -292,8 +298,7 @@ fn takes_reference(
                 return false;
             }
             // ⚠ Where the printer reads the call as `(int)x` the box stays for it to read.
-            let printer_casts = facts.byte_size <= 2
-                || (facts.byte_size == 4 && facts.constants.iter().any(|c| *c < 0));
+            let printer_casts = print::enum_fits_int(facts);
             path != CONVERT_TO_INT32 || !(enumeration(facts) && printer_casts)
         }
         Callee::Intrinsic { name, .. } => name == "array_set_ref" && index == 2,
@@ -302,7 +307,7 @@ fn takes_reference(
 }
 
 /// Reads each box an argument of the call `e` hands on whole as its conversion.
-fn handed(e: &mut Expr, head: &Head, project: &Project) {
+fn handed(e: &mut Expr, head: &Head, project: &Project, names: &Names) {
     let Expr::Call { callee, args, .. } = e else {
         return;
     };
@@ -311,7 +316,7 @@ fn handed(e: &mut Expr, head: &Head, project: &Project) {
         let taken = boxed(&args[index])
             .is_some_and(|(ty, _)| takes_reference(callee, args, index, ty, head, project));
         if taken {
-            convert(&mut args[index], head, project);
+            convert(&mut args[index], head, project, names);
         }
     }
 }

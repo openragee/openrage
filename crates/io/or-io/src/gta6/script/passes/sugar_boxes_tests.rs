@@ -122,9 +122,21 @@ fn frame(returns: Returns) -> Head {
     }
 }
 
+/// A list that names two builtins, by indices no program states, as the runtime's `int` and `float`.
+fn listed() -> Names {
+    let mut names = Names::default();
+    names.types.insert(0x8000_0ABC, "System.Int32".to_owned());
+    names.types.insert(0x8000_0ABD, "System.Single".to_owned());
+    names
+}
+
 fn read_in(head: &Head, body: Vec<Stmt>, project: &Project) -> Vec<Stmt> {
+    read_listed(head, body, project, &listed())
+}
+
+fn read_listed(head: &Head, body: Vec<Stmt>, project: &Project, names: &Names) -> Vec<Stmt> {
     let mut body = body;
-    run(&mut body, head, project);
+    run(&mut body, head, project, names);
     body
 }
 
@@ -396,4 +408,28 @@ fn a_box_is_read_as_a_conversion_only_where_the_conversion_keeps_what_the_box_co
     for (why, ty, value) in stays {
         assert!(!reads(ty, value), "{why}");
     }
+}
+
+#[test]
+fn a_box_of_a_builtin_is_of_the_runtime_type_the_users_list_names_its_index() {
+    let project = types();
+    let head = frame(Returns::Cell);
+    let int32 = "type_80000ABC";
+    let body = |value: Expr| {
+        let call = called(own(0x200), vec![value]);
+        vec![Stmt::Simple(ir::Stmt::Eval(call))]
+    };
+    let boxed = body(boxed_as(int32, local(3)));
+    let done = read_in(&head, boxed.clone(), &project);
+    assert_eq!(done, body(converted(int32, local(3))));
+    assert_eq!(tree::desugar(done), boxed);
+
+    // ⚠ With no list the index says no type, and a float the list names keeps its box.
+    let unlisted = read_listed(&head, boxed.clone(), &project, &Names::default());
+    assert_eq!(unlisted, boxed);
+    let float = body(boxed_as("type_80000ABD", local(3)));
+    assert_eq!(read_in(&head, float.clone(), &project), float);
+    // A float of the function boxed as an `int` would be converted by its value.
+    let made = body(boxed_as(int32, local(0)));
+    assert_eq!(read_in(&head, made.clone(), &project), made);
 }

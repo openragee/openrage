@@ -600,6 +600,8 @@ pub enum ExprSugar {
     Ref,
     /// `(a, b)`: cells that are a tuple.
     Tuple,
+    /// `x is T`: a comparison of what `x as T` makes with null, whole; `!(x is T)` where it asks for null.
+    Is,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

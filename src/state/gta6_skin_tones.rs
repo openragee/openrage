@@ -127,7 +127,7 @@ fn metadata_bodies(path: &Path) -> Vec<u64> {
 /// The skin tones of the install at `root` and where they were found, from the first archive
 /// that holds them, smallest first.
 fn find(root: &Path) -> Option<(Place, SkinTones)> {
-    let (archives, _) = crate::state::gta6_install_scan::archives_under(root);
+    let archives = or_title::install::gta6_files::list(root).archive_paths();
     let mut sized: Vec<(u64, PathBuf)> = (archives.into_iter())
         .filter_map(|path| Some((stat(&path)?.0, path)))
         .filter(|(len, _)| *len <= MOST_ARCHIVE)

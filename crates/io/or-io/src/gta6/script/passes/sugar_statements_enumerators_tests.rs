@@ -146,13 +146,28 @@ fn project() -> Project {
 
 /// What the pass makes of `body` where `local_0` and `local_5` are values of three cells.
 fn read_with(body: Vec<Stmt>, project: &Project, options: Options) -> (Vec<Stmt>, Found) {
+    read_beside(body, project, options, &[])
+}
+
+/// [`read_with`] where each `(n, cells)` also makes `local_n` a value of that many cells.
+fn read_beside(
+    body: Vec<Stmt>,
+    project: &Project,
+    options: Options,
+    beside: &[(u32, u32)],
+) -> (Vec<Stmt>, Found) {
     let wide = |cells: u32| VarInfo {
         width: Width::Cells,
         kind: Kind::Aggregate(cells),
         name: None,
         single: false,
     };
-    let vars = BTreeMap::from([(Var::Local(0), wide(3)), (Var::Local(5), wide(3))]);
+    let mut vars = BTreeMap::from([(Var::Local(0), wide(3)), (Var::Local(5), wide(3))]);
+    vars.extend(
+        beside
+            .iter()
+            .map(|(n, cells)| (Var::Local(*n), wide(*cells))),
+    );
     let mut f = tree::Function {
         head: Head {
             value_types: Default::default(),
@@ -502,4 +517,24 @@ fn a_foreach_over_a_struct_enumerator_is_written_over_what_the_enumerator_is_mad
     crate::gta6::script::print::function_in(&mut text, &f, &cx);
     assert!(text.contains(" in p0)"), "{text}");
     assert!(!text.contains("in &"), "{text}");
+}
+
+#[test]
+fn an_enumerator_or_an_item_a_wider_variable_names_by_its_cells_stays_a_loop() {
+    // `local_5`, of three cells, holds the item's cell where it is read after the loop.
+    let (_, found) = read(site(MAKE, MADE, 0, 6));
+    assert_eq!((found.held, found.refused), (1, 0));
+    let mut was = site(MAKE, MADE, 0, 6);
+    was.push(touch(5));
+    let (is, found) = read(was.clone());
+    assert_eq!((is, found.held, found.refused), (was, 0, 1));
+
+    // `local_4`, read after the loop, holds the first cell of the enumerator in `local_5` where it is of two cells.
+    let mut was = site(MAKE, MADE, 5, 3);
+    was.push(touch(4));
+    let (is, found) = read(was.clone());
+    assert_eq!((found.held, found.refused), (1, 0));
+    assert_ne!(is, was);
+    let (is, found) = read_beside(was.clone(), &project(), Options::default(), &[(4, 2)]);
+    assert_eq!((is, found.held, found.refused), (was, 0, 1));
 }

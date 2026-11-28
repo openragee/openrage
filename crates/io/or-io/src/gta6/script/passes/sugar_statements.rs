@@ -334,6 +334,8 @@ struct Scope<'a> {
     enumerated: BTreeMap<Var, usize>,
     /// The make, the advance and the read of the item that those loops take, by the value type the advance is a method of.
     pairs: BTreeMap<TypeKey, BTreeSet<(FunctionKey, FunctionKey, enumerators::Read)>>,
+    /// The variables the function names that take more than one cell: the only ones that cover another.
+    wide: Vec<Var>,
 }
 
 impl<'a> Scope<'a> {
@@ -369,7 +371,7 @@ impl<'a> Scope<'a> {
                 work.extend(nested(stmt));
             }
         }
-        Scope {
+        let mut scope = Scope {
             head,
             cx: *cx,
             uses,
@@ -379,7 +381,14 @@ impl<'a> Scope<'a> {
             headed: headed(body),
             enumerated,
             pairs,
-        }
+            wide: Vec::new(),
+        };
+        let wide: Vec<Var> = (scope.uses.keys())
+            .copied()
+            .filter(|var| scope.cells(*var) > 1)
+            .collect();
+        scope.wide = wide;
+        scope
     }
 
     /// The cells the address of `var` reaches: as many as its kind says, one where nothing says.
@@ -399,6 +408,11 @@ impl<'a> Scope<'a> {
             }
             _ => held == var,
         }
+    }
+
+    /// Whether another variable the function names holds the cell of `var` among its own: one that reads or changes `var` by another name.
+    fn wider(&self, var: Var) -> bool {
+        (self.wide.iter()).any(|held| *held != var && self.covers(*held, var))
     }
 
     /// Whether something other than an assignment that names `var` may change it: a global, or a cell an address taken in the function reaches.
@@ -427,8 +441,12 @@ impl<'a> Scope<'a> {
         let uses = self.uses.get(&index);
         let outermost = around.is_some_and(|around| !around.contains(&index));
         let headed = outermost && uses.is_some() && uses == self.headed.get(&index);
-        // A wider variable whose cells hold the index reads it by another name.
-        let wider = (self.uses.keys()).any(|var| *var != index && self.covers(*var, index));
+        // A wider variable whose cells hold the index, the array or the item reads or changes it
+        // by another name, which no count above sees.
+        let wider = [Some(index), Some(array), read.item]
+            .into_iter()
+            .flatten()
+            .any(|var| self.wider(var));
         let counted = (uses == Some(&only) || headed) && !wider;
         let apart = read
             .item
@@ -1385,7 +1403,8 @@ fn enumerator_foreach(
         return None;
     };
     let current = member_of(callee, cx) == Some(Member::Current);
-    if !current || var_of(receiver, false) != Some(e) || scope.covers(*x, e) {
+    let shared = scope.covers(*x, e) || scope.wider(*x);
+    if !current || var_of(receiver, false) != Some(e) || shared {
         return None;
     }
 
@@ -1409,8 +1428,9 @@ fn enumerator_foreach(
     hide(&mut body, scope, form.is_some(), &mut leaving)?;
 
     let assigned_again = used(&body).get(x).is_some_and(|uses| uses.assigned > 0);
-    let counted = (expected.iter())
-        .all(|(var, uses)| scope.uses.get(var) == Some(uses) && !scope.exposed(*var));
+    let counted = (expected.iter()).all(|(var, uses)| {
+        scope.uses.get(var) == Some(uses) && !scope.exposed(*var) && !scope.wider(*var)
+    });
     if assigned_again || scope.exposed(*x) || !counted {
         return None;
     }

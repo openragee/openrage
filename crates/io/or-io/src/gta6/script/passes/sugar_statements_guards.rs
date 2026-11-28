@@ -183,7 +183,8 @@ fn using(list: &[Stmt], scope: &Scope<'_>) -> Option<(Stmt, usize)> {
     };
     // The function names the variable nowhere else, and sets it once: where it is taken.
     let inside = used(&list[first..]);
-    let own = scope.uses.get(&held) == inside.get(&held) && !scope.exposed(held);
+    let own =
+        scope.uses.get(&held) == inside.get(&held) && !scope.exposed(held) && !scope.wider(held);
     let once = inside.get(&held).is_some_and(|uses| uses.assigned == 1);
     let body = &list[first + 1..end];
     if !own || !once || leaves(body, true, true) {
@@ -236,7 +237,7 @@ fn lock(list: &[Stmt], scope: &Scope<'_>) -> Option<(Stmt, usize)> {
     let (false, object) = monitor(last)? else {
         return None;
     };
-    let held = var_of(object, false).filter(|var| !scope.exposed(*var))?;
+    let held = var_of(object, false).filter(|var| !scope.exposed(*var) && !scope.wider(*var))?;
     let of = |stmt: &Stmt| {
         let (enters, object) = monitor(stmt)?;
         (var_of(object, false) == Some(held)).then_some(enters)

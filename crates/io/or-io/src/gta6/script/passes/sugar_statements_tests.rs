@@ -1256,3 +1256,54 @@ fn an_index_a_wider_variable_names_by_its_cells_is_no_loops_alone() {
     let (is, found) = read_wide(was.clone());
     assert_eq!((is, found.arrays, found.refused), (was, 0, 1));
 }
+
+/// [`read`] where each `(n, cells)` makes `local_n` a value of that many cells.
+fn read_cells(body: Vec<Stmt>, wide: &[(u32, u32)], names: &Names) -> (Vec<Stmt>, Found) {
+    let mut f = function(body);
+    for (n, cells) in wide {
+        let info = VarInfo {
+            width: Width::Cells,
+            kind: Kind::Aggregate(*cells),
+            name: None,
+            single: false,
+        };
+        f.head.vars.insert(Var::Local(*n), info);
+    }
+    let cx = Context::new(names, Project::empty(), Options::default());
+    let found = rewrite(&mut f, &cx);
+    (f.body, found)
+}
+
+#[test]
+fn an_array_or_an_item_a_wider_variable_names_by_its_cells_is_no_foreach() {
+    let names = Names::default();
+    // Read after the loop: `local_3`, of two cells, holds the array's; `local_6`, of two, the item's.
+    let over_array = vec![counted(Vec::new()), eval(call(vec![local(3)]))];
+    let item = set(7, op("array_get_u64", vec![local(4), local(5)]));
+    let used = eval(call(vec![local(7)]));
+    let over_item = vec![
+        looped(length_test(BinOp::Lt, 4), vec![item, used]),
+        eval(call(vec![local(6)])),
+    ];
+    for (was, wide) in [(over_array, (3, 2)), (over_item, (6, 2))] {
+        let (is, found) = read(was.clone(), &names);
+        assert_eq!((found.arrays, found.refused), (1, 0), "{was:?}");
+        assert_ne!(is, was);
+        let (is, found) = read_cells(was.clone(), &[wide], &names);
+        assert_eq!((is, found.arrays, found.refused), (was, 0, 1));
+    }
+}
+
+#[test]
+fn an_enumerator_or_an_item_a_wider_variable_names_by_its_cells_is_no_foreach() {
+    // The enumerator, the item, and a variable of two cells read after the loop that holds the
+    // item's cell (`local_2`) or the enumerator's (`local_4`).
+    for (e, x, wide) in [(1, 3, 2), (5, 2, 4)] {
+        let was = enumerated_as(0, e, x, Vec::new(), vec![eval(call(vec![local(wide)]))]);
+        let (is, found) = read(was.clone(), &members());
+        assert_eq!((found.enumerators, found.refused), (1, 0), "{was:?}");
+        assert_ne!(is, was);
+        let (is, found) = read_cells(was.clone(), &[(wide, 2)], &members());
+        assert_eq!((is, found.enumerators, found.refused), (was, 0, 1));
+    }
+}

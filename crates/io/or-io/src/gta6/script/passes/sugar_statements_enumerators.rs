@@ -324,7 +324,9 @@ pub(super) fn proved(list: &[Stmt], at: usize, shape: &Shape, scope: &Scope<'_>)
     )];
     let value = scope.uses.get(&made) == Some(&once)
         && scope.addresses.get(&made).map(Vec::as_slice) == Some(&handed[..]);
-    let counted = scope.uses.get(&held) == Some(&set) && taken && apart && value;
+    // ⚠ A wider variable whose cells hold the enumerator's reads or changes it by another name.
+    let alone = !scope.wider(held) && !scope.wider(made);
+    let counted = scope.uses.get(&held) == Some(&set) && taken && apart && alone && value;
     if loops == 0 || !counted || !private(scope, held, shape.cells) {
         return false;
     }
@@ -344,7 +346,8 @@ pub(super) fn proved(list: &[Stmt], at: usize, shape: &Shape, scope: &Scope<'_>)
     let hidden = !uses
         .keys()
         .any(|var| scope.covers(held, *var) || *var == made);
-    let item_apart = item != made && !scope.covers(held, item) && !scope.exposed(item);
+    let item_apart =
+        item != made && !scope.covers(held, item) && !scope.exposed(item) && !scope.wider(item);
     kept && hidden && item_apart && !labelled(rest) && !suspends(rest)
 }
 

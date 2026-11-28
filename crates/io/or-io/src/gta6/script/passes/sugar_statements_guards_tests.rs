@@ -3,7 +3,7 @@ use std::collections::BTreeMap as Map;
 use super::super::rewrite;
 use super::*;
 use crate::gta6::script::exec;
-use crate::gta6::script::ir::{Const, Head, Returns, Scalar, StoreKind};
+use crate::gta6::script::ir::{Const, Head, Kind, Returns, Scalar, StoreKind, VarInfo, Width};
 use crate::gta6::script::{Names, Options, Project};
 
 fn local(n: u32) -> Expr {
@@ -662,4 +662,39 @@ fn a_jump_into_a_handler_from_outside_it_leaves_the_function_as_its_blocks() {
     let regions = [catching(None, vec![1], 3), catching(None, vec![0], 2)];
     let flat = cfg::flat(f.clone());
     assert_eq!(protected(f, &regions, &all_on(&names)), flat);
+}
+
+/// [`read`] where `local_n` is a value of `cells` cells: the variables after it are cells of its own.
+fn read_wide(body: Vec<Stmt>, n: u32, cells: u32) -> (Vec<Stmt>, Found) {
+    let mut f = function(body);
+    let info = VarInfo {
+        width: Width::Cells,
+        kind: Kind::Aggregate(cells),
+        name: None,
+        single: false,
+    };
+    f.head.vars.insert(Var::Local(n), info);
+    let names = Names::default();
+    let cx = Context::new(&names, Project::empty(), Options::default());
+    let found = rewrite(&mut f, &cx);
+    (f.body, found)
+}
+
+#[test]
+fn what_a_wider_variable_changes_by_its_cells_is_no_using_and_no_lock() {
+    // Between the taking and the leaving, `local_0` or `local_2`, where of two cells, is assigned
+    // over the disposed `local_1` or the locked `local_3`.
+    let used = vec![take(1), set_to(0, int(0)), dispose_unless_null(1)];
+    let locked = vec![
+        monitor_call("Enter", 3),
+        set_to(2, int(0)),
+        monitor_call("Exit", 3),
+    ];
+    for (was, wide) in [(used, 0), (locked, 2)] {
+        let (is, found) = read(was.clone());
+        assert_eq!(found.usings + found.locks, 1, "{was:?}");
+        assert_ne!(is, was);
+        let (is, found) = read_wide(was.clone(), wide, 2);
+        assert_eq!((is, found.usings + found.locks, found.refused), (was, 0, 0));
+    }
 }

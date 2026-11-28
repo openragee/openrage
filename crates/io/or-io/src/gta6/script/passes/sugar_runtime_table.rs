@@ -30,12 +30,14 @@ pub(super) enum Form {
     New(&'static [u8]),
 }
 
-/// A type of the library: its full name, whether it is a value type, and its members.
+/// A type of the library: its full name, whether it is a value type, its members, and those of them that answer a truth.
 pub(super) struct Type {
     pub name: &'static str,
     /// A value type's own members are handed the address of the value, never a reference to it.
     pub value: bool,
     pub members: &'static [(&'static str, Form)],
+    /// The members every public overload of which returns `bool`.
+    pub truths: &'static [&'static str],
 }
 
 /// What a call of a member of the library reads as in C#.
@@ -43,6 +45,8 @@ pub(super) struct Type {
 pub(super) enum Reading {
     /// `receiver.Name(args)`, of the argument handed first.
     Method,
+    /// `receiver.Name(args)` of a method a type a script declares may override: only where the receiver holds an object of exactly the type that declares it.
+    Virtual,
     /// `Type.Name`.
     StaticGetter,
     /// `new Type(args)`, of the object handed first.
@@ -60,28 +64,43 @@ struct Fits {
     made: bool,
 }
 
+/// The type a path names the member of, and the member's name.
+fn found(path: &str) -> Option<(&'static Type, &str)> {
+    let (owner, member) = path.rsplit_once('.')?;
+    let ty = TYPES.iter().find(|ty| ty.name == owner)?;
+    Some((ty, member))
+}
+
+/// Whether an overload of the form `form` takes `args` arguments, the receiver of a member of an object or the object a constructor makes counted.
+fn takes(form: Form, args: usize) -> bool {
+    let counted = |counts: &[u8], receivers: usize| {
+        let passed = args.checked_sub(receivers).map(u8::try_from);
+        passed.is_some_and(|n| n.is_ok_and(|n| counts.contains(&n)))
+    };
+    match form {
+        Form::Method(counts) | Form::Open(counts) | Form::New(counts) => counted(counts, 1),
+        Form::Static(counts) => counted(counts, 0),
+        Form::Get | Form::OpenGet => args == 1,
+        Form::Set | Form::OpenSet => args == 2,
+        Form::StaticGet => args == 0,
+    }
+}
+
 /// What a call of the member `path` with `args` arguments reads as, where the table holds the member and exactly one reading takes that many.
 // ⚠ An argument the runtime adds, such as a type's handle, makes a count no public overload has:
 // the call is then left as it is.
 pub(super) fn reading(path: &str, args: usize) -> Option<Reading> {
-    let (owner, member) = path.rsplit_once('.')?;
-    let ty = TYPES.iter().find(|ty| ty.name == owner)?;
-    let takes = |counts: &[u8], receivers: usize| {
-        let passed = args.checked_sub(receivers).map(u8::try_from);
-        passed.is_some_and(|n| n.is_ok_and(|n| counts.contains(&n)))
-    };
+    let (ty, member) = found(path)?;
     let mut fits = Fits::default();
-    for (_, form) in ty.members.iter().filter(|(name, _)| *name == member) {
-        match *form {
-            Form::Method(counts) => fits.method |= takes(counts, 1),
-            Form::Open(counts) => fits.open |= takes(counts, 1),
-            Form::Get => fits.accessor |= args == 1,
-            Form::Set => fits.accessor |= args == 2,
-            Form::OpenGet => fits.open |= args == 1,
-            Form::OpenSet => fits.open |= args == 2,
-            Form::Static(counts) => fits.statics |= takes(counts, 0),
-            Form::StaticGet => fits.static_get |= args == 0,
-            Form::New(counts) => fits.made |= takes(counts, 1),
+    let forms = ty.members.iter().filter(|(name, _)| *name == member);
+    for (_, form) in forms.filter(|(_, form)| takes(*form, args)) {
+        match form {
+            Form::Method(_) => fits.method = true,
+            Form::Open(_) => fits.open = true,
+            Form::Get | Form::Set | Form::OpenGet | Form::OpenSet => fits.accessor = true,
+            Form::Static(_) => fits.statics = true,
+            Form::StaticGet => fits.static_get = true,
+            Form::New(_) => fits.made = true,
         }
     }
     let on_object = fits.method || fits.open || fits.accessor;
@@ -90,15 +109,74 @@ pub(super) fn reading(path: &str, args: usize) -> Option<Reading> {
         // An overload on an object and one on the type that take as many arguments: the call
         // does not say which it is.
         (true, true, _) => None,
-        // ⚠ A method a script's type may override would read as the call of the override; an
-        // accessor of an object is the `properties` reading's.
-        (true, false, false) if !fits.open && !fits.accessor && !ty.value => Some(Reading::Method),
+        // ⚠ An accessor of an object is the `properties` reading's.
+        (true, false, false) if !fits.accessor && !ty.value => match fits.open {
+            true => Some(Reading::Virtual),
+            false => Some(Reading::Method),
+        },
         (false, true, false) if !fits.statics => Some(Reading::StaticGetter),
         // ⚠ A value type is constructed in place, through its address.
         (false, false, true) if !ty.value => Some(Reading::Constructor),
         _ => None,
     }
 }
+
+/// Whether a call of the member `path` with `args` arguments is of an overload the table holds, every public overload of that member returning `bool`.
+pub(super) fn truth(path: &str, args: usize) -> bool {
+    let Some((ty, member)) = found(path) else {
+        return false;
+    };
+    let declared = ty
+        .members
+        .iter()
+        .any(|(name, form)| *name == member && takes(*form, args));
+    declared && ty.truths.contains(&member)
+}
+
+/// The members of a whole number.
+const WHOLE: &[(&str, Form)] = &[
+    ("CompareTo", Method(&[1])),
+    ("Equals", Method(&[1])),
+    ("GetHashCode", Method(&[0])),
+    ("GetTypeCode", Method(&[0])),
+    ("ToString", Method(&[0, 1, 2])),
+    ("Parse", Static(&[1, 2, 3])),
+    ("TryParse", Static(&[2, 3, 4])),
+];
+
+/// The members of a floating-point number.
+const FLOATING: &[(&str, Form)] = &[
+    ("CompareTo", Method(&[1])),
+    ("Equals", Method(&[1])),
+    ("GetHashCode", Method(&[0])),
+    ("GetTypeCode", Method(&[0])),
+    ("ToString", Method(&[0, 1, 2])),
+    ("IsFinite", Static(&[1])),
+    ("IsInfinity", Static(&[1])),
+    ("IsNaN", Static(&[1])),
+    ("IsNegative", Static(&[1])),
+    ("IsNegativeInfinity", Static(&[1])),
+    ("IsNormal", Static(&[1])),
+    ("IsPositiveInfinity", Static(&[1])),
+    ("IsSubnormal", Static(&[1])),
+    ("Parse", Static(&[1, 2, 3])),
+    ("TryParse", Static(&[2, 3, 4])),
+];
+
+const WHOLE_TRUTHS: &[&str] = &["Equals", "TryParse"];
+
+const FLOATING_TRUTHS: &[&str] = &[
+    "Equals",
+    "IsFinite",
+    "IsInfinity",
+    "IsNaN",
+    "IsNegative",
+    "IsNegativeInfinity",
+    "IsNormal",
+    "IsPositiveInfinity",
+    "IsSubnormal",
+    "TryParse",
+];
 
 /// Every type the table holds, each once.
 pub(super) const TYPES: &[Type] = &[
@@ -114,6 +192,7 @@ pub(super) const TYPES: &[Type] = &[
             ("ReferenceEquals", Static(&[2])),
             ("ToString", Open(&[0])),
         ],
+        truths: &["Equals", "ReferenceEquals"],
     },
     // The class every value type derives from: its members are handed the value boxed.
     Type {
@@ -124,6 +203,7 @@ pub(super) const TYPES: &[Type] = &[
             ("GetHashCode", Open(&[0])),
             ("ToString", Open(&[0])),
         ],
+        truths: &["Equals"],
     },
     // ⚠ No type a script declares derives from `Delegate`: C# refuses one, and a delegate type
     // a compiler declares holds no method bodies of its own.
@@ -134,13 +214,17 @@ pub(super) const TYPES: &[Type] = &[
             ("GetInvocationList", Method(&[0])),
             ("DynamicInvoke", Method(&[1])),
             ("Clone", Method(&[0])),
+            ("get_HasSingleTarget", Get),
             ("get_Target", Get),
             ("get_Method", Get),
             ("Combine", Static(&[1, 2])),
             ("Remove", Static(&[2])),
             ("RemoveAll", Static(&[2])),
             ("CreateDelegate", Static(&[2, 3, 4])),
+            ("op_Equality", Static(&[2])),
+            ("op_Inequality", Static(&[2])),
         ],
+        truths: &["get_HasSingleTarget", "op_Equality", "op_Inequality"],
     },
     // An abstract class C# lets a script derive from.
     Type {
@@ -150,16 +234,55 @@ pub(super) const TYPES: &[Type] = &[
             ("GetType", Method(&[0])),
             ("GetType", Static(&[1, 2, 3])),
             ("GetTypeFromHandle", Static(&[1])),
+            ("GetTypeCode", Static(&[1])),
+            ("Equals", Open(&[1])),
+            ("GetHashCode", Open(&[0])),
+            ("ToString", Open(&[0])),
             ("IsAssignableFrom", Open(&[1])),
+            ("IsAssignableTo", Method(&[1])),
+            ("IsEquivalentTo", Open(&[1])),
             ("IsSubclassOf", Open(&[1])),
             ("IsInstanceOfType", Open(&[1])),
             ("IsEnumDefined", Open(&[1])),
             ("GetElementType", Open(&[0])),
             ("GetEnumUnderlyingType", Open(&[0])),
             ("GetGenericArguments", Open(&[0])),
+            ("GetInterfaces", Open(&[0])),
+            ("get_BaseType", OpenGet),
+            ("get_IsAbstract", Get),
+            ("get_IsArray", Get),
+            ("get_IsClass", Get),
             ("get_IsEnum", OpenGet),
+            ("get_IsGenericType", OpenGet),
+            ("get_IsInterface", Get),
+            ("get_IsPrimitive", Get),
+            ("get_IsSealed", Get),
+            ("get_IsValueType", Get),
             ("get_Name", OpenGet),
             ("get_FullName", OpenGet),
+            ("get_Namespace", OpenGet),
+            ("op_Equality", Static(&[2])),
+            ("op_Inequality", Static(&[2])),
+        ],
+        truths: &[
+            "Equals",
+            "IsAssignableFrom",
+            "IsAssignableTo",
+            "IsEquivalentTo",
+            "IsSubclassOf",
+            "IsInstanceOfType",
+            "IsEnumDefined",
+            "get_IsAbstract",
+            "get_IsArray",
+            "get_IsClass",
+            "get_IsEnum",
+            "get_IsGenericType",
+            "get_IsInterface",
+            "get_IsPrimitive",
+            "get_IsSealed",
+            "get_IsValueType",
+            "op_Equality",
+            "op_Inequality",
         ],
     },
     Type {
@@ -169,17 +292,26 @@ pub(super) const TYPES: &[Type] = &[
             ("Clone", Method(&[0])),
             ("CompareTo", Method(&[1])),
             ("Compare", Static(&[2, 3, 4, 5, 6])),
+            ("CompareOrdinal", Static(&[2, 5])),
+            ("Concat", Static(&[1, 2, 3, 4])),
             ("Contains", Method(&[1, 2])),
+            ("Copy", Static(&[1])),
             ("CopyTo", Method(&[1, 4])),
             ("EndsWith", Method(&[1, 2, 3])),
             ("Equals", Method(&[1, 2])),
             ("Equals", Static(&[2, 3])),
+            ("Format", Static(&[2, 3, 4, 5])),
+            ("GetEnumerator", Method(&[0])),
             ("GetHashCode", Method(&[0])),
             ("GetHashCode", Static(&[1, 2])),
             ("IndexOf", Method(&[1, 2, 3, 4])),
             ("IndexOfAny", Method(&[1, 2, 3])),
             ("Insert", Method(&[2])),
+            ("Intern", Static(&[1])),
             ("IsNormalized", Method(&[0, 1])),
+            ("IsNullOrEmpty", Static(&[1])),
+            ("IsNullOrWhiteSpace", Static(&[1])),
+            ("Join", Static(&[2, 3, 4])),
             ("LastIndexOf", Method(&[1, 2, 3, 4])),
             ("LastIndexOfAny", Method(&[1, 2, 3])),
             ("Normalize", Method(&[0, 1])),
@@ -200,6 +332,19 @@ pub(super) const TYPES: &[Type] = &[
             ("TrimEnd", Method(&[0, 1])),
             ("TrimStart", Method(&[0, 1])),
             ("get_Length", Get),
+            ("op_Equality", Static(&[2])),
+            ("op_Inequality", Static(&[2])),
+        ],
+        truths: &[
+            "Contains",
+            "EndsWith",
+            "Equals",
+            "IsNormalized",
+            "IsNullOrEmpty",
+            "IsNullOrWhiteSpace",
+            "StartsWith",
+            "op_Equality",
+            "op_Inequality",
         ],
     },
     // ⚠ C# refuses a class that derives from `Array`.
@@ -209,6 +354,7 @@ pub(super) const TYPES: &[Type] = &[
         members: &[
             ("Clone", Method(&[0])),
             ("CopyTo", Method(&[2])),
+            ("GetEnumerator", Method(&[0])),
             ("GetLength", Method(&[1])),
             ("GetLongLength", Method(&[1])),
             ("GetLowerBound", Method(&[1])),
@@ -216,9 +362,42 @@ pub(super) const TYPES: &[Type] = &[
             ("GetValue", Method(&[1, 2, 3])),
             ("SetValue", Method(&[2, 3, 4])),
             ("Initialize", Method(&[0])),
+            ("get_IsFixedSize", Get),
+            ("get_IsReadOnly", Get),
+            ("get_IsSynchronized", Get),
             ("get_Length", Get),
             ("get_LongLength", Get),
             ("get_Rank", Get),
+            ("get_SyncRoot", Get),
+            ("AsReadOnly", Static(&[1])),
+            ("BinarySearch", Static(&[2, 3, 4, 5])),
+            ("Clear", Static(&[1, 3])),
+            ("ConstrainedCopy", Static(&[5])),
+            ("ConvertAll", Static(&[2])),
+            ("Copy", Static(&[3, 5])),
+            ("CreateInstance", Static(&[2, 3, 4])),
+            ("Empty", Static(&[0])),
+            ("Exists", Static(&[2])),
+            ("Fill", Static(&[2, 4])),
+            ("Find", Static(&[2])),
+            ("FindAll", Static(&[2])),
+            ("FindIndex", Static(&[2, 3, 4])),
+            ("FindLast", Static(&[2])),
+            ("FindLastIndex", Static(&[2, 3, 4])),
+            ("ForEach", Static(&[2])),
+            ("IndexOf", Static(&[2, 3, 4])),
+            ("LastIndexOf", Static(&[2, 3, 4])),
+            ("Resize", Static(&[2])),
+            ("Reverse", Static(&[1, 3])),
+            ("Sort", Static(&[1, 2, 3, 4, 5])),
+            ("TrueForAll", Static(&[2])),
+        ],
+        truths: &[
+            "Exists",
+            "TrueForAll",
+            "get_IsFixedSize",
+            "get_IsReadOnly",
+            "get_IsSynchronized",
         ],
     },
     // ⚠ The objects of `Enum` are boxed enums, and an enum declares no method.
@@ -227,10 +406,23 @@ pub(super) const TYPES: &[Type] = &[
         value: false,
         members: &[
             ("CompareTo", Method(&[1])),
+            ("Equals", Method(&[1])),
+            ("GetHashCode", Method(&[0])),
             ("HasFlag", Method(&[1])),
             ("GetTypeCode", Method(&[0])),
             ("ToString", Method(&[0, 1, 2])),
+            ("Format", Static(&[3])),
+            ("GetName", Static(&[2])),
+            ("GetNames", Static(&[1])),
+            ("GetUnderlyingType", Static(&[1])),
+            ("GetValues", Static(&[1])),
+            ("GetValuesAsUnderlyingType", Static(&[1])),
+            ("IsDefined", Static(&[2])),
+            ("Parse", Static(&[2, 3])),
+            ("ToObject", Static(&[2])),
+            ("TryParse", Static(&[2, 3, 4])),
         ],
+        truths: &["Equals", "HasFlag", "IsDefined", "TryParse"],
     },
     Type {
         name: "System.Random",
@@ -244,6 +436,7 @@ pub(super) const TYPES: &[Type] = &[
             ("NextSingle", Open(&[0])),
             ("get_Shared", StaticGet),
         ],
+        truths: &[],
     },
     Type {
         name: "System.WeakReference",
@@ -256,6 +449,7 @@ pub(super) const TYPES: &[Type] = &[
             ("set_Target", OpenSet),
             ("get_TrackResurrection", OpenGet),
         ],
+        truths: &["get_IsAlive", "get_TrackResurrection"],
     },
     Type {
         name: "System.WeakReference_1",
@@ -265,11 +459,13 @@ pub(super) const TYPES: &[Type] = &[
             ("SetTarget", Method(&[1])),
             ("TryGetTarget", Method(&[1])),
         ],
+        truths: &["TryGetTarget"],
     },
     Type {
         name: "System.EventArgs",
         value: false,
         members: &[("Ctor", New(&[0]))],
+        truths: &[],
     },
     Type {
         name: "System.Exception",
@@ -285,34 +481,249 @@ pub(super) const TYPES: &[Type] = &[
             ("get_Source", OpenGet),
             ("get_StackTrace", OpenGet),
         ],
+        truths: &[],
+    },
+    // A static class: every member is on the type.
+    Type {
+        name: "System.Convert",
+        value: false,
+        members: &[
+            ("ChangeType", Static(&[2, 3])),
+            ("FromBase64String", Static(&[1])),
+            ("ToBase64String", Static(&[1, 2, 3, 4])),
+            ("ToBoolean", Static(&[1, 2])),
+            ("ToByte", Static(&[1, 2])),
+            ("ToChar", Static(&[1, 2])),
+            ("ToDecimal", Static(&[1, 2])),
+            ("ToDouble", Static(&[1, 2])),
+            ("ToInt16", Static(&[1, 2])),
+            ("ToInt32", Static(&[1, 2])),
+            ("ToInt64", Static(&[1, 2])),
+            ("ToSByte", Static(&[1, 2])),
+            ("ToSingle", Static(&[1, 2])),
+            ("ToString", Static(&[1, 2, 3])),
+            ("ToUInt16", Static(&[1, 2])),
+            ("ToUInt32", Static(&[1, 2])),
+            ("ToUInt64", Static(&[1, 2])),
+        ],
+        truths: &["ToBoolean"],
+    },
+    // A static class: every member is on the type.
+    Type {
+        name: "System.GC",
+        value: false,
+        members: &[
+            ("AddMemoryPressure", Static(&[1])),
+            ("Collect", Static(&[0, 1, 2, 3, 4])),
+            ("GetGeneration", Static(&[1])),
+            ("GetTotalMemory", Static(&[1])),
+            ("KeepAlive", Static(&[1])),
+            ("ReRegisterForFinalize", Static(&[1])),
+            ("RemoveMemoryPressure", Static(&[1])),
+            ("SuppressFinalize", Static(&[1])),
+            ("WaitForPendingFinalizers", Static(&[0])),
+        ],
+        truths: &[],
+    },
+    Type {
+        name: "System.Boolean",
+        value: true,
+        members: &[
+            ("CompareTo", Method(&[1])),
+            ("Equals", Method(&[1])),
+            ("GetHashCode", Method(&[0])),
+            ("GetTypeCode", Method(&[0])),
+            ("ToString", Method(&[0, 1])),
+            ("Parse", Static(&[1])),
+            ("TryParse", Static(&[2])),
+        ],
+        truths: &["Equals", "Parse", "TryParse"],
+    },
+    Type {
+        name: "System.Char",
+        value: true,
+        members: &[
+            ("CompareTo", Method(&[1])),
+            ("Equals", Method(&[1])),
+            ("GetHashCode", Method(&[0])),
+            ("GetTypeCode", Method(&[0])),
+            ("ToString", Method(&[0, 1])),
+            ("ToString", Static(&[1])),
+            ("GetNumericValue", Static(&[1, 2])),
+            ("IsControl", Static(&[1, 2])),
+            ("IsDigit", Static(&[1, 2])),
+            ("IsLetter", Static(&[1, 2])),
+            ("IsLetterOrDigit", Static(&[1, 2])),
+            ("IsLower", Static(&[1, 2])),
+            ("IsNumber", Static(&[1, 2])),
+            ("IsPunctuation", Static(&[1, 2])),
+            ("IsSeparator", Static(&[1, 2])),
+            ("IsSymbol", Static(&[1, 2])),
+            ("IsUpper", Static(&[1, 2])),
+            ("IsWhiteSpace", Static(&[1, 2])),
+            ("Parse", Static(&[1])),
+            ("ToLower", Static(&[1, 2])),
+            ("ToLowerInvariant", Static(&[1])),
+            ("ToUpper", Static(&[1, 2])),
+            ("ToUpperInvariant", Static(&[1])),
+            ("TryParse", Static(&[2])),
+        ],
+        truths: &[
+            "Equals",
+            "IsControl",
+            "IsDigit",
+            "IsLetter",
+            "IsLetterOrDigit",
+            "IsLower",
+            "IsNumber",
+            "IsPunctuation",
+            "IsSeparator",
+            "IsSymbol",
+            "IsUpper",
+            "IsWhiteSpace",
+            "TryParse",
+        ],
+    },
+    Type {
+        name: "System.Byte",
+        value: true,
+        members: WHOLE,
+        truths: WHOLE_TRUTHS,
+    },
+    Type {
+        name: "System.SByte",
+        value: true,
+        members: WHOLE,
+        truths: WHOLE_TRUTHS,
+    },
+    Type {
+        name: "System.Int16",
+        value: true,
+        members: WHOLE,
+        truths: WHOLE_TRUTHS,
+    },
+    Type {
+        name: "System.UInt16",
+        value: true,
+        members: WHOLE,
+        truths: WHOLE_TRUTHS,
+    },
+    Type {
+        name: "System.Int32",
+        value: true,
+        members: WHOLE,
+        truths: WHOLE_TRUTHS,
+    },
+    Type {
+        name: "System.UInt32",
+        value: true,
+        members: WHOLE,
+        truths: WHOLE_TRUTHS,
+    },
+    Type {
+        name: "System.Int64",
+        value: true,
+        members: WHOLE,
+        truths: WHOLE_TRUTHS,
+    },
+    Type {
+        name: "System.UInt64",
+        value: true,
+        members: WHOLE,
+        truths: WHOLE_TRUTHS,
+    },
+    Type {
+        name: "System.Single",
+        value: true,
+        members: FLOATING,
+        truths: FLOATING_TRUTHS,
+    },
+    Type {
+        name: "System.Double",
+        value: true,
+        members: FLOATING,
+        truths: FLOATING_TRUTHS,
+    },
+    Type {
+        name: "System.Guid",
+        value: true,
+        members: &[
+            ("Ctor", New(&[1, 2, 4, 11])),
+            ("CompareTo", Method(&[1])),
+            ("Equals", Method(&[1])),
+            ("GetHashCode", Method(&[0])),
+            ("ToByteArray", Method(&[0, 1])),
+            ("ToString", Method(&[0, 1, 2])),
+            ("NewGuid", Static(&[0])),
+            ("Parse", Static(&[1, 2])),
+            ("ParseExact", Static(&[2])),
+            ("TryParse", Static(&[2, 3])),
+            ("TryParseExact", Static(&[3])),
+            ("op_Equality", Static(&[2])),
+            ("op_Inequality", Static(&[2])),
+        ],
+        truths: &[
+            "Equals",
+            "TryParse",
+            "TryParseExact",
+            "op_Equality",
+            "op_Inequality",
+        ],
     },
     Type {
         name: "System.Nullable_1",
         value: true,
         members: &[
+            ("Equals", Method(&[1])),
+            ("GetHashCode", Method(&[0])),
             ("GetValueOrDefault", Method(&[0, 1])),
+            ("ToString", Method(&[0])),
             ("get_HasValue", Get),
             ("get_Value", Get),
         ],
+        truths: &["Equals", "get_HasValue"],
     },
     Type {
         name: "System.DateTime",
         value: true,
         members: &[
+            ("Ctor", New(&[1, 2, 3, 4, 6, 7, 8, 9])),
+            ("Add", Method(&[1])),
             ("AddDays", Method(&[1])),
             ("AddHours", Method(&[1])),
+            ("AddMicroseconds", Method(&[1])),
             ("AddMilliseconds", Method(&[1])),
             ("AddMinutes", Method(&[1])),
+            ("AddMonths", Method(&[1])),
             ("AddSeconds", Method(&[1])),
             ("AddTicks", Method(&[1])),
+            ("AddYears", Method(&[1])),
+            ("CompareTo", Method(&[1])),
+            ("Equals", Method(&[1])),
+            ("GetHashCode", Method(&[0])),
+            ("IsDaylightSavingTime", Method(&[0])),
+            ("Subtract", Method(&[1])),
+            ("ToBinary", Method(&[0])),
+            ("ToFileTime", Method(&[0])),
+            ("ToLocalTime", Method(&[0])),
+            ("ToLongDateString", Method(&[0])),
+            ("ToLongTimeString", Method(&[0])),
+            ("ToOADate", Method(&[0])),
+            ("ToShortDateString", Method(&[0])),
+            ("ToShortTimeString", Method(&[0])),
+            ("ToString", Method(&[0, 1, 2])),
+            ("ToUniversalTime", Method(&[0])),
             ("get_Date", Get),
             ("get_Day", Get),
             ("get_DayOfWeek", Get),
             ("get_DayOfYear", Get),
             ("get_Hour", Get),
+            ("get_Kind", Get),
+            ("get_Microsecond", Get),
             ("get_Millisecond", Get),
             ("get_Minute", Get),
             ("get_Month", Get),
+            ("get_Nanosecond", Get),
             ("get_Second", Get),
             ("get_Ticks", Get),
             ("get_TimeOfDay", Get),
@@ -320,23 +731,104 @@ pub(super) const TYPES: &[Type] = &[
             ("get_Now", StaticGet),
             ("get_Today", StaticGet),
             ("get_UtcNow", StaticGet),
+            ("Compare", Static(&[2])),
+            ("DaysInMonth", Static(&[2])),
+            ("Equals", Static(&[2])),
+            ("FromBinary", Static(&[1])),
+            ("FromFileTime", Static(&[1])),
+            ("FromOADate", Static(&[1])),
+            ("IsLeapYear", Static(&[1])),
+            ("Parse", Static(&[1, 2, 3])),
+            ("ParseExact", Static(&[3, 4])),
+            ("SpecifyKind", Static(&[2])),
+            ("TryParse", Static(&[2, 3, 4])),
+            ("TryParseExact", Static(&[4, 5])),
+            ("op_Addition", Static(&[2])),
+            ("op_Subtraction", Static(&[2])),
+            ("op_Equality", Static(&[2])),
+            ("op_Inequality", Static(&[2])),
+            ("op_LessThan", Static(&[2])),
+            ("op_LessThanOrEqual", Static(&[2])),
+            ("op_GreaterThan", Static(&[2])),
+            ("op_GreaterThanOrEqual", Static(&[2])),
+        ],
+        truths: &[
+            "Equals",
+            "IsDaylightSavingTime",
+            "IsLeapYear",
+            "TryParse",
+            "TryParseExact",
+            "op_Equality",
+            "op_Inequality",
+            "op_LessThan",
+            "op_LessThanOrEqual",
+            "op_GreaterThan",
+            "op_GreaterThanOrEqual",
         ],
     },
     Type {
         name: "System.TimeSpan",
         value: true,
         members: &[
+            ("Ctor", New(&[1, 3, 4, 5, 6])),
+            ("Add", Method(&[1])),
+            ("CompareTo", Method(&[1])),
+            ("Divide", Method(&[1])),
+            ("Duration", Method(&[0])),
+            ("Equals", Method(&[1])),
+            ("GetHashCode", Method(&[0])),
+            ("Multiply", Method(&[1])),
+            ("Negate", Method(&[0])),
+            ("Subtract", Method(&[1])),
+            ("ToString", Method(&[0, 1, 2])),
             ("get_Days", Get),
             ("get_Hours", Get),
+            ("get_Microseconds", Get),
             ("get_Milliseconds", Get),
             ("get_Minutes", Get),
+            ("get_Nanoseconds", Get),
             ("get_Seconds", Get),
             ("get_Ticks", Get),
             ("get_TotalDays", Get),
             ("get_TotalHours", Get),
+            ("get_TotalMicroseconds", Get),
             ("get_TotalMilliseconds", Get),
             ("get_TotalMinutes", Get),
+            ("get_TotalNanoseconds", Get),
             ("get_TotalSeconds", Get),
+            ("Compare", Static(&[2])),
+            ("Equals", Static(&[2])),
+            ("FromDays", Static(&[1, 2, 3, 4, 5, 6])),
+            ("FromHours", Static(&[1, 2, 3, 4, 5])),
+            ("FromMicroseconds", Static(&[1])),
+            ("FromMilliseconds", Static(&[1, 2])),
+            ("FromMinutes", Static(&[1, 2, 3, 4])),
+            ("FromSeconds", Static(&[1, 2, 3])),
+            ("FromTicks", Static(&[1])),
+            ("Parse", Static(&[1, 2])),
+            ("ParseExact", Static(&[3, 4])),
+            ("TryParse", Static(&[2, 3])),
+            ("TryParseExact", Static(&[3, 4, 5])),
+            ("op_Addition", Static(&[2])),
+            ("op_Subtraction", Static(&[2])),
+            ("op_UnaryNegation", Static(&[1])),
+            ("op_Equality", Static(&[2])),
+            ("op_Inequality", Static(&[2])),
+            ("op_LessThan", Static(&[2])),
+            ("op_LessThanOrEqual", Static(&[2])),
+            ("op_GreaterThan", Static(&[2])),
+            ("op_GreaterThanOrEqual", Static(&[2])),
+        ],
+        truths: &[
+            "Equals",
+            "TryParse",
+            "TryParseExact",
+            "op_Equality",
+            "op_Inequality",
+            "op_LessThan",
+            "op_LessThanOrEqual",
+            "op_GreaterThan",
+            "op_GreaterThanOrEqual",
         ],
     },
     Type {
@@ -344,11 +836,13 @@ pub(super) const TYPES: &[Type] = &[
         value: true,
         members: &[
             ("Ctor", New(&[2])),
+            ("Deconstruct", Method(&[2])),
             ("get_Key", Get),
             ("set_Key", Set),
             ("get_Value", Get),
             ("set_Value", Set),
         ],
+        truths: &[],
     },
     Type {
         name: "System.Collections.Generic.Dictionary_2",
@@ -369,6 +863,13 @@ pub(super) const TYPES: &[Type] = &[
             ("get_Count", Get),
             ("get_Keys", Get),
             ("get_Values", Get),
+        ],
+        truths: &[
+            "ContainsKey",
+            "ContainsValue",
+            "Remove",
+            "TryAdd",
+            "TryGetValue",
         ],
     },
     Type {
@@ -403,6 +904,7 @@ pub(super) const TYPES: &[Type] = &[
             ("RemoveAt", Method(&[1])),
             ("RemoveRange", Method(&[2])),
             ("Reverse", Method(&[0, 2])),
+            ("Slice", Method(&[2])),
             ("Sort", Method(&[0, 1, 3])),
             ("ToArray", Method(&[0])),
             ("TrimExcess", Method(&[0])),
@@ -411,6 +913,7 @@ pub(super) const TYPES: &[Type] = &[
             ("set_Capacity", Set),
             ("get_Count", Get),
         ],
+        truths: &["Contains", "Exists", "Remove", "TrueForAll"],
     },
     Type {
         name: "System.Collections.Generic.HashSet_1",
@@ -421,9 +924,12 @@ pub(super) const TYPES: &[Type] = &[
             ("Clear", Method(&[0])),
             ("Contains", Method(&[1])),
             ("CopyTo", Method(&[1, 2, 3])),
+            ("EnsureCapacity", Method(&[1])),
             ("ExceptWith", Method(&[1])),
             ("GetEnumerator", Method(&[0])),
             ("IntersectWith", Method(&[1])),
+            ("IsProperSubsetOf", Method(&[1])),
+            ("IsProperSupersetOf", Method(&[1])),
             ("IsSubsetOf", Method(&[1])),
             ("IsSupersetOf", Method(&[1])),
             ("Overlaps", Method(&[1])),
@@ -436,6 +942,19 @@ pub(super) const TYPES: &[Type] = &[
             ("UnionWith", Method(&[1])),
             ("get_Comparer", Get),
             ("get_Count", Get),
+            ("CreateSetComparer", Static(&[0])),
+        ],
+        truths: &[
+            "Add",
+            "Contains",
+            "IsProperSubsetOf",
+            "IsProperSupersetOf",
+            "IsSubsetOf",
+            "IsSupersetOf",
+            "Overlaps",
+            "Remove",
+            "SetEquals",
+            "TryGetValue",
         ],
     },
     Type {
@@ -448,6 +967,7 @@ pub(super) const TYPES: &[Type] = &[
             ("CopyTo", Method(&[2])),
             ("Dequeue", Method(&[0])),
             ("Enqueue", Method(&[1])),
+            ("EnsureCapacity", Method(&[1])),
             ("GetEnumerator", Method(&[0])),
             ("Peek", Method(&[0])),
             ("ToArray", Method(&[0])),
@@ -456,6 +976,7 @@ pub(super) const TYPES: &[Type] = &[
             ("TryPeek", Method(&[1])),
             ("get_Count", Get),
         ],
+        truths: &["Contains", "TryDequeue", "TryPeek"],
     },
     Type {
         name: "System.Collections.Generic.Stack_1",
@@ -465,6 +986,7 @@ pub(super) const TYPES: &[Type] = &[
             ("Clear", Method(&[0])),
             ("Contains", Method(&[1])),
             ("CopyTo", Method(&[2])),
+            ("EnsureCapacity", Method(&[1])),
             ("GetEnumerator", Method(&[0])),
             ("Peek", Method(&[0])),
             ("Pop", Method(&[0])),
@@ -475,6 +997,7 @@ pub(super) const TYPES: &[Type] = &[
             ("TryPop", Method(&[1])),
             ("get_Count", Get),
         ],
+        truths: &["Contains", "TryPeek", "TryPop"],
     },
     Type {
         name: "System.Text.StringBuilder",
@@ -487,6 +1010,7 @@ pub(super) const TYPES: &[Type] = &[
             ("Clear", Method(&[0])),
             ("CopyTo", Method(&[3, 4])),
             ("EnsureCapacity", Method(&[1])),
+            ("Equals", Method(&[1])),
             ("Insert", Method(&[2, 3, 4])),
             ("Remove", Method(&[2])),
             ("Replace", Method(&[2, 4])),
@@ -497,12 +1021,15 @@ pub(super) const TYPES: &[Type] = &[
             ("set_Length", Set),
             ("get_MaxCapacity", Get),
         ],
+        truths: &["Equals"],
     },
     Type {
         name: "System.Threading.CancellationToken",
         value: true,
         members: &[
             ("Ctor", New(&[1])),
+            ("Equals", Method(&[1])),
+            ("GetHashCode", Method(&[0])),
             ("Register", Method(&[1, 2, 3])),
             ("ThrowIfCancellationRequested", Method(&[0])),
             ("UnsafeRegister", Method(&[2])),
@@ -510,6 +1037,15 @@ pub(super) const TYPES: &[Type] = &[
             ("get_IsCancellationRequested", Get),
             ("get_WaitHandle", Get),
             ("get_None", StaticGet),
+            ("op_Equality", Static(&[2])),
+            ("op_Inequality", Static(&[2])),
+        ],
+        truths: &[
+            "Equals",
+            "get_CanBeCanceled",
+            "get_IsCancellationRequested",
+            "op_Equality",
+            "op_Inequality",
         ],
     },
     Type {
@@ -526,11 +1062,14 @@ pub(super) const TYPES: &[Type] = &[
             ("get_Token", Get),
             ("CreateLinkedTokenSource", Static(&[1, 2])),
         ],
+        truths: &["TryReset", "get_IsCancellationRequested"],
     },
+    // ⚠ `Wait` returns nothing in some overloads and a truth in others: it answers none.
     Type {
         name: "System.Threading.Tasks.Task",
         value: false,
         members: &[
+            ("Ctor", New(&[1, 2, 3, 4])),
             ("ConfigureAwait", Method(&[1])),
             ("ContinueWith", Method(&[1, 2, 3, 4, 5])),
             ("Dispose", Method(&[0])),
@@ -550,6 +1089,22 @@ pub(super) const TYPES: &[Type] = &[
             ("get_CompletedTask", StaticGet),
             ("get_CurrentId", StaticGet),
             ("get_Factory", StaticGet),
+            ("Delay", Static(&[1, 2, 3])),
+            ("FromCanceled", Static(&[1])),
+            ("FromException", Static(&[1])),
+            ("FromResult", Static(&[1])),
+            ("Run", Static(&[1, 2])),
+            ("WaitAll", Static(&[1, 2, 3])),
+            ("WaitAny", Static(&[1, 2, 3])),
+            ("WhenAll", Static(&[1])),
+            ("WhenAny", Static(&[1, 2])),
+            ("Yield", Static(&[0])),
+        ],
+        truths: &[
+            "get_IsCanceled",
+            "get_IsCompleted",
+            "get_IsCompletedSuccessfully",
+            "get_IsFaulted",
         ],
     },
     Type {
@@ -560,6 +1115,8 @@ pub(super) const TYPES: &[Type] = &[
             ("ContinueWith", Method(&[1, 2, 3, 4, 5])),
             ("GetAwaiter", Method(&[0])),
             ("get_Result", Get),
+            ("get_Factory", StaticGet),
         ],
+        truths: &[],
     },
 ];

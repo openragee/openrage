@@ -6597,14 +6597,6 @@
    "estimate": "TASK::REMOVE_SCENARIO_BLOCKING_VOLUME",
    "estimate_confidence": "low"
   },
-  "0x255C369E30953857": {
-   "name": "_0x255C369E30953857",
-   "confidence": "unnamed",
-   "rva": "0x04507E00",
-   "arg_cells": 5,
-   "return_cells": 0,
-   "calls": 3
-  },
   "0x255D8C0D2A8AA6A7": {
    "name": "_0x255D8C0D2A8AA6A7",
    "confidence": "unnamed",
@@ -7245,16 +7237,6 @@
    "return_cells": 1,
    "calls": 1,
    "estimate": "PLAYER::GET_TIME_SINCE_PLAYER_DAMAGED_VEHICLE",
-   "estimate_confidence": "low"
-  },
-  "0x293DE5FCF74F740B": {
-   "name": "_0x293DE5FCF74F740B",
-   "confidence": "unnamed",
-   "rva": "0x04A90B70",
-   "arg_cells": 4,
-   "return_cells": 0,
-   "calls": 81,
-   "estimate": "WEAPON::SET_PED_HAS_INFINITE_AMMO_FOR_WEAPON",
    "estimate_confidence": "low"
   },
   "0x2942C9D941FA1070": {
@@ -58436,6 +58418,14 @@
    "arg_cells": 2,
    "return_cells": 0,
    "calls": 2
+  },
+  "0x255C369E30953857": {
+   "name": "_SET_PLAYER_COOPERATE_PROMPT_THIS_FRAME",
+   "confidence": "context+layout",
+   "rva": "0x04507E00",
+   "arg_cells": 5,
+   "return_cells": 0,
+   "calls": 3
   }
  },
  "WEAPON": {
@@ -59035,6 +59025,14 @@
    "arg_cells": 2,
    "return_cells": 0,
    "calls": 1
+  },
+  "0x293DE5FCF74F740B": {
+   "name": "SET_PED_INFINITE_AMMO",
+   "confidence": "context+layout",
+   "rva": "0x04A90B70",
+   "arg_cells": 4,
+   "return_cells": 0,
+   "calls": 81
   }
  },
  "CAMERA": {

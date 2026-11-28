@@ -591,6 +591,7 @@ fn two_geometries_that_wear_one_effect_with_other_streams_are_each_drawn_by_the_
         lost: &lost,
         ped: &|| None,
         tile: &|| None,
+        skin_tones: &|| Ok(None),
         game_texture: &|_| Ok(None),
     };
     let (meshlets, effects) = meshlets_of(&drawable, models, &sources).expect("its shader");

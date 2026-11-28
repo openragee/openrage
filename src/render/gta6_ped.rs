@@ -4,9 +4,11 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use or_cli::gta6_ped_layers::{component_map, ComponentBuffer, Map};
+use or_cli::gta6_ped_layers::{component_map, ComponentBuffer, Map, ObjectData};
+use or_cli::gta6_ped_skin::{Loaded, SkinPreset, SkinTone, SkinToneEntry, FALLBACK_PRESET};
 use or_cli::{Gta6Feed as Filled, Gta6ShadingPass};
 use or_io::gta6::ped_assets::PedTextures;
+use or_io::gta6::skin_tones::SkinTones;
 use or_renderer::game_shaders::mesh::Image;
 use or_renderer::game_shaders::meshlets::Feed;
 
@@ -103,6 +105,69 @@ pub(crate) fn fill(
         }
     }
     Ok(())
+}
+
+/// Feed the skin tone table and the object record of a pass that reads the table with `tones`
+/// as the game builds them for a ped that names no preset: the fallback preset's record.
+/// `None` where no skin tones are loaded leaves the records at rest. The preset it is drawn
+/// with is said once a session.
+pub(crate) fn fill_skin(
+    pass: &Gta6ShadingPass,
+    tones: Option<&SkinTones>,
+    feeds: &mut BTreeMap<(u32, u32), Feed>,
+) {
+    let stages = || pass.mesh.feeds.iter().chain(&pass.pixel.feeds);
+    let Some(tones) = tones.filter(|_| stages().any(|fed| fed.feed == Filled::SkinTones)) else {
+        return;
+    };
+    let loaded_tones: Vec<(u32, SkinTone)> = (tones.tones.iter())
+        .map(|t| {
+            let tone = SkinTone {
+                colour: t.colour,
+                at: t.place,
+                extra: t.extra,
+                depth_weight: t.depth_weight,
+            };
+            (t.name, tone)
+        })
+        .collect();
+    let presets: Vec<SkinPreset> = (tones.presets.iter())
+        .map(|p| SkinPreset {
+            name: p.name,
+            tone: p.tone,
+            entry: SkinToneEntry {
+                colour: p.colour,
+                offset: p.offset,
+            },
+        })
+        .collect();
+    let loaded = Loaded {
+        tones: &loaded_tones,
+        presets: &presets,
+    };
+    // A ped that names no preset is looked up by a name no preset has.
+    let slot = loaded.slot(0);
+    let record = ObjectData {
+        skin_tone: slot,
+        depth_weight: loaded.depth_weight(slot),
+        ..ObjectData::AT_REST
+    };
+    static SAID: std::sync::Once = std::sync::Once::new();
+    SAID.call_once(|| {
+        tracing::info!(
+            slot,
+            "a ped's part is drawn with the engine's fallback skin tone preset 0x{FALLBACK_PRESET:08X}, as a ped that names none"
+        );
+    });
+    for fed in stages() {
+        let bytes = match fed.feed {
+            Filled::SkinTones => loaded.table(),
+            Filled::ObjectData => record.bytes(),
+            _ => continue,
+        };
+        let filled = Feed::Bytes(super::gta6_meshlets::headed(fed.header, &bytes));
+        feeds.insert((fed.group, fed.binding), filled);
+    }
 }
 
 #[cfg(test)]
@@ -277,5 +342,52 @@ mod tests {
         let reading = || Some(Worn::Reading);
         assert_eq!(joined_for(&part, &mut held, &reading, &decoding), None);
         assert!(decoding.get() && held.is_some());
+    }
+
+    #[test]
+    fn a_skin_pass_is_fed_the_loaded_table_and_the_fallback_preset_s_record() {
+        use or_cli::gta6_ped_skin::FALLBACK_TONE;
+        use or_io::gta6::skin_tones::{SkinPreset as Preset, SkinTone as Tone};
+        let tones = SkinTones {
+            tones: vec![Tone {
+                name: FALLBACK_TONE,
+                colour: [0.5; 3],
+                place: [0.25, 0.0, 0.5],
+                depth_weight: 0.75,
+                extra: [0.0; 3],
+            }],
+            presets: vec![Preset {
+                name: FALLBACK_PRESET,
+                colour: [0.5; 3],
+                tone: FALLBACK_TONE,
+                offset: [0.0; 3],
+            }],
+        };
+        let skin = pass(vec![fed(0, Filled::SkinTones), fed(1, Filled::ObjectData)]);
+        let mut feeds = BTreeMap::new();
+        fill_skin(&skin, Some(&tones), &mut feeds);
+        let bytes = |binding| match feeds.get(&(1, binding)) {
+            Some(Feed::Bytes(bytes)) => bytes.clone(),
+            _ => Vec::new(),
+        };
+        assert_eq!(bytes(0).len(), 2 * 60, "record nought, then the preset's");
+        let record = bytes(1);
+        assert_eq!(
+            u32::from_le_bytes(record[0x164..0x168].try_into().unwrap()),
+            1
+        );
+        assert_eq!(
+            f32::from_le_bytes(record[0x19C..0x1A0].try_into().unwrap()),
+            0.75
+        );
+        // No skin tones loaded, or a pass that reads no table: nothing is fed.
+        let mut none = BTreeMap::new();
+        fill_skin(&skin, None, &mut none);
+        fill_skin(
+            &pass(vec![fed(1, Filled::ObjectData)]),
+            Some(&tones),
+            &mut none,
+        );
+        assert!(none.is_empty());
     }
 }

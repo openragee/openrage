@@ -177,6 +177,7 @@ pub use or_shader_front::rdna_bind::instances::{
     InstanceRecord as Gta6InstanceRecord, IDENTITY as GTA6_IN_PLACE,
 };
 pub use or_shader_front::rdna_bind::ped_layers as gta6_ped_layers;
+pub use or_shader_front::rdna_bind::ped_skin as gta6_ped_skin;
 pub use or_shader_front::rdna_bind::shading::drawn_by_hardware as gta6_drawn_by_hardware;
 pub use or_shader_front::rdna_bind::terrain as gta6_terrain;
 pub use project_resource::check_resource_folder;

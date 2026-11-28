@@ -27,6 +27,9 @@ pub struct SkinTone {
     pub at: [f32; 3],
     /// Three more numbers the record carries; nought for the built-in tone.
     pub extra: [f32; 3],
+    /// What a ped wearing it is given as the weight of the per-pixel term of the look-up's
+    /// depth ([`super::ped_layers::ObjectData::depth_weight`]); nought for the built-in tone.
+    pub depth_weight: f32,
 }
 
 impl SkinTone {
@@ -39,7 +42,67 @@ impl SkinTone {
         ],
         at: [0.0, 1.0, 0.0],
         extra: [0.0; 3],
+        depth_weight: 0.0,
     };
+}
+
+/// The tone a preset falls back to where the one it names is not loaded.
+pub const FALLBACK_TONE: u32 = 0xC28F_3ECD;
+/// The preset a ped takes where the one it names, or none, is not loaded.
+pub const FALLBACK_PRESET: u32 = 0xAC23_15DA;
+
+/// A preset of the loaded skin tones: its name, the tone it names, and its entry.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SkinPreset {
+    pub name: u32,
+    pub tone: u32,
+    pub entry: SkinToneEntry,
+}
+
+/// The loaded tones by name, and the presets in the order they are loaded.
+#[derive(Debug, Clone, Copy)]
+pub struct Loaded<'a> {
+    pub tones: &'a [(u32, SkinTone)],
+    pub presets: &'a [SkinPreset],
+}
+
+impl Loaded<'_> {
+    /// The tone named `name`, else the fallback tone, else the built-in one.
+    // The built-in tone is held under its own name before the loaded ones, which a loaded tone
+    // of that name shadows.
+    fn tone(&self, name: u32) -> SkinTone {
+        let named = |name| (self.tones.iter()).find_map(|(n, t)| (*n == name).then_some(*t));
+        let built_in = (name == DEFAULT_TONE).then_some(SkinTone::DEFAULT);
+        (named(name).or(built_in))
+            .or_else(|| named(FALLBACK_TONE))
+            .unwrap_or(SkinTone::DEFAULT)
+    }
+
+    /// The record table: record nought the default entry's, then one for each preset.
+    pub fn table(&self) -> Vec<u8> {
+        let mut bytes =
+            SkinToneRecord::of(&self.tone(DEFAULT_TONE), &SkinToneEntry::DEFAULT).bytes();
+        for preset in self.presets {
+            bytes.extend(SkinToneRecord::of(&self.tone(preset.tone), &preset.entry).bytes());
+        }
+        bytes
+    }
+
+    /// The number of the record of the preset named `name`: its place plus one, else the
+    /// fallback preset's, else nought.
+    pub fn slot(&self, name: u32) -> u32 {
+        let place = |name| (self.presets.iter()).position(|p| p.name == name);
+        (place(name).or_else(|| place(FALLBACK_PRESET))).map_or(0, |at| at as u32 + 1)
+    }
+
+    /// The depth weight a ped whose record is number `slot` is given: its preset's tone's.
+    pub fn depth_weight(&self, slot: u32) -> f32 {
+        let preset = slot
+            .checked_sub(1)
+            .and_then(|at| self.presets.get(at as usize));
+        self.tone(preset.map_or(DEFAULT_TONE, |p| p.tone))
+            .depth_weight
+    }
 }
 
 /// One of the game's list of tones a record is built for, of the fields the record takes.
@@ -129,7 +192,7 @@ impl SkinToneRecord {
 /// the look-up table from its own dictionaries.
 pub(super) fn stated(hash: u32) -> Option<Feed> {
     match hash {
-        SKIN_TONES => Some(Feed::Stated(SkinToneRecord::AT_REST.bytes())),
+        SKIN_TONES => Some(Feed::SkinTones),
         ALBEDO_LUT => Some(Feed::GameTexture(ALBEDO_LUT_NAME)),
         _ => None,
     }
@@ -161,6 +224,7 @@ mod tests {
             colour: [0.5, 0.25, 2.0],
             at: [0.125, 0.5, 0.75],
             extra: [3.0, 4.0, 5.0],
+            depth_weight: 0.0,
         };
         let entry = SkinToneEntry {
             colour: [0.1, 0.2, 0.3],
@@ -201,7 +265,7 @@ mod tests {
 }";
 
     #[test]
-    fn a_stage_reading_the_skin_tones_is_fed_record_nought() {
+    fn a_stage_reading_the_skin_tones_is_fed_the_table_and_the_look_up_by_name() {
         let buffer = ResourceKind::Buffer { stride: None };
         let fed = |hash| {
             let (native, lowered, table) = stage_reading(hash, 4, buffer, READING);
@@ -209,12 +273,83 @@ mod tests {
                 .unwrap_or_else(|why| panic!("0x{hash:08X}: {why}"));
             stage.feeds[0].feed.clone()
         };
-        assert_eq!(
-            fed(SKIN_TONES),
-            Feed::Stated(SkinToneRecord::AT_REST.bytes())
-        );
+        assert_eq!(fed(SKIN_TONES), Feed::SkinTones);
         // The look-up table is the game's own texture by its name, not noughts.
         assert_eq!(fed(ALBEDO_LUT), Feed::GameTexture(ALBEDO_LUT_NAME));
         assert_eq!(fed(0xA000_0007), Feed::Zero(Some(0xA000_0007)));
+    }
+
+    fn tone(colour: f32, depth_weight: f32) -> SkinTone {
+        SkinTone {
+            colour: [colour; 3],
+            at: [0.25, 0.0, 0.5],
+            extra: [0.0; 3],
+            depth_weight,
+        }
+    }
+
+    fn preset(name: u32, tone: u32) -> SkinPreset {
+        SkinPreset {
+            name,
+            tone,
+            entry: SkinToneEntry {
+                colour: [0.5; 3],
+                offset: [0.0; 3],
+            },
+        }
+    }
+
+    #[test]
+    fn the_loaded_table_holds_record_nought_then_a_record_a_preset_by_its_tone() {
+        let tones = [(FALLBACK_TONE, tone(0.5, 0.25)), (7, tone(0.25, 0.75))];
+        let presets = [
+            preset(FALLBACK_PRESET, FALLBACK_TONE),
+            preset(9, 7),
+            preset(11, 99),
+        ];
+        let loaded = Loaded {
+            tones: &tones,
+            presets: &presets,
+        };
+        let table = loaded.table();
+        assert_eq!(table.len(), 4 * 60);
+        // Record nought is the built-in tone's, whatever is loaded.
+        assert_eq!(&table[..60], SkinToneRecord::AT_REST.bytes().as_slice());
+        // Each preset's record undoes the colour of the tone it names, else the fallback tone's.
+        assert_eq!(float(&table, 60), 2.0);
+        assert_eq!(float(&table, 120), 4.0);
+        assert_eq!(
+            float(&table, 180),
+            2.0,
+            "an unloaded tone takes the fallback"
+        );
+        // A name is its preset's place plus one; any other, or none, the fallback preset's.
+        assert_eq!((loaded.slot(9), loaded.slot(0), loaded.slot(5)), (2, 1, 1));
+        assert_eq!(loaded.depth_weight(1), 0.25);
+        assert_eq!(loaded.depth_weight(2), 0.75);
+        assert_eq!(loaded.depth_weight(0), 0.0, "record nought's built-in tone");
+        // With no fallback preset loaded, an unknown name is record nought.
+        let none = Loaded {
+            tones: &tones,
+            presets: &presets[1..],
+        };
+        assert_eq!(none.slot(0), 0);
+    }
+
+    #[test]
+    fn a_ped_s_object_record_holds_its_tone_s_number_and_weight_where_the_program_reads_them() {
+        use super::super::ped_layers::ObjectData;
+        let record = ObjectData {
+            skin_tone: 3,
+            depth_weight: 0.5,
+            ..ObjectData::AT_REST
+        };
+        let bytes = record.bytes();
+        assert_eq!(bytes.len(), 416);
+        assert_eq!(
+            u32::from_le_bytes(bytes[0x164..0x168].try_into().unwrap()),
+            3
+        );
+        assert_eq!(float(&bytes, 0x19C), 0.5);
     }
 }

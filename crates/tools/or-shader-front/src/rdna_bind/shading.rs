@@ -164,6 +164,12 @@ pub enum Feed {
     /// A texture of the game's own dictionaries, by the hash of its name, which the game binds
     /// whatever is drawn ([`super::ped_skin`]).
     GameTexture(u32),
+    /// The table of skin tone records: record nought alone at rest, the loaded presets' records
+    /// where the renderer has them ([`super::ped_skin`]).
+    SkinTones,
+    /// An object's own record of the pool `OBJECT_DATA` names, at rest, in which the renderer
+    /// gives a ped its skin tone ([`super::ped_layers::ObjectData`]).
+    ObjectData,
 }
 
 /// One binding of a stage with what fills it.
@@ -340,6 +346,13 @@ fn loop_bindings(feeds: &[Fed], written: &BTreeSet<(u32, u32)>) -> Vec<loops::Bi
                     Some(super::trees::FRAME_RECORD),
                 ),
                 Feed::Stated(bytes) => (Words::Bytes(bytes.clone()), None),
+                // ⚠ Judged at rest: a ped's fill changes only a record's number and a weight,
+                // which the skin's pixel programs read as an index and a scale, never a count.
+                Feed::ObjectData => (Words::Bytes(super::ped_layers::object_data_at_rest()), None),
+                Feed::SkinTones => {
+                    let rest = super::ped_skin::SkinToneRecord::AT_REST;
+                    (Words::Bytes(rest.bytes()), None)
+                }
                 _ => (Words::Unknown, None),
             };
             // ⚠ A header comes before what is stated; what the stage writes has no words.

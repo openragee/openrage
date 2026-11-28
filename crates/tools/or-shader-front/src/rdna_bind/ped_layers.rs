@@ -111,7 +111,10 @@ pub struct ObjectData {
     pub ones_a4: [f32; 3],
     pub zero_b0: f32,
     pub ones_b4: [f32; 3],
-    pub zeros_c0: [f32; 43],
+    pub zeros_c0: [f32; 41],
+    /// The number of the ped's skin tone record ([`super::ped_skin::SKIN_TONES`]); nought at rest.
+    pub skin_tone: u32,
+    pub zero_168: f32,
     /// Bits that switch branches of the pixel program on; bit 1 blends [`Self::colour`].
     pub switches: u32,
     pub none_170: i32,
@@ -119,7 +122,9 @@ pub struct ObjectData {
     pub ones_178: [f32; 3],
     pub zeros_184: [f32; 2],
     pub ten_18c: f32,
-    pub zeros_190: [f32; 4],
+    pub zeros_190: [f32; 3],
+    /// The weight of the per-pixel term of the skin look-up's depth: the ped's tone's.
+    pub depth_weight: f32,
 }
 
 const _: () = assert!(std::mem::size_of::<ObjectData>() == 416);
@@ -151,14 +156,17 @@ impl ObjectData {
         ones_a4: [1.0; 3],
         zero_b0: 0.0,
         ones_b4: [1.0; 3],
-        zeros_c0: [0.0; 43],
+        zeros_c0: [0.0; 41],
+        skin_tone: 0,
+        zero_168: 0.0,
         switches: 0,
         none_170: -1,
         zero_174: 0.0,
         ones_178: [1.0; 3],
         zeros_184: [0.0; 2],
         ten_18c: 10.0,
-        zeros_190: [0.0; 4],
+        zeros_190: [0.0; 3],
+        depth_weight: 0.0,
     };
 
     /// The record's bytes.
@@ -188,12 +196,15 @@ impl ObjectData {
         floats(&mut words, &[self.zero_b0]);
         floats(&mut words, &self.ones_b4);
         floats(&mut words, &self.zeros_c0);
+        words.push(self.skin_tone);
+        floats(&mut words, &[self.zero_168]);
         words.extend([self.switches, self.none_170 as u32]);
         floats(&mut words, &[self.zero_174]);
         floats(&mut words, &self.ones_178);
         floats(&mut words, &self.zeros_184);
         floats(&mut words, &[self.ten_18c]);
         floats(&mut words, &self.zeros_190);
+        floats(&mut words, &[self.depth_weight]);
         words.iter().flat_map(|w| w.to_le_bytes()).collect()
     }
 }
@@ -208,7 +219,7 @@ pub fn object_data_at_rest() -> Vec<u8> {
 pub(super) fn stated(hash: u32) -> Option<super::shading::Feed> {
     match hash {
         LAYERS => Some(super::shading::Feed::Stated(LayersHeader::AT_REST.bytes())),
-        OBJECT_DATA => Some(super::shading::Feed::Stated(object_data_at_rest())),
+        OBJECT_DATA => Some(super::shading::Feed::ObjectData),
         _ => super::ped_skin::stated(hash),
     }
 }
@@ -587,6 +598,8 @@ return vec4<f32>(f32(s1_));
             (offset_of!(ObjectData, zero_b0), 0xB0),
             (offset_of!(ObjectData, ones_b4), 0xB4),
             (offset_of!(ObjectData, zeros_c0), 0xC0),
+            (offset_of!(ObjectData, skin_tone), 0x164),
+            (offset_of!(ObjectData, zero_168), 0x168),
             (offset_of!(ObjectData, switches), 0x16C),
             (offset_of!(ObjectData, none_170), 0x170),
             (offset_of!(ObjectData, zero_174), 0x174),
@@ -594,6 +607,7 @@ return vec4<f32>(f32(s1_));
             (offset_of!(ObjectData, zeros_184), 0x184),
             (offset_of!(ObjectData, ten_18c), 0x18C),
             (offset_of!(ObjectData, zeros_190), 0x190),
+            (offset_of!(ObjectData, depth_weight), 0x19C),
         ];
         for (offset, byte) in at {
             assert_eq!(offset, byte);
@@ -631,6 +645,6 @@ return vec4<f32>(f32(s1_));
         )
         .expect("a stage reading the object data is let through");
         let feeds: Vec<Feed> = stage.feeds.into_iter().map(|fed| fed.feed).collect();
-        assert_eq!(feeds, [Feed::Stated(bytes)]);
+        assert_eq!(feeds, [Feed::ObjectData]);
     }
 }

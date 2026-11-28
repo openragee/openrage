@@ -711,6 +711,38 @@ mod tests {
     }
 
     #[test]
+    fn a_sheet_of_water_is_its_rectangle_or_the_half_that_keeps_its_corner_wound_to_face_up() {
+        let (west, south, east, north, height) = (-6.0, 10.0, 2.0, 14.0, 7.5);
+        let sheet = |half| WaterQuad {
+            min: [west, south],
+            max: [east, north],
+            height,
+            half,
+        };
+        // Twice the area a triangle covers seen from above, above nought where it turns counter-clockwise.
+        let doubled = |[a, b, c]: [Vec3; 3]| (b - a).cross(c - a).z;
+        let rectangle = (east - west) * (north - south);
+        let whole = sheet(None).triangles();
+        assert_eq!(whole.len(), 2);
+        assert!(whole.iter().all(|triangle| doubled(*triangle) == rectangle));
+        for (corner, kept, across) in [
+            (Corner::SouthWest, [west, south], [east, north]),
+            (Corner::NorthWest, [west, north], [east, south]),
+            (Corner::NorthEast, [east, north], [west, south]),
+            (Corner::SouthEast, [east, south], [west, north]),
+        ] {
+            let [half] = sheet(Some(corner)).triangles()[..] else {
+                panic!("{corner:?} is one triangle");
+            };
+            let at = |[x, y]: [f32; 2]| Vec3::new(x, y, height);
+            assert!(half.contains(&at(kept)), "{corner:?} keeps its corner");
+            assert!(!half.contains(&at(across)), "{corner:?}: {half:?}");
+            assert_eq!(doubled(half), rectangle, "{corner:?} is half, facing up");
+            assert!(half.iter().all(|point| point.z == height));
+        }
+    }
+
+    #[test]
     fn an_interior_key_is_no_map_key_and_no_two_interiors_share_one() {
         let keys = [
             interior_key(MapId(0), 0),

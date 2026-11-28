@@ -1031,6 +1031,96 @@ fn the_water_file_of_an_install_reaches_the_world_as_sheets_at_their_heights() {
 }
 
 #[test]
+fn a_cut_quad_of_any_type_is_water_where_the_file_says_it_covers_and_nowhere_else() {
+    use or_io::gta5::data::water::CWaterData;
+    // Every type from the whole rectangle to past the last the game names, each on a rectangle of its own.
+    let types: Vec<u8> = (0..=8).collect();
+    let corners = |kind: u8| {
+        let west = i32::from(kind) * 100;
+        [west, west + 40, -30, 50]
+    };
+    let items: Vec<String> = (types.iter())
+        .map(|kind| water_item(corners(*kind), *kind, false, 2.0))
+        .collect();
+    let file = format!(
+        "<WaterData><WaterQuads>{}</WaterQuads></WaterData>",
+        items.concat()
+    );
+    let stated = CWaterData::open(file.as_bytes()).expect("the file reads");
+    let water: Files = vec![("data/levels/gta5/water.xml".to_owned(), file.into_bytes())];
+    let dir = install(&[("common.rpf", water), ("x64a.rpf", hand_built::files())]);
+    let scratch = tempfile::tempdir().expect("a scratch folder");
+    let (world, index) = opened(dir.path(), scratch.path());
+    let sheets = world.water(&index).expect("the water file reads");
+    // Whether a point seen from above lies in a triangle that turns counter-clockwise.
+    let inside = |[a, b, c]: [Vec3; 3], at: Vec3| {
+        [(a, b), (b, c), (c, a)]
+            .iter()
+            .all(|(from, to)| (*to - *from).cross(at - *from).z >= 0.0)
+    };
+    for (kind, quad) in types.iter().zip(&stated.water_quads) {
+        let mut wet = 0;
+        let [west, east, south, north] = corners(*kind).map(|n| n as f32);
+        let triangles: Vec<[Vec3; 3]> = (sheets.iter())
+            .filter(|sheet| sheet.min == [west, south])
+            .flat_map(|sheet| sheet.triangles())
+            .collect();
+        // Sixteen points of the rectangle, none on either of its diagonals.
+        for (i, j) in (0..4).flat_map(|i| (0..4).map(move |j| (i, j))) {
+            let x = west + (east - west) * (i as f32 + 0.5) / 4.0;
+            let y = south + (north - south) * (j as f32 + 0.3) / 4.0;
+            let drawn = (triangles.iter()).any(|triangle| inside(*triangle, Vec3::new(x, y, 2.0)));
+            assert_eq!(drawn, quad.covers(x, y), "type {kind} at {x}, {y}");
+            wet += usize::from(drawn);
+        }
+        // The whole rectangle is all water, the one the game leaves out none, and a cut one some.
+        match kind {
+            0 => assert_eq!(wet, 16),
+            5 => assert_eq!(wet, 0),
+            _ => assert!((1..16).contains(&wet), "type {kind}: {wet}"),
+        }
+    }
+}
+
+#[test]
+fn a_weather_a_group_names_that_no_name_is_known_for_is_listed_by_its_number() {
+    use forest_fixture::{manifest_bytes, map_around, map_file};
+    use or_world_gta5::state::flags;
+    // Two groups a weather switches: one names the rain, the other a weather of no known name.
+    let odd = "A_WEATHER_OF_NO_KNOWN_NAME";
+    let map = map_around(world_fixture::cube([0.0; 3], 100.0), Vec::new());
+    let files = vec![
+        map_file("m_rain", &map),
+        map_file("m_odd", &map),
+        (
+            "levels/_manifest.ymf".to_string(),
+            manifest_bytes(&[
+                ("m_rain", flags::WEATHER, 0, &["RAIN"]),
+                ("m_odd", flags::WEATHER, 0, &[odd]),
+            ]),
+        ),
+    ];
+    let dir = install(&[("x64a.rpf", files)]);
+    let scratch = tempfile::tempdir().expect("a scratch folder");
+    let (world, index) = opened(dir.path(), scratch.path());
+    let weathers = world.look().weathers(&index);
+    let of = |id: u32| {
+        let same = weathers
+            .iter()
+            .filter(|weather| weather.id == u64::from(id));
+        same.map(|weather| weather.name.clone()).collect::<Vec<_>>()
+    };
+    assert_eq!(weathers[0].name, "CLEAR");
+    assert_eq!(of(hash("RAIN")), ["RAIN"]);
+    // It can be chosen, so the map it gates can be seen: once, after the named ones, as its number.
+    assert_eq!(of(hash(odd)), [format!("{:#010x}", hash(odd))]);
+    assert_eq!(
+        weathers.last().map(|last| last.id),
+        Some(u64::from(hash(odd)))
+    );
+}
+
+#[test]
 fn the_world_names_its_weathers_the_clear_day_first_and_its_noon_sun_lights_ground_and_wall() {
     use or_world::model::Moment;
     let dir = install(&[("x64a.rpf", hand_built::files())]);
@@ -1068,4 +1158,6 @@ fn the_world_names_its_weathers_the_clear_day_first_and_its_noon_sun_lights_grou
     assert!(dawn.x > 0.99 && dusk.x < -0.99, "{dawn} {dusk}");
     assert!(dawn.z.abs() < 1e-5 && dusk.z.abs() < 1e-5);
     assert!(at(0.0).sun.z < 0.0 && at(0.0).key == [0.0; 3]);
+    // The day is exposed, which is what lifts the game's dark colour maps: at 1 the plain pass exposes nothing.
+    assert!(at(12.0).exposure > 1.0, "{}", at(12.0).exposure);
 }

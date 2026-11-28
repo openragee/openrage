@@ -1,6 +1,7 @@
 //! An opened GTA V world: the mount it reads through, its capabilities, its policy with GTA V's
 //! own rules, its look, and the ground and the collision of the mount's static bounds.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use crate::world_forest::streams_in;
@@ -123,13 +124,26 @@ impl WorldLook for Gta5World {
     }
 
     // The weathers a group of the game's maps may name, the clear day first.
-    fn weathers(&self, _index: &Index) -> Vec<WeatherKind> {
+    // ⚠ A group may name a weather no name here hashes to: it is listed by its number, or the map it gates could never be seen.
+    fn weathers(&self, index: &Index) -> Vec<WeatherKind> {
         let kind = |name: &&str| WeatherKind {
             id: u64::from(or_io::string_hash(name.as_bytes())),
             name: name.to_string(),
         };
         let rest = (crate::state::WEATHER_NAMES.iter()).filter(|name| **name != FIRST_WEATHER);
-        [FIRST_WEATHER].iter().chain(rest).map(kind).collect()
+        let mut all: Vec<WeatherKind> = [FIRST_WEATHER].iter().chain(rest).map(kind).collect();
+        let gated = index.maps().iter().filter_map(|row| match &row.gate {
+            Gate::When { weathers, .. } => Some(weathers),
+            _ => None,
+        });
+        let unnamed: BTreeSet<u64> = (gated.flatten().copied())
+            .filter(|id| all.iter().all(|kind| kind.id != *id))
+            .collect();
+        all.extend(unnamed.into_iter().map(|id| WeatherKind {
+            id,
+            name: format!("{id:#010x}"),
+        }));
+        all
     }
 
     // ⚠ The plain day and no more: the sun in the south at noon and at the horizon at 6 h and 18 h.

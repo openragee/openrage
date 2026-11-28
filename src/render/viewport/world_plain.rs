@@ -883,6 +883,109 @@ mod tests {
         assert!(lit(Vec3::Z) > lit(Vec3::NEG_Y) && lit(Vec3::NEG_Y) > lit(Vec3::Y));
     }
 
+    /// A feed of an empty selection under `facts`, with `water`.
+    struct Fed {
+        facts: FrameFacts,
+        water: Option<Arc<[WaterQuad]>>,
+    }
+
+    impl WorldFeed for Fed {
+        fn id(&self) -> u64 {
+            1
+        }
+        fn camera(&self) -> or_renderer::FlyCamera {
+            or_renderer::FlyCamera {
+                position: Vec3::ZERO,
+                yaw: 0.0,
+                pitch: 0.0,
+                speed: 1.0,
+                fov_y: 60f32.to_radians(),
+                near: 0.5,
+                far: 5000.0,
+            }
+        }
+        fn facts(&self) -> FrameFacts {
+            self.facts
+        }
+        fn selection(&self) -> Option<Arc<crate::state::world_session::Selection>> {
+            Some(Arc::default())
+        }
+        fn take_model(&mut self) -> Option<(AssetKey, Option<ArrivedModel>)> {
+            None
+        }
+        fn take_texture(&mut self) -> Option<(TextureAsk, Option<Texture>)> {
+            None
+        }
+        fn tell(&mut self, _: AssetKey, _: NodeState) {}
+        fn want_textures(&mut self, _: Vec<(f32, TextureAsk)>) {}
+        fn water(&self) -> Option<Arc<[WaterQuad]>> {
+            self.water.clone()
+        }
+    }
+
+    #[test]
+    fn a_fed_frame_takes_its_looks_exposure_and_draws_its_water_and_a_frame_no_session_feeds_is_exposed_no_more(
+    ) {
+        const WHAT: &str = "a_fed_frame_takes_its_looks_exposure_and_draws_its_water";
+        let Some((device, queue)) = crate::render::test_device(WHAT) else {
+            return;
+        };
+        let mut bridge = RenderBridge::new(
+            Arc::new(device),
+            Arc::new(queue),
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+        );
+        let sheet = WaterQuad {
+            min: [-50.0, 10.0],
+            max: [50.0, 90.0],
+            height: -2.0,
+            half: None,
+        };
+        let mut fed = Fed {
+            facts: FrameFacts {
+                sun: Vec3::Z,
+                key: [1.0; 3],
+                ambient: [0.3; 3],
+                exposure: 1.6,
+                clear: [0.1, 0.2, 0.4],
+            },
+            water: None,
+        };
+        let plain_exposure = or_renderer::viewport::PLAIN_EXPOSURE;
+        assert_eq!(bridge.renderer.plain_exposure(), plain_exposure);
+
+        // No water yet, and nothing selected: nothing is drawn, under the look's exposure.
+        bridge.begin_frame();
+        bridge.refresh_world_feed(&mut fed);
+        bridge.light_world_feed();
+        assert_eq!(bridge.renderer.plain_exposure(), 1.6);
+        assert_eq!(bridge.renderer.world_instances(), 0);
+
+        // The water comes: it is the one instance drawn, though the selection and the camera stand.
+        fed.water = Some(Arc::from(vec![sheet]));
+        bridge.begin_frame();
+        bridge.refresh_world_feed(&mut fed);
+        bridge.light_world_feed();
+        assert_eq!(bridge.renderer.world_instances(), 1);
+        assert!(
+            bridge.world.plain.laid.is_empty(),
+            "it is no instance of the selection"
+        );
+
+        // A darker sky is another tint, so what was laid out is laid out again.
+        let laid_for = bridge.world.plain.laid_for;
+        fed.facts.ambient = [0.1; 3];
+        bridge.begin_frame();
+        bridge.refresh_world_feed(&mut fed);
+        assert_ne!(bridge.world.plain.laid_for, laid_for);
+        assert_eq!(bridge.renderer.world_instances(), 1);
+
+        // A frame no session feeds: whatever draws in the plain pass then is exposed no more.
+        bridge.begin_frame();
+        bridge.light_world_feed();
+        assert_eq!(bridge.renderer.plain_exposure(), plain_exposure);
+    }
+
     #[test]
     fn a_map_is_asked_for_smaller_the_farther_it_is_seen() {
         let sizes: Vec<u32> = [0.0, 29.9, 30.0, 299.0, 899.0, 5000.0]
@@ -962,11 +1065,14 @@ mod tests {
             near: 0.5,
             far: 5000.0,
         };
+        plain.tint = 2.0;
         let runs = plain.lay(&instances, camera.view_proj(1.0), Vec3::ZERO);
         assert_eq!(
             runs.seen, 4,
             "the one behind and the one not on the device are left out"
         );
+        let tinted = |laid: &WorldInstance| laid.tint[..3] == [2.0; 3];
+        assert!(plain.laid.iter().all(tinted), "each takes the day's tint");
         let stated: Vec<(u32, u32, std::ops::Range<u32>)> = (runs.runs.iter())
             .map(|(model, level, range, _)| (*model, *level, range.clone()))
             .collect();

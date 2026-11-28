@@ -662,9 +662,7 @@ impl ViewportRenderer {
         self.key_light = (towards, strength);
     }
 
-    /// How far the plain world pass exposes what it lit: at any exposure but 1 a colour is multiplied by it and bent under white, so that a dark surface is lifted and a bright one does not clip.
-    ///
-    /// ⚠ At 1, where it begins, the pass draws what it lit as it is, bit for bit.
+    /// How far the plain world pass exposes what it lit: at any exposure but 1 a colour is multiplied by it and bent under white; at 1, where it begins, what was lit is drawn as it is.
     pub fn set_plain_exposure(&mut self, exposure: f32) {
         self.plain_exposure = match exposure.is_finite() && exposure > 0.0 {
             true => exposure,

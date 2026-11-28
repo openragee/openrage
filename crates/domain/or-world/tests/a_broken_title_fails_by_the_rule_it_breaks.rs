@@ -28,7 +28,8 @@ fn breaks(fault: Fault) -> Rule {
         | Fault::BaseStated
         | Fault::StoreUnstated
         | Fault::GroundUnstated
-        | Fault::WaterUnstated => Rule::Caps,
+        | Fault::WaterUnstated
+        | Fault::WaterAskew => Rule::Caps,
         Fault::SessionHidesBody => Rule::ApplyShows,
         Fault::GuardIgnored => Rule::StaleGuard,
         Fault::InverseWrong => Rule::Inverse,

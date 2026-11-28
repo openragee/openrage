@@ -151,10 +151,12 @@ pub enum Fault {
     WaterUnstated,
     /// The look lists its one weather twice.
     WeatherTwice,
+    /// Its sheet of water has its west edge east of its east edge.
+    WaterAskew,
 }
 
 impl Fault {
-    pub const ALL: [Self; 28] = [
+    pub const ALL: [Self; 29] = [
         Self::LinkForgets,
         Self::ParentUnlinked,
         Self::ChildrenMiscounted,
@@ -183,6 +185,7 @@ impl Fault {
         Self::GroundUnstated,
         Self::WaterUnstated,
         Self::WeatherTwice,
+        Self::WaterAskew,
     ];
 }
 
@@ -1129,7 +1132,15 @@ impl WorldInstall for Install {
     }
 
     fn water(&self, _index: &Index) -> Result<Vec<WaterQuad>, WorldError> {
-        Ok(vec![POND])
+        let askew = WaterQuad {
+            min: POND.max,
+            max: POND.min,
+            ..POND
+        };
+        match self.shared.has(Fault::WaterAskew) {
+            true => Ok(vec![askew]),
+            false => Ok(vec![POND]),
+        }
     }
 
     // The fake world's ground is level, at the height of nought everywhere.

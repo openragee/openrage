@@ -32,7 +32,7 @@ title's options, and none of GTA VI's own:
 | Go to | puts the camera at `X Y Z` in metres, keeping where it looks, or at a pasted camera line; the camera's own line is shown below to copy | the world is open |
 | Options | the title's choices at open: for GTA V the DLC pack the mount stops at, by the name `dlclist.xml` gives it, and the map as the story or as multiplayer has it. **Open the world with these** opens it again | the title states an option |
 | Streaming | instances in view and draws, models and textures on the device with their megabytes, what is waited for, and how many things placed with no model named and how many instance lists in range are not drawn | the world is open |
-| Weather | the weather the world is looked at under, by the game's own word for it: a map placed for some weathers streams under them alone. A world opens on a clear day | the world states a weather gate |
+| Weather | the weather the world is looked at under, by the game's own word for it, or its number where a map names a weather no word is known for: a map placed for some weathers streams under them alone. A world opens on a clear day | the world states a weather gate |
 | Could not be read | each reason a map, a model or a texture gave nothing, with how many | something was not read |
 
 A world opened with other options is another world: it has an index of its own, read from the

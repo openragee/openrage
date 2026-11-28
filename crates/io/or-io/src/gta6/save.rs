@@ -778,6 +778,21 @@ impl Asav {
         })
     }
 
+    /// The payload decrypted where the header states it is packed: `kind` 1 is a story save,
+    /// whose payload the passed cipher XORs back to its stored plaintext by the same operation the
+    /// game wrote it with; every other kind is plain and is returned as it stands. The reverse
+    /// direction is the same call, for the cipher is a counter-mode XOR.
+    pub fn payload_after_cipher(
+        &self,
+        cipher: &crate::gta6::save_crypto::SaveCipher,
+    ) -> Vec<u8> {
+        if self.header.kind == 1 {
+            cipher.crypt(&self.payload)
+        } else {
+            self.payload.clone()
+        }
+    }
+
     /// The payload as the JSON text a settings record holds; `None` where it is not UTF-8.
     pub fn text(&self) -> Option<&str> {
         let text = std::str::from_utf8(&self.payload).ok()?;

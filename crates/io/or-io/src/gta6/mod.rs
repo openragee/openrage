@@ -36,6 +36,8 @@ pub mod ped_assets;
 pub mod ped_catalogue;
 pub mod platform;
 pub mod save;
+pub mod save_codec;
+pub mod save_crypto;
 #[cfg(feature = "meta")]
 pub mod skin_tones;
 // Its natives list is GTA V's `NativeDb`, which `gta5` builds.

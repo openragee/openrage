@@ -1,6 +1,7 @@
 use super::*;
+use crate::gta5::script::natives::{NativeDb, NativeName, NativeParam};
 use crate::gta6::script::cfg::{Block, Cfg, Function, Terminator};
-use crate::gta6::script::ir::{Const, FunctionKey, Returns, VarInfo};
+use crate::gta6::script::ir::{Const, FunctionKey, Returns, StoreKind, VarInfo};
 use crate::gta6::script::project::Signature;
 use crate::gta6::script::{Level, Options};
 
@@ -270,4 +271,157 @@ fn a_value_a_function_returns_as_a_value_type_is_of_that_type() {
     project.signatures.insert(key, returning(2, three));
     let f = function(&[(0, TWO)], body());
     assert_eq!(kinded(f.clone(), &project, on()), f);
+}
+
+/// A list's natives: `void WAVE_AT_FRIEND(Ped friend, int times)`, `void POINT_AT_SPOT(Vector3 spot)`, `Vehicle PICK_FRIEND()`.
+fn listed() -> Names {
+    let takes = |ty: &str, name: &str| NativeParam {
+        ty: ty.to_owned(),
+        name: name.to_owned(),
+    };
+    let native = |name: &str, params: Vec<NativeParam>, returns: &str| NativeName {
+        namespace: Some("DEMO".to_owned()),
+        name: name.to_owned(),
+        params,
+        returns: Some(returns.to_owned()),
+    };
+    let wave = native(
+        "WAVE_AT_FRIEND",
+        vec![takes("Ped", "friend"), takes("int", "times")],
+        "void",
+    );
+    let point = native("POINT_AT_SPOT", vec![takes("Vector3", "spot")], "void");
+    let pick = native("PICK_FRIEND", Vec::new(), "Vehicle");
+    let natives = [(WAVE, wave), (POINT, point), (PICK, pick)];
+    Names {
+        natives: Some(NativeDb::from_names("a test's", natives)),
+        ..Names::default()
+    }
+}
+
+const WAVE: u64 = 0x7E57_0001;
+const POINT: u64 = 0x7E57_0002;
+const PICK: u64 = 0x7E57_0003;
+
+/// A call of the native of hash `hash`.
+fn native(hash: u64, args: Vec<Expr>, returns: u32) -> Expr {
+    let callee = Callee::Native {
+        namespace: Some("DEMO".to_owned()),
+        name: format!("_0x{hash:016X}"),
+        hash,
+        rva: 0,
+    };
+    Expr::Call {
+        callee,
+        args,
+        returns: Some(returns),
+    }
+}
+
+fn int(n: i32) -> Expr {
+    Expr::Const(Const::i32(n))
+}
+
+fn kinded_with(mut f: Function, names: &Names, options: Options) -> Function {
+    let project = Project::default();
+    let cx = Context::new(names, &project, options);
+    copied_kinds(&mut f, &cx, &mut Stats::default());
+    f
+}
+
+/// `store_T(&local_n[cell], offset, value)`.
+fn field(n: u32, cell: u32, kind: StoreKind, offset: u32, value: Expr) -> Stmt {
+    Stmt::Store {
+        kind,
+        addr: Expr::AddrOf {
+            var: Var::Local(n),
+            cell,
+        },
+        offset,
+        value,
+    }
+}
+
+#[test]
+fn a_value_handed_whole_to_a_native_a_list_says_takes_a_handle_or_a_vector_is_of_that_kind() {
+    let names = listed();
+    let body = || {
+        vec![
+            set(0, engine()),
+            Stmt::Eval(native(WAVE, vec![local(0), int(3)], 0)),
+            set(2, Expr::ZeroSlots(2)),
+            Stmt::Eval(native(POINT, vec![local(2)], 0)),
+        ]
+    };
+    let wide = [(0, TWO), (2, TWO)];
+    let done = kinded_with(function(&wide, body()), &names, on());
+    assert_eq!(kind_of(&done, Var::Local(0)), Some(Kind::Handle));
+    assert_eq!(kind_of(&done, Var::Local(2)), Some(Kind::Vector));
+    assert_eq!(done.cfg, function(&wide, body()).cfg);
+
+    // With no list, or with either name off, nothing is given a kind.
+    let f = function(&wide, body());
+    assert_eq!(kinded_with(f.clone(), &Names::default(), on()), f);
+    for off in [Pass::Kinds, Pass::Aggregates] {
+        assert_eq!(kinded_with(f.clone(), &names, on().without(off)), f);
+    }
+
+    // A call that passes other cells than its list's parameters take says nothing of any.
+    let more = vec![
+        set(0, engine()),
+        Stmt::Eval(native(WAVE, vec![local(0), int(3), int(4)], 0)),
+    ];
+    let f = function(&[(0, TWO)], more);
+    assert_eq!(kinded_with(f.clone(), &names, on()), f);
+
+    // Handed to a handle and to a vector: neither.
+    let both = vec![
+        Stmt::Eval(native(WAVE, vec![local(0), int(3)], 0)),
+        Stmt::Eval(native(POINT, vec![local(0)], 0)),
+    ];
+    let f = function(&[(0, TWO)], both);
+    assert_eq!(kinded_with(f.clone(), &names, on()), f);
+}
+
+#[test]
+fn a_value_one_way_in_of_which_is_a_native_a_list_says_yields_a_handle_is_a_handle() {
+    let names = listed();
+    let body = vec![set(0, native(PICK, Vec::new(), 2)), set(0, engine())];
+    let done = kinded_with(function(&[(0, TWO)], body), &names, on());
+    assert_eq!(kind_of(&done, Var::Local(0)), Some(Kind::Handle));
+}
+
+#[test]
+fn a_value_filled_field_by_field_and_handed_whole_to_a_vector_is_a_vector() {
+    let names = listed();
+    let x = Expr::Const(Const::f32(1.0));
+    let filled = |handed: u64, last: Stmt| {
+        vec![
+            set(0, Expr::ZeroSlots(2)),
+            field(0, 0, StoreKind::I32, 0, x.clone()),
+            field(0, 0, StoreKind::I32, 4, x.clone()),
+            last,
+            Stmt::Eval(native(handed, vec![local(0)], 0)),
+        ]
+    };
+    let third = || field(0, 1, StoreKind::I32, 0, x.clone());
+    let done = kinded_with(function(&[(0, TWO)], filled(POINT, third())), &names, on());
+    assert_eq!(kind_of(&done, Var::Local(0)), Some(Kind::Vector));
+
+    let untouched = |body: Vec<Stmt>| {
+        let f = function(&[(0, TWO)], body);
+        assert_eq!(kinded_with(f.clone(), &names, on()), f);
+    };
+    // A handle is whole wherever it is used: one whose fields are written is none.
+    untouched(filled(WAVE, third()));
+    // A store that runs past the value's end writes what lies beyond it.
+    untouched(filled(POINT, field(0, 1, StoreKind::U64, 4, x.clone())));
+    // A store of more than one cell's bytes may bring in part of a value of another kind.
+    let wide = Stmt::StoreBytes {
+        addr: own(0),
+        offset: 0,
+        bytes: 12,
+        value: local(4),
+    };
+    untouched(filled(POINT, wide));
 }

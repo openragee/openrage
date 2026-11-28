@@ -337,6 +337,16 @@ const RECORDS: &str = r#"<?xml version="1.0"?>
     <u16 name="numStreetLights"/>
     <u16 name="category"/>
   </structdef>
+  <structdef type="rage__fwGrassInstanceListDef">
+    <float name="lodDist"/>
+  </structdef>
+  <structdef type="rage__fwPropInstanceListDef">
+    <float name="lodDist"/>
+  </structdef>
+  <structdef type="rage__fwInstancedMapData">
+    <array name="PropInstanceList" type="atArray"><struct type="rage__fwPropInstanceListDef"/></array>
+    <array name="GrassInstanceList" type="atArray"><struct type="rage__fwGrassInstanceListDef"/></array>
+  </structdef>
   <structdef type="CMapData">
     <string name="name" type="atHashString"/>
     <string name="parent" type="atHashString"/>
@@ -350,6 +360,7 @@ const RECORDS: &str = r#"<?xml version="1.0"?>
     <array name="occludeModels" type="atArray"><struct type="OccludeModel"/></array>
     <struct name="LODLightsSOA" type="CLODLight"/>
     <struct name="DistantLODLightsSOA" type="CDistantLODLight"/>
+    <struct name="instancedData" type="rage__fwInstancedMapData"/>
   </structdef>
 </ParserSchema>"#;
 
@@ -387,6 +398,8 @@ pub struct Records {
     pub stands: Vec<Far>,
     pub boxes: Vec<Boxed>,
     pub models: Vec<Occluding>,
+    /// How many grass lists and how many prop lists it states, each with no instance.
+    pub lists: (usize, usize),
 }
 
 fn held(items: Vec<MetaInstance>) -> Value {
@@ -488,6 +501,24 @@ pub fn records_bytes(name: &str, extents: Span, records: &Records) -> Vec<u8> {
     stands.set("numStreetLights", Value::UInt(0));
     stands.set("category", Value::UInt(0));
     root.set("DistantLODLightsSOA", Value::Struct(Box::new(stands)));
+    let lists = |kind: &str, count: usize| {
+        let list = |_| {
+            let mut inst = MetaInstance::new(kind);
+            inst.set("lodDist", Value::Float(60.0));
+            inst
+        };
+        held((0..count).map(list).collect())
+    };
+    let mut instanced = MetaInstance::new("rage__fwInstancedMapData");
+    instanced.set(
+        "PropInstanceList",
+        lists("rage__fwPropInstanceListDef", records.lists.1),
+    );
+    instanced.set(
+        "GrassInstanceList",
+        lists("rage__fwGrassInstanceListDef", records.lists.0),
+    );
+    root.set("instancedData", Value::Struct(Box::new(instanced)));
     let library = build_library([("records.psc", RECORDS.as_bytes())]).expect("the schema");
     let layout = canonical::layout_for(&library, &root, BinaryFormat::Rbm, None).expect("lays out");
     write_meta_binary(BinaryFormat::Rbm, Some(&layout), &root).expect("encodes")
@@ -519,7 +550,10 @@ pub fn boxes() -> Vec<Boxed> {
     ]
 }
 
-/// A square of two triangles, and a model whose count of triangles is not what its bytes hold.
+/// How many grass lists and prop lists the map of occluders states.
+pub const LISTS: (usize, usize) = (2, 1);
+
+/// A square of two triangles, a model whose count of triangles is not what its bytes hold, and one whose triangle names a point it does not hold.
 pub fn occlude_models() -> Vec<Occluding> {
     let square = Occluding {
         points: vec![
@@ -535,7 +569,11 @@ pub fn occlude_models() -> Vec<Occluding> {
         stated_triangles: Some(0x8000 | 5),
         ..square.clone()
     };
-    vec![square, bad]
+    let past = Occluding {
+        triangles: vec![[0, 1, 4]],
+        ..square.clone()
+    };
+    vec![square, bad, past]
 }
 
 /// A parent at the origin drawn to 1,000 m that states two children and 100 m for them.
@@ -625,6 +663,7 @@ pub fn files() -> Files {
     let hides = Records {
         boxes: boxes(),
         models: occlude_models(),
+        lists: LISTS,
         ..Records::default()
     };
     for (name, records) in [

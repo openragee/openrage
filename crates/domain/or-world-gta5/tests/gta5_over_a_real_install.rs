@@ -31,7 +31,8 @@ use or_world::kit::{
     self, Fixture, Grounded, HeldBack, InteriorAt, Ladder, Lit, Rule, Scene, Timed,
 };
 use or_world::model::{
-    AssetKey, Gate, Index, MapRow, Moment, Semantic, Switched, TextureAsk, EVERY_HOUR,
+    AssetKey, Element, ElementFormat, Gate, Index, MapRow, Mesh, Moment, Semantic, Switched,
+    TextureAsk, EVERY_HOUR,
 };
 use or_world::slots::OptionValue;
 use or_world::streaming::NodeState;
@@ -466,9 +467,11 @@ struct Read {
     models: BTreeMap<(Option<Holding>, Option<bool>), Of>,
     unread_models: BTreeMap<&'static str, usize>,
     textures: Of,
+    /// The textures answered whose file says their colours are sRGB.
+    srgb: usize,
     unread_textures: BTreeMap<String, usize>,
-    /// Meshes, those whose colour is the texture their parameter for it binds, those that took the first binding, and those with no normal among their elements, by whether the target is the Enhanced game's.
-    meshes: BTreeMap<bool, [usize; 4]>,
+    /// Meshes, those whose colour is the texture their parameter for it binds, those that took the first binding, those with no normal among their elements, and those a position of which is no place of a model, by whether the target is the Enhanced game's.
+    meshes: BTreeMap<bool, [usize; 5]>,
     lights: [usize; 2],
     boxes: usize,
     occlude_models: [usize; 2],
@@ -476,6 +479,22 @@ struct Read {
 }
 
 const READS: &str = "the_models_and_textures_a_selection_draws_with_read_at_fixed_cameras";
+
+/// Whether every position of `mesh` stored as three floats is a number within 10 km of its model's origin, which bytes read from the wrong place seldom are.
+fn stands_in_its_model(mesh: &Mesh) -> bool {
+    let position = |element: &&Element| element.semantic == Semantic::Position;
+    let Some(element) = mesh.layout.elements.iter().find(position) else {
+        return false;
+    };
+    if element.format != ElementFormat::F32x3 {
+        return true;
+    }
+    let mut vertices = mesh.vertices.chunks_exact(mesh.layout.stride as usize);
+    vertices.all(|vertex| {
+        let numbers = vertex[element.offset as usize..][..12].as_chunks::<4>().0;
+        (numbers.iter()).all(|four| f32::from_le_bytes(*four).abs() < 1.0e4)
+    })
+}
 
 #[test]
 fn the_models_and_textures_a_selection_draws_with_read_at_fixed_cameras() {
@@ -550,12 +569,12 @@ fn the_models_and_textures_a_selection_draws_with_read_at_fixed_cameras() {
                             .into_iter()
                             .any(|bound| bound.parameter == colour(enhanced))
                     });
-                    let normal =
-                        |element: &or_world::model::Element| element.semantic == Semantic::Normal;
+                    let normal = |element: &Element| element.semantic == Semantic::Normal;
                     counts[0] += 1;
                     counts[1] += usize::from(named);
                     counts[2] += usize::from(!named && mesh.surface.colour.is_some());
                     counts[3] += usize::from(!mesh.layout.elements.iter().any(normal));
+                    counts[4] += usize::from(!stands_in_its_model(mesh));
                 }
             }
         }
@@ -571,6 +590,7 @@ fn the_models_and_textures_a_selection_draws_with_read_at_fixed_cameras() {
             match texture {
                 Ok(texture) => {
                     answered += 1;
+                    all.srgb += usize::from(texture.srgb);
                     held += texture.levels.iter().map(Vec::len).sum::<usize>();
                 }
                 Err(why) => {
@@ -618,12 +638,16 @@ fn the_models_and_textures_a_selection_draws_with_read_at_fixed_cameras() {
     }
     println!("  not read, by reason: {:?}", all.unread_models);
     println!(
-        "{}: textures answered, {}; not answered, by reason: {:?}",
-        id.0, all.textures, all.unread_textures
+        "{}: textures answered, {}, of which {} state sRGB; not answered, by reason: {:?}",
+        id.0, all.textures, all.srgb, all.unread_textures
     );
-    for (enhanced, [meshes, named, first, no_normal]) in &all.meshes {
+    for (enhanced, [meshes, named, first, no_normal, misplaced]) in &all.meshes {
         println!(
-            "  Enhanced layout {enhanced}: {meshes} meshes, the colour of {named} by its parameter's name and of {first} by the first binding, {no_normal} with no normal among their elements"
+            "  Enhanced layout {enhanced}: {meshes} meshes, the colour of {named} by its parameter's name and of {first} by the first binding, {no_normal} with no normal among their elements, {misplaced} with a position that is no place of a model"
+        );
+        assert_eq!(
+            *misplaced, 0,
+            "meshes whose positions are no numbers of a model"
         );
     }
     println!(
@@ -644,6 +668,23 @@ fn the_models_and_textures_a_selection_draws_with_read_at_fixed_cameras() {
             .sum();
         assert!(read > 0, "no model held as {holding:?} read");
     }
-    assert!(all.textures.read > 0 && total.read * 2 > total.asked);
+    // ⚠ A share, not a count: a fault in how a file binds its textures answered two in three of
+    // them on the Enhanced game while every model still read.
+    assert!(
+        total.read * 100 >= total.asked * 99,
+        "{total} models read: {:?}",
+        all.unread_models
+    );
+    assert!(
+        all.textures.read * 20 >= all.textures.asked * 19,
+        "{} textures answered: {:?}",
+        all.textures,
+        all.unread_textures
+    );
     assert!(all.lights[0] > 0 && all.boxes > 0 && all.occlude_models[0] > 0);
+    assert_eq!(
+        (all.lights[1], all.occlude_models[1]),
+        (0, 0),
+        "far lights and occlude models a body left unread"
+    );
 }

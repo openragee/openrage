@@ -603,7 +603,322 @@ fn a_body_states_the_far_lights_and_the_occluders_of_its_map() {
         .map(|index| u32::from(*index))
         .collect();
     assert_eq!(mesh.indices, indices);
-    // The other model states more triangles than its bytes hold.
-    assert_eq!(own(&*hides).beside.occluders_unread, 1);
+    // Of the other two, one states more triangles than its bytes hold and one names a point it lacks.
+    assert_eq!(own(&*hides).beside.occluders_unread, 2);
+    // Its lists are counted, grass and props alike, and none is laid out.
+    assert_eq!(
+        own(&*hides).beside.lists as usize,
+        hand_built::LISTS.0 + hand_built::LISTS.1
+    );
+    assert_eq!(own(&*lit).beside.lists, 0);
     assert!(lit.bytes() > 0 && hides.bytes() > far.bytes());
+}
+
+#[test]
+fn a_channel_an_enhanced_file_keeps_in_a_run_of_its_own_is_gathered_a_vertex_at_a_time() {
+    use or_io::codec::mesh::elements_g9;
+    use or_io::decl::{File, Gen9};
+    use or_io::gta5::GtaDrawable;
+    let legacy = hand_built::drawable_bytes("runs9", 1);
+    let woven = hand_built::enhanced("runs9.ydr", &legacy);
+    // The same vertices with each channel in a run of its own: every position, then every normal, then every coordinate.
+    let mut apart = <GtaDrawable<Gen9> as File>::from_bytes(&woven).expect("the file reads");
+    let lod = &mut apart.base.lod_group.lods[0];
+    let buffer = &mut *lod.models[0].geometries[0].vertex_buffer;
+    let together = std::mem::take(&mut buffer.data);
+    let stride = together.len() / CORNERS.len();
+    let info = buffer.info.as_deref_mut().expect("a declaration");
+    let mut sizes = Vec::new();
+    for element in elements_g9(&info.offsets, &info.sizes, &info.types) {
+        let size = element.format.byte_size().expect("a size");
+        info.offsets[element.slot] = buffer.data.len() as u32;
+        info.sizes[element.slot] = size as u8;
+        for vertex in 0..CORNERS.len() {
+            let at = vertex * stride + element.offset as usize;
+            buffer.data.extend_from_slice(&together[at..at + size]);
+        }
+        sizes.push(size as u32);
+    }
+    assert_ne!(buffer.data, together, "the runs are the woven bytes");
+    let files: Files = vec![
+        types_file("props", &[held("woven9", ""), held("runs9", "")]),
+        ("models/woven9.ydr".to_owned(), woven),
+        (
+            "models/runs9.ydr".to_owned(),
+            apart.to_bytes().expect("a drawable"),
+        ),
+    ];
+    let dir = install(&[("x64a.rpf", files)]);
+    let scratch = tempfile::tempdir().expect("a scratch folder");
+    let (world, index) = opened(dir.path(), scratch.path());
+    let mut read = Vec::new();
+    world.read_models(&index, &[key("woven9"), key("runs9")], &mut read);
+    let mesh_of = |name: &str| {
+        let outcome = (read.iter().find(|outcome| outcome.ask == key(name))).expect("an outcome");
+        assert_eq!(outcome.target, Some(Generation::Gen9));
+        match &outcome.model {
+            Ok(model) => model.lods[0].meshes[0].clone(),
+            Err(why) => panic!("{name} does not read: {why}"),
+        }
+    };
+    let (woven, runs) = (mesh_of("woven9"), mesh_of("runs9"));
+    // A vertex of the gathered mesh is its kept elements end to end, in the order of the file's channels.
+    let mut at = 0;
+    for (element, size) in runs.layout.elements.iter().zip(&sizes) {
+        assert_eq!((element.offset, element.format.size()), (at, *size));
+        at += size;
+    }
+    assert_eq!(runs.layout.elements.len(), sizes.len());
+    assert_eq!(runs.layout.stride, at);
+    assert_eq!(runs.vertices.len(), CORNERS.len() * at as usize);
+    for semantic in [Semantic::Position, Semantic::Normal, Semantic::TexCoord(0)] {
+        assert_eq!(numbers(&runs, semantic), numbers(&woven, semantic));
+    }
+    assert_eq!(numbers(&runs, Semantic::Position), CORNERS);
+    assert_eq!(runs.indices, woven.indices);
+}
+
+#[test]
+fn a_model_two_files_hold_is_read_from_the_dictionary_then_the_fragment_and_a_surface_blends_by_its_bucket(
+) {
+    use or_io::decl::File;
+    let bucket = |name: &str, bucket: u8| {
+        let mut built = hand_built::drawable(name, 1);
+        let group = built.base.shader_group.as_deref_mut().expect("a group");
+        group.shaders[0].draw_bucket = bucket;
+        (
+            format!("models/{name}.ydr"),
+            built.to_bytes().expect("a drawable"),
+        )
+    };
+    let mut files: Files = vec![
+        types_file(
+            "props",
+            &[
+                held("both", "pack_both"),
+                held("twice", ""),
+                held("solid", ""),
+                held("glass", ""),
+                held("decal", ""),
+                held("water", ""),
+            ],
+        ),
+        // Each loose drawable has one level, the dictionary's entry three and the fragment two.
+        (
+            "models/both.ydr".to_owned(),
+            hand_built::drawable_bytes("both", 1),
+        ),
+        (
+            "models/pack_both.ydd".to_owned(),
+            hand_built::dictionary_bytes(&[("both", 3)]),
+        ),
+        (
+            "models/twice.ydr".to_owned(),
+            hand_built::drawable_bytes("twice", 1),
+        ),
+        (
+            "models/twice.yft".to_owned(),
+            hand_built::fragment_bytes("twice", 2),
+        ),
+    ];
+    let buckets = [("solid", 0), ("glass", 1), ("decal", 2), ("water", 6)];
+    files.extend(buckets.map(|(name, at)| bucket(name, at)));
+    let dir = install(&[("x64a.rpf", files)]);
+    let scratch = tempfile::tempdir().expect("a scratch folder");
+    let (world, index) = opened(dir.path(), scratch.path());
+    let names = ["both", "twice", "solid", "glass", "decal", "water"];
+    let asks: Vec<AssetKey> = names.iter().map(|name| key(name)).collect();
+    let mut read = Vec::new();
+    world.read_models(&index, &asks, &mut read);
+    let of = |name: &str| {
+        let outcome = (read.iter().find(|outcome| outcome.ask == key(name))).expect("an outcome");
+        let model = outcome.model.as_ref();
+        let model = model.unwrap_or_else(|why| panic!("{name} does not read: {why}"));
+        (
+            outcome.holding,
+            model.lods.len(),
+            model.lods[0].meshes[0].surface.alpha,
+        )
+    };
+    assert_eq!(of("both").0, Some(Holding::Dictionary));
+    assert_eq!(of("both").1, 3);
+    assert_eq!(of("twice").0, Some(Holding::Fragment));
+    assert_eq!(of("twice").1, 2);
+    assert_eq!(of("solid").2, Alpha::Opaque);
+    for blended in ["glass", "decal", "water"] {
+        assert_eq!(of(blended).2, Alpha::Blend, "{blended}");
+    }
+}
+
+#[test]
+fn a_model_with_no_level_no_drawable_or_no_triangle_list_states_which() {
+    use or_io::decl::{File, Gen8};
+    use or_io::gta5::{FragType, GtaDrawable, GtaFragType, RmcDrawable};
+    // A triangle strip, where the model's triangles are three indices each.
+    let mut strip = hand_built::drawable("strip", 1);
+    let lod = &mut strip.base.lod_group.lods[0];
+    lod.models[0].geometries[0].primitive_type = 4;
+    let level_less = GtaDrawable::<Gen8> {
+        base: RmcDrawable {
+            name: "level_less".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut hollow = GtaFragType::<Gen8>::default();
+    *hollow = FragType::default();
+    let ydr = |name: &str, built: &GtaDrawable<Gen8>| {
+        (
+            format!("models/{name}.ydr"),
+            built.to_bytes().expect("a drawable"),
+        )
+    };
+    let names = ["strip", "level_less", "hollow"];
+    let types: Vec<Arch> = names.iter().map(|name| held(name, "")).collect();
+    let files: Files = vec![
+        types_file("props", &types),
+        ydr("strip", &strip),
+        ydr("level_less", &level_less),
+        (
+            "models/hollow.yft".to_owned(),
+            hollow.to_bytes().expect("a fragment"),
+        ),
+    ];
+    let dir = install(&[("x64a.rpf", files)]);
+    let scratch = tempfile::tempdir().expect("a scratch folder");
+    let (world, index) = opened(dir.path(), scratch.path());
+    let asks: Vec<AssetKey> = names.iter().map(|name| key(name)).collect();
+    let mut read = Vec::new();
+    world.read_models(&index, &asks, &mut read);
+    let why = |name: &str| {
+        let outcome = (read.iter().find(|outcome| outcome.ask == key(name))).expect("an outcome");
+        outcome.model.as_ref().err().cloned()
+    };
+    assert_eq!(why("strip"), Some(NoModel::NotTriangles));
+    assert_eq!(why("level_less"), Some(NoModel::NoLevel));
+    assert_eq!(why("hollow"), Some(NoModel::NoDrawable));
+}
+
+#[test]
+fn a_texture_reads_in_the_format_its_file_states_and_one_that_cannot_says_why() {
+    use or_io::decl::File;
+    use or_io::gta5::gen8::GrcTexture;
+    use or_io::gta5::gen9::{GrcTextureG9, TileMode};
+    use or_io::gta5::PgDictionary;
+    let four_cc = |code: &[u8; 4]| u32::from_le_bytes(*code);
+    let made = |name: &str, change: &dyn Fn(&mut GrcTexture)| {
+        let mut texture = hand_built::texture(name, 11);
+        change(&mut texture);
+        texture
+    };
+    let mut formats = PgDictionary::<GrcTexture>::default();
+    // One level each, the first of colours the file says are sRGB; the last is a format's number and no four letters.
+    let stated = [
+        ("five", four_cc(b"DXT5"), TextureFormat::Bc3),
+        ("one_channel", four_cc(b"ATI1"), TextureFormat::Bc4),
+        ("two_channels", four_cc(b"ATI2"), TextureFormat::Bc5),
+        ("seven", four_cc(b"BC7 "), TextureFormat::Bc7),
+        ("plain", 32, TextureFormat::Rgba8),
+    ];
+    for (name, format, _) in stated {
+        formats.insert(made(name, &|texture| {
+            texture.format = format;
+            texture.mip_count = 1;
+            texture.info_bits |= u8::from(name == "five");
+            texture.backing_store = (0..=255).collect();
+        }));
+    }
+    formats.insert(made("three", &|texture| texture.format = four_cc(b"DXT3")));
+    formats.insert(made("cube", &|texture| texture.image_type = 1));
+    formats.insert(made("deep", &|texture| texture.depth = 4));
+    // Its first level alone is more bytes than its store holds.
+    formats.insert(made("short", &|texture| {
+        texture.width = 64;
+        texture.height = 64;
+        texture.mip_count = 1;
+    }));
+    let plain = hand_built::enhanced("tiles9.ytd", &hand_built::textures_bytes(&[("tile", 3)]));
+    let mut tiled =
+        <PgDictionary<GrcTextureG9> as File>::from_bytes(&plain).expect("the dictionary reads");
+    let tile = tiled.entries[0].as_deref_mut().expect("a texture");
+    tile.tile_mode = or_io::decl::Open::new(TileMode::Standard);
+    let files: Files = vec![
+        (
+            "textures/formats.ytd".to_owned(),
+            formats.to_bytes().expect("a dictionary"),
+        ),
+        ("textures/plain9.ytd".to_owned(), plain),
+        (
+            "textures/tiles9.ytd".to_owned(),
+            tiled.to_bytes().expect("a dictionary"),
+        ),
+        (
+            "textures/ring_a.ytd".to_owned(),
+            hand_built::textures_bytes(&[(MOSS, MOSS_SEED)]),
+        ),
+        // Two dictionaries that each fall through to the other.
+        (
+            "data/gtxd.meta".to_owned(),
+            hand_built::relationships_bytes(&[("ring_a", "ring_b"), ("ring_b", "ring_a")]),
+        ),
+    ];
+    let dir = install(&[("x64a.rpf", files)]);
+    let scratch = tempfile::tempdir().expect("a scratch folder");
+    let (world, index) = opened(dir.path(), scratch.path());
+    let ask = |scope: &str, name: &str| TextureAsk {
+        scope: key(scope),
+        name: u64::from(hash(name)),
+        pixels: u32::MAX,
+    };
+    let mut asks = vec![
+        ask("formats", "five"),
+        ask("formats", "three"),
+        ask("formats", "cube"),
+        ask("formats", "deep"),
+        ask("formats", "short"),
+        ask("plain9", "tile"),
+        ask("tiles9", "tile"),
+        ask("ring_a", "no_such_texture"),
+        ask("ring_b", MOSS),
+    ];
+    asks.extend(stated.map(|(name, ..)| ask("formats", name)));
+    let mut read: Vec<(TextureAsk, Result<Texture, NoTexture>)> = Vec::new();
+    let opened = world.read_textures(&index, &asks, &mut read);
+    assert_eq!(opened.files, 4);
+    let of = |at: usize| {
+        let (given, texture) = &read[at];
+        assert_eq!(*given, asks[at]);
+        texture
+    };
+    let store: Vec<u8> = (0..=255).collect();
+    for (at, (name, _, format)) in stated.into_iter().enumerate() {
+        assert_eq!(
+            of(9 + at),
+            &Ok(Texture {
+                width: 8,
+                height: 8,
+                format,
+                srgb: name == "five",
+                levels: vec![store[..format.level_bytes(8, 8)].to_vec()],
+            }),
+            "{name}"
+        );
+    }
+    assert_eq!(of(0), of(9));
+    assert_eq!(of(1), &Err(NoTexture::Format("DXT3".to_owned())));
+    assert_eq!(of(2), &Err(NoTexture::NotFlat));
+    assert_eq!(of(3), &Err(NoTexture::NotFlat));
+    assert_eq!(of(4), &Err(NoTexture::PartLevel));
+    assert!(of(5).is_ok(), "{:?}", of(5));
+    assert_eq!(of(6), &Err(NoTexture::Tiled));
+    // A chain that comes back to where it began is walked once round and no further.
+    assert_eq!(
+        of(7),
+        &Err(NoTexture::NotInChain {
+            walked: 2,
+            absent: 1,
+            unread: 0
+        })
+    );
+    assert!(of(8).is_ok(), "{:?}", of(8));
 }

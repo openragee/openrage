@@ -704,3 +704,80 @@ impl ModelReader for Gta5World {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use or_io::decl::Shared;
+    use or_io::gta5::drawable::gen8;
+
+    /// A Legacy geometry of `bytes` zeroed bytes of vertices of `channels`, drawn by `indices`: what `or_io`'s writer refuses and a file may still hold.
+    fn geometry(
+        channels: &[(GrcFvfChannel, GrcDataSize)],
+        bytes: usize,
+        indices: &[u16],
+    ) -> GrmGeometry<Gen8> {
+        let mut fvf = gen8::GrcFvf::default();
+        for (channel, size) in channels {
+            fvf.fvf |= 1 << *channel as u32;
+            fvf.channel_sizes |= (*size as u64) << (*channel as u64 * 4);
+        }
+        fvf.channel_count = channels.len() as u8;
+        let layout = or_io::codec::mesh::VertexLayout::of(fvf.fvf, fvf.channel_sizes);
+        fvf.fvf_size = layout.packed_stride() as u8;
+        GrmGeometry::<Gen8> {
+            primitive_type: TRIANGLES,
+            vertex_buffer: Box::new(gen8::GrcVertexBuffer {
+                data: vec![0; bytes],
+                fvf: Some(Box::new(fvf)),
+                lock_ptr: Shared::Same,
+                ..Default::default()
+            }),
+            index_buffer: Box::new(gen8::GrcIndexBuffer {
+                indices: indices.to_vec(),
+                ..Default::default()
+            }),
+            vertex_data: Shared::Same,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_geometry_whose_vertices_or_indices_are_not_whole_is_refused_with_its_reason() {
+        use GrcDataSize::{Float2, Float3, PackedNormal, Short4};
+        use GrcFvfChannel::{Normal, Position, Tex0};
+        let placed = [(Position, Float3), (Normal, PackedNormal), (Tex0, Float2)];
+        // Three vertices of twelve, four and eight bytes: the normal's encoding has no format, so its bytes stay in the vertex and no element names them.
+        let whole = mesh_of(&geometry(&placed, 72, &[0, 1, 2])).expect("it reads");
+        assert_eq!((whole.layout.stride, whole.vertices.len()), (24, 72));
+        let kept: Vec<(Semantic, u32)> = (whole.layout.elements.iter())
+            .map(|element| (element.semantic, element.offset))
+            .collect();
+        assert_eq!(kept, [(Semantic::Position, 0), (Semantic::TexCoord(0), 16)]);
+        let why = |geometry: GrmGeometry<Gen8>| mesh_of(&geometry).err();
+        // An index that names a vertex past the last, and indices that are no whole triangles.
+        assert_eq!(
+            why(geometry(&placed, 72, &[0, 1, 3])),
+            Some(NoModel::NotTriangles)
+        );
+        assert_eq!(
+            why(geometry(&placed, 72, &[0, 1, 2, 0])),
+            Some(NoModel::NotTriangles)
+        );
+        assert_eq!(
+            why(geometry(&placed, 71, &[0, 1, 2])),
+            Some(NoModel::PartVertex)
+        );
+        assert_eq!(
+            why(geometry(&[(Normal, Float3)], 36, &[0, 1, 2])),
+            Some(NoModel::NoPosition)
+        );
+        assert_eq!(
+            why(geometry(&[(Position, Short4)], 24, &[0, 1, 2])),
+            Some(NoModel::NoPosition)
+        );
+        let mut bare = geometry(&placed, 72, &[0, 1, 2]);
+        bare.vertex_buffer.fvf = None;
+        assert_eq!(why(bare), Some(NoModel::NoLayout));
+    }
+}

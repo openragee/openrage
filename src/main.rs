@@ -1,5 +1,9 @@
 // wgpu's auto-trait chain (`Device: Send`) is deeper than the default 128 on this nightly.
 #![recursion_limit = "256"]
+
+/// The editor's allocator: the system one makes threads wait on each other past about 16.
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[macro_use]
 mod i18n;
 mod app;

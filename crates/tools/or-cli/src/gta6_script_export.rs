@@ -268,9 +268,11 @@ pub(super) fn built(
 ) -> (Project, Vec<Result<Stated, String>>) {
     let size = |body: &Body| body.bytes.len();
     // The first pass: what the programs state of each other, then what the code of each shows.
-    let tables = index::tables(bodies.iter().map(|body| body.bytes.as_slice()));
+    let tables = or_io::gta6::script::par::pooled(threads, || {
+        index::tables(bodies.iter().map(|body| body.bytes.as_slice()))
+    });
     let counted = Counted::new("first reading", bodies.len(), said);
-    let firsts = largest_first(bodies, size, threads, |body| {
+    let firsts = pooled_largest_first(bodies, size, threads, |body| {
         let one = guarded(|| first(&body.bytes, &tables));
         counted.one();
         one
@@ -297,7 +299,7 @@ pub(super) fn built(
     let mut project = index::merge(parts);
     // What the code shows through the variables and receivers the whole project types.
     let counted = Counted::new("second reading with the project", bodies.len(), said);
-    let typed = largest_first(bodies, size, threads, |body| {
+    let typed = pooled_largest_first(bodies, size, threads, |body| {
         let one = guarded(|| {
             index::typed_part(&body.bytes, &tables, &project).map_err(|e| e.to_string())
         });
@@ -376,6 +378,29 @@ fn largest_first<I: Sync, T: Send>(
     }
     // Every place was given its item's result once, so none is left out.
     placed.into_iter().flatten().collect()
+}
+
+/// What `each` gives for every item, in the items' order, the items of most `size` started first on a pool of `threads` threads, which the functions of one item spread over too.
+fn pooled_largest_first<I: Sync, T: Send>(
+    items: &[I],
+    size: impl Fn(&I) -> usize + Sync + Send,
+    threads: usize,
+    each: impl Fn(&I) -> T + Sync + Send,
+) -> Vec<T> {
+    or_io::gta6::script::par::pooled(threads, || {
+        let mut order: Vec<usize> = (0..items.len()).collect();
+        // Stable, so that items of one size keep their own order.
+        order.sort_by_key(|n| Reverse(items.get(*n).map_or(0, &size)));
+        let done = or_io::gta6::script::par::map(order.clone(), |n| items.get(n).map(&each));
+        let mut placed: Vec<Option<T>> = (0..items.len()).map(|_| None).collect();
+        for (n, result) in order.iter().zip(done) {
+            if let Some(place) = placed.get_mut(*n) {
+                *place = result;
+            }
+        }
+        // Every place was given its item's result once, so none is left out.
+        placed.into_iter().flatten().collect()
+    })
 }
 
 /// What `work` gives, a fault in it turned into its body's failure.

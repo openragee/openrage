@@ -525,20 +525,27 @@ fn slot_reads(
             .chain(implemented.into_iter().flatten().copied())
             .collect()
     };
+    // Each slot's lines and whether any function it reaches is of no line, worked out once: the
+    // same slots are called by many functions.
+    let mut known: BTreeMap<Slot, (Vec<FunctionKey>, bool)> = BTreeMap::new();
     for waits in open.values() {
         let called = waits.slot_uses.iter().map(|(slot, usage)| (slot, *usage));
         let handed_on = waits.handed_slots.iter().map(|slot| (slot, Usage::Mixed));
         for (slot, usage) in called.chain(handed_on) {
-            let targets = reached(slot);
-            let rooted: Vec<FunctionKey> = targets
-                .iter()
-                .filter_map(|target| roots.get(target).copied())
-                .collect();
-            if rooted.is_empty() || rooted.len() != targets.len() {
+            let (rooted, open_ended) = known.entry(*slot).or_insert_with(|| {
+                let targets = reached(slot);
+                let rooted: Vec<FunctionKey> = targets
+                    .iter()
+                    .filter_map(|target| roots.get(target).copied())
+                    .collect();
+                let open_ended = rooted.is_empty() || rooted.len() != targets.len();
+                (rooted, open_ended)
+            });
+            if *open_ended {
                 unresolved.insert(slot.1);
             }
-            for root in rooted {
-                read(&mut lines, root, usage);
+            for root in rooted.iter() {
+                read(&mut lines, *root, usage);
             }
         }
     }

@@ -190,12 +190,31 @@ fn again(
             break;
         }
         let mut still = Vec::new();
-        for place in waiting {
-            let Some(row) = rows.get(place) else {
+        // Every function of a round is tried with the counts held at its start, so each is tried
+        // alone, on the caller's threads, and what each gives is taken in their order.
+        let asked: Vec<(usize, Counts)> = (waiting.iter())
+            .map(|place| (*place, tried.get(place).cloned().unwrap_or_default()))
+            .collect();
+        let children = slots.children_made();
+        let answers = super::par::map_with(
+            asked,
+            || {
+                let held = Slots::sharing(slots.project, children);
+                held.install(learned);
+                held
+            },
+            |held, (place, mut last)| {
+                let answer = (rows.get(place)).map(|row| retried(program, held, row, &mut last));
+                (place, last, answer)
+            },
+        );
+        for (place, last, answer) in answers {
+            let Some(answer) = answer else {
                 still.push(place);
                 continue;
             };
-            match retried(program, slots, row, tried.entry(place).or_default()) {
+            tried.insert(place, last);
+            match answer {
                 None => still.push(place),
                 Some(Ok((lifted, found))) => {
                     learn(learned, &found);
@@ -212,12 +231,20 @@ fn again(
 
 /// Lifts every function of a program as [`functions`] does: those that fail for want of a count again, with what the others were found to take of their slots.
 pub fn program_in(program: &Program, project: &Project) -> Vec<Result<Lifted, LiftError>> {
-    let slots = Slots::new(project);
+    let children = sizing::children(project);
+    let slots = Slots::sharing(project, &children);
     let mut learned = Learned::new();
     let mut lifted = Vec::with_capacity(program.functions.len());
     let mut waiting = Vec::new();
-    for (place, row) in program.functions.iter().enumerate() {
-        match function_counted(program, &slots, row) {
+    // Each function alone, on the threads of the caller's pool: nothing is learned before every one is lifted once.
+    let rows: Vec<&FunctionRow> = program.functions.iter().collect();
+    let firsts = super::par::map_with(
+        rows,
+        || Slots::sharing(project, &children),
+        |slots, row| function_counted(program, slots, row),
+    );
+    for (place, first) in firsts.into_iter().enumerate() {
+        match first {
             Ok((one, found)) => {
                 learn(&mut learned, &found);
                 lifted.push(Ok(one));

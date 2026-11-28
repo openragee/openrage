@@ -2,8 +2,8 @@
 //! the walk from the entry that counts cells, what a project states of a virtual slot, and the
 //! search for the one choice of counts that balances and keeps to the compiler's rules.
 
-use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::cell::{OnceCell, RefCell};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::super::decode::Insn;
 use super::super::ir::{Callee, Expr, Scalar, TypeKey, Var};
@@ -59,6 +59,24 @@ pub(super) struct Slots<'a> {
     found: RefCell<BTreeMap<(TypeKey, u32), Said>>,
     /// The count each slot returns by the functions of the program that lifted alone, held for a slot no type below states.
     learned: RefCell<Learned>,
+    /// The types each type is the base of, made at the first slot asked for where none is shared.
+    children: OnceCell<Children>,
+    /// The types each type is the base of, made once for the threads that lift one program.
+    shared: Option<&'a Children>,
+}
+
+/// The types each type of a project is the base of.
+pub(super) type Children = HashMap<TypeKey, Vec<TypeKey>>;
+
+/// The types each type of `project` is the base of.
+pub(super) fn children(project: &Project) -> Children {
+    let mut children: Children = HashMap::new();
+    for (key, facts) in &project.types {
+        if let Some(base) = facts.base {
+            children.entry(base).or_default().push(*key);
+        }
+    }
+    children
 }
 
 /// What the types below a slot state of the cells it returns.
@@ -89,6 +107,24 @@ impl<'a> Slots<'a> {
             project,
             found: RefCell::new(BTreeMap::new()),
             learned: RefCell::new(Learned::new()),
+            children: OnceCell::new(),
+            shared: None,
+        }
+    }
+
+    /// The types each type of the project is the base of: those shared, else made now.
+    pub(super) fn children_made(&self) -> &Children {
+        match self.shared {
+            Some(children) => children,
+            None => self.children.get_or_init(|| children(self.project)),
+        }
+    }
+
+    /// As [`Slots::new`], with the types each type is the base of made already.
+    pub(super) fn sharing(project: &'a Project, children: &'a Children) -> Self {
+        Slots {
+            shared: Some(children),
+            ..Slots::new(project)
         }
     }
 
@@ -116,7 +152,7 @@ impl<'a> Slots<'a> {
         wanted.iter().filter(open).filter_map(known).collect()
     }
 
-    /// Finds every slot of `wanted` not asked for before, in one pass over the project's types.
+    /// Finds every slot of `wanted` not asked for before, by the types below each slot's type.
     fn ask(&self, wanted: &BTreeSet<(TypeKey, u32)>) {
         let mut found = self.found.borrow_mut();
         let new = wanted.iter().filter(|key| !found.contains_key(*key));
@@ -125,28 +161,34 @@ impl<'a> Slots<'a> {
             return;
         }
         let types = &self.project.types;
+        let children = self.children_made();
         // `None` once two types below have stated different counts.
         let mut said: BTreeMap<(TypeKey, u32), Option<u32>> = BTreeMap::new();
-        for facts in types.values() {
-            let mut above = facts.base;
+        let bases: BTreeSet<TypeKey> = new.iter().map(|(base, _)| *base).collect();
+        for base in bases {
+            // The types `base` stands at most BASES steps above, level by level, as the walk up from each of them meets it.
+            let mut level: Vec<TypeKey> = children.get(&base).cloned().unwrap_or_default();
             for _ in 0..BASES {
-                let Some(base) = above else {
+                if level.is_empty() {
                     break;
-                };
-                for key in new.range((base, 0)..=(base, u32::MAX)) {
-                    let slot = key.1;
-                    let filled = facts.slots.get(&slot);
-                    let function = filled.and_then(|at| self.project.signatures.get(at));
-                    let record = facts.returns.get(&slot).copied();
-                    let Some(cells) = record.or(function.map(|held| held.returns)) else {
-                        continue;
-                    };
-                    let held = said.entry(*key).or_insert(Some(cells));
-                    if *held != Some(cells) {
-                        *held = None;
+                }
+                for facts in level.iter().filter_map(|below| types.get(below)) {
+                    for key in new.range((base, 0)..=(base, u32::MAX)) {
+                        let slot = key.1;
+                        let filled = facts.slots.get(&slot);
+                        let function = filled.and_then(|at| self.project.signatures.get(at));
+                        let record = facts.returns.get(&slot).copied();
+                        let Some(cells) = record.or(function.map(|held| held.returns)) else {
+                            continue;
+                        };
+                        let held = said.entry(*key).or_insert(Some(cells));
+                        if *held != Some(cells) {
+                            *held = None;
+                        }
                     }
                 }
-                above = types.get(&base).and_then(|facts| facts.base);
+                let next = level.iter().filter_map(|below| children.get(below));
+                level = next.flatten().copied().collect();
             }
         }
         for key in new {

@@ -24,6 +24,7 @@ pub mod names;
 pub mod native_addresses;
 pub mod opcode;
 pub mod options;
+pub mod par;
 pub mod passes;
 pub mod print;
 pub mod program;

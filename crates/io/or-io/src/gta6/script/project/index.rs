@@ -20,7 +20,7 @@ use crate::gta6::script::ir::{
 use crate::gta6::script::listing::Listing;
 use crate::gta6::script::opcode::Op;
 use crate::gta6::script::program::{FunctionRow, Program};
-use crate::gta6::script::{cfg, decode, lift, passes, Context, Names, Options, Pass, Stats};
+use crate::gta6::script::{cfg, decode, lift, par, passes, Context, Names, Options, Pass, Stats};
 
 /// The version a project file states; a file of another version is refused.
 const VERSION: u32 = 1;
@@ -132,23 +132,25 @@ impl Tables {
 /// The tables of the compiled programs among `bodies`; a body that is no program gives none.
 pub fn tables<'a>(bodies: impl IntoIterator<Item = &'a [u8]> + Clone) -> Tables {
     let mut tables = Tables::default();
+    let bodies: Vec<&[u8]> = bodies.into_iter().collect();
     let read = |bytes: &[u8]| Program::read(bytes).ok();
-    for program in bodies.clone().into_iter().filter_map(read) {
-        for (to, at) in program.called_elsewhere() {
-            tables.called.entry(to).or_default().insert(at);
-        }
+    let called = par::map(bodies.clone(), |bytes| {
+        read(bytes).map(|p| p.called_elsewhere())
+    });
+    for (to, at) in called.into_iter().flatten().flatten() {
+        tables.called.entry(to).or_default().insert(at);
     }
-    // Each program is read again, so that the code of one is held at a time.
-    let mut parts = Vec::new();
-    for mut program in bodies.into_iter().filter_map(read) {
+    // Each program is read again, so that the code of a thread's one is held at a time.
+    let parts = par::map(bodies, |bytes| {
+        let mut program = read(bytes)?;
         tables.start(&mut program);
         let mut part = Project::default();
         part.programs.insert(program.program, program.info());
         types::of_program(&mut part, &program);
         signatures::of_program(&mut part, &program);
-        parts.push(part);
-    }
-    tables.project = merge(parts);
+        Some(part)
+    });
+    tables.project = merge(parts.into_iter().flatten().collect());
     tables
 }
 
@@ -164,21 +166,30 @@ pub fn typed_part(
     let names = Names::default();
     let options = Options::baseline().with(Pass::Kinds).with(Pass::Interproc);
     let cx = Context::new(&names, project, options);
-    let mut stats = Stats::default();
     let mut part = Project::default();
     // Lifted as the decompiler lifts the program: what one function settles of a slot sizes the rest.
-    for lifted in lift::program_in(&program, project) {
-        let Ok(lifted) = lifted else {
-            continue;
-        };
-        if !lifted.regions.is_empty() {
-            continue;
+    let lifted = lift::program_in(&program, project);
+    // A function that faults to a handler is left out: no pass understands its way there.
+    let mut whole =
+        (lifted.into_iter().filter_map(Result::ok)).filter(|one| one.regions.is_empty());
+    // A run of functions at a time: the passes of each on the caller's threads, the part told of
+    // each in the order of the functions.
+    loop {
+        let run: Vec<lift::Lifted> = whole.by_ref().take(RUN).collect();
+        if run.is_empty() {
+            break;
         }
-        let mut f = lifted.function;
-        passes::values::run_in(&mut f, &cx, &mut stats);
-        passes::interproc::run(&mut f, &cx, &mut stats);
-        passes::types::run_in(&mut f, &cx, &mut stats);
-        layouts::of_typed_function(&mut part, &f, project);
+        let typed = crate::gta6::script::par::map(run, |lifted| {
+            let mut f = lifted.function;
+            let mut stats = Stats::default();
+            passes::values::run_in(&mut f, &cx, &mut stats);
+            passes::interproc::run(&mut f, &cx, &mut stats);
+            passes::types::run_in(&mut f, &cx, &mut stats);
+            f
+        });
+        for f in typed {
+            layouts::of_typed_function(&mut part, &f, project);
+        }
     }
     Ok(part)
 }
@@ -206,40 +217,77 @@ pub fn of_program_in(bytes: &[u8], tables: &Tables) -> Result<Project, ProjectEr
 
     let names = Names::default();
     let cx = Context::baseline(&names);
-    let mut stats = Stats::default();
     // Lifted as the decompiler lifts the program: what one function settles of a slot sizes the rest.
     let lifted = lift::program_in(&program, &tables.project);
-    for (row, lifted) in program.functions.iter().zip(lifted) {
-        // A function that does not lift shows nothing: what the tables state of it stands, and the rest of the program is read.
-        let Ok(lifted) = lifted else {
-            let named = named_by(&program, &tables.project, row);
-            let imported: Vec<u32> = program
-                .imports
-                .iter()
-                .map(|import| import.program)
-                .collect();
-            let (functions, calls) = match named {
-                Some(named) => (Some(named.functions), Some((named.slots, named.natives))),
-                None => (None, None),
-            };
-            signatures::unseen(&mut project, program.program, &imported, functions);
-            signatures::unseen_calls(&mut project, calls);
-            continue;
-        };
-        let mut f = lifted.function;
-        accessed(&mut project, &f);
-        // ⚠ What a parameter's address reaches is read off the code as it is: a pass may leave out
-        // a read no later code takes, which the code still makes.
-        reach::of_function(&mut project, &f);
-        let first = signatures::first_read(&f);
-        // No pass understands a fault's way to its handler.
-        if lifted.regions.is_empty() {
-            passes::values::run_in(&mut f, &cx, &mut stats);
-            passes::types::run_in(&mut f, &cx, &mut stats);
+    let mut functions = program.functions.iter().zip(lifted);
+    let work = |lifted: Result<lift::Lifted, lift::LiftError>| {
+        lifted.map(|lifted| {
+            let before = lifted.function.clone();
+            let mut f = lifted.function;
+            let first = signatures::first_read(&f);
+            // No pass understands a fault's way to its handler.
+            if lifted.regions.is_empty() {
+                let mut stats = Stats::default();
+                passes::values::run_in(&mut f, &cx, &mut stats);
+                passes::types::run_in(&mut f, &cx, &mut stats);
+            }
+            (before, f, first)
+        })
+    };
+    // A run of functions at a time: the passes of each on the caller's threads while the project is
+    // told of the run before, each in the order of the functions, as one after another would tell it.
+    let mut read: Vec<(&FunctionRow, _)> = Vec::new();
+    loop {
+        let (rows, run): (Vec<&FunctionRow>, Vec<_>) = functions.by_ref().take(RUN).unzip();
+        let last = run.is_empty();
+        let ((), next) = crate::gta6::script::par::join(
+            || {
+                for (row, one) in std::mem::take(&mut read) {
+                    told(&mut project, &program, tables, row, one);
+                }
+            },
+            || crate::gta6::script::par::map(run, work),
+        );
+        if last {
+            break;
         }
-        gather(&mut project, &f, first);
+        read = rows.into_iter().zip(next).collect();
     }
     Ok(project)
+}
+
+/// The functions whose passes run at once before the project is told of them: each is held twice meanwhile.
+const RUN: usize = 1024;
+
+/// Tells `project` what one function of `program` shows: the code as lifted and after the passes, and what was first read of it; or, where it did not lift, what the tables state of it.
+fn told(
+    project: &mut Project,
+    program: &Program,
+    tables: &Tables,
+    row: &FunctionRow,
+    read: Result<(cfg::Function, cfg::Function, signatures::FirstRead), lift::LiftError>,
+) {
+    // A function that does not lift shows nothing: what the tables state of it stands, and the rest of the program is read.
+    let Ok((before, f, first)) = read else {
+        let named = named_by(program, &tables.project, row);
+        let imported: Vec<u32> = program
+            .imports
+            .iter()
+            .map(|import| import.program)
+            .collect();
+        let (functions, calls) = match named {
+            Some(named) => (Some(named.functions), Some((named.slots, named.natives))),
+            None => (None, None),
+        };
+        signatures::unseen(project, program.program, &imported, functions);
+        signatures::unseen_calls(project, calls);
+        return;
+    };
+    accessed(project, &before);
+    // ⚠ What a parameter's address reaches is read off the code as it is: a pass may leave out
+    // a read no later code takes, which the code still makes.
+    reach::of_function(project, &before);
+    gather(project, &f, first);
 }
 
 /// The part of a program whose own part is refused or faults: its code may call any function of it and of the programs it imports, through any slot, and any native; `None` where its bytes are no program.

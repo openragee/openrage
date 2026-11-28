@@ -1,6 +1,7 @@
 //! A project built from every program of the GTA VI archive a script was read from, and written
 //! as the names folder's `project.json`, which every script opened after it is decompiled with.
 
+use std::cmp::Reverse;
 use std::fs::File;
 use std::io::Read as _;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -10,18 +11,15 @@ use std::sync::{Mutex, PoisonError};
 
 use or_io::container::rpf::{Gta6Mount, GtaViKeys, RPF9_MAGIC};
 use or_io::gta6::script::lift::Progress;
+use or_io::gta6::script::par;
 use or_io::gta6::script::program::Program;
 use or_io::gta6::script::project::index;
 use or_io::gta6::script::Project;
 
 use super::lists::PROJECT_FILE;
-use super::STACK;
 
 /// The nested archives followed below the archive: a ring of them must end.
 const MAX_DEPTH: usize = 8;
-
-/// The threads a build reads programs on at most.
-const THREADS: usize = 4;
 
 /// The file a project is written to before it takes the place of the one there; the folder's reader passes over a name with a leading dot.
 const PART_FILE: &str = ".project.json.part";
@@ -169,6 +167,16 @@ fn project_of(
     if bodies.is_empty() {
         return Err(tr!("no entry of this archive is a GTA VI program").to_string());
     }
+    let threads = std::thread::available_parallelism().map_or(1, usize::from);
+    par::pooled(threads, || pooled_project_of(bodies, building, progress))
+}
+
+/// [`project_of`] on the threads of the pool it runs in.
+fn pooled_project_of(
+    bodies: &[Vec<u8>],
+    building: &Building,
+    progress: &Progress,
+) -> Result<Project, String> {
     building.all.store(bodies.len() * 2, Ordering::Relaxed);
     let tables = index::tables(bodies.iter().map(Vec::as_slice));
     let parts = each(bodies, building, progress, |bytes| {
@@ -197,48 +205,33 @@ fn project_of(
     Ok(project)
 }
 
-/// What `work` gives of each body, in their order, on up to [`THREADS`] threads of a deep stack; a body whose work faults gives `None`, and so does each body left once a stop is asked.
+/// What `work` gives of each body, in their order, the largest started first on the threads of the pool the caller runs in, else one after another; a body whose work faults gives `None`, and so does each body left once a stop is asked.
 fn each<T: Send>(
     bodies: &[Vec<u8>],
     building: &Building,
     progress: &Progress,
     work: impl Fn(&[u8]) -> Option<T> + Sync,
 ) -> Vec<Option<T>> {
-    let next = AtomicUsize::new(0);
-    let done: Mutex<Vec<(usize, Option<T>)>> = Mutex::new(Vec::with_capacity(bodies.len()));
-    let run = || loop {
-        let n = next.fetch_add(1, Ordering::Relaxed);
-        let Some(bytes) = bodies.get(n) else {
-            break;
-        };
-        let made = match progress.stopped() {
-            true => None,
-            false => catch_unwind(AssertUnwindSafe(|| work(bytes)))
+    let mut order: Vec<usize> = (0..bodies.len()).collect();
+    // Stable, so that bodies of one size keep their own order.
+    order.sort_by_key(|n| Reverse(bodies.get(*n).map_or(0, Vec::len)));
+    let made = par::map(order.clone(), |n| {
+        let made = match (bodies.get(n), progress.stopped()) {
+            (Some(bytes), false) => catch_unwind(AssertUnwindSafe(|| work(bytes)))
                 .ok()
                 .flatten(),
+            _ => None,
         };
         building.read.fetch_add(1, Ordering::Relaxed);
-        let mut done = done.lock().unwrap_or_else(PoisonError::into_inner);
-        done.push((n, made));
-    };
-    let threads = std::thread::available_parallelism()
-        .map_or(1, usize::from)
-        .clamp(1, THREADS)
-        .min(bodies.len());
-    std::thread::scope(|scope| {
-        let mut started = 0;
-        for _ in 0..threads {
-            let thread = std::thread::Builder::new().stack_size(STACK);
-            started += usize::from(thread.spawn_scoped(scope, run).is_ok());
-        }
-        // With no thread to be had, the bodies are read here, on the worker's own deep stack.
-        if started == 0 {
-            run();
-        }
+        made
     });
-    let mut done = done.into_inner().unwrap_or_else(PoisonError::into_inner);
-    done.sort_by_key(|(n, _)| *n);
-    done.into_iter().map(|(_, made)| made).collect()
+    let mut placed: Vec<Option<T>> = (0..bodies.len()).map(|_| None).collect();
+    for (n, made) in order.into_iter().zip(made) {
+        if let Some(place) = placed.get_mut(n) {
+            *place = made;
+        }
+    }
+    placed
 }
 
 /// Writes `bytes` into `folder` as `project.json` in place of the one there, through a file the folder's reader passes over, so that no reader sees half of it.

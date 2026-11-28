@@ -113,6 +113,8 @@ sha1 = "0.10"
 memmap2 = "0.9"
 tempfile = "3"
 rayon = "1.10"
+# The executables' allocator: the system one makes threads wait on each other past about 16.
+mimalloc = "0.1"
 bincode = "1.3"
 # Opus decode and encode for GTA VI's `.awc` streams, in `or-media` only; pinned exactly.
 ropus = "=0.12.18"
@@ -340,7 +342,7 @@ or-world-gta6.workspace = true
 or-job.workspace = true
 # Every layer the app spans: it opens archives and reads every declared format
 # (io) and mounts installs (title). Every other crate names one.
-or-io = { workspace = true, features = ["awc", "fxc", "gfx", "gta6", "meta", "rel"] }
+or-io = { workspace = true, features = ["awc", "fxc", "gfx", "gta6", "meta", "rayon", "rel"] }
 # Every audio and video decode, behind one interface: the `.awc` panel and the `.bik` preview.
 or-media.workspace = true
 or-title.workspace = true
@@ -355,6 +357,9 @@ or-simulation.workspace = true
 
 # The baker compresses and translates shaders in parallel.
 rayon.workspace = true
+# The allocator of both executables: building a GTA VI script project on 32 threads took 87 s on
+# the system allocator and 33 s on this one.
+mimalloc.workspace = true
 
 # Sound output, on every platform: only the output device, since or-media decodes and so no rodio
 # decoder is built. ⚠ On Linux `cpal` links ALSA, so building needs libasound2-dev (CI installs it).

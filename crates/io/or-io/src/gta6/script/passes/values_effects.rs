@@ -1,7 +1,9 @@
 //! What the values pass knows of a function before it moves anything: how each variable is used,
 //! which frame cells a pointer may reach, and what evaluating an expression reads and writes.
 
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::rc::Rc;
 
 use crate::gta6::script::cfg::{self, BlockId, Cfg};
 use crate::gta6::script::ir::{BinOp, Callee, Expr, Head, Kind, Scalar, Stmt, Var, VarInfo, Width};
@@ -631,8 +633,30 @@ pub(in crate::gta6::script::passes) struct Facts {
     fresh: HashMap<Var, Window>,
 }
 
+std::thread_local! {
+    /// The function this thread read facts of last, as it was, and what they were.
+    // ⚠ Held whole and compared whole: the passes change a function in place and say so only by
+    // what they return, and a round that changes nothing reads the same function a dozen times.
+    static LAST: RefCell<Option<(cfg::Function, Rc<Facts>)>> = const { RefCell::new(None) };
+}
+
 impl Facts {
-    pub fn of(f: &cfg::Function) -> Facts {
+    /// What holds of `f`'s variables: the facts this thread read last where `f` is the same function as then, else read now.
+    pub fn of(f: &cfg::Function) -> Rc<Facts> {
+        let held = LAST.with(|last| {
+            let last = last.borrow();
+            let (seen, facts) = last.as_ref()?;
+            (seen == f).then(|| Rc::clone(facts))
+        });
+        if let Some(facts) = held {
+            return facts;
+        }
+        let facts = Rc::new(Self::read(f));
+        LAST.with(|last| *last.borrow_mut() = Some((f.clone(), Rc::clone(&facts))));
+        facts
+    }
+
+    fn read(f: &cfg::Function) -> Facts {
         let mut scan = Scan::default();
         for block in &f.cfg.blocks {
             for stmt in &block.stmts {
@@ -857,8 +881,8 @@ impl Facts {
     // ⚠ An object is in no other hands only until the first statement that mentions its variable
     // other than as the address of a load or a store: from there a copy of the reference may be
     // anywhere.
-    pub fn finer(f: &cfg::Function) -> Facts {
-        let mut facts = Facts::of(f);
+    pub fn finer(f: &cfg::Function) -> Rc<Facts> {
+        let mut facts = Facts::read(f);
         facts.fine = true;
         for (b, block) in f.cfg.blocks.iter().enumerate() {
             for (i, stmt) in block.stmts.iter().enumerate() {
@@ -893,7 +917,7 @@ impl Facts {
                 facts.fresh.insert(var, window);
             }
         }
-        facts
+        Rc::new(facts)
     }
 
     /// Whether `var` holds an object the function made that is in no other hands at statement `at.1` of block `at.0`.

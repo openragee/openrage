@@ -12,7 +12,7 @@ description = "openrage-cli: convert, inspect, search and serve RAGE resources"
 # The RAGE string hashes and the reverse index over them, for `hash`/`names`,
 # `.awc` for `awc`, `.gfx` for `gfx`, the metadata family for `meta`,
 # texture import and encoding for `texture`, and GTA VI's packs for `ttpf`.
-or-io = { workspace = true, features = ["authoring", "awc", "fxc", "gfx", "gta6", "meta", "rel"] }
+or-io = { workspace = true, features = ["authoring", "awc", "fxc", "gfx", "gta6", "meta", "rayon", "rel"] }
 # The one decode of an `.awc` stream, whichever codec it is stored in, for `awc export`.
 or-media.workspace = true
 or-title.workspace = true

@@ -17507,8 +17507,8 @@ msgstr "此脚本是单独反编译的：需要其他程序所声明内容的函
 msgid "A lit one among them takes the sun with no shadow: the game's cascades are stated empty, and the editor's shadow tile is not handed to it"
 msgstr "其中受光照的表面接收没有阴影的阳光：游戏的级联被声明为空，编辑器的阴影图块不交给它"
 
-msgid "Of the game's thirty material kinds, the standard and the translucent are lit by their own arithmetic; skin, clear coat, sheen and the rest are lit as the standard one for now"
-msgstr "游戏的三十种材质类型中，标准与半透明按各自的算法照明；皮肤、清漆、光泽及其余类型暂时按标准类型照明"
+msgid "Of the game's thirty material kinds, the standard, the translucent and skin are lit by their own arithmetic; clear coat, sheen and the rest are lit as the standard one for now"
+msgstr "游戏的三十种材质类型中，标准、半透明与皮肤按各自的算法照明；清漆、光泽及其余类型暂时按标准类型照明"
 
 msgid "No GTA VI keys: the {platform} build's folder holds no executable OpenRage reads them from, so they come only from a key snapshot of that build."
 msgstr "没有 GTA VI 密钥：{platform} 版本的文件夹中没有 OpenRage 可从中读取密钥的可执行文件，因此密钥只能来自该版本的密钥快照。"

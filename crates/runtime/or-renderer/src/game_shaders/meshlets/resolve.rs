@@ -315,9 +315,10 @@ fn kind_of(colour_a: f32) -> u32 {
     return u32(colour_a * 255.0) & 31u;
 }
 
-// The kind of a leaf or a sheet that lets light through; every other kind is lit as the standard
-// material, kind nought.
+// The kind of a leaf or a sheet that lets light through, and the kind of skin; every other kind is
+// lit as the standard material, kind nought.
 const TRANSLUCENCY: u32 = 5u;
+const SKIN: u32 = 29u;
 
 // What a disc of light whose angular radius has the squared sine `size` gives a surface it stands
 // at the cosine `c` to, over what it gives one that faces it: the share of the disc above the
@@ -380,6 +381,16 @@ fn passed(through: Through, v_l: f32, shape: f32) -> f32 {
     return through.scale * shape * lobe;
 }
 
+// The matte part of the sun's or the moon's light on skin, as GTA VI's skin program takes it at
+// the cosine `n_l`, signed, before the share its facets reflect: the falloff table's first share
+// over pi, with neither the standard's grazing term nor its roughness factor. Its light through
+// the skin, its second gloss lobe and its subsurface blur take a fifth target and the game's
+// tables of profiles and materials, which the editor has none of; with none, the program adds
+// nothing of them.
+fn skin_matte(n_l: f32) -> f32 {
+    return falloff(n_l).x / PI;
+}
+
 // The surface the targets hold at `texel`; `clip` is where the texel stands on the frame and
 // `far` its depth.
 fn surface_at(texel: vec2<i32>, clip: vec2<f32>, far: f32) -> Surface {
@@ -433,6 +444,7 @@ fn shade(surface: Surface, pixel: vec2<f32>) -> vec3<f32> {
     var matte = vec3<f32>(1.0 / PI);
     // A leaf lit by GTA VI's translucency program, and what passes through it.
     let leaf = game && surface.kind == TRANSLUCENCY;
+    let skin = game && surface.kind == SKIN;
     let through = through_of(select(0.0, surface.through, leaf));
     let passes = through.profile > 0.0;
     var passing = 0.0;
@@ -464,7 +476,7 @@ fn shade(surface: Surface, pixel: vec2<f32>) -> vec3<f32> {
     // colours of the sky and the ground.
     let probed = light.around[0].w > 0.0;
     var direct = vec3<f32>(0.0);
-    if n_l > 0.0 || leaf {
+    if n_l > 0.0 || leaf || skin {
         // A light the clouds hide goes towards what the surroundings give along its way, then
         // the mask dims it: by the model's own shadow and by the clouds', which the mask holds
         // as one share, as the game's does.
@@ -477,6 +489,8 @@ fn shade(surface: Surface, pixel: vec2<f32>) -> vec3<f32> {
             // behind, so a leaf the light stands behind is lit through.
             let shares = falloff(dot(n, l));
             direct = (albedo * ((1.0 - reflected) * matte * shares.x + passing * shares.y) + gloss * n_l) * from_light;
+        } else if skin {
+            direct = (albedo * (1.0 - reflected) * skin_matte(dot(n, l)) + gloss * n_l) * from_light;
         } else {
             direct = (albedo * (1.0 - reflected) * matte + gloss) * from_light * n_l;
         }

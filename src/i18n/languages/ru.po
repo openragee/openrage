@@ -17668,8 +17668,8 @@ msgstr "Этот скрипт декомпилирован отдельно: у 
 msgid "A lit one among them takes the sun with no shadow: the game's cascades are stated empty, and the editor's shadow tile is not handed to it"
 msgstr "Освещаемая из них получает солнце без тени: каскады игры заданы пустыми, а плитка тени редактора ей не передаётся"
 
-msgid "Of the game's thirty material kinds, the standard and the translucent are lit by their own arithmetic; skin, clear coat, sheen and the rest are lit as the standard one for now"
-msgstr "Из тридцати видов материала игры стандартный и просвечивающий освещаются по собственной арифметике; кожа, лак, блеск и остальные пока освещаются как стандартный"
+msgid "Of the game's thirty material kinds, the standard, the translucent and skin are lit by their own arithmetic; clear coat, sheen and the rest are lit as the standard one for now"
+msgstr "Из тридцати видов материала игры стандартный, просвечивающий и кожа освещаются по собственной арифметике; лак, блеск и остальные пока освещаются как стандартный"
 
 msgid "No GTA VI keys: the {platform} build's folder holds no executable OpenRage reads them from, so they come only from a key snapshot of that build."
 msgstr "Нет ключей GTA VI: в папке сборки {platform} нет исполняемого файла, из которого OpenRage их читает, поэтому они приходят только из снимка ключей этой сборки."

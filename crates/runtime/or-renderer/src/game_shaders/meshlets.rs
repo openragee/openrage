@@ -1957,6 +1957,8 @@ mod mask_tests;
 #[cfg(test)]
 mod scene_tests;
 #[cfg(test)]
+mod skin_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod traced_tests;

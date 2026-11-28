@@ -369,7 +369,7 @@ pub(crate) fn said_of_own(
             };
             if by_cycles {
                 said.push('\n');
-                said.push_str(tr!("Of the game's thirty material kinds, the standard and the translucent are lit by their own arithmetic; skin, clear coat, sheen and the rest are lit as the standard one for now"));
+                said.push_str(tr!("Of the game's thirty material kinds, the standard, the translucent and skin are lit by their own arithmetic; clear coat, sheen and the rest are lit as the standard one for now"));
             }
             if own.forward > 0 {
                 said.push('\n');
@@ -466,7 +466,9 @@ mod tests {
         );
         // The game's lighting names the material kinds it lights as the standard one.
         assert!(
-            lit.contains("lit as the standard one for now") && !whole.contains("material kinds"),
+            lit.contains("the translucent and skin are lit by their own arithmetic")
+                && lit.contains("lit as the standard one for now")
+                && !whole.contains("material kinds"),
             "{lit}"
         );
         let laid = Own {

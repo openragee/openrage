@@ -7,7 +7,7 @@ use super::*;
 use crate::game_shaders::frame::read_back;
 
 /// The resolve's functions of the material kind and the light through a leaf, cut from it.
-fn leaf_functions() -> &'static str {
+pub(super) fn leaf_functions() -> &'static str {
     let from = RESOLVE
         .find("// The kind GTA VI's tiled lighting picks")
         .expect("the resolve reads the kind");
@@ -51,6 +51,12 @@ fn leaf(amount: f32, v_l: f32) -> vec4<f32> {
 
 /// The row `y` of what [`CASES`] computes, four numbers a pixel; none with no device.
 fn cases(test: &str) -> Option<Vec<[f32; 4]>> {
+    computed(test, &format!("{CASES}{}", leaf_functions()))
+}
+
+/// What the fragment entry `worked` of `source` writes over a target of [`SIZE`] a side, four
+/// numbers a pixel, its entry `corner` drawing a triangle over it; none with no device.
+pub(super) fn computed(test: &str, source: &str) -> Option<Vec<[f32; 4]>> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter = match crate::instance::headless_adapter(&instance) {
         Ok(adapter) => adapter,
@@ -61,7 +67,6 @@ fn cases(test: &str) -> Option<Vec<[f32; 4]>> {
     };
     let (device, queue) =
         pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()?;
-    let source = format!("{CASES}{}", leaf_functions());
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("translucency-cases"),
         source: wgpu::ShaderSource::Wgsl(source.into()),

@@ -17507,8 +17507,8 @@ msgstr "このスクリプトは単独で逆コンパイルされました。ほ
 msgid "A lit one among them takes the sun with no shadow: the game's cascades are stated empty, and the editor's shadow tile is not handed to it"
 msgstr "その中の照明されるものは影なしで太陽を受けます。ゲームのカスケードは空と指定され、エディターの影タイルは渡されません"
 
-msgid "Of the game's thirty material kinds, the standard and the translucent are lit by their own arithmetic; skin, clear coat, sheen and the rest are lit as the standard one for now"
-msgstr "ゲームの30種類の材質のうち、標準と半透明はそれぞれの計算で照らされます。肌、クリアコート、シーンなどの残りは当面、標準として照らされます"
+msgid "Of the game's thirty material kinds, the standard, the translucent and skin are lit by their own arithmetic; clear coat, sheen and the rest are lit as the standard one for now"
+msgstr "ゲームの30種類の材質のうち、標準、半透明、肌はそれぞれの計算で照らされます。クリアコート、シーンなどの残りは当面、標準として照らされます"
 
 msgid "No GTA VI keys: the {platform} build's folder holds no executable OpenRage reads them from, so they come only from a key snapshot of that build."
 msgstr "GTA VI の鍵がありません。{platform} ビルドのフォルダーに OpenRage が鍵を読み取れる実行ファイルがないため、鍵はそのビルドの鍵スナップショットからのみ得られます。"

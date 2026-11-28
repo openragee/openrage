@@ -17507,8 +17507,8 @@ msgstr "Este script se descompiló solo: una función que necesita lo que otro p
 msgid "A lit one among them takes the sun with no shadow: the game's cascades are stated empty, and the editor's shadow tile is not handed to it"
 msgstr "Una iluminada entre ellas recibe el sol sin sombra: las cascadas del juego se declaran vacías y la tesela de sombra del editor no se le entrega"
 
-msgid "Of the game's thirty material kinds, the standard and the translucent are lit by their own arithmetic; skin, clear coat, sheen and the rest are lit as the standard one for now"
-msgstr "De los treinta tipos de material del juego, el estándar y el translúcido se iluminan con su propia aritmética; la piel, la laca transparente, el brillo satinado y los demás se iluminan por ahora como el estándar"
+msgid "Of the game's thirty material kinds, the standard, the translucent and skin are lit by their own arithmetic; clear coat, sheen and the rest are lit as the standard one for now"
+msgstr "De los treinta tipos de material del juego, el estándar, el translúcido y la piel se iluminan con su propia aritmética; la laca transparente, el brillo satinado y los demás se iluminan por ahora como el estándar"
 
 msgid "No GTA VI keys: the {platform} build's folder holds no executable OpenRage reads them from, so they come only from a key snapshot of that build."
 msgstr "No hay claves de GTA VI: la carpeta de la compilación de {platform} no tiene ningún ejecutable del que OpenRage las lea, así que solo proceden de una instantánea de claves de esa compilación."

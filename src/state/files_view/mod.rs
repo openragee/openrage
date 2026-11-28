@@ -710,11 +710,8 @@ mod tests {
 
     #[test]
     fn a_held_body_with_no_sections_a_read_finds_counts_what_it_inflates_to() {
-        use std::io::Write;
         let content = b"a body that is no block-mapped resource. ".repeat(64);
-        let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
-        z.write_all(&content).unwrap();
-        let stream = z.finish().unwrap();
+        let stream = or_io::container::rpf::gta6_patch::optimal_deflate(&content, true).unwrap();
         assert!(stream.len() < content.len());
         assert_eq!(sections_len(&stream), Some(content.len() as u64));
     }
